@@ -41,8 +41,26 @@ set(MUDUO_LIB
     muduo_inspect
 )
 
+set(BASE_SRC
+    src/base/log.cpp
+    src/base/log_level.cpp
+    src/base/log_formatter.cpp
+    src/base/log_attr.cpp
+    src/base/log_appender.cpp
+
+    src/base/util.cpp
+    src/base/time_stamp.cpp
+)
+
+set(SRC
+    ${BASE_SRC}
+)
+
+add_library(kit_muduo SHARED ${SRC})
+redefine_file_macro(kit_muduo)   #重定义 __FILE__
 
 set(LIB_LIB
+    kit_muduo
     dl
     pthread
     GTest::GTest
@@ -50,7 +68,7 @@ set(LIB_LIB
 )
 
 set(DEPENDS
-
+    kit_muduo
 )
 
 
@@ -58,11 +76,15 @@ set(DEPENDS
 if(MUDUO_TEST)
     # muduo库使用示例 test_muduo
     add_executable(test_muduo tests/test_muduo.cpp)
-    # add_dependencies(test_muduo ${DEPENDS})
     target_link_directories(test_muduo PRIVATE ${EXTERN_LIB_PATH})
     redefine_file_macro(test_muduo)   #重定义 __FILE__
     target_link_libraries(test_muduo ${LIB_LIB} ${MUDUO_LIB})
 
+    # time_stamp  使用示例 test_time_stamp
+    add_executable(test_time_stamp tests/test_time_stamp.cpp)
+    target_link_directories(test_time_stamp PRIVATE ${EXTERN_LIB_PATH})
+    redefine_file_macro(test_time_stamp)   #重定义 __FILE__
+    target_link_libraries(test_time_stamp ${LIB_LIB})
 endif()
 
 
