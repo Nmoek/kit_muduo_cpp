@@ -1,6 +1,14 @@
 # Prerequisites
 *.d
 
+#dir
+lib/*
+include/muduo/*
+build/*
+bin/*
+
+#file
+
 # Compiled Object files
 *.slo
 *.lo
