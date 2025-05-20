@@ -52,8 +52,13 @@ set(BASE_SRC
     src/base/time_stamp.cpp
 )
 
+set(NET_SRC
+    src/net/inet_address.cpp
+)
+
 set(SRC
     ${BASE_SRC}
+    ${NET_SRC}
 )
 
 add_library(kit_muduo SHARED ${SRC})
@@ -80,11 +85,15 @@ if(MUDUO_TEST)
     redefine_file_macro(test_muduo)   #重定义 __FILE__
     target_link_libraries(test_muduo ${LIB_LIB} ${MUDUO_LIB})
 
-    # time_stamp  使用示例 test_time_stamp
+    # time_stamp  时间戳测试 test_time_stamp
     add_executable(test_time_stamp tests/test_time_stamp.cpp)
-    target_link_directories(test_time_stamp PRIVATE ${EXTERN_LIB_PATH})
     redefine_file_macro(test_time_stamp)   #重定义 __FILE__
     target_link_libraries(test_time_stamp ${LIB_LIB})
+
+    # inet_address 网络地址测试 test_inet_address
+    add_executable(test_inet_address tests/test_inet_address.cpp)
+    redefine_file_macro(test_inet_address)   #重定义 __FILE__
+    target_link_libraries(test_inet_address ${LIB_LIB})
 endif()
 
 

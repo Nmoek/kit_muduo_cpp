@@ -18,16 +18,37 @@ namespace kit_muduo {
 class TimeStamp
 {
 public:
-    TimeStamp() = default;
-    TimeStamp(uint64_t millSeconds);
+    /**
+     * @brief 默认构造
+     */
+    explicit TimeStamp() = default;
 
+    /**
+     * @brief 普通构造
+     * @param[in] millSeconds
+     */
+    explicit TimeStamp(uint64_t millSeconds);
+
+    /**
+     * @brief 转为时间字符串, 如2025-05-20 22:14:17
+     * @return std::string
+     */
     std::string toString();
 
 public:
+    /**
+     * @brief  生成时间戳对象
+     * @return TimeStamp
+     */
     static TimeStamp Now();
+    /**
+     * @brief 获取当前时间戳ms
+     * @return uint64_t
+     */
     static uint64_t NowTimeStamp();
 
 private:
+    /// @brief 时间戳ms
     uint64_t _millSeconds{0};
 };
 
