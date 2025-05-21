@@ -16,6 +16,9 @@
 namespace kit_muduo
 {
 
+thread_local pid_t t_thread_id = 0;
+
+
 uint64_t GetTimeStampMs()
 {
     struct timeval tv = {0};
@@ -43,7 +46,12 @@ std::string Timer2Str(time_t ts, const std::string& format)
 
 pid_t GetThreadPid()
 {
-    return syscall(SYS_gettid);
+    // 编译优化  告知编译器该分支进入概率偏低
+    if(__builtin_expect(t_thread_id == 0, 0))
+    {
+        t_thread_id = syscall(SYS_gettid);
+    }
+    return t_thread_id;
 }
 
 pthread_t GetThreadTid()

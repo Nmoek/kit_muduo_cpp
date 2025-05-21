@@ -54,6 +54,11 @@ set(BASE_SRC
 
 set(NET_SRC
     src/net/inet_address.cpp
+    src/net/channel.cpp
+    src/net/poller.cpp
+    src/net/default_poller.cpp
+    src/net/epoll_poller.cpp
+    src/net/event_loop.cpp
 )
 
 set(SRC

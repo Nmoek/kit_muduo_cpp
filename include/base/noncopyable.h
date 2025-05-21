@@ -10,7 +10,7 @@
 #ifndef __KIT_NONCOPYABLE_H__
 #define __KIT_NONCOPYABLE_H__
 
-namespace kit_muoduo {
+namespace kit_muduo {
 
 /**
  * @brief 子类继承后禁止拷贝操作

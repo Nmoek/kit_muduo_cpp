@@ -16,6 +16,8 @@
 namespace kit_muduo
 {
 
+extern thread_local pid_t t_thread_id;
+
 /**
  * @brief 获取ms级系统时间
  * @return uint64_t
