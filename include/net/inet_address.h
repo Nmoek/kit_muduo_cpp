@@ -51,6 +51,10 @@ public:
      */
     std::string toIpPort() const;
 
+    void setSockAddr(const struct sockaddr_in& addr) { _addr = addr; }
+
+    const struct sockaddr_in* getSockAddr() const { return &_addr; }
+
 private:
     struct sockaddr_in _addr;
 };

@@ -25,7 +25,7 @@ class EventLoopThreadPool: Noncopyable
 public:
     using ThreadInitCb = std::function<void(EventLoop *)>;
 
-    EventLoopThreadPool(EventLoop *loop, const std::string &name = "");
+    explicit EventLoopThreadPool(EventLoop *loop, const std::string &name = "");
 
     ~EventLoopThreadPool() = default;
 
@@ -44,9 +44,13 @@ public:
 private:
     /// @brief Master Reactor 主事件循环
     EventLoop *_baseLoop;
+    /// @brief 线程名称
     std::string _name;
+    /// @brief 是否开启
     bool _started;
+    /// @brief 线程创建数量
     int32_t _threadNums;
+    /// @brief 取出下一个Loop的下标
     int32_t _next;
     /// @brief 每个子事件循环所在的线程池
     std::vector<std::unique_ptr<EventLoopThread>> _threads;

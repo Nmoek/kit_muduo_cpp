@@ -63,7 +63,7 @@ set(NET_SRC
     src/net/default_poller.cpp
     src/net/epoll_poller.cpp
     src/net/event_loop.cpp
-
+    src/net/socket.cpp
 )
 
 set(SRC
@@ -97,23 +97,33 @@ if(MUDUO_TEST)
 
     # time_stamp  时间戳测试 test_time_stamp
     add_executable(test_time_stamp tests/test_time_stamp.cpp)
+    add_dependencies(test_time_stamp ${DEPENDS})
     redefine_file_macro(test_time_stamp)   #重定义 __FILE__
     target_link_libraries(test_time_stamp ${LIB_LIB})
 
     # inet_address 网络地址测试 test_inet_address
     add_executable(test_inet_address tests/test_inet_address.cpp)
+    add_dependencies(test_inet_address ${DEPENDS})
     redefine_file_macro(test_inet_address)   #重定义 __FILE__
     target_link_libraries(test_inet_address ${LIB_LIB})
 
     # Thread 线程测试 test_thread
     add_executable(test_thread tests/test_thread.cpp)
+    add_dependencies(test_thread ${DEPENDS})
     redefine_file_macro(test_thread)   #重定义 __FILE__
     target_link_libraries(test_thread ${LIB_LIB})
 
     # EventLoopThread 线程测试 test_event_loop_thread
     add_executable(test_event_loop_thread tests/test_event_loop_thread.cpp)
+    add_dependencies(test_event_loop_thread ${DEPENDS})
     redefine_file_macro(test_event_loop_thread)   #重定义 __FILE__
     target_link_libraries(test_event_loop_thread ${LIB_LIB})
+
+    # socket socket测试 test_socket
+    add_executable(test_socket tests/test_socket.cpp)
+    add_dependencies(test_socket ${DEPENDS})
+    redefine_file_macro(test_socket)   #重定义 __FILE__
+    target_link_libraries(test_socket ${LIB_LIB})
 endif()
 
 

@@ -23,7 +23,7 @@ class Thread
 public:
     using ThreadFunc = std::function<void()>;
 
-    Thread(ThreadFunc func, const std::string &name = "");
+    explicit Thread(ThreadFunc func, const std::string &name = "");
     ~Thread();
 
     void start();

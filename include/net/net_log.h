@@ -77,3 +77,17 @@ static auto g_net_logger = KIT_INIT_LOGGER("net");
 #define LOOP_F_FATAL(fmt, ...)     NET_F_FATAL("event_loop", fmt, ##__VA_ARGS__)
 /*******EventLoop模块*********/
 
+/*******Socket模块*********/
+#define SOCK_DEBUG()     NET_DEBUG("socket")
+#define SOCK_INFO()      NET_INFO("socket")
+#define SOCK_WARN()      NET_WARN("socket")
+#define SOCK_ERROR()     NET_ERROR("socket")
+#define SOCK_FATAL()     NET_FATAL("socket")
+
+#define SOCK_F_DEBUG(fmt, ...)     NET_F_DEBUG("socket", fmt, ##__VA_ARGS__)
+#define SOCK_F_INFO(fmt, ...)      NET_F_INFO("socket", fmt, ##__VA_ARGS__)
+#define SOCK_F_WARN(fmt, ...)      NET_F_WARN("socket", fmt, ##__VA_ARGS__)
+#define SOCK_F_ERROR(fmt, ...)     NET_F_ERROR("socket", fmt, ##__VA_ARGS__)
+#define SOCK_F_FATAL(fmt, ...)     NET_F_FATAL("socket", fmt, ##__VA_ARGS__)
+/*******Socket模块*********/
+
