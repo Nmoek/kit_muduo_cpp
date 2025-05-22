@@ -56,7 +56,7 @@ void Channel::remove()
 
 void Channel::update()
 {
-    _loop->hasChannel(this);
+    _loop->updateChannel(this);
 }
 
 void Channel::handleEventWithGuard(TimeStamp receiveTime)

@@ -44,7 +44,7 @@ EventLoop::EventLoop()
     ,_quit(true)
     ,_callingPendingFunc(false)
     ,_threadId(GetThreadPid())
-    ,_poller(nullptr)
+    ,_poller(Poller::NewDefaultPoller(this))
     ,_curActiveChannel(nullptr)
     , _wakeupFd(CreateEventFd())
     ,_wakeupChannel(new Channel(this, _wakeupFd))
@@ -85,7 +85,7 @@ void EventLoop::loop()
     _looping = true;
     _quit = false;
 
-    LOOP_INFO() << "EventLoop start! " << t_loopInThread << "pid= "  << _threadId << std::endl;
+    LOOP_INFO() << "EventLoop start! t=" << t_loopInThread << ", pid="  << _threadId << std::endl;
 
     while(!_quit)
     {
