@@ -50,6 +50,10 @@ set(BASE_SRC
 
     src/base/util.cpp
     src/base/time_stamp.cpp
+
+    src/base/thread.cpp
+    src/base/event_loop_thread.cpp
+    src/base/event_loop_thread_pool.cpp
 )
 
 set(NET_SRC
@@ -59,6 +63,7 @@ set(NET_SRC
     src/net/default_poller.cpp
     src/net/epoll_poller.cpp
     src/net/event_loop.cpp
+
 )
 
 set(SRC
@@ -99,6 +104,16 @@ if(MUDUO_TEST)
     add_executable(test_inet_address tests/test_inet_address.cpp)
     redefine_file_macro(test_inet_address)   #重定义 __FILE__
     target_link_libraries(test_inet_address ${LIB_LIB})
+
+    # Thread 线程测试 test_thread
+    add_executable(test_thread tests/test_thread.cpp)
+    redefine_file_macro(test_thread)   #重定义 __FILE__
+    target_link_libraries(test_thread ${LIB_LIB})
+
+    # EventLoopThread 线程测试 test_event_loop_thread
+    add_executable(test_event_loop_thread tests/test_event_loop_thread.cpp)
+    redefine_file_macro(test_event_loop_thread)   #重定义 __FILE__
+    target_link_libraries(test_event_loop_thread ${LIB_LIB})
 endif()
 
 

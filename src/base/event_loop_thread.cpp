@@ -1,6 +1,6 @@
 /**
  * @file event_loop_thread.cpp
- * @brief 专属EventLoop的线程类
+ * @brief EventLoop事件循环线程类
  * @author Kewin Li
  * @version 1.0
  * @date 2025-05-22 21:01:25

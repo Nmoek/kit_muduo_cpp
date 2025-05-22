@@ -128,11 +128,11 @@ void EventLoop::wakeup()
 void EventLoop::runInLoop(Func cb)
 {
     assert(cb != nullptr);
-    if(isInLoopThread())
+    if(isInLoopThread()) // 事件循环运行在当前线程则直接执行
     {
         cb();
     }
-    else
+    else   //事件循环运行在其他线程则入队
     {
         queueInLoop(cb);
     }
@@ -145,7 +145,7 @@ void EventLoop::queueInLoop(Func cb)
     lock.unlock();
 
     // 难点：为什么要判断_callingPendingFunc
-    // 答：poll会阻塞，提前放入一个唤醒事件，在下一轮的doPendingFuncs能够被唤醒继续执行
+    // 答：poll会阻塞，触发一次唤醒事件，在下一轮的doPendingFuncs才能够被唤醒继续执行，否则将永远阻塞
     if(!isInLoopThread() || _callingPendingFunc)
         wakeup();
 }
@@ -181,7 +181,7 @@ void EventLoop::doPendingFuncs()
     std::vector<Func> tmp_func;
     _callingPendingFunc = true;
 
-    //这里很关键: 将待处理数据一次性交换出来, 较快地释放锁
+    //关键: 将待处理数据一次性交换出来, 较快地释放锁
     std::unique_lock<std::mutex> lock(_mutex);
     tmp_func.swap(_pendingFuncs);
     lock.unlock();
