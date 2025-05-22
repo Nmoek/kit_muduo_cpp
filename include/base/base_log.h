@@ -9,7 +9,7 @@
 
  #include "base/log.h"
 
-static auto g_base_logger = KIT_INIT_LOGGER("base");
+static auto g_base_logger = KIT_LOGGER("base");
 
 /*********流式输出**********/
 #define BASE_DEBUG(module) \

@@ -35,7 +35,7 @@ public:
     void setReusePort(bool on);
 
 public:
-    static int32_t Create();
+    static int32_t CreateIpv4(bool nonblock = true);
 private:
     int32_t _sockfd;
 };

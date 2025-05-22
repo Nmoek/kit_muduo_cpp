@@ -9,7 +9,8 @@
 
  #include "base/log.h"
 
-static auto g_net_logger = KIT_INIT_LOGGER("net");
+static auto g_net_logger = KIT_LOGGER("net");
+
 
 /*********流式输出**********/
 #define NET_DEBUG(module) \

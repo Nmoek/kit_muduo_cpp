@@ -21,6 +21,10 @@ class InetAddress
 {
 public:
     /**
+     * @brief 默认构造
+     */
+    InetAddress() = default;
+    /**
      * @brief 普通构造
      * @param[in] port
      * @param[in] ip

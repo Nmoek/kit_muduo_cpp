@@ -67,7 +67,7 @@ void Channel::handleEventWithGuard(TimeStamp receiveTime)
     if((revent & EPOLLHUP)
         && !(revent & EPOLLIN))
     {
-        CHANNEL_INFO() << "Channel: trigger close event" << std::endl;
+        CHANNEL_DEBUG() << "Channel: trigger close event" << std::endl;
         if(_closeCallback)
             _closeCallback();
     }
@@ -75,7 +75,7 @@ void Channel::handleEventWithGuard(TimeStamp receiveTime)
     // 2. 继续处理错误事件
     if(revent & EPOLLERR)
     {
-        CHANNEL_INFO() << "Channel: trigger error event" << std::endl;
+        CHANNEL_DEBUG() << "Channel: trigger error event" << std::endl;
         if(_errorCallback)
             _errorCallback();
     }
@@ -83,7 +83,7 @@ void Channel::handleEventWithGuard(TimeStamp receiveTime)
     // 3. 继续处理可读事件
     if(revent & (EPOLLIN | EPOLLRDNORM | EPOLLPRI | EPOLLRDHUP))
     {
-        CHANNEL_INFO() << "Channel: trigger read event" << std::endl;
+        CHANNEL_DEBUG() << "Channel: trigger read event" << std::endl;
         if(_readCallback)
             _readCallback(receiveTime);
     }
@@ -91,7 +91,7 @@ void Channel::handleEventWithGuard(TimeStamp receiveTime)
     // 3. 最后处理可写事件
     if(revent & (EPOLLOUT | EPOLLWRNORM))
     {
-        CHANNEL_INFO() << "Channel: trigger write event" << std::endl;
+        CHANNEL_DEBUG() << "Channel: trigger write event" << std::endl;
         if(_writeCallback)
             _writeCallback();
     }

@@ -9,7 +9,7 @@
 
  #include "base/log.h"
 
-static auto g_test_logger = KIT_INIT_LOGGER("test");
+static auto g_test_logger = KIT_LOGGER("test");
 
 #define TEST_MODULE_NAME    "null"
 #define TEST_DEBUG() \

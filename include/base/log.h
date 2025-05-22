@@ -52,11 +52,6 @@
 #define KIT_LOGGER(name) \
     kit_muduo::LogManagerInstance::GetInstance().getLogger(name)
 
-#define KIT_INIT_LOGGER(name) \
-    kit_muduo::LogManagerInstance::GetInstance().addLogger(name)
-
-
-
 
 namespace kit_muduo {
 
@@ -191,7 +186,7 @@ public:
      * @param[in] name
      * @return Logger::Ptr
      */
-    Logger::Ptr getLogger(const std::string& name) const;
+    Logger::Ptr getLogger(const std::string& name);
 
     /**
      * @brief 删除日志器

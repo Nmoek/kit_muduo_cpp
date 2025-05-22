@@ -66,6 +66,7 @@ TimeStamp EpollPoller::poll(int32_t timeout, ChannelList *channelList)
     {
         _events.resize(numEvents * 2);
     }
+    POLLER_F_DEBUG("%d event trigger \n", numEvents);
 
     return now;
 }
@@ -139,13 +140,18 @@ void EpollPoller::update(int32_t operation, Channel *channel)
 
 void EpollPoller::fillActiveEvent(int32_t numEvents, ChannelList *channelList)
 {
-    for(auto &e : _events)
+    for(int i = 0;i < numEvents;++i)
     {
-        Channel *c = static_cast<Channel*>(e.data.ptr);
+        Channel *c = static_cast<Channel*>(_events[i].data.ptr);
+        if(!c)
+        {
+            POLLER_F_ERROR("i:%d, %p void* --> Channel* error! \n", i, _events[i].data.ptr);
+            continue;
+        }
 
-        POLLER_F_DEBUG("===> fd[%d] events[0x%x] active! \n", c->fd(), e.events);
+        POLLER_F_DEBUG("===> fd[%d] events[0x%x] active! \n", c->fd(), _events[i].events);
         // 获取当前真正发生的事件
-        c->setRevents(e.events);
+        c->setRevents(_events[i].events);
         channelList->push_back(c);
     }
 }

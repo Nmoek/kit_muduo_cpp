@@ -8,6 +8,7 @@
  */
 #include "net/socket.h"
 #include "net/inet_address.h"
+#include "net/acceptor.h"
 #include "./test_log.h"
 
 
@@ -16,9 +17,9 @@
 using namespace kit_muduo;
 
 
-TEST(TestSocket, test)
+TEST(TestSocket, DISABLED_test1)
 {
-    Socket s(Socket::Create());
+    Socket s(Socket::CreateIpv4());
     InetAddress addr(5555);
     s.bindAddress(addr);
     TEST_INFO() << "server listen.." << std::endl;
@@ -27,6 +28,19 @@ TEST(TestSocket, test)
     TEST_INFO() << "new connect: " << connfd << ", " << addr.toIpPort() << std::endl;
 }
 
+TEST(TestSocket, test2)
+{
+    EventLoop loop;
+    InetAddress addr(5555);
+    Acceptor a(&loop, addr);
+
+    a.setNewConnectionCallback([](int32_t connfd, const InetAddress &peerAddr){
+        TEST_INFO() << "new connect: " << connfd << ", " << peerAddr.toIpPort() << std::endl;
+    });
+    a.listen();
+    TEST_INFO() << "server listen.." << std::endl;
+    loop.loop();
+}
 
 int main(int argc, char **argv)
 {

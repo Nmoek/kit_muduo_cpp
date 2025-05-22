@@ -8,6 +8,7 @@
  */
 
 #include "base/log.h"
+#include <iostream>
 
 namespace kit_muduo
 {
@@ -70,7 +71,8 @@ LogAttrWrap::LogAttrWrap(LogAttr::Ptr attr)
 
 LogAttrWrap::~LogAttrWrap()
 {
-    _attr->getLogger()->log(_attr);
+    if(_attr->getLogger()->getLevel() <= _attr->getLevel())
+        _attr->getLogger()->log(_attr);
 }
 
 
@@ -102,11 +104,14 @@ Logger::Ptr LogManager::addLogger(const std::string &name)
     return logger;
 }
 
-Logger::Ptr LogManager::getLogger(const std::string& name) const
+Logger::Ptr LogManager::getLogger(const std::string& name)
 {
     std::unique_lock<std::mutex> lock(_loggersMtx);
     auto it = _loggers.find(name);
-    return it != _loggers.end() ? it->second : _defaultLogger;
+    if(it != _loggers.end())
+        return it->second;
+    lock.unlock();
+    return addLogger(name);
 }
 
 void LogManager::delLogger(const std::string& name)

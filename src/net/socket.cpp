@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
+#include <fcntl.h>
 
 namespace kit_muduo {
 
@@ -85,9 +86,33 @@ void Socket::setReusePort(bool on)
     ::setsockopt(_sockfd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 }
 
-int32_t Socket::Create()
+
+static void SetSocketNoNBlock(int32_t fd, bool on)
 {
-    return ::socket(AF_INET, SOCK_STREAM, 0);
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+    {
+        SOCK_F_ERROR("SetSocketNoNBlock error! %d:%s \n", errno, strerror(errno));
+        return;
+    }
+    if(on)
+        flags |= O_NONBLOCK;
+    else
+        flags &= ~O_NONBLOCK;
+
+    fcntl(fd, F_SETFL, flags);
+}
+
+int32_t Socket::CreateIpv4(bool nonblock)
+{
+    int32_t fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if(fd < 0)
+    {
+        SOCK_F_FATAL("::socket error! %d:%s \n", errno, strerror(errno));
+        abort();
+    }
+    SetSocketNoNBlock(fd, nonblock);
+    return fd;
 }
 
 }   //kit_muduo

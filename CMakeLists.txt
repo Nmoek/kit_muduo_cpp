@@ -64,6 +64,7 @@ set(NET_SRC
     src/net/epoll_poller.cpp
     src/net/event_loop.cpp
     src/net/socket.cpp
+    src/net/acceptor.cpp
 )
 
 set(SRC
