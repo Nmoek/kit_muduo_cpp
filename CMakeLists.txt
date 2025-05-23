@@ -65,6 +65,8 @@ set(NET_SRC
     src/net/event_loop.cpp
     src/net/socket.cpp
     src/net/acceptor.cpp
+    src/net/tcp_server.cpp
+    src/net/buffer.cpp
 )
 
 set(SRC
@@ -120,11 +122,23 @@ if(MUDUO_TEST)
     redefine_file_macro(test_event_loop_thread)   #重定义 __FILE__
     target_link_libraries(test_event_loop_thread ${LIB_LIB})
 
-    # socket socket测试 test_socket
+    # socket测试 test_socket
     add_executable(test_socket tests/test_socket.cpp)
     add_dependencies(test_socket ${DEPENDS})
     redefine_file_macro(test_socket)   #重定义 __FILE__
     target_link_libraries(test_socket ${LIB_LIB})
+
+    # TcpServer测试 test_tcp_server
+    add_executable(test_tcp_server tests/test_tcp_server.cpp)
+    add_dependencies(test_tcp_server ${DEPENDS})
+    redefine_file_macro(test_tcp_server)   #重定义 __FILE__
+    target_link_libraries(test_tcp_server ${LIB_LIB})
+
+    # Buffer测试 test_buffer
+    add_executable(test_buffer tests/test_buffer.cpp)
+    add_dependencies(test_buffer ${DEPENDS})
+    redefine_file_macro(test_buffer)   #重定义 __FILE__
+    target_link_libraries(test_buffer ${LIB_LIB})
 endif()
 
 

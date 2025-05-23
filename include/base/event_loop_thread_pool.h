@@ -54,7 +54,7 @@ private:
     int32_t _next;
     /// @brief 每个子事件循环所在的线程池
     std::vector<std::unique_ptr<EventLoopThread>> _threads;
-    /// @brief 子Reactor 子事件循环
+    /// @brief Sub Reactor 子事件循环
     std::vector<EventLoop*> _loops;
 };
 

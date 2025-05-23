@@ -92,3 +92,18 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define SOCK_F_FATAL(fmt, ...)     NET_F_FATAL("socket", fmt, ##__VA_ARGS__)
 /*******Socket模块*********/
 
+/*******TcpServer模块*********/
+#define TCP_DEBUG()     NET_DEBUG("tcp_svr")
+#define TCP_INFO()      NET_INFO("tcp_svr")
+#define TCP_WARN()      NET_WARN("tcp_svr")
+#define TCP_ERROR()     NET_ERROR("tcp_svr")
+#define TCP_FATAL()     NET_FATAL("tcp_svr")
+
+#define TCP_F_DEBUG(fmt, ...)     NET_F_DEBUG("tcp_svr", fmt, ##__VA_ARGS__)
+#define TCP_F_INFO(fmt, ...)      NET_F_INFO("tcp_svr", fmt, ##__VA_ARGS__)
+#define TCP_F_WARN(fmt, ...)      NET_F_WARN("tcp_svr", fmt, ##__VA_ARGS__)
+#define TCP_F_ERROR(fmt, ...)     NET_F_ERROR("tcp_svr", fmt, ##__VA_ARGS__)
+#define TCP_F_FATAL(fmt, ...)     NET_F_FATAL("tcp_svr", fmt, ##__VA_ARGS__)
+/*******TcpServer模块*********/
+
+
