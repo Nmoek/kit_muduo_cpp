@@ -67,6 +67,7 @@ set(NET_SRC
     src/net/acceptor.cpp
     src/net/tcp_server.cpp
     src/net/buffer.cpp
+    src/net/tcp_connection.cpp
 )
 
 set(SRC

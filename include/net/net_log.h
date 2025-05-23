@@ -106,4 +106,18 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define TCP_F_FATAL(fmt, ...)     NET_F_FATAL("tcp_svr", fmt, ##__VA_ARGS__)
 /*******TcpServer模块*********/
 
+/*******TcpConnect模块*********/
+#define CONN_DEBUG()     NET_DEBUG("tcp_conn")
+#define CONN_INFO()      NET_INFO("tcp_conn")
+#define CONN_WARN()      NET_WARN("tcp_conn")
+#define CONN_ERROR()     NET_ERROR("tcp_conn")
+#define CONN_FATAL()     NET_FATAL("tcp_conn")
+
+#define CONN_F_DEBUG(fmt, ...)     NET_F_DEBUG("tcp_conn", fmt, ##__VA_ARGS__)
+#define CONN_F_INFO(fmt, ...)      NET_F_INFO("tcp_conn", fmt, ##__VA_ARGS__)
+#define CONN_F_WARN(fmt, ...)      NET_F_WARN("tcp_conn", fmt, ##__VA_ARGS__)
+#define CONN_F_ERROR(fmt, ...)     NET_F_ERROR("tcp_conn", fmt, ##__VA_ARGS__)
+#define CONN_F_FATAL(fmt, ...)     NET_F_FATAL("tcp_conn", fmt, ##__VA_ARGS__)
+/*******TcpConnect模块*********/
+
 

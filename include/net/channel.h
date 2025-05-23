@@ -59,7 +59,7 @@ public:
      * @brief 防止channel被手动remove时，channel还在继续执行回调操作
      * @param[in] data 注意:这里使用引用是避免引用计数+1
      */
-    void tie(std::shared_ptr<void> &data) { _tie = data; _tied = true; }
+    void tie(const std::shared_ptr<void> &data) { _tie = data; _tied = true; }
     bool isTied() const { return _tied; }
     void remove();
 

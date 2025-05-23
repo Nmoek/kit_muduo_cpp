@@ -59,6 +59,9 @@ public:
 
     const struct sockaddr_in* getSockAddr() const { return &_addr; }
 
+public:
+    static InetAddress GetLocalAddr(int32_t fd);
+
 private:
     struct sockaddr_in _addr;
 };

@@ -113,6 +113,7 @@ public:
     }
 
     ssize_t readFd(int32_t fd, int32_t *savedErrno);
+    ssize_t writeFd(int32_t fd, int32_t *savedErrno);
 
 private:
     char* begin()

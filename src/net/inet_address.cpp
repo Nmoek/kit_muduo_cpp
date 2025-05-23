@@ -8,6 +8,7 @@
  */
 
 #include "net/inet_address.h"
+#include "net/net_log.h"
 
 namespace kit_muduo {
 
@@ -43,6 +44,17 @@ std::string InetAddress::toIpPort() const
     return res;
 }
 
+InetAddress InetAddress::GetLocalAddr(int32_t fd)
+{
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    if(::getsockname(fd, (struct sockaddr*)&addr, &len) < 0)
+    {
+        NET_F_ERROR("inet_addr", "::getsockname error! %d:%s \n", errno, strerror(errno));
+        return InetAddress();
+    }
 
+    return InetAddress(addr);
+}
 
 }   //kit_muduo

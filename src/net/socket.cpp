@@ -75,6 +75,13 @@ void Socket::setTcpNoDelay(bool on)
     int32_t opt = on ? 1 : 0;
     ::setsockopt(_sockfd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
 }
+
+void Socket::setKeepAlive(bool on)
+{
+    int32_t opt = on ? 1 : 0;
+    ::setsockopt(_sockfd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt));
+}
+
 void Socket::setReuseAddr(bool on)
 {
     int32_t opt = on ? 1 : 0;

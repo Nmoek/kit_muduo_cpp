@@ -8,6 +8,7 @@
  */
 #include "net/buffer.h"
 #include <sys/uio.h>
+#include <unistd.h>
 
 namespace kit_muduo {
 
@@ -41,5 +42,14 @@ ssize_t Buffer::readFd(int32_t fd, int32_t *savedErrno)
     return n;
 }
 
+ssize_t Buffer::writeFd(int32_t fd, int32_t *savedErrno)
+{
+    ssize_t n = ::write(fd, peek(), readableBytes());
+    if(n < 0)
+    {
+        *savedErrno = errno;
+    }
 
+    return n;
+}
 }   // kit_muduo

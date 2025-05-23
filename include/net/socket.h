@@ -31,6 +31,7 @@ public:
     void shutdownWrite();
 
     void setTcpNoDelay(bool on);
+    void setKeepAlive(bool on);
     void setReuseAddr(bool on);
     void setReusePort(bool on);
 
