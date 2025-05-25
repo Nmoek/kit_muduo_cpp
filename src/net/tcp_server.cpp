@@ -73,6 +73,8 @@ void TcpServer::start()
         return;
     ++_started;
 
+    _threadPool->start(_threadInitCallback);
+
     _baseLoop->runInLoop([this](){
         _acceptor->listen();
     });
@@ -101,7 +103,7 @@ void TcpServer::newConnection(int32_t sockfd, const InetAddress& peerAddr)
 
     _connections[conn_name] = connPtr;
 
-    // 直接调用 TcoConnection 连接建立函数
+    // 直接调用 TcoConnection::connectEstablished 设置Channel状态+触发回调
     sub_loop->runInLoop(std::bind(&TcpConnection::connectEstablished, connPtr));
 }
 

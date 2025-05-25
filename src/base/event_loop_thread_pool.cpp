@@ -52,6 +52,7 @@ void EventLoopThreadPool::start(const ThreadInitCb &callback)
 EventLoop* EventLoopThreadPool::getNextLoop()
 {
     _next = _loops.empty() ? 0 : (_next + 1) % _threadNums;
+    THREAD_F_DEBUG("getNextLoop empyt[%d], next[%d - %p]\n", _loops.empty(),_next, _loops[_next]);
     return _loops.empty() ? _baseLoop : _loops[_next];
 }
 
