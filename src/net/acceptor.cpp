@@ -52,13 +52,11 @@ void Acceptor::handleRead()
     if(connfd < 0)
         return;
 
-    // 该回调函数作用：轮询找到合法的EventLoop* 将当前新连接的fd分发
+    // TcpServer::newConnection该回调函数作用：轮询找到合法的EventLoop* 将当前新连接的connfd分发
     if(_newConnectionCallback)
         _newConnectionCallback(connfd, peer_addr);
     else
         ::close(connfd);
-
-
 }
 
 }   //kit_muduo

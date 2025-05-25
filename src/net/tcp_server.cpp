@@ -103,7 +103,9 @@ void TcpServer::newConnection(int32_t sockfd, const InetAddress& peerAddr)
 
     _connections[conn_name] = connPtr;
 
-    // 直接调用 TcoConnection::connectEstablished 设置Channel状态+触发回调
+    // 设置当前连接状态+触发用户回调
+    // 1. 这样写避免 TcpConnection::getChannel这种接口出现，借助std::bind绑定器也能实现执行成员函数效果
+    // 2. 延迟执行
     sub_loop->runInLoop(std::bind(&TcpConnection::connectEstablished, connPtr));
 }
 

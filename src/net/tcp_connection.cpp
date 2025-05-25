@@ -121,6 +121,7 @@ void TcpConnection::handleRead(TimeStamp receiveTime)
     }
 
     // 用户传入的Message处理
+    // 存在改进点：业务处理异步出Loop线程
     _messageCallback(shared_from_this(), &_inputBuffer, receiveTime);
 }
 
@@ -230,7 +231,7 @@ void TcpConnection::sendInLoop(const void* message, size_t len)
             // 一次性全部写完
             if(0 == remain && _writeCompleteCallback)
             {
-                _subLoop->queueInLoop(std::bind(&TcpConnection::_writeCompleteCallback, shared_from_this()));
+                _subLoop->queueInLoop(std::bind(_writeCompleteCallback, shared_from_this()));
 
                 return;
             }

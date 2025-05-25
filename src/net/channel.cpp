@@ -81,7 +81,7 @@ void Channel::handleEventWithGuard(TimeStamp receiveTime)
     }
 
     // 3. 继续处理可读事件
-    if(revent & (EPOLLIN | EPOLLRDNORM | EPOLLPRI | EPOLLRDHUP))
+    if(revent & (EPOLLIN | EPOLLRDNORM | EPOLLPRI ))
     {
         CHANNEL_DEBUG() << "Channel: trigger read event" << std::endl;
         if(_readCallback)

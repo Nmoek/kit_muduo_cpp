@@ -97,7 +97,7 @@ private:
     int32_t _events;
     /// @brief 实际发生事件集
     int32_t _revents;
-    /// @brief 被哪个poller所使用
+    /// @brief 标明当前Channel在Poller中的状态：未添加New、已添加Added、添加后不再监听任何事件Deleted
     int32_t _index;
     /// @brief 绑定自身，监视资源是否释放
     std::weak_ptr<void> _tie;
