@@ -52,7 +52,7 @@ int32_t Socket::accept(InetAddress *peerAddr)
     struct sockaddr_in sockaddr = {0};
     socklen_t len = sizeof(struct sockaddr);
     int32_t fd = -1;
-    fd = ::accept(_sockfd, (struct sockaddr*)&sockaddr, &len);
+    fd = ::accept4(_sockfd, (struct sockaddr*)&sockaddr, &len, SOCK_NONBLOCK | SOCK_CLOEXEC);
     if(fd < 0)
     {
         SOCK_F_ERROR("::accept error! %d:%s \n", errno, strerror(errno));

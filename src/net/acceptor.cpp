@@ -52,7 +52,7 @@ void Acceptor::handleRead()
     if(connfd < 0)
         return;
 
-    // 轮询找到合法的EventLoop* 将当前新连接的fd分发
+    // 该回调函数作用：轮询找到合法的EventLoop* 将当前新连接的fd分发
     if(_newConnectionCallback)
         _newConnectionCallback(connfd, peer_addr);
     else
