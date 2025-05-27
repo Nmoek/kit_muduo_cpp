@@ -54,32 +54,33 @@ TimeStamp PollPoller::poll(int32_t timeout, ChannelList *channelList)
 */
 void PollPoller::updateChannel(Channel *channel)
 {
-    int32_t state = channel->index();
+    int32_t idx = channel->index(); // epoll中是状态,poll中是下标
     int32_t fd = channel->fd();
-    if(Poller::kNew == state) // 在Poller中不存在
+    if(idx < 0)    // 从没添加到poll中
     {
-        _channels[fd] = channel; //Poller中添加
-        channel->setIndex(Poller::kAdded);
-        // poll中添加
-        update(channel);
+        struct pollfd p;
+        p.fd = fd;
+        p.events = static_cast<short>(channel->events());
+        _eventList.push_back(p);
+        idx = _eventList.size() - 1;
+        channel->setIndex(idx);
+        _channels[fd] = channel;
+        POLLER_F_DEBUG("poll add success! fd[%d], idx[%d]!\n", fd, idx);
 
     }
-    else if(Poller::kDeleted == state) // 未监听任何事件但仍存在于Poller记录中
+    else // 存在Poller中 修改事件
     {
-        assert(_channels.find(fd) != _channels.end());
-        assert(_channels[fd] == channel);
+        struct pollfd *p = &_eventList[idx];
+        // 修改监听事件
+        POLLER_F_DEBUG("poll update fd[%d], idx[%d], ev[0x%x] -> [0x%x]\n", fd, idx, p->events, channel->events());
 
-        channel->setIndex(Poller::kAdded);
-        update(channel);
-    }
-    else  // 当前有监听事件也存在于Poller记录中  可能需要修改事件
-    {
+        p->fd = fd;
+        p->events = static_cast<short>(channel->events());
+        // 如果不监听任何事件 poll忽略该套接字
         if(channel->isNonEvent())
-            channel->setIndex(kDeleted);
-
-        //poll中修改/删除
-        update(channel);
+            p->fd = -fd-1;  //保证永远<0
     }
+
 }
 
 /**
@@ -89,17 +90,32 @@ void PollPoller::updateChannel(Channel *channel)
 void PollPoller::removeChannel(Channel *channel)
 {
     int32_t fd = channel->fd();
-    int32_t state = channel->index();
+    int32_t idx = channel->index();
+    int32_t exchange_fd = _eventList.back().fd;
 
     size_t n = _channels.erase(fd);
     assert(n == 1);
-    if(Poller::kAdded == state)
+    assert(idx >= 0 && idx < _eventList.size());
+    // 不能直接删  会引起大量数据拷贝和移动
+    // _eventList.erase(_eventList.begin() + idx);
+    if(idx == _eventList.size() - 1)
     {
-        channel->setIndex(Poller::kDeleted);
-        update(channel);
+        _eventList.pop_back();
+    }
+    else
+    {
+        // 优化将目标pollfd交换到末尾，最后删除末尾
+        std::swap(_eventList[idx], _eventList.back());
+        _eventList.pop_back();
+
+        // 更新数组索引
+        Channel *swapChannel = _channels[exchange_fd];
+        swapChannel->setIndex(idx);
     }
 
-    channel->setIndex(Poller::kNew);
+    POLLER_F_DEBUG("poll del swap fd[%d], idx[%d] <-- back fd[%d]\n", fd, idx, exchange_fd);
+
+    return;
 }
 
 
@@ -118,56 +134,5 @@ void PollPoller::fillActiveEvent(ChannelList *channelList)
     }
     return;
 }
-
-void PollPoller::update(Channel *channel)
-{
-    int32_t fd = channel->fd();
-    int32_t state = channel->index();
-
-    auto it = std::find_if(_eventList.begin(), _eventList.end(), [fd](struct pollfd p){
-        return fd == p.fd;
-    });
-
-    if(it == _eventList.end())
-    {
-        // 增加监听的fd
-        if(kAdded == state)
-        {
-            struct pollfd p;
-            p.fd = fd;
-            p.events = channel->events();
-            _eventList.push_back(p);
-            POLLER_F_DEBUG("poll add success! fd[%d]!\n", fd);
-        }
-        else
-        {
-            POLLER_F_ERROR("poll not find fd[%d]!\n", fd);
-
-        }
-        return;
-    }
-    assert(it != _eventList.end());
-    assert(fd == it->fd);
-
-    // 删除监听的fd
-    if(Poller::kDeleted == state)
-    {
-        _eventList.erase(it);
-        POLLER_F_DEBUG("poll del fd[%d]\n", fd);
-        return;
-    }
-
-    // 修改监听事件
-    POLLER_F_DEBUG("poll update fd[%d], ev[0x%x] -> [0x%x]\n", fd,  it->events, channel->events());
-
-    it->fd = fd;
-    it->events = channel->events();
-
-    return;
-}
-
-
-
-
 
 }   //kit_muduo

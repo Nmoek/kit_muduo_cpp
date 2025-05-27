@@ -59,14 +59,6 @@ public:
 public:
     static Poller* NewDefaultPoller(EventLoop *loop);
 
-public:
-    /******Channel状态机 表示的是channel在IO复用组件中的状态, 不是IO复用组件的实际状态******/
-    /// Channel未添加到Poller
-    static const int32_t kNew = -1;
-    /// Channel已添加到Poller
-    static const int32_t kAdded = 1;
-    /// Channel从Poller删除
-    static const int32_t kDeleted = 2;
 protected:
     /**
      * @brief key: socket fd ----> val: Channel*对象

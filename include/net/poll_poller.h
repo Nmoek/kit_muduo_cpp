@@ -48,8 +48,6 @@ public:
 private:
     void fillActiveEvent(ChannelList *channelList);
 
-    void update(Channel *channel);
-
 private:
     using EventList = std::vector<struct pollfd>;
     EventList _eventList;

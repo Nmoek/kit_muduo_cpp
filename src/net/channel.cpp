@@ -23,7 +23,7 @@ Channel::Channel(EventLoop *loop, int32_t fd)
     ,_fd(fd)
     ,_events(0)
     ,_revents(0)
-    ,_index(-1)
+    ,_index(-1) // 必须是-1 与之后下标判断有关联
     ,_tied(false)
 {
 
