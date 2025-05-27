@@ -39,7 +39,7 @@ public:
 
     void wakeup();
 
-    TimeStamp pollReturnTime() const { return _poolReturnTime; }
+    TimeStamp pollReturnTime() const { return _pollReturnTime; }
 
     /**
      * @brief 在当前loop中执行回调函数
@@ -81,7 +81,7 @@ private:
     /// @brief 当前是否有事件回调正在执行
     std::atomic_bool _callingPendingFunc;
     /// @brief 获取到活跃事件集的时间
-    TimeStamp _poolReturnTime;
+    TimeStamp _pollReturnTime;
     /// @brief 当前事件循环所属线程内核PID
     const pid_t _threadId;
     /// @brief IO复用组件

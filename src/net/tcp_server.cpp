@@ -16,7 +16,7 @@
 
 namespace kit_muduo {
 
-static EventLoop* CheckNullLoop(EventLoop *p)
+static inline EventLoop* CheckNullLoop(EventLoop *p)
 {
     if(!p)
     {

@@ -21,7 +21,6 @@ Poller* Poller::NewDefaultPoller(EventLoop *loop)
     if(::getenv("KIT_MUDUO_POLLER_POLL"))
     {
         return new PollPoller(loop);
-        ;
     }
     else
     {

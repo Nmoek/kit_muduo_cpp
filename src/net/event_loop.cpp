@@ -90,10 +90,10 @@ void EventLoop::loop()
     while(!_quit)
     {
         _activeChannels.clear();
-        _poolReturnTime = _poller->poll(kPollTimeOutMs, &_activeChannels);
+        _pollReturnTime = _poller->poll(kPollTimeOutMs, &_activeChannels);
         for(auto &c : _activeChannels)
         {
-            c->handleEvent(_poolReturnTime);
+            c->handleEvent(_pollReturnTime);
         }
 
         // 特别注意：这里执行的是提前缓存的回调队列中的函数，而不是Channel中的读写回调函数

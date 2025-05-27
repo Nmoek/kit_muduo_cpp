@@ -8,6 +8,7 @@ build/*
 bin/*
 
 #file
+*.vsdx
 
 # Compiled Object files
 *.slo

@@ -17,14 +17,6 @@
 
 namespace kit_muduo {
 
-/******Channel状态机 表示的是channel在epoll中的状态******/
-/// Channel未添加到Poller
-static const int32_t kNew = -1;
-/// Channel已添加到Poller
-static const int32_t kAdded = 1;
-/// Channel从Poller删除
-static const int32_t kDeleted = 2;
-
 int32_t EpollPoller::kInitEventNums = 16;
 
 EpollPoller::EpollPoller(EventLoop *loop)
@@ -57,7 +49,7 @@ TimeStamp EpollPoller::poll(int32_t timeout, ChannelList *channelList)
     }
     else if(0 == numEvents)
     {
-        POLLER_F_DEBUG("epoll_wait timeout!\n");
+        POLLER_F_WARN("epoll_wait timeout!\n");
         return now;
     }
     POLLER_F_DEBUG("%d event trigger \n", numEvents);
@@ -76,9 +68,9 @@ void EpollPoller::updateChannel(Channel *channel)
     // 表示当前传入Channel的状态
     int32_t status = channel->index();
     int32_t fd = channel->fd();
-    if(kNew == status || kDeleted == status) // epoll中未添加
+    if(Poller::kNew == status || Poller::kDeleted == status) // epoll中未添加
     {
-        if(kNew == status)
+        if(Poller::kNew == status)
         {
             assert(_channels.find(fd) == _channels.end());
             _channels[fd] = channel;
@@ -97,7 +89,7 @@ void EpollPoller::updateChannel(Channel *channel)
     {
         if(channel->isNonEvent()) // 没有任何事件需要监听 从epoll中删除 _channels中还存在
         {
-            channel->setIndex(kDeleted);
+            channel->setIndex(Poller::kDeleted);
             update(EPOLL_CTL_DEL, channel);
         }
         else
@@ -115,7 +107,7 @@ void EpollPoller::removeChannel(Channel *channel)
     // 从_channels删除
     size_t n = _channels.erase(fd);
     assert(n == 1);
-    if(kAdded == status) // epoll中还存在 同时从epoll中删除
+    if(Poller::kAdded == status) // epoll中还存在 同时从epoll中删除
     {
         update(EPOLL_CTL_DEL, channel);
     }
