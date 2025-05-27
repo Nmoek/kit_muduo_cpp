@@ -20,8 +20,8 @@ class TimeStamp;
 
 using TcpConnectionPtr = std::shared_ptr<TcpConnection>;
 
-//TODO: 定时器回调函数
-// using TimerCb = std::function<void()>;
+//定时器回调函数
+using TimerCb = std::function<void()>;
 
 using ConnectionCb = std::function<void(const TcpConnectionPtr&)>;
 using CloseCb = std::function<void(const TcpConnectionPtr&)>;

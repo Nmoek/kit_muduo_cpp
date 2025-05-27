@@ -18,11 +18,12 @@ using namespace kit_muduo;
 
 TEST(TestTcpServer, test)
 {
-    auto l = KIT_LOGGER("net");
-    l->setLevel(LogLevel::INFO);
+    // auto l = KIT_LOGGER("net");
+    // l->setLevel(LogLevel::INFO);
     EventLoop loop;
     InetAddress addr(5555);
     TcpServer server(&loop, addr, "mytcp_server", TcpServer::KReusetPort);
+    server.setThreadNum(4);
 
     server.setConnectionCallback([](const TcpConnectionPtr& conn){
         if(conn->connected())

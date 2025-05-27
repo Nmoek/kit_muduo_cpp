@@ -43,6 +43,11 @@ uint64_t TimeStamp::NowTimeStamp()
     return t.tv_sec * 1000 + t.tv_usec / 1000;
 }
 
+TimeStamp TimeStamp::AddTime(TimeStamp now, int64_t seconds)
+{
+    int64_t delta = seconds * 1000;// 转为ms
+    return TimeStamp(now.millSeconds() + delta);
+}
 
 
 

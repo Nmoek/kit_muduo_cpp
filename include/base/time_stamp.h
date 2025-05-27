@@ -35,6 +35,38 @@ public:
      */
     std::string toString();
 
+    /**
+     * @brief 获取时间 单位ms
+     * @return int64_t
+     */
+    int64_t millSeconds() const { return _millSeconds; }
+
+    bool operator==(const TimeStamp &t) const
+    {
+        return _millSeconds == t._millSeconds;
+    }
+
+    bool operator<(const TimeStamp &t) const
+    {
+        return _millSeconds < t._millSeconds;
+    }
+
+    bool operator>(const TimeStamp &t) const
+    {
+        return _millSeconds > t._millSeconds;
+    }
+
+    bool operator>=(const TimeStamp &t) const
+    {
+        return _millSeconds >= t._millSeconds;
+    }
+
+
+    bool operator<=(const TimeStamp &t) const
+    {
+        return _millSeconds <= t._millSeconds;
+    }
+
 public:
     /**
      * @brief  生成时间戳对象
@@ -46,6 +78,14 @@ public:
      * @return uint64_t
      */
     static uint64_t NowTimeStamp();
+
+    /**
+     * @brief 时刻计算, 当前时刻加上秒数后的时刻
+     * @param[in] now
+     * @param[in] seconds
+     * @return TimeStamp
+     */
+    static TimeStamp AddTime(TimeStamp now, int64_t seconds);
 
 private:
     /// @brief 时间戳ms
