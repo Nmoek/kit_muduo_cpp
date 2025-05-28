@@ -19,7 +19,7 @@ TimeStamp::TimeStamp(uint64_t millSeconds)
 
 }
 
-std::string TimeStamp::toString()
+std::string TimeStamp::toString() const
 {
     char buf[128] = {0};
     time_t now = _millSeconds / 1000;

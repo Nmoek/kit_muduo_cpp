@@ -33,7 +33,7 @@ public:
      * @brief 转为时间字符串, 如2025-05-20 22:14:17
      * @return std::string
      */
-    std::string toString();
+    std::string toString() const;
 
     /**
      * @brief 获取时间 单位ms

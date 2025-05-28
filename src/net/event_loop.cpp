@@ -11,6 +11,7 @@
 #include "net/poller.h"
 #include "net/net_log.h"
 #include "net/channel.h"
+#include "base/util.h"
 
 #include <sys/eventfd.h>
 #include <assert.h>
@@ -23,21 +24,6 @@ thread_local EventLoop* t_loopInThread = nullptr;
 
 /// @brief 事件循环默认超时10s
 static const int32_t kPollTimeOutMs = 10000;
-
-/**
- * @brief 创建eventfd句柄
- * @return int32_t
- */
-static int32_t CreateEventFd()
-{
-    int32_t evfd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-    if(evfd < 0)
-    {
-        LOOP_F_FATAL("eventfd create error! %d:%s \n", errno, strerror(errno));
-        abort();
-    }
-    return evfd;
-}
 
 EventLoop::EventLoop()
     :_looping(false)

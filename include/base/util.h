@@ -56,5 +56,17 @@ pthread_t GetThreadTid();
  */
 std::string GetThreadName();
 
+/**
+* @brief 创建eventfd句柄
+* @return int32_t
+*/
+int32_t CreateEventFd();
+
+/**
+* @brief 创建timerfd句柄
+* @return int32_t
+*/
+int32_t CreateTimerFd();
+
 } // namespace kit
 #endif

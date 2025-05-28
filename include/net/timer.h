@@ -21,7 +21,7 @@ namespace kit_muduo {
 class Timer: Noncopyable
 {
 public:
-    Timer(const TimerCb &cb, TimeStamp when, int64_t interval);
+    Timer(TimerCb cb, TimeStamp when, int64_t interval);
 
     ~Timer() = default;
 
@@ -30,12 +30,16 @@ public:
     TimeStamp expiration() const { return _expiration; }
     double interval() const { return _interval; }
     bool repeated() const { return _repeated; }
+    // for compare 用于容器比较指定最大值，其他场景禁止使用
+    void setSequence(int64_t s) { _sequence = s; }
     int64_t sequence() const { return _sequence; };
+
     /**
      * @brief 重置定时器到期时间点
      * @param[in] now  当前时间点
      */
     void restart(TimeStamp now);
+
 public:
     static int32_t createNum() { return s_createNum; }
 

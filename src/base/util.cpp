@@ -7,11 +7,15 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "base/util.h"
+#include "base/base_log.h"
+
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <stdint.h>
 #include <sys/time.h>
 #include <string>
+#include <sys/eventfd.h>
+#include <sys/timerfd.h>
 
 namespace kit_muduo
 {
@@ -65,4 +69,35 @@ std::string GetThreadName()
     ::pthread_getname_np(::pthread_self(), thread_name, sizeof(thread_name));
     return thread_name;
 }
+
+/**
+ * @brief 创建eventfd句柄
+ * @return int32_t
+ */
+int32_t CreateEventFd()
+{
+    int32_t evfd = ::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if(evfd < 0)
+    {
+        BASE_F_FATAL("util", "eventfd create error! %d:%s \n", errno, strerror(errno));
+        abort();
+    }
+    return evfd;
+}
+
+/**
+ * @brief 创建timerfd句柄
+ * @return int32_t
+ */
+int32_t CreateTimerFd()
+{
+    int32_t timerfd = ::timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+    if(timerfd < 0)
+    {
+        BASE_F_FATAL("util", "timerfd_createerror! %d:%s \n", errno, strerror(errno));
+        abort();
+    }
+    return timerfd;
+}
+
 } // namespace kit

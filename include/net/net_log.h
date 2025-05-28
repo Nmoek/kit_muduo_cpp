@@ -120,4 +120,18 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define CONN_F_FATAL(fmt, ...)     NET_F_FATAL("tcp_conn", fmt, ##__VA_ARGS__)
 /*******TcpConnect模块*********/
 
+/*******Timer定时器模块*********/
+#define TIMER_DEBUG()     NET_DEBUG("timer")
+#define TIMER_INFO()      NET_INFO("timer")
+#define TIMER_WARN()      NET_WARN("timer")
+#define TIMER_ERROR()     NET_ERROR("timer")
+#define TIMER_FATAL()     NET_FATAL("timer")
+
+#define TIMER_F_DEBUG(fmt, ...)     NET_F_DEBUG("timer", fmt, ##__VA_ARGS__)
+#define TIMER_F_INFO(fmt, ...)      NET_F_INFO("timer", fmt, ##__VA_ARGS__)
+#define TIMER_F_WARN(fmt, ...)      NET_F_WARN("timer", fmt, ##__VA_ARGS__)
+#define TIMER_F_ERROR(fmt, ...)     NET_F_ERROR("timer", fmt, ##__VA_ARGS__)
+#define TIMER_F_FATAL(fmt, ...)     NET_F_FATAL("timer", fmt, ##__VA_ARGS__)
+/*******Timer定时器模块*********/
+
 

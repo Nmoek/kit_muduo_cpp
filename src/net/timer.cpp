@@ -10,10 +10,10 @@
 
 namespace kit_muduo {
 
-std::atomic_int Timer::s_createNum{0};
+std::atomic_int Timer::s_createNum{1};
 
-Timer::Timer(const TimerCb &cb, TimeStamp when, int64_t interval)
-    :_timerCallback(std::move(cb))
+Timer::Timer(TimerCb cb, TimeStamp when, int64_t interval)
+    :_timerCallback(cb ? std::move(cb) : TimerCb())
     ,_expiration(when)
     ,_interval(interval)
     ,_repeated(interval > 0)

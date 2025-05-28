@@ -56,6 +56,7 @@ set(BASE_SRC
     src/base/event_loop_thread_pool.cpp
 
     src/net/timer.cpp
+    src/net/sample_timer_queue.cpp
 )
 
 set(NET_SRC
@@ -143,6 +144,12 @@ if(MUDUO_TEST)
     add_dependencies(test_buffer ${DEPENDS})
     redefine_file_macro(test_buffer)   #重定义 __FILE__
     target_link_libraries(test_buffer ${LIB_LIB})
+
+    # Timer测试 test_timer
+    add_executable(test_timer tests/test_timer.cpp)
+    add_dependencies(test_timer ${DEPENDS})
+    redefine_file_macro(test_timer)   #重定义 __FILE__
+    target_link_libraries(test_timer ${LIB_LIB})
 
     # Timer测试 test_timer
     add_executable(test_timer tests/test_timer.cpp)
