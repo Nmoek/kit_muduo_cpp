@@ -23,18 +23,34 @@ TEST(TestTcpServer, test)
     EventLoop loop;
     InetAddress addr(5555);
     TcpServer server(&loop, addr, "mytcp_server", TcpServer::KReusetPort);
-    server.setThreadNum(4);
+    // server.setThreadNum(4);
 
-    server.setConnectionCallback([](const TcpConnectionPtr& conn){
+    std::unordered_map<int32_t, std::shared_ptr<Timer>> timer_map;
+
+    server.setConnectionCallback([&](const TcpConnectionPtr& conn){
         if(conn->connected())
         {
             TEST_INFO() << "new connection!" << std::endl;
+            auto timer = conn->getLoop()->runEvery(5, [conn](){
+                std::stringstream ss;
+                ss << "this is a eveny timer msg! ";
+                ss << TimeStamp::NowTimeStamp();
+                ss << std::endl;
+                TEST_INFO() << ss.str();
+                conn->send(ss.str());
+            });
+            // 不记录无法知道定时器是哪一个
+            timer_map[conn->fd()] = timer;
         }
         else
         {
+            TEST_INFO() << "=============connection close!!!" << std::endl;
+            conn->getLoop()->cancel(timer_map[conn->fd()]);
             conn->shutdown();
         }
     });
+
+
 
     server.setMessageCallback([](const TcpConnectionPtr &conn, Buffer* buffer, TimeStamp receiveTime){
         std::string msg = buffer->resetAllAsString();

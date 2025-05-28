@@ -12,6 +12,8 @@
 #include "net/net_log.h"
 #include "net/channel.h"
 #include "base/util.h"
+#include "net/timer.h"
+#include "net/sample_timer_queue.h"
 
 #include <sys/eventfd.h>
 #include <assert.h>
@@ -31,6 +33,7 @@ EventLoop::EventLoop()
     ,_callingPendingFunc(false)
     ,_threadId(GetThreadPid())
     ,_poller(Poller::NewDefaultPoller(this))
+    ,_timerQueue(new SampleTimerQueue(this))
     ,_curActiveChannel(nullptr)
     , _wakeupFd(CreateEventFd())
     ,_wakeupChannel(new Channel(this, _wakeupFd))
@@ -135,6 +138,28 @@ void EventLoop::queueInLoop(Func cb)
     if(!isInLoopThread() || _callingPendingFunc)
         wakeup();
 }
+
+std::shared_ptr<Timer> EventLoop::runAt(TimeStamp time, TimerCb cb)
+{
+    return _timerQueue->addTimer(std::move(cb), time);
+}
+
+std::shared_ptr<Timer> EventLoop::runAfter(int64_t delay, TimerCb cb)
+{
+    return _timerQueue->addTimer(std::move(cb), TimeStamp::AddTime(TimeStamp::Now(), delay));
+
+}
+
+std::shared_ptr<Timer> EventLoop::runEvery(int64_t interval, TimerCb cb)
+{
+    return _timerQueue->addTimer(std::move(cb), TimeStamp::AddTime(TimeStamp::Now(), interval), interval);
+}
+
+void EventLoop::cancel(std::shared_ptr<Timer> timer)
+{
+    _timerQueue->cancel(timer);
+}
+
 
 void EventLoop::updateChannel(Channel *channel)
 {

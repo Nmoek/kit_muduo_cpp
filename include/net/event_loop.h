@@ -12,6 +12,7 @@
 #include "base/noncopyable.h"
 #include "base/time_stamp.h"
 #include "base/util.h"
+#include "net/call_backs.h"
 
 #include <vector>
 #include <memory>
@@ -23,7 +24,8 @@ namespace kit_muduo {
 
 class Channel;
 class Poller;
-
+class Timer;
+class SampleTimerQueue;
 
 class EventLoop: Noncopyable
 {
@@ -53,8 +55,36 @@ public:
      */
     void queueInLoop(Func cb);
 
-    /****TODO 定时器 ****/
+    /****定时器 ****/
 
+    /**
+     * @brief 在某个时间点执行任务
+     * @param[in] time  时间点
+     * @param[in] cb  任务
+     * @return std::shared_ptr<Timer>
+     */
+    std::shared_ptr<Timer> runAt(TimeStamp time, TimerCb cb);
+    /**
+     * @brief 等待一定时间后执行任务
+     * @param[in] delay 等待时长 单位s
+     * @param[in] cb 任务
+     * @return std::shared_ptr<Timer>
+     */
+    std::shared_ptr<Timer> runAfter(int64_t delay, TimerCb cb);
+    /**
+     * @brief 每间隔一段时间执行一次任务
+     * @param[in] interval 循环间隔 单位s
+     * @param[in] cb 任务
+     * @return std::shared_ptr<Timer>
+     */
+    std::shared_ptr<Timer> runEvery(int64_t interval, TimerCb cb);
+    /**
+     * @brief 取消定时器
+     * @param[in] timer
+     */
+    void cancel(std::shared_ptr<Timer> timer);
+
+    /****事件增删***/
     void updateChannel(Channel *channel);
     void removeChannel(Channel *channel);
     bool hasChannel(Channel *channel);
@@ -86,6 +116,9 @@ private:
     const pid_t _threadId;
     /// @brief IO复用组件
     std::unique_ptr<Poller> _poller;
+    /// @brief 简易定时器队列
+    std::unique_ptr<SampleTimerQueue> _timerQueue;
+
 
     /// @brief 当前活跃的事件集合
     ChannelList _activeChannels;

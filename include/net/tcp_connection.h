@@ -14,6 +14,7 @@
 #include "base/time_stamp.h"
 #include "net/buffer.h"
 #include "net/inet_address.h"
+#include "net/socket.h"
 
 #include <memory>
 #include <string>
@@ -22,7 +23,6 @@
 namespace kit_muduo {
 
 class EventLoop;
-class Socket;
 class Channel;
 class InetAddress;
 class Buffer;
@@ -62,6 +62,7 @@ public:
     void connectDestroyed();
 
     InetAddress peerAddr() const { return _peerAddr; }
+    int32_t fd() const { return _socket->fd(); }
 
 private:
     void handleRead(TimeStamp receiveTime);
