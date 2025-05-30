@@ -61,6 +61,19 @@ std::string HttpResponse::toString()
     ss << kSpace;
     ss << _stateCode.message();
     ss << kCRLF;
+
+    if(Version::kHttp11 == _version())
+    {
+        _headers["Connection"] = _connectionClosed ? "Keep-Alive" : "close";
+    }
+    else
+    {
+        _headers["Connection"] = "close";
+    }
+
+    if(_body.size())
+        _headers["Content-Length"] = std::to_string(_body.size());  //去掉换行符
+
     for(auto &it : _headers)
     {
         ss << it.first;

@@ -54,6 +54,10 @@ std::string HttpRequet::toString()
     ss << kSpace;
     ss << _version.toString();
     ss << kCRLF;
+
+    if(_body.size())
+        _headers["Content-Length"] = std::to_string(_body.size());
+
     // Headers
     for(auto &it : _headers)
     {

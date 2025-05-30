@@ -12,6 +12,8 @@
 #include "base/time_stamp.h"
 #include "net/buffer.h"
 #include "net/http/http_response.h"
+#include "net/http/http_server.h"
+#include "net/event_loop.h"
 
 #include <gtest/gtest.h>
 
@@ -70,7 +72,7 @@ TEST(TestHttpReq, create_data)
     orireq.setVersion(Version::kHttp11);
     orireq.addHeader("Host", "www.kit.com");
     orireq.addHeader("XData", "666");
-    orireq.appendBody("12345678", sizeof("12345678"));
+    orireq.appendBody("12345678", strlen("12345678"));
 
     std::cout << orireq.toString() << std::endl;
     std::cout << "---------------------\n";
@@ -105,17 +107,42 @@ TEST(TestHttpReq, create_data)
     TEST_INFO() << "Body: "<< "|" << req.body() << "|" << std::endl;
 }
 
+
 TEST(TestHttpResp, create_data)
 {
     HttpResponse resp;
     resp.setVersion(Version::kHttp11);
     resp.setStateCode(HttpResponse::StateCode::k301MovedPermanently);
     resp.addHeader("XData", "999");
-    resp.appendBody("99999999", sizeof("99999999"));
+    resp.appendBody("99999999", strlen("99999999"));
     std::cout << resp.toString() << std::endl;
     std::cout << "----------------\n";
 
 
+}
+void testHttpCb(const HttpRequet &req, HttpResponse &resp)
+{
+    TEST_INFO() << "req body= " << req.body() << std::endl;
+    resp.setStateCode(HttpResponse::StateCode::k200Ok);
+    resp.setVersion(Version::kHttp11);
+    resp.setConnectionClosed(true);
+
+    resp.appendBody(req.body());
+    resp.appendBody("\n");
+}
+
+
+TEST(TestHttpServer, test)
+{
+    EventLoop loop;
+    InetAddress addr(5555);
+    HttpServer server(&loop, addr, "myhttp", TcpServer::KReusetPort);
+    server.setThreadNum(1);
+
+    server.setHttpCallback(testHttpCb);
+
+    server.start();
+    loop.loop();
 }
 
 int main(int argc, char **argv)

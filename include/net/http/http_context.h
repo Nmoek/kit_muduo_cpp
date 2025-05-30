@@ -40,6 +40,12 @@ public:
 
     bool gotAll() const { return kGotAll == _state; }
 
+    void reset()
+    {
+        _state = kExpectRequestLine;
+        _request = HttpRequet();
+    }
+
     HttpRequet& request() { return _request; }
     const HttpRequet& request() const {return _request; }
 

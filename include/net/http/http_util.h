@@ -29,7 +29,6 @@ struct Version
 
     const char* toString() const
     {
-        assert(m_version != kUnknow);
         switch (m_version)
         {
             case kHttp10: return "HTTP/1.0";

@@ -64,6 +64,10 @@ public:
     InetAddress peerAddr() const { return _peerAddr; }
     int32_t fd() const { return _socket->fd(); }
 
+    void setContext(std::shared_ptr<void> data) { _context = data; }
+    std::shared_ptr<void> getContext() const
+    { return _context; }
+
 private:
     void handleRead(TimeStamp receiveTime);
     void handleWrite();
@@ -101,6 +105,8 @@ private:
 
     Buffer _inputBuffer;
     Buffer _outputBuffer;
+
+    std::shared_ptr<void> _context;
 
 };
 

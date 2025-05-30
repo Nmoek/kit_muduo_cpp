@@ -58,6 +58,12 @@ public:
      */
     void start();
 
+    /**
+     * @brief 获取事件循环句柄
+     * @return EventLoop*
+     */
+    EventLoop *getLoop() const {return _baseLoop; }
+
 private:
     void newConnection(int32_t sockfd, const InetAddress& peerAddr);
     void removeConnection(const TcpConnectionPtr& conn);

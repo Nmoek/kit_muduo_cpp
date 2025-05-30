@@ -7,7 +7,7 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #ifndef __KIT_HTTP_RESPONSE_H__
-#define __KIT_HTTO_RESPONSE_H__
+#define __KIT_HTTP_RESPONSE_H__
 
 #include "net/http/http_util.h"
 #include "net/buffer.h"
@@ -89,9 +89,12 @@ public:
     const std::unordered_map<std::string, std::string>& headers() const { return _headers; }
     const std::unordered_map<std::string, std::string>& headers() { return _headers; }
 
+    void setConnectionClosed(bool on) { _connectionClosed = on; }
+    bool connectionClosed() const { return _connectionClosed; }
+
     void appendBody(const std::string &data)
     {
-        _body = data;
+        _body += data;
     }
 
     void appendBody(const char *start, size_t len)
@@ -115,6 +118,8 @@ private:
     Version _version;
     /// @brief 头部字段
     std::unordered_map<std::string, std::string> _headers;
+    /// @brief 连接是否关闭
+    bool _connectionClosed;
     /// @brief Body数据
     std::string _body;
     /// @brief 接收时间

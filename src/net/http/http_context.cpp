@@ -122,7 +122,7 @@ bool HttpContext::processRequestLine(const char *start, const char *end)
     space_pos = std::find(start, end, ' ');
     if(space_pos == end)
     {
-        HTTP_F_ERROR("http request parse 'path' error! %s \n", tmp_str.c_str());
+        HTTP_F_ERROR("http request parse 'path' error! %s \n", start);
         return false;
     }
     tmp_str.clear();
@@ -149,7 +149,8 @@ const char* HttpContext::findCRLF(Buffer &buf) const
 
 const char* HttpContext::findCRLF(const char *start, const char *end) const
 {
-    const char* pos = std::search(start, end, kCRLF, kCRLF + 2);
+    std::string crlf{"\r\n"};
+    auto pos = std::search(start, end, crlf.begin(), crlf.end());
     return pos == end ? nullptr : pos;
 }
 
