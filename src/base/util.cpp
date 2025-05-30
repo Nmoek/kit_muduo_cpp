@@ -100,4 +100,19 @@ int32_t CreateTimerFd()
     return timerfd;
 }
 
+/**
+ * @brief 去除string左右所有空格
+ * @param str
+ */
+void DelSpaceHelper(std::string &str)
+{
+    auto pos = str.find_first_not_of(' ');
+    pos = pos == std::string::npos ? 0 : pos;
+
+    auto pos2 = str.find_last_not_of(' ');
+    pos2 = pos2 == std::string::npos ? 0 : pos2;
+    str = str.substr(pos, pos2 - pos + 1);
+}
+
+
 } // namespace kit

@@ -134,4 +134,19 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define TIMER_F_FATAL(fmt, ...)     NET_F_FATAL("timer", fmt, ##__VA_ARGS__)
 /*******Timer定时器模块*********/
 
+/*******HttpRequest模块*********/
+#define HTTP_DEBUG()     NET_DEBUG("http")
+#define HTTP_INFO()      NET_INFO("http")
+#define HTTP_WARN()      NET_WARN("http")
+#define HTTP_ERROR()     NET_ERROR("http")
+#define HTTP_FATAL()     NET_FATAL("http")
+
+#define HTTP_F_DEBUG(fmt, ...)     NET_F_DEBUG("http", fmt, ##__VA_ARGS__)
+#define HTTP_F_INFO(fmt, ...)      NET_F_INFO("http", fmt, ##__VA_ARGS__)
+#define HTTP_F_WARN(fmt, ...)      NET_F_WARN("http", fmt, ##__VA_ARGS__)
+#define HTTP_F_ERROR(fmt, ...)     NET_F_ERROR("http", fmt, ##__VA_ARGS__)
+#define HTTP_F_FATAL(fmt, ...)     NET_F_FATAL("http", fmt, ##__VA_ARGS__)
+/*******HttpRequest模块*********/
+
+
 

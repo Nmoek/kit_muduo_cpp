@@ -72,6 +72,9 @@ set(NET_SRC
     src/net/tcp_server.cpp
     src/net/buffer.cpp
     src/net/tcp_connection.cpp
+
+    src/net/http/http_request.cpp
+    src/net/http/http_context.cpp
 )
 
 set(SRC
@@ -156,6 +159,12 @@ if(MUDUO_TEST)
     add_dependencies(test_timer ${DEPENDS})
     redefine_file_macro(test_timer)   #重定义 __FILE__
     target_link_libraries(test_timer ${LIB_LIB})
+
+    # http测试 test_http
+    add_executable(test_http tests/http/test_http.cpp)
+    add_dependencies(test_http ${DEPENDS})
+    redefine_file_macro(test_http)   #重定义 __FILE__
+    target_link_libraries(test_http ${LIB_LIB})
 endif()
 
 

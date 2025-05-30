@@ -68,5 +68,12 @@ int32_t CreateEventFd();
 */
 int32_t CreateTimerFd();
 
+/**
+ * @brief 去除string左右所有空格
+ * @param str
+ */
+void DelSpaceHelper(std::string &str);
+
+
 } // namespace kit
 #endif

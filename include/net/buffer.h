@@ -54,6 +54,11 @@ public:
         return _readIndex;
     }
 
+    char* peek()
+    {
+        return begin() + _readIndex;
+    }
+
     /**
      * @brief 读区有效起始地址
      * @return const char*
@@ -61,6 +66,16 @@ public:
     const char* peek() const
     {
         return begin() + _readIndex;
+    }
+
+    char *beginWrite()
+    {
+        return &*_buffer.begin() + _writeIndex;
+    }
+
+    const char *beginWrite() const
+    {
+        return &*_buffer.begin() + _writeIndex;
     }
 
     void reset(size_t len)
@@ -126,15 +141,6 @@ private:
         return &*_buffer.begin();
     }
 
-    char *beginWrite()
-    {
-        return &*_buffer.begin() + _writeIndex;
-    }
-
-    const char *beginWrite()const
-    {
-        return &*_buffer.begin() + _writeIndex;
-    }
     /*
         |8|                      DATA                           |
         |  P Bytes    |         R  Bytes        |   W  Bytes    |
