@@ -75,6 +75,7 @@ set(NET_SRC
 
     src/net/http/http_request.cpp
     src/net/http/http_context.cpp
+    src/net/http/http_response.cpp
 )
 
 set(SRC

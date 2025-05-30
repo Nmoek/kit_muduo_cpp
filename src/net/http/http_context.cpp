@@ -17,7 +17,7 @@
 namespace kit_muduo {
 namespace http {
 
-static const char kCRCL[] = "\r\n";
+static const char kCRLF[] = "\r\n";
 
 // 有限状态机 解析
 bool HttpContext::parseRequest(Buffer &buf, TimeStamp receiveTime)
@@ -35,6 +35,7 @@ bool HttpContext::parseRequest(Buffer &buf, TimeStamp receiveTime)
             {
                 HTTP_DEBUG() << "not findCRLF" << std::endl;
                 hasMore = false;
+                ok = false;
                 continue;
             }
             ok = processRequestLine(buf.peek(), crlf_pos);
@@ -54,33 +55,41 @@ bool HttpContext::parseRequest(Buffer &buf, TimeStamp receiveTime)
             {
                 HTTP_DEBUG() << "not findCRLF" << std::endl;
                 hasMore = false;
+                ok = false;
                 continue;
             }
             const char *start = buf.peek();
             const char *colon = std::find(start, crlf_pos, ':');
             if(colon == crlf_pos)
             {
-                hasMore = false;
+
                 // 是否是空行
-                if(strncmp(buf.peek(), kCRCL, 2) == 0)
+                if(strncmp(buf.peek(), kCRLF, 2) == 0)
                 {
-                    _state = kGotAll;
-                    buf.reset(2);
+
                     HTTP_INFO() << "http request header parse ok" << std::endl;
+
+                    buf.reset(2);
+                    _state = kExpectBody;
                 }
                 else
                 {
                     HTTP_ERROR() << "not colon ':' ; " << start << std::endl;
+                    ok = false;
+                    hasMore = false;
                 }
                 continue;
 
             }
             _request.addHeader(buf.peek(), colon, crlf_pos);
             buf.reset(crlf_pos + 2 - buf.peek());
+
         }
         else if(kExpectBody == _state)
         {
-            //nothing
+            _request.appendBody(buf);
+            hasMore = false;
+            _state = kGotAll;
         }
 
     }
@@ -126,7 +135,7 @@ bool HttpContext::processRequestLine(const char *start, const char *end)
     tmp_str.clear();
     tmp_str.assign(start, end);
     DelSpaceHelper(tmp_str);
-    const auto& version = HttpRequet::Version::FromString(tmp_str);
+    const auto& version = Version::FromString(tmp_str);
     _request.setVersion(version);
     HTTP_DEBUG() << "Version: " << version() << ",|" << version.toString() << "|"<< std::endl;
 
@@ -140,8 +149,8 @@ const char* HttpContext::findCRLF(Buffer &buf) const
 
 const char* HttpContext::findCRLF(const char *start, const char *end) const
 {
-    const char* pos = std::search(start, end, kCRCL, kCRCL + 2);
-    return pos == end? nullptr : pos;
+    const char* pos = std::search(start, end, kCRLF, kCRLF + 2);
+    return pos == end ? nullptr : pos;
 }
 
 

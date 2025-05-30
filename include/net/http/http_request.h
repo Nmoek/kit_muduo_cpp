@@ -9,13 +9,14 @@
 #ifndef __KIT_HTTP_REQUEST_H__
 #define __KIT_HTTP_REQUEST_H__
 #include "base/time_stamp.h"
+#include "net/http/http_util.h"
+#include "net/buffer.h"
 
 #include <string>
 #include <unordered_map>
 #include <assert.h>
 
 namespace kit_muduo {
-
 namespace http {
 
 class HttpRequet
@@ -25,15 +26,14 @@ public:
     {
         enum { kInvaild, kGet, kPost, kHead, kPut, kDelete };
 
-        Method() = default;
-        // 支持隐式转换
-        Method(int32_t method) :m_method(method) { }
+        explicit Method(int32_t method = kInvaild) :m_method(method) { }
 
         int32_t operator()() const { return m_method; }
 
+        void set(int32_t val) { m_method = val; }
+
         const char* toString() const
         {
-            assert(m_method != kInvaild);
             switch (m_method)
             {
                 case kGet: return "GET";
@@ -42,62 +42,30 @@ public:
                 case kPut: return "PUT";
                 case kDelete: return "DELETE";
                 default:
-                    return "";
+                    return "Invaild";
             }
-            return "";
+            return "Invaild";
         }
 
         static Method FromString(const std::string &methodStr)
         {
-            if("GET" == methodStr) return Method::kGet;
-            if("POST" == methodStr) return Method::kPost;
-            if("HEAD" == methodStr) return Method::kHead;
-            if("PUT" == methodStr) return Method::kPut;
-            if("DELETE" == methodStr) return Method::kDelete;
-            return Method::kInvaild;
+            if("GET" == methodStr) return Method(kGet);
+            if("POST" == methodStr) return Method(kPost);
+            if("HEAD" == methodStr) return Method(kHead);
+            if("PUT" == methodStr) return Method(kPut);
+            if("DELETE" == methodStr) return Method(kDelete);
+            return Method();
         }
     private:
         int32_t m_method{kInvaild};
-    };
-
-    struct Version
-    {
-        enum { kUnknow, kHttp10, kHttp11 };
-
-        Version() = default;
-
-        Version(int32_t version): m_version(version) { }
-        int32_t operator()() const { return m_version; }
-
-        const char* toString() const
-        {
-            assert(m_version != kUnknow);
-            switch (m_version)
-            {
-                case kHttp10: return "HTTP/1.0";
-                case kHttp11: return "HTTP/1.1";
-                default:
-                    return "";
-            }
-            return "";
-        }
-        static Version FromString(const std::string &versionStr)
-        {
-            if("HTTP/1.0" == versionStr) return Version::kHttp10;
-            if("HTTP/1.1" == versionStr) return Version::kHttp11;
-            return Version::kUnknow;
-        }
-
-    private:
-        int32_t m_version{kUnknow};
     };
 
     HttpRequet() = default;
     ~HttpRequet() = default;
 
     Method method() const { return _method; }
-    void setMethod(int32_t methodVal) { _method = methodVal; }
-    void setMethod(Method method) { _method = method; }
+    void setMethod(int32_t methodVal) { _method.set(methodVal); }
+    void setMethod(Method method) { _method = std::move(method); }
 
 
     std::string path() const { return _path; }
@@ -108,18 +76,42 @@ public:
 
 
     Version version() const { return _version; }
-    void setVersion(int32_t versionVal) { _version = versionVal; }
-    void setVersion(Version version) { _version = version; }
+    void setVersion(int32_t versionVal) { _version.set(versionVal); }
+    void setVersion(Version version) { _version = std::move(version); }
 
+    void addHeader(const std::string& head, const std::string &val);
     void addHeader(const char *start, const char *colon, const char *end);
     std::string getHeader(const std::string &key) const;
 
     const std::unordered_map<std::string, std::string>& headers() const { return _headers; }
     const std::unordered_map<std::string, std::string>& headers() { return _headers; }
 
+    void appendBody(const std::string &data)
+    {
+        _body = data;
+    }
+
+    void appendBody(const char *start, size_t len)
+    {
+        _body.assign(start, start + len);
+    }
+
+    void appendBody(Buffer& buffer)
+    {
+        _body = buffer.resetAllAsString();
+    }
+
     void setReceiveTime(TimeStamp receiveTime) { _receiveTime = receiveTime; }
     TimeStamp receiveTime() const { return _receiveTime; }
     TimeStamp receiveTime() { return _receiveTime; }
+
+    std::string body() const { return _body; };
+
+    /**
+     * @brief 报文序列化
+     * @return std::string
+     */
+    std::string toString();
 
 
 private:
@@ -133,6 +125,8 @@ private:
     Version _version;
     /// @brief 头部字段
     std::unordered_map<std::string, std::string> _headers;
+    /// @brief Body数据
+    std::string _body;
     /// @brief 接收请求时间点
     TimeStamp _receiveTime;
 
