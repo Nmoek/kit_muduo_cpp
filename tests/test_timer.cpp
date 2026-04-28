@@ -21,10 +21,10 @@ TEST(TestTimer, DISABLED_test)
 {
     Timer timer([](){
         TEST_DEBUG() << "cur time= " << TimeStamp::Now().toString() << ", timer is expired! \n" << std::endl;
-    }, TimeStamp::Now(), 5);
+    }, TimeStamp::NowMs(), 5);
     TEST_DEBUG() << "cur time= " << TimeStamp::Now().toString() << std::endl;
     sleep(6);
-    if(TimeStamp::Now() >= timer.expiration())
+    if(TimeStamp::NowMs() >= timer.expiration())
         timer.run();
 }
 TEST(TestTimerQueue, test)
@@ -38,17 +38,17 @@ TEST(TestTimerQueue, test)
     {
         queue.addTimer([=](){
             TEST_DEBUG() << "im timer "<< i << std::endl;
-        }, TimeStamp::AddTime(TimeStamp::Now(), 2));
+        }, TimeStamp::Now().addTime(2000));
     }
 
     auto timer4 = queue.addTimer([](){
         TEST_DEBUG() << "im timer 4" << std::endl;
-    }, TimeStamp::AddTime(TimeStamp::Now(), 10));
+    }, TimeStamp::Now().addTime(10000));
 
     queue.addTimer([&, timer4 = std::move(timer4)](){
         TEST_DEBUG() << "im timer 5" << std::endl;
         queue.cancel(timer4);
-    }, TimeStamp::AddTime(TimeStamp::Now(), 5));
+    }, TimeStamp::Now().addTime(5000));
 
     std::shared_ptr<Timer> timer6;
     int count = 3;

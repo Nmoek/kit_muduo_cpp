@@ -8,7 +8,9 @@
  */
 #include "base/util.h"
 #include "base/base_log.h"
+#include "stduuid/uuid.h"
 
+#include <ctime>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <stdint.h>
@@ -47,6 +49,26 @@ std::string Timer2Str(time_t ts, const std::string& format)
 
     return buf;
 }
+
+/**
+ * @brief 获取开机时间, 单位 秒s
+ * @return uint32_t 
+ */
+int32_t GetMonotonicS()
+{
+    struct timespec spec;
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+
+    return static_cast<int32_t>(spec.tv_sec);
+}
+
+int64_t GetMonotonicMS()
+{
+    struct timespec spec;
+    clock_gettime(CLOCK_MONOTONIC, &spec);
+    return spec.tv_sec * 1000 + spec.tv_nsec / 1000000;
+}
+
 
 pid_t GetThreadPid()
 {
@@ -106,12 +128,35 @@ int32_t CreateTimerFd()
  */
 void DelSpaceHelper(std::string &str)
 {
+    if(str.empty())
+    {
+        return;
+    }
     auto pos = str.find_first_not_of(' ');
     pos = pos == std::string::npos ? 0 : pos;
 
     auto pos2 = str.find_last_not_of(' ');
     pos2 = pos2 == std::string::npos ? 0 : pos2;
     str = str.substr(pos, pos2 - pos + 1);
+}
+
+/**
+ * @brief 生成UUID
+ * @return std::string 
+ */
+std::string GenerateUuid()
+{
+    std::random_device rd;
+    auto seed_data = std::array<int, std::mt19937::state_size> {};
+    std::generate(std::begin(seed_data), std::end(seed_data), std::ref(rd));
+
+    std::seed_seq seq(std::begin(seed_data), std::end(seed_data));
+
+    std::mt19937 generator(seq);
+    uuids::uuid_random_generator gen{generator};
+
+    uuids::uuid uuid = gen();
+    return uuids::to_string(uuid);
 }
 
 

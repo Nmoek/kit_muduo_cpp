@@ -7,18 +7,30 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 
- #include "base/log.h"
+#include "base/log.h"
 
-static auto g_test_logger = KIT_LOGGER("test");
 
-#define TEST_MODULE_NAME    "null"
 #define TEST_DEBUG() \
-    KIT_DEBUG(g_test_logger, TEST_MODULE_NAME)
+    KIT_DEBUG(KIT_LOGGER("test"), "null")
 #define TEST_INFO() \
-    KIT_INFO(g_test_logger, TEST_MODULE_NAME)
+    KIT_INFO(KIT_LOGGER("test"), "null")
 #define TEST_WARN() \
-    KIT_WARN(g_test_logger, TEST_MODULE_NAME)
+    KIT_WARN(KIT_LOGGER("test"), "null")
 #define TEST_ERROR() \
-    KIT_ERROR(g_test_logger, TEST_MODULE_NAME)
+    KIT_ERROR(KIT_LOGGER("test"), "null")
 #define TEST_FATAL() \
-    KIT_FATAL(g_test_logger, TEST_MODULE_NAME)
+    KIT_FATAL(KIT_LOGGER("test"), "null")
+
+#define TEST_F_DEBUG(fmt, ...) \
+    KIT_FMT_DEBUG(KIT_LOGGER("test"), "null", fmt, ##__VA_ARGS__)
+
+#define TEST_F_INFO(fmt, ...) \
+    KIT_FMT_INFO(KIT_LOGGER("test"), "null", fmt, ##__VA_ARGS__)
+
+#define TEST_F_WARN(fmt, ...) \
+    KIT_FMT_WARN(KIT_LOGGER("test"), "null", fmt, ##__VA_ARGS__)
+
+#define TEST_F_ERROR(fmt, ...) \
+    KIT_FMT_ERROR(KIT_LOGGER("test"), "null", fmt, ##__VA_ARGS__)
+
+#define TEST_F_FATAL(fmt, ...)  KIT_FMT_FATAL(KIT_LOGGER("test"), "null", fmt, ##__VA_ARGS__)

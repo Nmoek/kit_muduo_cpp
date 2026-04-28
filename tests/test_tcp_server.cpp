@@ -11,7 +11,7 @@
 #include "net/event_loop.h"
 #include "net/inet_address.h"
 
-#include <gtest/gtest.h>
+#include "gtest/gtest.h"
 
 using namespace kit_muduo;
 
@@ -22,7 +22,7 @@ TEST(TestTcpServer, test)
     // l->setLevel(LogLevel::INFO);
     EventLoop loop;
     InetAddress addr(5555);
-    TcpServer server(&loop, addr, "mytcp_server", TcpServer::KReusetPort);
+    TcpServer server(&loop, addr, "mytcp_server", TcpServer::KReusePort);
     // server.setThreadNum(4);
 
     std::unordered_map<int32_t, std::shared_ptr<Timer>> timer_map;
@@ -34,7 +34,7 @@ TEST(TestTcpServer, test)
             auto timer = conn->getLoop()->runEvery(5, [conn](){
                 std::stringstream ss;
                 ss << "this is a eveny timer msg! ";
-                ss << TimeStamp::NowTimeStamp();
+                ss << TimeStamp::NowMs();
                 ss << std::endl;
                 TEST_INFO() << ss.str();
                 conn->send(ss.str());

@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <atomic>
+#include <string>
 
 namespace kit_muduo {
 

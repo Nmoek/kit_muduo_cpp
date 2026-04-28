@@ -13,6 +13,7 @@
 
 #include <unordered_map>
 #include <vector>
+#include <stdint.h>
 
 namespace kit_muduo {
 
@@ -63,6 +64,7 @@ protected:
     /**
      * @brief key: socket fd ----> val: Channel*对象
      */
+    // 有问题  不能使用fd 作为唯一索引
     using ChannelMap = std::unordered_map<int32_t, Channel*>;
     ChannelMap _channels;
 private:

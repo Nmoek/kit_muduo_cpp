@@ -29,7 +29,7 @@ public:
      * @param[in] port
      * @param[in] ip
      */
-    explicit InetAddress(uint16_t port, std::string ip = "127.0.0.1");
+    explicit InetAddress(uint16_t port, std::string ip = "0.0.0.0");
 
     /**
      * @brief 普通构造
@@ -61,6 +61,10 @@ public:
 
 public:
     static InetAddress GetLocalAddr(int32_t fd);
+
+    static InetAddress GetPeerAddr(int32_t fd);
+
+    static InetAddress GetInterfaceIpv4(const std::string& iname);
 
 private:
     struct sockaddr_in _addr;

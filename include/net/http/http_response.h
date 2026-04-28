@@ -15,115 +15,64 @@
 
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
+#include <memory>
 
 namespace kit_muduo {
+
+class ContentParser;
+
 namespace http {
 
 class HttpResponse
 {
 public:
-    struct StateCode
-    {
-        enum
-        {
-            kUnknown,
-            //2XX
-            k200Ok = 200,
-            //3XX
-            k301MovedPermanently = 301,
-            k302MoveTemporarily = 302,
-            //4XX
-            k400BadRequest = 400,
-            k403Forbidden = 403,
-            k404NotFound = 404,
-            //5XX
-            k500InternalServerError = 500,
-        };
 
-        explicit StateCode(int32_t code = kUnknown): m_code(code) { };
-        ~StateCode() = default;
+    HttpResponse();
+    ~HttpResponse();
 
-        int32_t operator()() const { return m_code; }
+    StateCode stateCode() const { return state_code_; }
+    void setStateCode(int32_t val) { state_code_.set(val); }
+    void setStateCode(StateCode stateCode) { state_code_ = std::move(stateCode); }
 
-        void set(int32_t val) { m_code = val; }
-
-        std::string toString() const
-        {
-            return std::to_string(m_code);
-        }
-
-        static StateCode FromString(const std::string &str)
-        {
-            int32_t code = std::stoi(str);
-            auto it = s_m_codeMessageMap.find(code);
-
-            return it == s_m_codeMessageMap.end() ? StateCode() : StateCode(code);
-        }
-
-        std::string message() const
-        {
-            return m_code == kUnknown ? "UNKNOW" : s_m_codeMessageMap[m_code];
-        }
-    private:
-        static std::unordered_map<int32_t, std::string> s_m_codeMessageMap;
-    private:
-        int32_t m_code;
-        std::string m_message;
-    };
-
-    HttpResponse() = default;
-    ~HttpResponse() = default;
-
-    StateCode stateCode() const { return _stateCode; }
-    void setStateCode(int32_t val) { _stateCode.set(val); }
-    void setStateCode(StateCode stateCode) { _stateCode = std::move(stateCode); }
-
-    Version version() const { return _version; }
-    void setVersion(int32_t versionVal) { _version.set(versionVal); }
-    void setVersion(Version version) { _version = std::move(version); }
+    Version version() const { return version_; }
+    void setVersion(int32_t versionVal) { version_.set(versionVal); }
+    void setVersion(Version version) { version_ = std::move(version); }
 
     void addHeader(const std::string& head, const std::string &val);
-    void addHeader(const char *start, const char *colon, const char *end);
+    bool addHeader(const char *start, const char *colon, const char *end);
     std::string getHeader(const std::string &key) const;
 
-    const std::unordered_map<std::string, std::string>& headers() const { return _headers; }
-    const std::unordered_map<std::string, std::string>& headers() { return _headers; }
+    const std::unordered_map<std::string, std::string>& headers() const { return headers_; }
+    const std::unordered_map<std::string, std::string>& headers() { return headers_; }
+    void setHeaders(const std::unordered_map<std::string, std::string> &headers) { headers_ = headers; }
 
-    void setConnectionClosed(bool on) { _connectionClosed = on; }
-    bool connectionClosed() const { return _connectionClosed; }
+    void setConnectionClosed(bool on) { connection_closed_ = on; }
+    bool connectionClosed() const { return connection_closed_; }
 
-    void appendBody(const std::string &data)
-    {
-        _body += data;
-    }
+    void setReceiveTime(TimeStamp receiveTime) { receive_time_ = receiveTime; }
+    TimeStamp receiveTime() const { return receive_time_; }
+    TimeStamp receiveTime() { return receive_time_; }
 
-    void appendBody(const char *start, size_t len)
-    {
-        _body.assign(start, start + len);
-    }
+    Body& body() { return body_; }
+    void setBody(const Body &body) { body_ = body; }
 
-    void appendBody(Buffer& buffer)
-    {
-        _body = buffer.resetAllAsString();
-    }
-
-    std::string body() const { return _body; }
 
     std::string toString();
 
-private:
+protected:
     /// @brief 状态码
-    StateCode _stateCode;
+    StateCode state_code_;
     /// @brief 协议版本
-    Version _version;
+    Version version_;
     /// @brief 头部字段
-    std::unordered_map<std::string, std::string> _headers;
+    std::unordered_map<std::string, std::string> headers_;
     /// @brief 连接是否关闭
-    bool _connectionClosed;
-    /// @brief Body数据
-    std::string _body;
-    /// @brief 接收时间
-    TimeStamp _receiveTime;
+    bool connection_closed_;
+    /// @brief Body结构
+    Body body_;
+    /// @brief 收到响应时间
+    TimeStamp receive_time_;
 };
 
 

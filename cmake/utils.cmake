@@ -10,10 +10,10 @@ function(redefine_file_macro targetname)
         get_property(defs SOURCE "${sourcefile}"
             PROPERTY COMPILE_DEFINITIONS)
         #获取当前文件的绝对路径
-        get_filename_component(filename "${sourcefile}" NAME)
+        get_filename_component(abs_path "${sourcefile}" ABSOLUTE)
 
         #将绝对路径中的项目路径替换成空,得到源文件相对于项目路径的相对路径
-        string(REPLACE ${PROJECT_SOURCE_DIR}/ "" relpath ${filename})
+        file(RELATIVE_PATH relpath "${PROJECT_SOURCE_DIR}" "${abs_path}")
 
         #将我们要加的编译参数(__FILE__定义)添加到原来的编译参数里面
         list(APPEND defs "__FILE__=\"${relpath}\"")
@@ -24,4 +24,3 @@ function(redefine_file_macro targetname)
             )
     endforeach()
 endfunction()
-

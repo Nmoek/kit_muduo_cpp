@@ -10,7 +10,7 @@
 #include "net/buffer.h"
 #include "./test_log.h"
 
-#include <gtest/gtest.h>
+#include "gtest/gtest.h"
 #include <string.h>
 
 using namespace kit_muduo;

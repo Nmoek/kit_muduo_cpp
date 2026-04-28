@@ -12,27 +12,28 @@ namespace kit_muduo {
 
 std::atomic_int Timer::s_createNum{1};
 
-Timer::Timer(TimerCb cb, TimeStamp when, int64_t interval)
-    :_timerCallback(cb ? std::move(cb) : TimerCb())
-    ,_expiration(when)
-    ,_interval(interval)
-    ,_repeated(interval > 0)
-    ,_sequence(s_createNum++)
+Timer::Timer(TimerCb cb, int64_t when, int64_t interval)
+    :timer_callback_(cb ? std::move(cb) : TimerCb())
+    ,expiration_(when)
+    ,interval_(interval)
+    ,repeated_(interval > 0)
+    ,sequence_(s_createNum++)
 {
 
 }
 
-void Timer::restart(TimeStamp now)
+void Timer::restart(int64_t now)
 {
-    if(_repeated)
+    if(repeated_)
     {
-        _expiration = TimeStamp::AddTime(now, _interval);
+        expiration_ = now + interval_;
     }
     else
     {
-        _expiration = TimeStamp();
+        expiration_ = 0;
     }
 }
+
 
 
 }   // kit_muduo

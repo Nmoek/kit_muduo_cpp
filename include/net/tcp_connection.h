@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <atomic>
+#include <mutex>
 
 namespace kit_muduo {
 
@@ -56,6 +57,8 @@ public:
 
     void send(const std::string& buf);
 
+    void send(const std::vector<char>& buf);
+
     void shutdown();
 
     void connectEstablished();
@@ -75,6 +78,9 @@ private:
     void handleClose();
 
     void sendInLoop(const void* message, size_t len);
+    void sendInLoop(const std::string message);
+    
+    void sendInLoop(const std::vector<char> message);
 
     void shutdownInLoop();
 
@@ -105,6 +111,7 @@ private:
 
     Buffer _inputBuffer;
     Buffer _outputBuffer;
+    std::mutex _mutex;
 
     std::shared_ptr<void> _context;
 

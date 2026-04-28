@@ -167,7 +167,7 @@ class FileFormatItem: public FormatItem
 public:
     FileFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getFileName(); }
+    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getFileBaseName(); }
 };
 
 /**

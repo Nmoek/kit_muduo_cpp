@@ -1,0 +1,311 @@
+/**
+ * @file thread_pool.h
+ * @brief 线程池 14/17版本
+ * @author Kewin Li
+ * @version 2.0
+ * @date 2025-04-20 10:42:42
+ * @copyright Copyright (c) 2025 Kewin Li
+ */
+#ifndef __THREAD_POOL_14_17_H__
+#define __THREAD_POOL_14_17_H__
+
+#include "base/thread.h"
+
+#include <vector>
+#include <queue>
+#include <memory>
+#include <condition_variable>
+#include <mutex>
+#include <atomic>
+#include <functional>
+#include <iostream>
+#include <pthread.h>
+#include <semaphore.h>
+#include <thread>
+#include <unordered_map>
+#include <future>
+
+namespace kit_muduo {
+
+static const int32_t THREAD_MAX_THRESHHOLD = 100;
+static const int32_t TASK_MAX_THRESHHOLD = INT32_MAX;
+static const int32_t THREAD_MAX_IDLE_INTERVAL = 30;  //单位s
+
+class WorkThread: public Thread
+{
+public:
+    using UPtr = std::unique_ptr<WorkThread>;
+    using PoolFunc = std::function<void(uint32_t)>;
+    WorkThread();
+
+    ~WorkThread() = default;
+
+    void setPoolFunc(PoolFunc func) { _poolFunc = std::move(func); }
+
+    /**
+     * @brief 获取线程唯一ID
+     * @return uint32_t
+     */
+     uint32_t getGenerateId() const;
+
+private:
+    void workFunc();
+
+private:
+    /// @brief 线程唯一ID
+    static uint32_t s_generateId;
+
+private:
+
+    uint32_t _id;
+    PoolFunc _poolFunc;
+};
+
+/**
+ * @brief 线程池类
+ */
+class ThreadPool
+{
+
+public:
+    enum PoolMode {
+        FIXED_MOD = 1,  //固定数量模式
+        CACHE_MOD    ,  //动态扩容模式
+    };
+
+public:
+
+    ThreadPool(int32_t initThreadCount = std::thread::hardware_concurrency());
+
+    ~ThreadPool();
+
+    void start();
+
+    void stop();
+    /**
+     * @brief 设置线程池启动模式
+     * @param[in] mode 模式
+     */
+    void setMode(PoolMode mode);
+
+    /**
+     * @brief 设置任务队列数量上限
+     * @param[in] threshhold
+     */
+    void setTaskQueMaxThreshHold(int32_t threshhold);
+
+    /**
+     * @brief 获取任务队列数量上限
+     * @return int32_t
+     */
+    int32_t getTaskQueMaxThreshHold() const;
+
+
+    /**
+     * @brief 设置线程数量上限
+     * @param[in] threshhold
+     */
+     void setThreadMaxThreshHold(int32_t threshhold);
+
+     /**
+      * @brief 获取线程数量上限
+      * @return int32_t
+      */
+    int32_t getThreadMaxThreshHold() const;
+
+    /**
+     * @brief 设置线程最大空闲间隔
+     * @param interval_s
+     */
+    void setThreadMaxIdleInterval(int32_t interval_s);
+
+    /**
+     * @brief 获取线程最大空闲间隔
+     * @return int32_t
+     */
+    int32_t getThreadMaxIdleInterval() const;
+
+    /**
+     * @brief 带超时提交任务
+     * @tparam FuncType 任务函数类型
+     * @tparam Args 任务函数可变参数
+     * @param interval_ms 超时时间
+     * @param func
+     * @param args
+     * @return std::future<decltype(func(args...))>
+     */
+    template<typename FuncType, typename... Args>
+    auto submitTaskTimeOut(int32_t interval_ms, FuncType &&func, Args&&... args) -> std::future<decltype(func(args...))>
+    {
+        using ReturnType = decltype(func(args...));
+        auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+            std::bind(std::forward<FuncType>(func), std::forward<Args>(args)...)
+        );
+
+        // 这里是制作一个空的返回对象
+        auto nullTask = std::make_shared<std::packaged_task<ReturnType()>>(
+            []() -> ReturnType {
+                return ReturnType();
+            });
+
+        auto nullResult = nullTask->get_future();
+        
+        // 原地执行 否则future不返回
+        (*nullTask)();
+
+        if(!isRun_)
+            return nullResult;
+
+
+        std::unique_lock<std::mutex> lock(taskQueMutex_);
+
+        auto waitCondFunc = [this](){
+
+            return curTaskCount_ < taskQueMaxThreshHold_ || !isRun_;
+        };
+
+        if(-1 == interval_ms)
+        {
+            notFull_.wait(lock, waitCondFunc);
+        }
+        else
+        {
+            if(!notFull_.wait_for(lock, std::chrono::milliseconds(interval_ms), waitCondFunc))
+            {
+                // 扩容条件
+                if(isCache())
+                {
+                    addThread();
+                }
+
+                return nullResult;
+            }
+        }
+
+        if(!isRun_)
+            return nullResult;
+
+
+        // taskQue_.push(ptask);
+        taskQue_.emplace([task](){ (*task)(); });
+        ++curTaskCount_;
+        lock.unlock();
+        notEmpty_.notify_one();
+
+        // 扩容条件
+        if(isCache())
+        {
+            addThread();
+        }
+
+        return task->get_future();
+    }
+
+    /**
+     * @brief 阻塞提交任务
+     * @tparam FuncType 任务函数类型
+     * @tparam Args 任务函数可变参数
+     * @param func
+     * @param args
+     * @return std::future<decltype(func(args...))>
+     */
+    template<class FuncType, class ...Args>
+    auto submitTask(FuncType &&func, Args&& ...args) -> std::future<decltype(func(args...))>
+    {
+        return submitTaskTimeOut(-1, std::forward<FuncType>(func), std::forward<Args>(args)...);
+    }
+
+private:
+    /**
+     * @brief 线程入口函数, 处理业务
+     */
+    void threadRunFunc(uint32_t generateId);
+
+
+    inline bool checkState() const
+    {
+        return isRun_;
+    }
+
+    inline bool isCache() const
+    {
+        //只要 任务数 >  空闲线程数就扩容
+        return CACHE_MOD == mode_
+        && curThreadCount_ < threadMaxThreshHold_
+        &&  curTaskCount_ > (curThreadCount_ - busyCount_);
+    }
+
+
+    inline bool isClear() const
+    {
+        return CACHE_MOD == mode_
+        && curThreadCount_ > initThreadCount_
+        &&  curTaskCount_ < (curThreadCount_ - busyCount_);
+    }
+
+    inline bool checkExit() const
+    {
+        // 1. 只要全是空闲线程就退出
+        // return busyCount_ == 0;
+        // 2. 全是空闲线程 && 任务执行完 才退出
+        return busyCount_ == 0
+            && curTaskCount_ == 0;
+    }
+
+    /**
+     * @brief 增加线程
+     */
+    void addThread();
+
+    /**
+     * @brief 删除线程
+     * @param[in] id 线程唯一ID
+     */
+    void delThread(uint32_t generateId);
+
+
+
+private:
+
+    /// @brief 线程集合
+    // std::vector<WorkThread::UPtr> pool_;
+    std::unordered_map<uint32_t, WorkThread::UPtr> pool_;
+    /// @brief 线程集合锁
+    // std::mutex poolMutex_;
+    /// @brief 线程初始数量
+    int32_t initThreadCount_{0};
+    /// @brief 当前已创建的线程数量
+    std::atomic_int32_t curThreadCount_{0};
+    /// @brief 正在忙碌线程数量
+    std::atomic_int32_t busyCount_{0};
+    /// @brief 线程数量上限
+    int32_t threadMaxThreshHold_;
+    /// @brief 线程池运行状态
+    std::atomic_bool isRun_{false};
+    /// @brief 线程最大空闲时间
+    int32_t threadMaxIdleInterval_{0};
+
+
+    using Task = std::function<void()>;
+    /// @brief 任务队列
+    std::queue<Task> taskQue_;
+    /// @brief 当前未处理任务数量
+    std::atomic_int32_t curTaskCount_{0};
+    /// @brief 任务队列数量上限
+    int32_t taskQueMaxThreshHold_;
+    /// @brief 任务队列锁
+    std::mutex taskQueMutex_;
+    /// @brief 任务队列不空条件变量
+    std::condition_variable notEmpty_;
+    /// @brief 任务队列不满条件变量
+    std::condition_variable notFull_;
+    /// @brief 线程池退出条件变量
+    std::condition_variable waitExit_;
+
+    /// @brief 当前线程池模式
+    PoolMode mode_{FIXED_MOD};
+};
+
+
+} // namespace kit
+#endif

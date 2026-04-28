@@ -9,6 +9,8 @@
 #include "base/event_loop_thread.h"
 #include "base/base_log.h"
 #include "net/event_loop.h"
+#include <cstddef>
+#include <memory>
 
 namespace kit_muduo {
 
@@ -24,10 +26,11 @@ EventLoopThread::EventLoopThread(EventLoopThread::ThreadInitCb callback, const s
 EventLoopThread::~EventLoopThread()
 {
     _exiting = true;
-    if(!_loop)
+    if(_loop)
     {
         _loop->quit();
         _thread.join();
+        _loop.reset();
     }
 }
 
@@ -39,29 +42,27 @@ EventLoop* EventLoopThread::startLoop()
         return _loop != nullptr;
     });
 
-    return _loop;
+    return _loop.get();
 }
 
 void EventLoopThread::threadFunc()
 {
-    EventLoop loop;
+    std::shared_ptr<EventLoop> loop{std::make_shared<EventLoop>()};
     if(_callback)
     {
-        _callback(&loop);
+        _callback(loop.get());
     }
     // 对外传递EventLoop
     std::unique_lock<std::mutex> lock(_mutex);
-    _loop = &loop;
+    _loop = loop;
     lock.unlock();
     _cond.notify_one();
 
     // 开启事件循环
-    loop.loop();
+    loop->loop();
+    
+    THREAD_INFO() << "EventLoopThread exit!" << std::endl;
 
-    //EventLoop退出 需要置空
-    lock.lock();
-    _loop = nullptr;
-    lock.unlock();
 }
 
 

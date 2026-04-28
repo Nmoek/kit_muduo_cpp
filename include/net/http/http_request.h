@@ -15,26 +15,29 @@
 #include <string>
 #include <unordered_map>
 #include <assert.h>
+#include <memory>
 
-namespace kit_muduo {
-namespace http {
 
-class HttpRequet
+
+namespace kit_muduo::http {
+
+class HttpRequest
 {
 public:
     struct Method
     {
         enum { kInvaild, kGet, kPost, kHead, kPut, kDelete };
 
-        explicit Method(int32_t method = kInvaild) :m_method(method) { }
+        explicit Method(int32_t method = kInvaild) :method(method) { }
 
-        int32_t operator()() const { return m_method; }
+        int32_t operator()() const { return method; }
 
-        void set(int32_t val) { m_method = val; }
+        void set(int32_t val) { method = val; }
 
+        int32_t toInt() const { return method; }
         const char* toString() const
         {
-            switch (m_method)
+            switch (method)
             {
                 case kGet: return "GET";
                 case kPost: return "POST";
@@ -57,55 +60,53 @@ public:
             return Method();
         }
     private:
-        int32_t m_method{kInvaild};
+        int32_t method{kInvaild};
     };
 
-    HttpRequet() = default;
-    ~HttpRequet() = default;
 
-    Method method() const { return _method; }
-    void setMethod(int32_t methodVal) { _method.set(methodVal); }
-    void setMethod(Method method) { _method = std::move(method); }
+    HttpRequest();
+    HttpRequest(const HttpRequest&) = default;
 
-
-    std::string path() const { return _path; }
-    void setPath(const std::string &path) { _path = path; }
-
-    std::string qurey() const { return _query; }
-    void setQurey(const std::string &qurey) { _query = qurey; }
+    ~HttpRequest();
 
 
-    Version version() const { return _version; }
-    void setVersion(int32_t versionVal) { _version.set(versionVal); }
-    void setVersion(Version version) { _version = std::move(version); }
+    Method method() const { return method_; }
+    void setMethod(int32_t methodVal) { method_.set(methodVal); }
+    void setMethod(Method method) { method_ = std::move(method); }
+
+
+    std::string path() const { return path_; }
+    void setPath(const std::string &path) { path_ = path; }
+
+    std::string getQureyParam(const std::string &key) const
+    { 
+        auto it = query_params_.find(key);
+        return it ==  query_params_.end() ? "" : it->second;
+    } 
+
+    void addQureyParam(const std::string &key, const std::string &val) { query_params_[key] = val; }
+
+
+    Version version() const { return version_; }
+    void setVersion(int32_t versionVal) { version_.set(versionVal); }
+    void setVersion(Version version) { version_ = std::move(version); }
 
     void addHeader(const std::string& head, const std::string &val);
-    void addHeader(const char *start, const char *colon, const char *end);
+    bool addHeader(const char *start, const char *colon, const char *end);
     std::string getHeader(const std::string &key) const;
 
-    const std::unordered_map<std::string, std::string>& headers() const { return _headers; }
-    const std::unordered_map<std::string, std::string>& headers() { return _headers; }
+    const std::unordered_map<std::string, std::string>& headers() const { return headers_; }
+    std::unordered_map<std::string, std::string>& headers() { return headers_; }
+    void setHeaders(const std::unordered_map<std::string, std::string> &headers) { headers_ = std::move(headers); }
 
-    void appendBody(const std::string &data)
-    {
-        _body = data;
-    }
 
-    void appendBody(const char *start, size_t len)
-    {
-        _body.assign(start, start + len);
-    }
+    void setReceiveTime(TimeStamp receiveTime) { receive_time_ = receiveTime; }
+    TimeStamp receiveTime() const { return receive_time_; }
+    TimeStamp receiveTime() { return receive_time_; }
 
-    void appendBody(Buffer& buffer)
-    {
-        _body = buffer.resetAllAsString();
-    }
-
-    void setReceiveTime(TimeStamp receiveTime) { _receiveTime = receiveTime; }
-    TimeStamp receiveTime() const { return _receiveTime; }
-    TimeStamp receiveTime() { return _receiveTime; }
-
-    std::string body() const { return _body; };
+    Body& body() { return body_; }
+    const Body& body() const { return body_; }
+    void setBody(const Body &body) { body_ = body; }
 
     /**
      * @brief 报文序列化
@@ -113,26 +114,29 @@ public:
      */
     std::string toString();
 
-
 private:
+
     /// @brief 请求方法
-    Method _method;
+    Method method_;
+    
+protected:
+    using ParamMap = std::unordered_map<std::string, std::string>;
     /// @brief 请求路径
-    std::string _path;
+    std::string path_;
     /// @brief 请求参数
-    std::string _query;
+    ParamMap query_params_;
     /// @brief 协议版本
-    Version _version;
+    Version version_;
     /// @brief 头部字段
-    std::unordered_map<std::string, std::string> _headers;
-    /// @brief Body数据
-    std::string _body;
+    std::unordered_map<std::string, std::string> headers_;
+    /// @brief Body结构
+    Body body_;
     /// @brief 接收请求时间点
-    TimeStamp _receiveTime;
+    TimeStamp receive_time_;
 
 };
 
 
 }
-}
+
 #endif

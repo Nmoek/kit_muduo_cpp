@@ -17,10 +17,12 @@ using namespace kit_muduo;
 
 TEST(TestTimeStamp, test)
 {
+    std::string time_str = TimeStamp::Now().toString();
+    TEST_INFO() << "stamp --> str: " << time_str << std::endl;
 
-    TEST_INFO() << "now time stamp: " << TimeStamp::Now().toString() << std::endl;
+    TEST_INFO() << "now: " << TimeStamp::NowMs() << std::endl;
 
-    TEST_INFO() << "now: " << TimeStamp::NowTimeStamp() << std::endl;
+    TEST_INFO() << "str --> stamp: " << TimeStamp::Str2TimeStamp(time_str) << std::endl;
 }
 
 

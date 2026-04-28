@@ -18,9 +18,11 @@ const int32_t Channel::kNonEvent = 0;
 const int32_t Channel::kReadEvent = EPOLLIN | EPOLLPRI;
 const int32_t Channel::kWriteEvent = EPOLLOUT;
 
-Channel::Channel(EventLoop *loop, int32_t fd)
+Channel::Channel(EventLoop *loop, int32_t fd, bool connected)
     :_loop(loop)
     ,_fd(fd)
+    ,_connected(connected)
+    ,_peerAddr(connected ? InetAddress::GetPeerAddr(fd) : InetAddress())
     ,_events(0)
     ,_revents(0)
     ,_index(-1) // 必须是-1 与之后下标判断有关联
@@ -62,12 +64,13 @@ void Channel::update()
 void Channel::handleEventWithGuard(TimeStamp receiveTime)
 {
     int32_t revent = _revents;
-    CHANNEL_F_INFO("Channel: trigger event 0X%x \n", revent);
+    CHANNEL_F_INFO("Channel: fd[%d][%s] trigger event 0x%x \n", fd(), _peerAddr.toIpPort().c_str(), revent);
     // 1. 先处理关闭
     if((revent & EPOLLHUP)
         && !(revent & EPOLLIN))
     {
         CHANNEL_DEBUG() << "Channel: trigger close event" << std::endl;
+
         if(_closeCallback)
             _closeCallback();
     }

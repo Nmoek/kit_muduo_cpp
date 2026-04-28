@@ -9,6 +9,7 @@
 #ifndef __KIT_TIME_STAMP_H__
 #define __KIT_TIME_STAMP_H__
 
+#include "base/util.h"
 #include <bits/stdint-uintn.h>
 #include <string>
 
@@ -36,35 +37,59 @@ public:
     std::string toString() const;
 
     /**
+     * @brief 时间字符串转为时间戳(仅支持格式%Y-%m-%d %H:%M:%S)
+     * @param dataStr 
+     * @return uint64_t 
+     */
+    void fromString(const std::string &dataStr);
+
+    /**
      * @brief 获取时间 单位ms
      * @return int64_t
      */
-    int64_t millSeconds() const { return _millSeconds; }
+    int64_t millSeconds() const { return real_time_ms_; }
+
+    /**
+     * @brief 获取时间 单位s
+     * @return uint64_t 
+     */
+    int64_t seconds() const { return real_time_ms_ / 1000; }
+
+    /**
+     * @brief 获取已存时间戳对应的单调递增时间值
+     * @return uint64_t 
+     */
+    int64_t toMonotonic() const;
+
+    TimeStamp& addTime(int64_t millseconds);
+    TimeStamp& subTime(int64_t millseconds);
+    TimeStamp& addTime(const TimeStamp &t);
+    TimeStamp& subTime(const TimeStamp &t);
 
     bool operator==(const TimeStamp &t) const
     {
-        return _millSeconds == t._millSeconds;
+        return real_time_ms_ == t.real_time_ms_;
     }
 
     bool operator<(const TimeStamp &t) const
     {
-        return _millSeconds < t._millSeconds;
+        return real_time_ms_ < t.real_time_ms_;
     }
 
     bool operator>(const TimeStamp &t) const
     {
-        return _millSeconds > t._millSeconds;
+        return real_time_ms_ > t.real_time_ms_;
     }
 
     bool operator>=(const TimeStamp &t) const
     {
-        return _millSeconds >= t._millSeconds;
+        return real_time_ms_ >= t.real_time_ms_;
     }
 
 
     bool operator<=(const TimeStamp &t) const
     {
-        return _millSeconds <= t._millSeconds;
+        return real_time_ms_ <= t.real_time_ms_;
     }
 
 public:
@@ -77,19 +102,28 @@ public:
      * @brief 获取当前时间戳ms
      * @return uint64_t
      */
-    static uint64_t NowTimeStamp();
+    static int64_t NowMs();
 
     /**
-     * @brief 时刻计算, 当前时刻加上秒数后的时刻
-     * @param[in] now
-     * @param[in] seconds
-     * @return TimeStamp
+     * @brief 时间字符串 --> 时间戳
+     * @param timeStr 
+     * @return std::string 
      */
-    static TimeStamp AddTime(TimeStamp now, int64_t seconds);
+    static time_t Str2TimeStamp(const std::string &timeStr);
+
+    /**
+     * @brief 时间戳 --> 时间字符串
+     * @param timeStamp 
+     * @return std::string 
+     */
+    static std::string TimeStamp2Str(time_t timeStamp);
+
+
+    static TimeStamp FromMonotonic(int64_t ms);
 
 private:
     /// @brief 时间戳ms
-    uint64_t _millSeconds{0};
+    int64_t real_time_ms_{0};
 };
 
 

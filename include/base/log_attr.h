@@ -56,6 +56,12 @@ public:
 
     std::string getFileName() const { return _fileName; }
 
+    /**
+     * @brief 获取日志文件的纯文件名
+     * @return std::string
+     */
+    std::string getFileBaseName() const;
+
     std::string getContent() const { return _content.str(); }
 
 

@@ -9,32 +9,34 @@
 
  #include "base/log.h"
 
-static auto g_net_logger = KIT_LOGGER("net");
-
-
+/*
+net  info  DEBUG
+    -channel模块
+    -TcpServer模块
+*/
 /*********流式输出**********/
 #define NET_DEBUG(module) \
-    KIT_DEBUG(g_net_logger, module)
+    KIT_DEBUG(KIT_LOGGER("net"), module)
 #define NET_INFO(module) \
-    KIT_INFO(g_net_logger, module)
+    KIT_INFO(KIT_LOGGER("net"), module)
 #define NET_WARN(module) \
-    KIT_WARN(g_net_logger, module)
+    KIT_WARN(KIT_LOGGER("net"), module)
 #define NET_ERROR(module) \
-    KIT_ERROR(g_net_logger, module)
+    KIT_ERROR(KIT_LOGGER("net"), module)
 #define NET_FATAL(module) \
-    KIT_FATAL(g_net_logger, module)
+    KIT_FATAL(KIT_LOGGER("net"), module)
 
 /**********变参输出***********/
 #define NET_F_DEBUG(module, fmt, ...) \
-    KIT_FMT_DEBUG(g_net_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_DEBUG(KIT_LOGGER("net"), module, fmt, ##__VA_ARGS__)
 #define NET_F_INFO(module, fmt, ...) \
-    KIT_FMT_INFO(g_net_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_INFO(KIT_LOGGER("net"), module, fmt, ##__VA_ARGS__)
 #define NET_F_WARN(module, fmt, ...) \
-    KIT_FMT_WARN(g_net_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_WARN(KIT_LOGGER("net"), module, fmt, ##__VA_ARGS__)
 #define NET_F_ERROR(module, fmt, ...) \
-    KIT_FMT_ERROR(g_net_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_ERROR(KIT_LOGGER("net"), module, fmt, ##__VA_ARGS__)
 #define NET_F_FATAL(module, fmt, ...) \
-    KIT_FMT_FATAL(g_net_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_FATAL(KIT_LOGGER("net"), module, fmt, ##__VA_ARGS__)
 
 /*******channel模块*********/
 #define CHANNEL_DEBUG()     NET_DEBUG("channel")
@@ -106,6 +108,20 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define TCP_F_FATAL(fmt, ...)     NET_F_FATAL("tcp_svr", fmt, ##__VA_ARGS__)
 /*******TcpServer模块*********/
 
+/*******UDP模块*********/
+#define UDP_DEBUG()     NET_DEBUG("udp")
+#define UDP_INFO()      NET_INFO("udp")
+#define UDP_WARN()      NET_WARN("udp")
+#define UDP_ERROR()     NET_ERROR("udp")
+#define UDP_FATAL()     NET_FATAL("udp")
+
+#define UDP_F_DEBUG(fmt, ...)     NET_F_DEBUG("udp", fmt, ##__VA_ARGS__)
+#define UDP_F_INFO(fmt, ...)      NET_F_INFO("udp", fmt, ##__VA_ARGS__)
+#define UDP_F_WARN(fmt, ...)      NET_F_WARN("udp", fmt, ##__VA_ARGS__)
+#define UDP_F_ERROR(fmt, ...)     NET_F_ERROR("udp", fmt, ##__VA_ARGS__)
+#define UDP_F_FATAL(fmt, ...)     NET_F_FATAL("udp", fmt, ##__VA_ARGS__)
+/*******UDP模块*********/
+
 /*******TcpConnect模块*********/
 #define CONN_DEBUG()     NET_DEBUG("tcp_conn")
 #define CONN_INFO()      NET_INFO("tcp_conn")
@@ -134,7 +150,7 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define TIMER_F_FATAL(fmt, ...)     NET_F_FATAL("timer", fmt, ##__VA_ARGS__)
 /*******Timer定时器模块*********/
 
-/*******HttpRequest模块*********/
+/*******Http模块*********/
 #define HTTP_DEBUG()     NET_DEBUG("http")
 #define HTTP_INFO()      NET_INFO("http")
 #define HTTP_WARN()      NET_WARN("http")
@@ -146,7 +162,48 @@ static auto g_net_logger = KIT_LOGGER("net");
 #define HTTP_F_WARN(fmt, ...)      NET_F_WARN("http", fmt, ##__VA_ARGS__)
 #define HTTP_F_ERROR(fmt, ...)     NET_F_ERROR("http", fmt, ##__VA_ARGS__)
 #define HTTP_F_FATAL(fmt, ...)     NET_F_FATAL("http", fmt, ##__VA_ARGS__)
-/*******HttpRequest模块*********/
+/*******Http模块*********/
 
+/*******Rtsp模块*********/
+#define RTSP_DEBUG()     NET_DEBUG("rtsp")
+#define RTSP_INFO()      NET_INFO("rtsp")
+#define RTSP_WARN()      NET_WARN("rtsp")
+#define RTSP_ERROR()     NET_ERROR("rtsp")
+#define RTSP_FATAL()     NET_FATAL("rtsp")
 
+#define RTSP_F_DEBUG(fmt, ...)     NET_F_DEBUG("rtsp", fmt, ##__VA_ARGS__)
+#define RTSP_F_INFO(fmt, ...)      NET_F_INFO("rtsp", fmt, ##__VA_ARGS__)
+#define RTSP_F_WARN(fmt, ...)      NET_F_WARN("rtsp", fmt, ##__VA_ARGS__)
+#define RTSP_F_ERROR(fmt, ...)     NET_F_ERROR("rtsp", fmt, ##__VA_ARGS__)
+#define RTSP_F_FATAL(fmt, ...)     NET_F_FATAL("rtsp", fmt, ##__VA_ARGS__)
+/*******Rtsp模块*********/
+
+// DBEUG: 这里临时这么写，后续要更正
+/*******Rtcp模块*********/
+#define RTCP_DEBUG()     KIT_DEBUG(KIT_LOGGER("rtcp"), "rtcp")
+#define RTCP_INFO()      KIT_INFO(KIT_LOGGER("rtcp"), "rtcp")
+#define RTCP_WARN()      KIT_WARN(KIT_LOGGER("rtcp"), "rtcp")
+#define RTCP_ERROR()     KIT_ERROR(KIT_LOGGER("rtcp"), "rtcp")
+#define RTCP_FATAL()     KIT_FATAL(KIT_LOGGER("rtcp"), "rtcp")
+
+#define RTCP_F_DEBUG(fmt, ...)     KIT_FMT_DEBUG(KIT_LOGGER("rtcp"), "rtcp", fmt, ##__VA_ARGS__)
+#define RTCP_F_INFO(fmt, ...)      KIT_FMT_INFO(KIT_LOGGER("rtcp"), "rtcp", fmt, ##__VA_ARGS__)
+#define RTCP_F_WARN(fmt, ...)      KIT_FMT_WARN(KIT_LOGGER("rtcp"), "rtcp", fmt, ##__VA_ARGS__)
+#define RTCP_F_ERROR(fmt, ...)     KIT_FMT_ERROR(KIT_LOGGER("rtcp"), "rtcp", fmt, ##__VA_ARGS__)
+#define RTCP_F_FATAL(fmt, ...)     KIT_FMT_FATAL(KIT_LOGGER("rtcp"), "rtcp", fmt, ##__VA_ARGS__)
+/*******Rtcp模块*********/
+
+/*******Media模块*********/
+#define MEDIA_DEBUG()     NET_DEBUG("media")
+#define MEDIA_INFO()      NET_INFO("media")
+#define MEDIA_WARN()      NET_WARN("media")
+#define MEDIA_ERROR()     NET_ERROR("media")
+#define MEDIA_FATAL()     NET_FATAL("media")
+
+#define MEDIA_F_DEBUG(fmt, ...)     NET_F_DEBUG("media", fmt, ##__VA_ARGS__)
+#define MEDIA_F_INFO(fmt, ...)      NET_F_INFO("media", fmt, ##__VA_ARGS__)
+#define MEDIA_F_WARN(fmt, ...)      NET_F_WARN("media", fmt, ##__VA_ARGS__)
+#define MEDIA_F_ERROR(fmt, ...)     NET_F_ERROR("media", fmt, ##__VA_ARGS__)
+#define MEDIA_F_FATAL(fmt, ...)     NET_F_FATAL("media", fmt, ##__VA_ARGS__)
+/*******Media模块*********/
 

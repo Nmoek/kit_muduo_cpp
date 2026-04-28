@@ -9,6 +9,7 @@
 #ifndef __KIT_BUFFER_H__
 #define __KIT_BUFFER_H__
 #include <bits/stdint-intn.h>
+#include <algorithm>
 #include <vector>
 #include <string>
 
@@ -105,6 +106,60 @@ public:
         std::string res(peek(), len);
         reset(len);
         return res;
+    }
+
+    std::vector<uint8_t> resetAllAsDataUint8()
+    {
+        return resetAsDataUint8(readableBytes());
+    }
+
+    std::vector<uint8_t> resetAsDataUint8(size_t len)
+    {
+        std::vector<uint8_t> res(peek(), peek() + std::min(len, readableBytes()));
+        reset(std::min(len, readableBytes()));
+        return res;
+    }
+
+    std::vector<char> resetAllAsData()
+    {
+        return resetAsData(readableBytes());
+    }
+
+    std::vector<char> resetAsData(size_t len)
+    {
+        std::vector<char> res(_buffer.begin() + _readIndex, _buffer.begin() + _readIndex + len);
+        reset(len);
+        return res;
+    }
+
+    std::vector<uint8_t> lookAllAsDataUint8()
+    {
+        return lookAsDataUint8(readableBytes());
+    }
+
+    std::vector<uint8_t> lookAsDataUint8(size_t len)
+    {
+        return {peek(), peek() + std::min(readableBytes(), len)};
+    }
+
+    std::vector<char> lookAllAsData()
+    {
+        return lookAsData(readableBytes());
+    }
+
+    std::vector<char> lookAsData(size_t len)
+    {
+        return {peek(), peek() + std::min(readableBytes(), len)};
+    }
+
+    std::string lookAllAsString()
+    {
+        return lookAsString(readableBytes());
+    }
+
+    std::string lookAsString(size_t len)
+    {
+        return {peek(), std::min(len, readableBytes())};
     }
 
     void ensureWritableBytes(size_t len)

@@ -12,54 +12,74 @@
 
 #include <sstream>
 
-namespace kit_muduo {
-namespace http {
+
+namespace kit_muduo::http {
 
 static const char kSpace[] = " ";
 static const char kCRLF[] = "\r\n";
 static const char kColon[] = ":";
 
-void HttpRequet::addHeader(const std::string& head, const std::string &val)
+HttpRequest::HttpRequest()
 {
-    _headers[head] = val;
+    HTTP_F_DEBUG("HttpRequest::construct() %p\n", this);
+}
+HttpRequest::~HttpRequest()
+{
+    HTTP_F_DEBUG("HttpRequest::~HttpRequest() %p\n", this);
 }
 
-void HttpRequet::addHeader(const char *start, const char *colon, const char *end)
+void HttpRequest::addHeader(const std::string& head, const std::string &val)
+{
+    headers_[head] = val;
+}
+
+bool HttpRequest::addHeader(const char *start, const char *colon, const char *end)
 {
     assert(start != end);
     std::string head(start, colon);
     DelSpaceHelper(head);
-    assert(head.size() != 0);
+    // assert(head.size() != 0);
+    if(head.size() <= 0)
+    {
+        return false;
+    }
     ++colon;
     std::string val(colon, end);
     DelSpaceHelper(val);
-    assert(val.size() != 0);
+    // assert(val.size() != 0);
     HTTP_F_DEBUG("Header: |%s|-|%s|\n", head.c_str(), val.c_str());
-    _headers[head] = val;
+    if(val.size() <= 0)
+    {
+        return false;
+    }
+    headers_[head] = val;
+    return true;
 }
 
-std::string HttpRequet::getHeader(const std::string &key) const
+std::string HttpRequest::getHeader(const std::string &key) const
 {
-    auto it = _headers.find(key);
-    return it == _headers.end() ? "" : it->second;
+    if(headers_.empty())
+        return "";
+    auto it = headers_.find(key);
+    return it == headers_.end() ? "" : it->second;
 }
 
-std::string HttpRequet::toString()
+std::string HttpRequest::toString()
 {
     std::stringstream ss{""};
     // Line
-    ss << _method.toString();
+    ss << method_.toString();
     ss << kSpace;
-    ss << _path;
+    ss << path_;
     ss << kSpace;
-    ss << _version.toString();
+    ss << version_.toString();
     ss << kCRLF;
 
-    if(_body.size())
-        _headers["Content-Length"] = std::to_string(_body.size());
+    if(body_.data().size())
+        headers_["Content-Length"] = std::to_string(body_.data().size());
 
     // Headers
-    for(auto &it : _headers)
+    for(auto &it : headers_)
     {
         ss << it.first;
         ss << kColon << kSpace;
@@ -67,10 +87,9 @@ std::string HttpRequet::toString()
         ss << kCRLF;
     }
     ss << kCRLF;
-    ss << _body;
+    ss << body_.toString();
     return ss.str();
 }
 
 
-}
 }

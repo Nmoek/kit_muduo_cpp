@@ -13,6 +13,7 @@
 #include "base/thread.h"
 #include "net/event_loop.h"
 
+#include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <string>
@@ -34,7 +35,7 @@ private:
     void threadFunc();
 
 private:
-    EventLoop *_loop;
+    std::shared_ptr<EventLoop> _loop;
     bool _exiting;
     Thread _thread;
     std::mutex _mutex;

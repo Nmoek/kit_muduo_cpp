@@ -56,7 +56,7 @@ TimeStamp EpollPoller::poll(int32_t timeout, ChannelList *channelList)
     }
     else if(0 == numEvents)
     {
-        POLLER_F_WARN("epoll_wait timeout!\n");
+        POLLER_F_DEBUG("epoll_wait timeout!\n");
         return now;
     }
     POLLER_F_DEBUG("%d event trigger \n", numEvents);
@@ -75,11 +75,18 @@ void EpollPoller::updateChannel(Channel *channel)
     // 表示当前传入Channel的状态
     int32_t status = channel->index();
     int32_t fd = channel->fd();
+
     if(kNew == status || kDeleted == status) // epoll中未添加
     {
         if(kNew == status)
         {
-            assert(_channels.find(fd) == _channels.end());
+            // BUGFIX: 暂时删除  存在fd重复的可能性
+            // assert(_channels.find(fd) == _channels.end());
+            auto it = _channels.find(fd);
+            if(it != _channels.end())
+            {
+                POLLER_F_WARN("fd[%d] exists! %s ---> %s \n", fd, it->second->peerAddr().toIpPort().c_str(), channel->peerAddr().toIpPort().c_str());
+            }
             _channels[fd] = channel;
         }
         else //曾添加过 已从epoll中删除 _channels中还存在
@@ -91,6 +98,8 @@ void EpollPoller::updateChannel(Channel *channel)
         // kDeleted ==> kAdded
         channel->setIndex(kAdded);
         update(EPOLL_CTL_ADD, channel);
+
+        POLLER_F_DEBUG("EpollPoller::updateChannel state change fd[%d][%s], state:[%d] --> [%d]\n", fd, channel->peerAddr().toIpPort().c_str(), status, kAdded);
     }
     else
     {
@@ -98,6 +107,8 @@ void EpollPoller::updateChannel(Channel *channel)
         {
             channel->setIndex(kDeleted);
             update(EPOLL_CTL_DEL, channel);
+
+            POLLER_F_DEBUG("EpollPoller::updateChannel state change fd[%d][%s], state:[%d]-->[%d]\n", fd, channel->peerAddr().toIpPort().c_str(), status, kDeleted);
         }
         else
         {
@@ -110,15 +121,30 @@ void EpollPoller::removeChannel(Channel *channel)
 {
     int32_t fd = channel->fd();
     int32_t status = channel->index();
+    const std::string& ip_port = channel->peerAddr().toIpPort();
+        
+    POLLER_F_DEBUG("EpollPoller::removeChannel fd[%d][%s], status[%d]\n", fd, ip_port.c_str(), status);
 
     // 从_channels删除
+
+    auto it = _channels.find(fd);
+
+    // 重要: 这个代码是兜底代码,不能删除
+    if(channel != it->second)
+    {
+        POLLER_F_WARN("poller will delete fd[%d] not match! old_channel[%p][%s] -- -> new_channel[%p][%s]\n", fd, it->second, it->second->peerAddr().toIpPort().c_str(), channel, ip_port.c_str());
+        return;
+    }
+
     size_t n = _channels.erase(fd);
     assert(n == 1);
+
     if(kAdded == status) // epoll中还存在 同时从epoll中删除
     {
         update(EPOLL_CTL_DEL, channel);
     }
     channel->setIndex(kNew);
+
 }
 
 void EpollPoller::update(int32_t operation, Channel *channel)

@@ -47,10 +47,10 @@
 
 /********3、全局日志器操作********/
 #define KIT_DEF_LOGGER() \
-    kit_muduo::LogManagerInstance::GetInstance().getDefLogger()
+    kit_muduo::LogManager::GetInstance().getDefLogger()
 
 #define KIT_LOGGER(name) \
-    kit_muduo::LogManagerInstance::GetInstance().getLogger(name)
+    kit_muduo::LogManager::GetInstance().getLogger(name)
 
 
 namespace kit_muduo {
@@ -153,9 +153,10 @@ class LogManager
 {
 public:
     /**
-     * @brief 默认构造
+     * @brief 日志器管理全局单例
+     * @return LogManager& 
      */
-    LogManager();
+    static LogManager& GetInstance();
 
     /**
      * @brief 默认析构
@@ -195,6 +196,12 @@ public:
     void delLogger(const std::string& name);
 
 private:
+    /**
+     * @brief 默认构造
+     */
+    LogManager();
+
+private:
     /// @brief 日志器集合
     std::unordered_map<std::string, Logger::Ptr> _loggers;
     /// @brief 默认日志器
@@ -203,7 +210,8 @@ private:
     mutable std::mutex _loggersMtx;
 };
 /// @brief 日志管理单例
-using LogManagerInstance = Singleton<LogManager>;
+#define LOGMANAGER_INSTANCE() (LogManager::GetInstance())
+
 
 
 } // namespace kit_muduo

@@ -98,10 +98,19 @@ void FileAppender::log(LogAttr::Ptr pattr)
     if(pattr->getLevel() < _level)
         return;
 
-    if(reopen())
+    if(_f.is_open() || reopen())
     {
         if(_formatter)
-            _f << _formatter->format(pattr);
+        {
+            const std::string& log_data = _formatter->format(pattr);
+            _curSize += log_data.size();
+            _f << log_data;
+            if(_curSize >= 1*1024*1024)
+            {
+                _f.flush();
+                _curSize = 0;
+            }
+        }
     }
 
 }

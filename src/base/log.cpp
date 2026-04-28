@@ -78,6 +78,14 @@ LogAttrWrap::~LogAttrWrap()
 
 
 /**************LogManager****************/
+
+
+LogManager& LogManager::GetInstance()
+{
+    static LogManager m;
+    return m;
+}
+
 LogManager::LogManager()
     :_defaultLogger(std::make_shared<Logger>("root"))
 {
@@ -124,5 +132,4 @@ void LogManager::delLogger(const std::string& name)
 
 
 } // namespace kit
-
 

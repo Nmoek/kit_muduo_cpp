@@ -9,14 +9,16 @@
 #include "net/acceptor.h"
 #include "net/socket.h"
 #include "net/inet_address.h"
+#include "net/net_log.h"
 
+#include <cstdlib>
 #include <unistd.h>
 
 namespace kit_muduo {
 
 Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     :_loop(loop)
-    ,_acceptSocket(Socket::CreateIpv4(true))
+    ,_acceptSocket(Socket::CreateTcpIpv4(true))
     ,_acceptChannel(loop, _acceptSocket.fd())
     ,_newConnectionCallback(nullptr)
     ,_listening(false)
@@ -24,14 +26,21 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     _acceptSocket.setReuseAddr(reuseport);
     _acceptSocket.setReusePort(reuseport);
     _acceptSocket.setTcpNoDelay(true);
-    _acceptSocket.bindAddress(addr);
+
+    if(!_acceptSocket.bindAddress(addr))
+    {
+        abort();
+    }
 
     _acceptChannel.setReadCallback(std::bind(&Acceptor::handleRead, this));
+
+    CHANNEL_F_DEBUG("Acceptor::fd[%d] \n", _acceptSocket.fd());
 
 }
 
 Acceptor::~Acceptor()
 {
+    CHANNEL_F_DEBUG("~Acceptor::fd[%d] \n", _acceptSocket.fd());
     _acceptChannel.disableAll();
     _acceptChannel.remove();
 

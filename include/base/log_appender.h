@@ -104,6 +104,8 @@ private:
     std::string _fileName;
     /// @brief  文件流句柄
     std::fstream _f;
+    /// @brief 当前一次性写入的大小
+    uint64_t _curSize;
 };
 
 //TODO: 网络传输(分布式)

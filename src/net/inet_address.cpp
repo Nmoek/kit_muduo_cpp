@@ -10,6 +10,11 @@
 #include "net/inet_address.h"
 #include "net/net_log.h"
 
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <net/if.h>
+
 namespace kit_muduo {
 
 InetAddress::InetAddress(uint16_t port, std::string ip)
@@ -56,5 +61,59 @@ InetAddress InetAddress::GetLocalAddr(int32_t fd)
 
     return InetAddress(addr);
 }
+
+InetAddress InetAddress::GetPeerAddr(int32_t fd)
+{
+    struct sockaddr_in addr;
+    socklen_t len = sizeof(addr);
+    if(::getpeername(fd, (struct sockaddr*)&addr, &len) < 0)
+    {
+        NET_F_ERROR("inet_addr", "::getpeername error! fd[%d], %d:%s \n", fd, errno, strerror(errno));
+        return InetAddress();
+    }
+    return InetAddress(addr);
+}
+
+InetAddress InetAddress::GetInterfaceIpv4(const std::string& iname)
+{
+    if(iname.empty())
+    {
+        NET_F_ERROR("inet_addr", "inet interface name is empty!\n");
+        return InetAddress();
+    }
+    struct ifaddrs *ifaddrs = nullptr;
+    struct sockaddr_in tar_addr = {0};
+
+    if(::getifaddrs(&ifaddrs) < 0)
+    {
+        NET_F_ERROR("inet_addr", "::getifaddrs error! %d:%s \n", errno, strerror(errno));
+        return InetAddress();
+    }
+
+    for(auto it = ifaddrs; it != nullptr; it = it->ifa_next)
+    {
+        if(it->ifa_addr == nullptr)
+        {
+            continue;
+        }
+        if(it->ifa_name != iname)
+        {
+            continue;
+        }
+
+        if(it->ifa_addr->sa_family == AF_INET)
+        {
+            tar_addr = *(reinterpret_cast<struct sockaddr_in*>(it->ifa_addr));
+            break;
+        }
+        else
+        {
+            NET_F_WARN("inet_addr", "find eth %s, but not ipv4!! \n", iname.c_str());
+        }
+    }
+    freeifaddrs(ifaddrs);
+    return InetAddress(tar_addr);
+}
+
 
 }   //kit_muduo

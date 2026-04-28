@@ -19,6 +19,7 @@
 #include <atomic>
 #include <unordered_map>
 #include <iostream>
+#include <vector>
 
 namespace kit_muduo {
 
@@ -42,7 +43,8 @@ public:
     void cancel(std::shared_ptr<Timer> timer);
 
 private:
-    using WillExpiredTimer = std::pair<TimeStamp, std::shared_ptr<Timer>>;
+    using WillExpiredTimer = std::pair<int64_t, std::shared_ptr<Timer>>;
+
     /**
      * @brief 定时器队列比较器
      */
@@ -64,14 +66,15 @@ private:
     void addTimerInLoop(std::shared_ptr<Timer> timer);
     void cancelInLoop(std::shared_ptr<Timer> timer);
 
-    std::vector<WillExpiredTimer> getExpired(TimeStamp now);
+    std::vector<WillExpiredTimer> getExpired(int64_t now);
+
     void handleRead();
-    void reset(const std::vector<WillExpiredTimer>& expired, TimeStamp now);
+    void reset(const std::vector<WillExpiredTimer>& expired, int64_t now);
 
     bool insert(std::shared_ptr<Timer> timer);
 
     void readTimerFd();
-    void resetTimerFd(TimeStamp nextExpired);
+    void resetTimerFd(int64_t next_expired);
 
 private:
     /// @brief 所属事件循环
@@ -90,7 +93,8 @@ private:
     std::atomic_bool _callingExipiredTimers;
     /// @brief 记录取消状态的定时器
     ActiveTimerMap _cancelingTimers;
-
+    /// @brief 记录当前正在执行函数的定时器, 防止递归操作
+    ActiveTimerMap _runningTimers;
 
 };
 

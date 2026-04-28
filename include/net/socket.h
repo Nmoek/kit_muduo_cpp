@@ -19,12 +19,18 @@ class InetAddress;
 class Socket: Noncopyable
 {
 public:
-    explicit Socket(int32_t fd);
+    enum Type {
+        TCP = 1,
+        UDP = 2,
+    };
+
+    explicit Socket(int32_t fd, Socket::Type type = TCP);
     ~Socket();
 
-    int32_t fd() const { return _sockfd; }
-
-    void bindAddress(const InetAddress &addr);
+    int32_t fd() const { return sockfd_; }
+    int32_t get();
+    bool bindAddress(const InetAddress &addr);
+    bool isBind() const { return is_bind_; }
     void listen();
     int32_t accept(InetAddress *peerAddr);
 
@@ -36,9 +42,12 @@ public:
     void setReusePort(bool on);
 
 public:
-    static int32_t CreateIpv4(bool nonblock = true);
+    static int32_t CreateTcpIpv4(bool nonblock = true);
+    static int32_t CreateUdpIpv4(bool nonblock = true);
 private:
-    int32_t _sockfd;
+    int32_t sockfd_;
+    Type type_;
+    bool is_bind_;
 };
 
 }   //kit_muduo

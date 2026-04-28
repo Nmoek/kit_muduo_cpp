@@ -17,6 +17,7 @@
 #include <memory>
 #include <atomic>
 #include <string>
+#include <unordered_map>
 
 namespace kit_muduo {
 
@@ -32,7 +33,7 @@ public:
     enum Option
     {
         kNoRusePort,
-        KReusetPort,
+        KReusePort,
     };
 
     TcpServer(EventLoop *loop, const InetAddress &addr, const std::string &name = "", Option option = kNoRusePort);
@@ -64,6 +65,13 @@ public:
      */
     EventLoop *getLoop() const {return _baseLoop; }
 
+    void addConnection(const std::string &name, TcpConnectionPtr conn);
+
+    TcpConnectionPtr getConnection(const std::string &name);
+
+    void delConnection(const std::string &name);
+
+
 private:
     void newConnection(int32_t sockfd, const InetAddress& peerAddr);
     void removeConnection(const TcpConnectionPtr& conn);
@@ -84,8 +92,9 @@ private:
     WriteCompleteCb _writeCompleteCallback;
     ThreadInitCb _threadInitCallback;
 
-    int32_t _nextConnId;
+    std::atomic_int32_t _nextConnId;
     ConnectMap _connections;
+    std::mutex _connectMapMtx;
 };
 
 

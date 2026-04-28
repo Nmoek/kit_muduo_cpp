@@ -33,10 +33,10 @@ EventLoop::EventLoop()
     ,_callingPendingFunc(false)
     ,_threadId(GetThreadPid())
     ,_poller(Poller::NewDefaultPoller(this))
-    ,_timerQueue(new SampleTimerQueue(this))
+    ,_timerQueue(std::make_unique<SampleTimerQueue>(this))
     ,_curActiveChannel(nullptr)
     , _wakeupFd(CreateEventFd())
-    ,_wakeupChannel(new Channel(this, _wakeupFd))
+    ,_wakeupChannel(std::make_unique<Channel>(this, _wakeupFd))
 {
 
     if(t_loopInThread)
@@ -54,6 +54,8 @@ EventLoop::EventLoop()
     _wakeupChannel->setReadCallback(std::bind(&EventLoop::handleRead, this));
     // 添加wakeup读事件监听
     _wakeupChannel->enableReading();
+
+    LOOP_F_DEBUG("EventLoop::EventLoop():: _wakeupFd[%d] \n", _wakeupFd);
 }
 
 EventLoop::~EventLoop()
@@ -62,11 +64,17 @@ EventLoop::~EventLoop()
     {
         _wakeupChannel->disableAll();
         _wakeupChannel->remove();
+
+        LOOP_F_DEBUG("EventLoop::wakeupChannel destroy fd[%d] \n", _wakeupFd);
     }
     if(_wakeupFd > 0)
+    {
         ::close(_wakeupFd);
+        _wakeupFd = -1;
+    }
 
     t_loopInThread = nullptr;
+    LOOP_F_DEBUG("EventLoop::~EventLoop()\n", _wakeupFd);
 }
 
 void EventLoop::loop()
@@ -103,6 +111,8 @@ void EventLoop::quit()
     }
 }
 
+// 暂停处理事件接口
+
 void EventLoop::wakeup()
 {
     uint64_t one = 1;
@@ -134,7 +144,7 @@ void EventLoop::queueInLoop(Func cb)
     lock.unlock();
 
     // 难点：为什么要判断_callingPendingFunc
-    // 答：poll会阻塞，触发一次唤醒事件，在下一轮的doPendingFuncs才能够被唤醒继续执行，否则将永远阻塞
+    // 答：poller会阻塞，触发一次唤醒事件，在下一轮的doPendingFuncs才能够被唤醒继续执行，否则将永远阻塞
     if(!isInLoopThread() || _callingPendingFunc)
         wakeup();
 }
@@ -146,13 +156,13 @@ std::shared_ptr<Timer> EventLoop::runAt(TimeStamp time, TimerCb cb)
 
 std::shared_ptr<Timer> EventLoop::runAfter(int64_t delay, TimerCb cb)
 {
-    return _timerQueue->addTimer(std::move(cb), TimeStamp::AddTime(TimeStamp::Now(), delay));
+    return _timerQueue->addTimer(std::move(cb), TimeStamp::Now().addTime(delay));
 
 }
 
 std::shared_ptr<Timer> EventLoop::runEvery(int64_t interval, TimerCb cb)
 {
-    return _timerQueue->addTimer(std::move(cb), TimeStamp::AddTime(TimeStamp::Now(), interval), interval);
+    return _timerQueue->addTimer(std::move(cb), TimeStamp::Now().addTime(interval), interval);
 }
 
 void EventLoop::cancel(std::shared_ptr<Timer> timer)
@@ -196,6 +206,7 @@ void EventLoop::doPendingFuncs()
     std::unique_lock<std::mutex> lock(_mutex);
     tmp_func.swap(_pendingFuncs);
     lock.unlock();
+
 
     for(auto &f : tmp_func)
         if(f) f();

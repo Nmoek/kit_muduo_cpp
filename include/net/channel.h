@@ -11,6 +11,7 @@
 
 #include "base/noncopyable.h"
 #include "base/time_stamp.h"
+#include "net/inet_address.h"
 
 #include <functional>
 #include <memory>
@@ -29,7 +30,7 @@ public:
     using ReadEventCb = std::function<void(TimeStamp)>;
     using EventCb = std::function<void()>;
 
-    Channel(EventLoop *loop, int32_t fd);
+    Channel(EventLoop *loop, int32_t fd,  bool connected = false);
     ~Channel() = default;
 
     /**
@@ -64,6 +65,9 @@ public:
     void remove();
 
     int32_t fd() const { return _fd; }
+
+    InetAddress peerAddr() const { return _peerAddr; }
+
     int32_t events() const { return _events; }
     void setRevents(int32_t revents) { _revents = revents; }
     int32_t index() const { return _index; }
@@ -93,6 +97,10 @@ private:
     EventLoop *_loop;
     /// @brief 通信fd
     int32_t _fd;
+    /// @brief 是否建立连接
+    bool _connected;
+    /// @brief  对端ip地址
+    InetAddress _peerAddr;
     /// @brief 监听事件集
     int32_t _events;
     /// @brief 实际发生事件集

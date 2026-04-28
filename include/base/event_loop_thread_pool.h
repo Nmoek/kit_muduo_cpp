@@ -14,6 +14,7 @@
 #include <functional>
 #include <vector>
 #include <memory>
+#include <string>
 
 namespace kit_muduo {
 

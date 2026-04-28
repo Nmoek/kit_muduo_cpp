@@ -11,16 +11,17 @@
 #include "base/base_log.h"
 
 #include <semaphore.h>
+#include <unistd.h>
 
 namespace kit_muduo {
 
-std::atomic_int Thread::_createdNum = 0;
+std::atomic_int Thread::_createdNum(0);
 
 Thread::Thread(ThreadFunc func, const std::string &name)
     :_started(false)
     ,_joined(false)
     ,_pid(0)
-    ,_func(std::move(func))
+    ,_func(func)
     ,_name(name)
 {
     setDefaultName();
@@ -43,11 +44,15 @@ void Thread::start()
     _thread = std::make_shared<std::thread>([&](){
         try
         {
+
             _pid = GetThreadPid();
-            ::pthread_setname_np(::pthread_self(), _name.c_str());
+            const char* tmp_namp = _name.c_str();
+            if(strlen(tmp_namp) > 0)
+                ::pthread_setname_np(::pthread_self(), tmp_namp);
+
             sem_post(&sem);
-            THREAD_DEBUG() << "thread start success! " << _pid << ":" << _name << std::endl;
-            _func();
+            if(_func)
+                _func();
         }
         catch (std::exception &e)
         {
@@ -57,6 +62,7 @@ void Thread::start()
 
     // 注意: 必须确保子线程起来后才能继续往下
     sem_wait(&sem);
+    usleep(100);
 }
 
 void Thread::join()

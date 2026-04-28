@@ -66,14 +66,14 @@ public:
     std::shared_ptr<Timer> runAt(TimeStamp time, TimerCb cb);
     /**
      * @brief 等待一定时间后执行任务
-     * @param[in] delay 等待时长 单位s
+     * @param[in] delay 等待时长 单位ms
      * @param[in] cb 任务
      * @return std::shared_ptr<Timer>
      */
     std::shared_ptr<Timer> runAfter(int64_t delay, TimerCb cb);
     /**
      * @brief 每间隔一段时间执行一次任务
-     * @param[in] interval 循环间隔 单位s
+     * @param[in] interval 循环间隔 单位ms
      * @param[in] cb 任务
      * @return std::shared_ptr<Timer>
      */
@@ -116,7 +116,7 @@ private:
     const pid_t _threadId;
     /// @brief IO复用组件
     std::unique_ptr<Poller> _poller;
-    /// @brief 简易定时器队列
+    /// @brief 简易定时器队列  BUG:这里销毁有问题
     std::unique_ptr<SampleTimerQueue> _timerQueue;
 
 

@@ -39,6 +39,16 @@ uint64_t GetCurrentUs();
 std::string Timer2Str(time_t ts, const std::string& format);
 
 /**
+ * @brief 获取开机时间, 单位 秒s
+ * @return uint32_t 
+ */
+int32_t GetMonotonicS();
+
+
+int64_t GetMonotonicMS();
+
+
+/**
  * @brief 获取内核线程pid
  * @return pid_t
  */
@@ -74,6 +84,11 @@ int32_t CreateTimerFd();
  */
 void DelSpaceHelper(std::string &str);
 
+/**
+ * @brief 生成UUID
+ * @return std::string 
+ */
+std::string GenerateUuid();
 
 } // namespace kit
 #endif

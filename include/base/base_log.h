@@ -48,3 +48,32 @@ static auto g_base_logger = KIT_LOGGER("base");
 #define THREAD_F_ERROR(fmt, ...)     BASE_F_ERROR("Thread", fmt, ##__VA_ARGS__)
 #define THREAD_F_FATAL(fmt, ...)     BASE_F_FATAL("Thread", fmt, ##__VA_ARGS__)
 /*******thread模块*********/
+
+/*******thread pool模块*********/
+#define TPOOL_DEBUG()     BASE_DEBUG("ThreadPool")
+#define TPOOL_INFO()      BASE_INFO("ThreadPool")
+#define TPOOL_WARN()      BASE_WARN("ThreadPool")
+#define TPOOL_ERROR()     BASE_ERROR("ThreadPool")
+#define TPOOL_FATAL()     BASE_FATAL("ThreadPool")
+
+#define TPOOL_F_DEBUG(fmt, ...)     BASE_F_DEBUG("ThreadPool", fmt, ##__VA_ARGS__)
+#define TPOOL_F_INFO(fmt, ...)      BASE_F_INFO("ThreadPool", fmt, ##__VA_ARGS__)
+#define TPOOL_F_WARN(fmt, ...)      BASE_F_WARN("ThreadPool", fmt, ##__VA_ARGS__)
+#define TPOOL_F_ERROR(fmt, ...)     BASE_F_ERROR("ThreadPool", fmt, ##__VA_ARGS__)
+#define TPOOL_F_FATAL(fmt, ...)     BASE_F_FATAL("ThreadPool", fmt, ##__VA_ARGS__)
+/*******thread pool模块模块*********/
+
+/*******content parser模块*********/
+#define PARSER_DEBUG()     BASE_DEBUG("parser")
+#define PARSER_INFO()      BASE_INFO("parser")
+#define PARSER_WARN()      BASE_WARN("parser")
+#define PARSER_ERROR()     BASE_ERROR("parser")
+#define PARSER_FATAL()     BASE_FATAL("parser")
+
+#define PARSER_F_DEBUG(fmt, ...)     BASE_F_DEBUG("parser", fmt, ##__VA_ARGS__)
+#define PARSER_F_INFO(fmt, ...)      BASE_F_INFO("parser", fmt, ##__VA_ARGS__)
+#define PARSER_F_WARN(fmt, ...)      BASE_F_WARN("parser", fmt, ##__VA_ARGS__)
+#define PARSER_F_ERROR(fmt, ...)     BASE_F_ERROR("parser", fmt, ##__VA_ARGS__)
+#define PARSER_F_FATAL(fmt, ...)     BASE_F_FATAL("parser", fmt, ##__VA_ARGS__)
+
+/*******content parser模块*********/

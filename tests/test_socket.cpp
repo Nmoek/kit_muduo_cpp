@@ -12,14 +12,14 @@
 #include "./test_log.h"
 
 
-#include <gtest/gtest.h>
+#include "gtest/gtest.h"
 
 using namespace kit_muduo;
 
 
 TEST(TestSocket, DISABLED_test1)
 {
-    Socket s(Socket::CreateIpv4());
+    Socket s(Socket::CreateTcpIpv4());
     InetAddress addr(5555);
     s.bindAddress(addr);
     TEST_INFO() << "server listen.." << std::endl;

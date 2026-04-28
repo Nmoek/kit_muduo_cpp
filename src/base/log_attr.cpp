@@ -31,6 +31,16 @@ LogAttr::LogAttr(std::shared_ptr<Logger> logger, LogLevel::Level level, const st
 
 }
 
+std::string LogAttr::getFileBaseName() const
+{
+    const size_t pos = _fileName.find_last_of("/\\");
+    if(pos == std::string::npos)
+    {
+        return _fileName;
+    }
+    return _fileName.substr(pos + 1);
+}
+
 void LogAttr::format(const char *fmt, ...)
 {
     va_list va;
@@ -45,7 +55,14 @@ void LogAttr::format(const char *fmt, va_list va)
     int len = vasprintf(&buf, fmt, va);
     if(-1 != len)
     {
-        _content << buf;
+        try {
+            _content << buf;
+            free(buf);
+        } catch(...) {
+            std::cerr << "LogAttr format error! " << std::endl;
+            free(buf);
+        }
+
     }
 }
 } // namespace kit
