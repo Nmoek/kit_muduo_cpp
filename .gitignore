@@ -13,7 +13,10 @@
 /bin/coverage/
 /lib/coverage/
 /coverage/
+/log
 
 # 忽略所有 .md 文件，但保留 README.md
 *.md
 !README.md
+
+*.sqlite

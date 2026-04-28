@@ -1,0 +1,6 @@
+/.codex
+/AGENTS.md
+*.md
+node_modules/
+jsconfig.json
+

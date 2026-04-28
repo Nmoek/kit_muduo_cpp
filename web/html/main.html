@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>协议测试</title>
+    <link rel="stylesheet" href="../css/main.css">
+    <link rel="stylesheet" href="../css/modal_styles.css">
+</head>
+<body>
+    <div class="admin-container">
+        <aside class="sidebar">
+            <h2>通用安检机协议半自动测试平台</h2>
+            <nav>
+                <ul>
+                    <li><a href="main.html" class="active">协议测试</a></li>
+                    <li><a href="dashboard.html">控制面板</a></li>
+                </ul>
+            </nav>
+        </aside>
+        <main class="content">
+            <div class="service-manager-header">
+                <h2>测试服务管理</h2>
+                <button id="add-service" class="add-btn">+ 添加测试服务</button>
+            </div>
+            <div class="service-platform">
+                <div class="service-cards">
+                    <!-- 测试服务卡片将通过JS动态添加 -->
+                </div>
+                <div id="service-pagination" class="pagination-bar"></div>
+            </div>
+        </main>
+    </div>
+    <script src="../js/namespace.js"></script>
+    <script src="../js/config.js"></script>
+    <script src="../js/constants.js"></script>
+    <script src="../js/utils.js"></script>
+    <script src="../js/mock_data.js"></script>
+    <script src="../js/api.js"></script>
+    <script src="../js/pagination.js"></script>
+    <script src="../js/tcp_pattern_modal.js"></script>
+    <script src="../js/add_protocol_modal.js"></script>
+    <script src="../js/protocol_item.js"></script>
+    <script src="../js/protocol_registry.js"></script>
+    <script src="../js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>通用安检机协议半自动测试平台</title>
+    <link rel="stylesheet" href="../css/login.css">
+    <style>
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+            position: relative;
+        }
+        .login-title {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .beta-badge {
+            position: absolute;
+            top: 0;
+            right: 0;
+            background: #f39c12;
+            color: white;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-header">
+            <h1 class="login-title">通用安检机协议半自动测试平台<span class="beta-badge">Beta</span></h1>
+        </div>
+        <div class="login-box">
+            <form id="loginForm" action="main.html">
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password" required>
+                </div>
+                <button type="submit" onclick="login()">登录</button>
+            </form>
+        </div>
+    </div>
+    <script src="../js/login.js"></script>
+</body>
+</html>

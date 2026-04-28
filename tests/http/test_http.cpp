@@ -28,13 +28,14 @@ static const char g_test_req[] = \
 "Accept-Encoding: UTF-8\r\n" \
 "\r\n561wefwe65f1ewf";
 
+#if 0
 static const char g_test_resp[] = \
 "HTTP/1.1 200 OK\r\n" \
 "Host: www.chenshuo.com\r\n" \
 "Content-Length: 6\r\n" \
 "Accept-Encoding: UTF-8\r\n" \
 "\r\n123456";
-
+#endif
 
 TEST(TestHttpReq, raw_data)
 {

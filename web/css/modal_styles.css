@@ -1,0 +1,589 @@
+/* 模态框基础样式 */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+/* 通用模态框样式 */
+.add-service-modal,
+.add-protocol-item-modal,
+.edit-method-modal,
+.config-pattern-modal,
+.edit-path-modal,
+.tcp-pattern-change-modal {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    width: fit-content;
+    height: fit-content;
+    max-width: 90%;
+    animation: modalFadeIn 0.3s ease;
+}
+
+.add-service-modal,
+.add-protocol-item-modal {
+    min-width: 40rem;
+}
+
+/* 模态框头部样式 */
+.modal-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #333;
+}
+
+.close-modal {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #999;
+}
+
+/* 模态框内容样式 */
+.modal-body {
+    padding: 20px 24px;
+}
+
+/* 动画效果 */
+@keyframes modalFadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* 表单网格布局 */
+.form-columns-container {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.2rem;
+    padding: 1rem;
+    margin-bottom: 1.2rem;
+    align-items: flex-start;
+    overflow: hidden;
+}
+
+@media (max-width: 1200px) {
+    .form-columns-container {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    .form-columns-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+.form-group {
+    margin-bottom: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.5rem 0;
+}
+
+.form-group::after {
+    content: '';
+    position: absolute;
+    bottom: -0.4rem;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background-color: #f0f0f0;
+}
+
+.form-group .body-type-header,
+.form-group .pattern-header,
+.form-group label {
+    font-weight: 500;
+    color: #555;
+    font-size: 14px;
+    text-align: left;
+    padding-left: 0.2rem;
+    margin-bottom: 0.2rem;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    max-width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.3s;
+    box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #1890ff;
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+/* 美化选择框 */
+.form-group select {
+    appearance: none;
+    position: relative;
+    padding-right: 2.5rem;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.form-group select::after {
+    content: "▼";
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    color: #555;
+    pointer-events: none;
+}
+
+.form-group select option[value=""] {
+    color: #999;
+}
+
+/* Body编辑模态框样式 */
+.edit-body-modal {
+    width: 600px;
+    max-width: 90%;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    animation: modalFadeIn 0.3s ease;
+}
+
+.edit-body-modal textarea {
+    min-height: 200px;
+    font-family: monospace;
+    resize: vertical;
+}
+
+/* 协议项模态框按钮样式 */
+
+.add-protocol-item-modal .cancel-btn {
+    background: #f5f5f5;
+    color: #666;
+    border: 1px solid #ddd;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.add-protocol-item-modal .cancel-btn:hover {
+    background: #eee;
+    color: #333;
+}
+
+.add-protocol-item-modal .confirm-btn {
+    background: #1890ff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    box-shadow: 0 2px 4px rgba(24, 144, 255, 0.2);
+}
+
+.add-protocol-item-modal .confirm-btn:hover {
+    background: #40a9ff;
+    box-shadow: 0 3px 6px rgba(24, 144, 255, 0.3);
+}
+
+/* 协议项模态框自适应样式 */
+.add-protocol-item-modal .method-radios,
+.add-protocol-item-modal .method-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 7.5px;
+    margin-bottom: 7.5px;
+    position: relative;
+    width: 100%;
+    height: fit-content;
+}
+
+.add-protocol-item-modal .body-type-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.add-protocol-item-modal .body-type-container select {
+    flex: 1;
+    min-width: 100px;
+}
+
+.pattern-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.pattern-container select {
+    flex: 1;
+    min-width: 100px;
+}
+
+.pattern-config-btn {
+    padding: 0.5rem 1rem;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.pattern-config-btn:hover {
+    background: #e0e0e0;
+}
+
+
+.add-protocol-item-modal .import-btn {
+    padding: 0.5rem 1rem;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.add-protocol-item-modal .import-btn:hover {
+    background: #e0e0e0;
+}
+
+/* 导入模态框样式 */
+.import-modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 500px;
+    max-width: 90%;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1100;
+    padding: 20px;
+}
+
+.import-modal .modal-body {
+    padding: 20px;
+}
+
+.import-modal textarea {
+    width: 100%;
+    min-height: 200px;
+    margin-bottom: 16px;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    font-family: monospace;
+}
+
+/* 导入状态提示 */
+.import-status {
+    display: inline-block;
+    margin-left: 8px;
+    font-size: 12px;
+    color: #52c41a;
+    background: #f6ffed;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #b7eb8f;
+    animation: fadeIn 0.3s;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.import-modal .form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.import-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.add-protocol-item-modal .method-radios label,
+.add-protocol-item-modal .method-checkboxes label {
+    display: flex;
+    align-items: center;
+    padding: 4px 2px;
+    background: #f5f5f5;
+    border-radius: 4px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-bottom: 0;
+}
+
+.add-protocol-item-modal .method-radios input,
+.add-protocol-item-modal .method-checkboxes input {
+    margin-right: 4px;
+    margin-bottom: 4px;
+}
+
+/* 文本域调整 */
+.form-group textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+/* TCP格式信息列表 */
+
+.pattern-field-container {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+}
+
+
+.pattern-field-container .del-field-btn {
+    background: #ef4444;
+    color: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    margin-top: auto;
+    margin-bottom: auto;
+    margin-right: auto;
+}
+
+.pattern-field-container .del-field-btn:disabled {
+    background-color: light-dark(rgba(239, 239, 239, 0.3), rgba(19, 1, 1, 0.3));
+    color: light-dark(rgba(16, 16, 16, 0.3), rgba(255, 255, 255, 0.3));
+    border-color: light-dark(rgba(118, 118, 118, 0.3), rgba(195, 195, 195, 0.3));
+}
+
+.pattern-field-info {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1.2rem;
+    margin: 1rem 0;
+    border: 1px solid #e9ecef;
+}
+
+.pattern-field-info .pattern-field-info-header {
+    display: flex;
+    gap: 0.95rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid #e9ecef;
+}
+
+.pattern-field-info .pattern-field-info-header label {
+    display: block;
+    font-weight: 600;
+    color: #333;
+    font-size: 15px;
+}
+
+.pattern-field-info .pattern-field-labels {
+    display: flex;
+    gap: 0.95rem;
+    margin-bottom: 0.8rem;
+    padding: 0 0.7rem;
+    padding-left: 2.35rem;
+    align-items: center;
+    width: 100%;
+}
+
+.pattern-field-info .pattern-field-labels label {
+    font-weight: 500;
+    color: #555;
+    font-size: 13px;
+    text-align: center;
+    background: #e9ecef;
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+    margin: 0;
+    min-width: 9.9rem;
+    box-sizing: border-box;
+}
+
+.pattern-field-info .pattern-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    /* 设置最大高度，当内容超过时启用滚动 */
+    max-height: 300px;
+    overflow-y: auto;
+    /* 平滑滚动效果 */
+    scroll-behavior: smooth;
+    /* 自定义滚动条样式 */
+    scrollbar-width: thin;
+    scrollbar-color: #c1c1c1 #f0f0f0;
+}
+
+/* 当子元素超过3个时显示滚动条 */
+.pattern-field-info .pattern-list:has(> :nth-child(4)) {
+    overflow-y: scroll;
+}
+
+/* 当子元素不超过3个时不显示滚动条 */
+.pattern-field-info .pattern-list:not(:has(> :nth-child(4))) {
+    overflow-y: hidden;
+}
+
+/* Webkit浏览器滚动条样式 */
+.pattern-field-info .pattern-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.pattern-field-info .pattern-list::-webkit-scrollbar-track {
+    background: #f0f0f0;
+    border-radius: 4px;
+}
+
+.pattern-field-info .pattern-list::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+.pattern-field-info .pattern-list::-webkit-scrollbar-thumb:hover {
+    background: #a1a1a1;
+}
+
+.pattern-field-info .pattern-field {
+    display: flex;
+    gap: 0.8rem;
+    align-items: center;
+    background: white;
+    padding: 0.8rem;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+    transition: all 0.2s ease;
+}
+
+.pattern-field-info .pattern-field:hover {
+    border-color: #1890ff;
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.1);
+}
+
+.pattern-field-info .pattern-field input,
+.pattern-field-info .pattern-field select {
+    flex: 1;
+    width: 10rem;
+    min-width: 0;
+    padding: 0.5rem 1.4rem 0.5rem 0.8rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    font-size: 13px;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.pattern-field-info .pattern-field-value-container {
+    display: flex;
+    width: 10rem;
+    min-width: 0;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.pattern-field-info .pattern-field input:focus,
+.pattern-field-info .pattern-field select:focus {
+    outline: none;
+    border-color: #1890ff;
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+}
+
+.pattern-field-info .pattern-field select {
+    appearance: none;
+    padding-right: 1.5rem;
+    position: relative;
+}
+
+.pattern-field-info .pattern-field select::after {
+    content: "▼";
+    position: absolute;
+    right: 0.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: #555;
+    pointer-events: none;
+}
+
+
+.pattern-field-info .pattern-field select:disabled {
+    background-color: light-dark(rgba(239, 239, 239, 0.3), rgba(19, 1, 1, 0.3));
+    border-color: light-dark(rgba(118, 118, 118, 0.3), rgba(195, 195, 195, 0.3));
+}
+
+
+
+.form-actions .clear-btn {
+    background: #ef4444;
+    color: white;
+    border: 1px solid #ddd;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+    margin-right: auto;
+}
+
+.form-actions .clear-btn:hover {
+    background: #dc2626;
+    color: white;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .pattern-field-info .pattern-field-labels {
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+    
+    .pattern-field-info .pattern-field {
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+    
+    .pattern-field-info .pattern-field-labels label {
+        text-align: left;
+        padding: 0.3rem 0.4rem;
+        font-size: 12px;
+        width: 100%;
+        min-width: 100%;
+    }
+}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0)
-project(video_server)
+project(protocol-test-platform)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include (cmake/utils.cmake)
@@ -26,6 +26,17 @@ set(CMAKE_CXX_FLAGS  "$ENV{CXXFLAGS} \
     -Wno-unused-local-typedefs\
     -Wno-sequence-point \
     -Wcast-align")
+
+# Sqlite3 配置参数
+set(SQLITE3_DEF
+    SQLITE_ENABLE_JSON1
+    SQLITE_ENABLE_MEMSYS5
+    SQLITE_DEFAULT_CACHE_SIZE=20000  
+    SQLITE_DEFAULT_MMAP_SIZE=268435456
+    SQLITE_DEFAULT_WAL_SYNCHRONOUS=1  
+    SQLITE_DEFAULT_SYNCHRONOUS=1
+    SQLITE_DEFAULT_JOURNAL_MODE=WAL 
+)
 
 
 # 测试用例默认关闭
@@ -130,15 +141,68 @@ set(NET_SRC
     ${NET_HTTP_SRC}
 )
 
+set(DB_SRC
+    src/db/sqlite3/sqlite3.c
+)
 
 set(MUDUO_SRC
     ${BASE_SRC}
     ${NET_SRC}
+    ${DB_SRC}
 )
 
 
-set(WORK_SRC
+set(WORK_DAO_SRC
+    src/work/repository/dao/init.cpp
+    src/work/repository/dao/dao_project.cpp
+    src/work/repository/dao/dao_protocol.cpp
+)
 
+
+set(WORK_REPO_SRC
+    src/work/repository/repo_project.cpp
+    src/work/repository/repo_protocol.cpp
+
+)
+
+set(WORK_SVC_SRC
+    src/work/service/svc_project.cpp
+    src/work/service/svc_protocol.cpp
+)
+
+set(WORK_DOMAIN_SRC
+    src/work/domain/type.cpp
+    src/work/domain/project_server.cpp
+    src/work/domain/protocol_item.cpp
+    src/work/domain/http_project_server.cpp
+    src/work/domain/custom_tcp_project_server.cpp
+    src/work/domain/project_server_factory.cpp
+
+    src/work/domain/custom_tcp_pattern.cpp
+    src/work/domain/custom_tcp_context.cpp
+    src/work/domain/custom_tcp_message.cpp
+)
+
+set(WORK_WEB_SRC
+    src/work/web/web_test.cpp
+    src/work/web/web_project.cpp
+    src/work/web/web_protocol.cpp
+    src/work/web/project_vo.cpp
+    src/work/web/protocol_vo.cpp
+)
+
+set(IOC_SRC
+    src/ioc/web.cpp
+)
+
+set(WORK_SRC
+    ${WORK_DAO_SRC}
+    ${WORK_REPO_SRC}
+    ${WORK_SVC_SRC}
+    ${WORK_DOMAIN_SRC}
+    ${WORK_WEB_SRC}
+    ${IOC_SRC}
+    src/application.cpp
 )
 
 # defines
@@ -282,17 +346,42 @@ if(MUDUO_TEST)
     target_link_libraries(test_lru_cache ${LIB_LIB})
     add_test(NAME test_lru_cache COMMAND test_lru_cache)
 
+    #sqlite3测试相关配置是否生效
+    add_executable(test_sqlite3 tests/db/test_sqlite3.cpp ${WORK_SRC})
+    add_dependencies(test_sqlite3 ${DEPENDS})
+    redefine_file_macro(test_sqlite3)   #重定义 __FILE__
+    target_compile_definitions(test_sqlite3 PRIVATE ${DEF})
+    target_link_libraries(test_sqlite3 ${LIB_LIB})
+
+    # sqlite_orm 测试 test_sqlite_orm
+    add_executable(test_sqlite_orm tests/db/test_sqlite_orm.cpp ${WORK_SRC})
+    add_dependencies(test_sqlite_orm ${DEPENDS})
+    redefine_file_macro(test_sqlite_orm)   #重定义 __FILE__
+    target_link_libraries(test_sqlite_orm ${LIB_LIB})
+
+endif()
+
+if(WORK_TEST)
+    add_executable(test_web_project tests/work/web/test_web_project.cpp ${WORK_SRC})
+    add_dependencies(test_web_project ${DEPENDS})
+    redefine_file_macro(test_web_project)   #重定义 __FILE__
+    target_link_libraries(test_web_project ${LIB_LIB})
+
+    # custom_tcp服务器实例
+    add_executable(test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})
+    add_dependencies(test_custom_project_server ${DEPENDS})
+    redefine_file_macro(test_custom_project_server)   #重定义 __FILE__
+    target_compile_definitions(test_custom_project_server PRIVATE ${DEF})
+    target_link_libraries(test_custom_project_server ${LIB_LIB})
 endif()
 
 
-
-# **********************************example**********************************#
-# http服务器实例
-add_executable(example_http_server example/example_http_server.cpp)
-add_dependencies(example_http_server ${DEPENDS})
-redefine_file_macro(example_http_server)   #重定义 __FILE__
-target_link_libraries(example_http_server ${LIB_LIB})
-
+# app服务器实例
+add_executable(kit_protocol_test_platform main.cpp ${WORK_SRC})
+add_dependencies(kit_protocol_test_platform ${DEPENDS})
+redefine_file_macro(kit_protocol_test_platform)   #重定义 __FILE__
+target_compile_definitions(kit_protocol_test_platform PRIVATE ${DEF})
+target_link_libraries(kit_protocol_test_platform ${LIB_LIB})
 
 if(COVERAGE_TEST)
     set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin/coverage)

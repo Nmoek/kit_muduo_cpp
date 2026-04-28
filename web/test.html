@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CSS控件底部横线绘制方法</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        header {
+            background: #3498db;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+        
+        h2 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #3498db;
+        }
+        
+        .demo-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        
+        .demo-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+        }
+        
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin: 15px 0;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 8px 15px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #2980b9;
+        }
+        
+        /* 方法1: 使用border-bottom */
+        .input-border {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-bottom: 2px solid #3498db;
+            background: transparent;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        .input-border:focus {
+            outline: none;
+            border-bottom-color: #e74c3c;
+        }
+        
+        /* 方法2: 使用伪元素 */
+        .input-pseudo {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: transparent;
+            font-size: 16px;
+            position: relative;
+        }
+        
+        .input-pseudo::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            bottom: 0;
+            width: 100%;
+            height: 2px;
+            background: #3498db;
+            transition: background 0.3s;
+        }
+        
+        .input-pseudo:focus::after {
+            background: #e74c3c;
+        }
+        
+        /* 方法3: 使用box-shadow */
+        .input-shadow {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: transparent;
+            font-size: 16px;
+            box-shadow: 0 2px 0 #3498db;
+            transition: box-shadow 0.3s;
+        }
+        
+        .input-shadow:focus {
+            outline: none;
+            box-shadow: 0 2px 0 #e74c3c;
+        }
+        
+        /* 方法4: 使用渐变背景 */
+        .input-gradient {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: linear-gradient(to bottom, transparent 95%, #3498db 95%);
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        
+        .input-gradient:focus {
+            outline: none;
+            background: linear-gradient(to bottom, transparent 95%, #e74c3c 95%);
+        }
+        
+        /* 方法5: 使用fieldset和legend */
+        .fieldset-line {
+            border: none;
+            border-bottom: 2px solid #3498db;
+            padding: 0;
+            margin: 0;
+            position: relative;
+        }
+        
+        .fieldset-line legend {
+            padding: 0 10px;
+            font-size: 14px;
+            color: #3498db;
+        }
+        
+        .fieldset-input {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: transparent;
+            font-size: 16px;
+        }
+        
+        .fieldset-input:focus {
+            outline: none;
+        }
+        
+        /* 动画效果示例 */
+        .input-animated {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: transparent;
+            font-size: 16px;
+            border-bottom: 2px solid #ddd;
+            transition: border-color 0.3s;
+        }
+        
+        .input-animated:focus {
+            outline: none;
+            border-bottom-color: #3498db;
+            animation: underline 0.5s forwards;
+        }
+        
+        @keyframes underline {
+            0% {
+                border-bottom-width: 2px;
+            }
+            50% {
+                border-bottom-width: 3px;
+            }
+            100% {
+                border-bottom-width: 2px;
+            }
+        }
+        
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .demo-area {
+                grid-template-columns: 1fr;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+        }
+        
+        .highlight {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CSS控件底部横线绘制方法</h1>
+            <p class="subtitle">多种实现方式及效果演示</p>
+        </header>
+        
+        <div class="content">
+            <div class="section">
+                <h2>方法一：使用 border-bottom</h2>
+                <p>最简单直接的方法，通过设置底部边框实现横线效果。</p>
+                
+                <div class="demo-area">
+                    <div class="demo-box">
+                        <h3>效果演示</h3>
+                        <input type="text" class="input-border" placeholder="请输入内容">
+                    </div>
+                    
+                    <div class="demo-box">
+                        <h3>CSS代码</h3>
+                        <div class="code-block">
+                            <pre><code>.input-border {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    <span class="highlight">border-bottom: 2px solid #3498db;</span>
+    background: transparent;
+    font-size: 16px;
+    transition: border-color 0.3s;
+}
+
+.input-border:focus {
+    outline: none;
+    border-bottom-color: #e74c3c;
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>方法二：使用伪元素 (::after)</h2>
+                <p>通过伪元素创建横线，提供更大的灵活性。</p>
+                
+                <div class="demo-area">
+                    <div class="demo-box">
+                        <h3>效果演示</h3>
+                        <input type="text" class="input-pseudo" placeholder="请输入内容">
+                    </div>
+                    
+                    <div class="demo-box">
+                        <h3>CSS代码</h3>
+                        <div class="code-block">
+                            <pre><code>.input-pseudo {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    position: relative;
+}
+
+<span class="highlight">.input-pseudo::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    height: 2px;
+    background: #3498db;
+    transition: background 0.3s;
+}</span>
+
+.input-pseudo:focus::after {
+    background: #e74c3c;
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>方法三：使用 box-shadow</h2>
+                <p>利用阴影效果创建底部横线，可以实现更复杂的效果。</p>
+                
+                <div class="demo-area">
+                    <div class="demo-box">
+                        <h3>效果演示</h3>
+                        <input type="text" class="input-shadow" placeholder="请输入内容">
+                    </div>
+                    
+                    <div class="demo-box">
+                        <h3>CSS代码</h3>
+                        <div class="code-block">
+                            <pre><code>.input-shadow {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    <span class="highlight">box-shadow: 0 2px 0 #3498db;</span>
+    transition: box-shadow 0.3s;
+}
+
+.input-shadow:focus {
+    outline: none;
+    box-shadow: 0 2px 0 #e74c3c;
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>方法四：使用渐变背景</h2>
+                <p>通过线性渐变创建底部横线，适合需要与其他背景效果结合的场景。</p>
+                
+                <div class="demo-area">
+                    <div class="demo-box">
+                        <h3>效果演示</h3>

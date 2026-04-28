@@ -1,0 +1,14 @@
+{
+  "name": "kit-proxy-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:syntax": "node --check js/namespace.js && node --check js/config.js && node --check js/constants.js && node --check js/utils.js && node --check js/mock_data.js && node --check js/api.js && node --check js/pagination.js && node --check js/tcp_pattern_modal.js && node --check js/add_protocol_modal.js && node --check js/protocol_item.js && node --check js/protocol_registry.js && node --check js/main.js && node --check js/protocol_items.js && node --check js/protocol_test.js && node --check js/login.js && node --check js/dashboard.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3",
+    "vitest": "^2.1.9"
+  }
+}

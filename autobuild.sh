@@ -9,6 +9,6 @@ rm -r ./bin/*
 cd ./build
 cmake ..
 echo "build...."
-make -j
+make -j4
 
 echo "build finish!"

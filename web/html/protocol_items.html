@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>协议项管理</title>
+    <link rel="stylesheet" href="../css/main.css">
+    <link rel="stylesheet" href="../css/modal_styles.css">
+</head>
+<body>
+    <div class="admin-container">
+        <aside class="sidebar">
+            <h2>通用安检机协议半自动测试平台</h2>
+            <nav>
+                <ul>
+                    <li><a href="main.html" class="active">协议测试</a></li>
+                    <li><a href="dashboard.html">控制面板</a></li>
+                </ul>
+            </nav>
+        </aside>
+        <main class="content">
+            <div class="service-manager-header protocol-items-header">
+                <div>
+                    <a id="back-service-list" class="back-link" href="main.html">返回测试服务列表</a>
+                    <h2 id="protocol-items-title">协议项管理</h2>
+                </div>
+                <button id="add-protocol-item" class="add-btn" disabled>+ 添加协议项</button>
+            </div>
+
+            <div id="protocol-page-error" class="page-error" style="display: none"></div>
+
+            <div class="protocol-items-page">
+                <div id="protocol-service-meta" class="service-fields-container protocol-service-meta"></div>
+                <div class="protocol-management">
+                    <div class="protocol-list"></div>
+                </div>
+                <div id="protocol-pagination" class="pagination-bar"></div>
+            </div>
+        </main>
+    </div>
+    <script src="../js/namespace.js"></script>
+    <script src="../js/config.js"></script>
+    <script src="../js/constants.js"></script>
+    <script src="../js/utils.js"></script>
+    <script src="../js/mock_data.js"></script>
+    <script src="../js/api.js"></script>
+    <script src="../js/pagination.js"></script>
+    <script src="../js/tcp_pattern_modal.js"></script>
+    <script src="../js/add_protocol_modal.js"></script>
+    <script src="../js/protocol_item.js"></script>
+    <script src="../js/protocol_registry.js"></script>
+    <script src="../js/main.js"></script>
+    <script src="../js/protocol_items.js"></script>
+</body>
+</html>

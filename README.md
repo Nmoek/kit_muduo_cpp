@@ -1,2 +1,3 @@
-# kit_muduo_cpp
-实现一个仿muduo网络库
+# 轻量协议测试平台
+1. 基于muduo库开发的HTTP业务平台
+2. web前端采用Js原生开发，未使用框架
