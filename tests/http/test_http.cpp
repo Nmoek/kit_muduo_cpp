@@ -77,6 +77,50 @@ TEST(TestHttpReq, raw_data)
     TEST_INFO() << "Body: "<< "|" << req->body().toString() << "|" << std::endl;
 }
 
+TEST(TestHttpReq, query_params)
+{
+    static const char test_req[] = \
+    "GET /projects?project_id=42&name=kit+muduo&empty=&encoded=a%2Bb%20c&flag HTTP/1.1\r\n" \
+    "Host: localhost\r\n" \
+    "\r\n";
+
+    HttpContext context;
+    Buffer buf;
+    buf.append(test_req, strlen(test_req));
+
+    auto now = TimeStamp::Now();
+    bool ok = context.parseRequest(buf, now);
+
+    EXPECT_EQ(ok, true);
+    auto req = context.request();
+    EXPECT_STREQ(req->path().c_str(), "/projects");
+    EXPECT_STREQ(req->getQureyParam("project_id").c_str(), "42");
+    EXPECT_STREQ(req->getQureyParam("name").c_str(), "kit muduo");
+    EXPECT_STREQ(req->getQureyParam("empty").c_str(), "");
+    EXPECT_STREQ(req->getQureyParam("encoded").c_str(), "a+b c");
+    EXPECT_STREQ(req->getQureyParam("flag").c_str(), "");
+}
+
+TEST(TestHttpReq, query_params_segmented_url)
+{
+    HttpContext context;
+    auto now = TimeStamp::Now();
+
+    EXPECT_EQ(context.parseRequest("GET /pro", now), true);
+    EXPECT_EQ(context.gotAll(), false);
+
+    bool ok = context.parseRequest("jects?project_id=42&name=kit+muduo HTTP/1.1\r\n"
+                                   "Host: localhost\r\n"
+                                   "\r\n", now);
+
+    EXPECT_EQ(ok, true);
+    EXPECT_EQ(context.gotAll(), true);
+    auto req = context.request();
+    EXPECT_STREQ(req->path().c_str(), "/projects");
+    EXPECT_STREQ(req->getQureyParam("project_id").c_str(), "42");
+    EXPECT_STREQ(req->getQureyParam("name").c_str(), "kit muduo");
+}
+
 
 TEST(TestHttpReq, create_data)
 {

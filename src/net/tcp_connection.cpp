@@ -67,7 +67,7 @@ void TcpConnection::send(const std::vector<char>& buf)
 
             TCP_F_DEBUG("TcpConnection::send queue fd[%d][%s] \n", fd(), _peerAddr.toIpPort().c_str());
 
-            _subLoop->queueInLoop([&, this_ptr = shared_from_this()](){
+            _subLoop->queueInLoop([buf, this_ptr = shared_from_this()](){
                 this_ptr->sendInLoop(buf);
             });
 

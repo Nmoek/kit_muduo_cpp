@@ -20,6 +20,53 @@
 namespace kit_muduo {
 namespace http {
 
+namespace {
+
+static bool IsHexDigit(char ch)
+{
+    return ('0' <= ch && ch <= '9')
+        || ('a' <= ch && ch <= 'f')
+        || ('A' <= ch && ch <= 'F');
+}
+
+static int HexToInt(char ch)
+{
+    if('0' <= ch && ch <= '9') return ch - '0';
+    if('a' <= ch && ch <= 'f') return ch - 'a' + 10;
+    if('A' <= ch && ch <= 'F') return ch - 'A' + 10;
+    return 0;
+}
+
+static std::string UrlDecode(const std::string &value)
+{
+    std::string decoded;
+    decoded.reserve(value.size());
+
+    for(size_t i = 0; i < value.size(); ++i)
+    {
+        if(value[i] == '%' && i + 2 < value.size()
+            && IsHexDigit(value[i + 1]) && IsHexDigit(value[i + 2]))
+        {
+            decoded.push_back(static_cast<char>(
+                HexToInt(value[i + 1]) * 16 + HexToInt(value[i + 2])));
+            i += 2;
+        }
+        else if(value[i] == '+')
+        {
+            decoded.push_back(' ');
+        }
+        else
+        {
+            decoded.push_back(value[i]);
+        }
+    }
+
+    return decoded;
+}
+
+
+} // namespace
+
 LLhttpParser::LLhttpParser(HttpContext *context)
     :HttpParser(context)
 {
@@ -28,6 +75,7 @@ LLhttpParser::LLhttpParser(HttpContext *context)
     _settings.on_status = &LLhttpParser::onStatus;
     _settings.on_status_complete = &LLhttpParser::onStatusComplete;
     _settings.on_url = &LLhttpParser::onUrl;
+    _settings.on_url_complete = &LLhttpParser::onUrlComplete;
     _settings.on_version = &LLhttpParser::onVersion;
     _settings.on_header_field = &LLhttpParser::onHeaderField;
     _settings.on_header_value = &LLhttpParser::onHeaderValue;
@@ -109,13 +157,77 @@ int LLhttpParser::onStatusComplete(llhttp_t* parser)
 int LLhttpParser::onUrl(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
+    HeaderContext &ctx = parser_ptr->_headerCtx;
 
-    const std::string &s = std::string(data, len);
+    std::string s(data, len);
     HTTP_DEBUG() << "url: " << s << std::endl;
 
-    request->setPath(s);
+    ctx.url.append(data, len);
     
+    return 0;
+}
+
+void LLhttpParser::parseQueryParams(const std::string &query, const HttpRequestPtr &request)
+{
+    size_t start = 0;
+    while(start <= query.size())
+    {
+        const size_t end = query.find('&', start);
+        const size_t part_end = end == std::string::npos ? query.size() : end;
+
+        if(part_end > start)
+        {
+            const size_t equal = query.find('=', start);
+            const bool has_equal = equal != std::string::npos && equal < part_end;
+            std::string key;
+            std::string val;
+
+            if(has_equal)
+            {
+                key = query.substr(start, equal - start);
+                val = query.substr(equal + 1, part_end - equal - 1);
+            }
+            else
+            {
+                key = query.substr(start, part_end - start);
+            }
+
+            key = UrlDecode(key);
+            if(!key.empty())
+            {
+                request->addQureyParam(key, UrlDecode(val));
+            }
+        }
+
+        if(end == std::string::npos)
+        {
+            break;
+        }
+        start = end + 1;
+    }
+}
+
+void LLhttpParser::parseUrl(const std::string &url, const HttpRequestPtr &request)
+{
+    const size_t query_pos = url.find('?');
+    if(query_pos != std::string::npos)
+    {
+        request->setPath(url.substr(0, query_pos));
+        parseQueryParams(url.substr(query_pos + 1), request);
+    }
+    else
+    {
+        request->setPath(url);
+    }
+}
+
+int LLhttpParser::onUrlComplete(llhttp_t* parser)
+{
+    LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
+    HttpRequestPtr request = parser_ptr->_context->request();
+    HeaderContext &ctx = parser_ptr->_headerCtx;
+
+    parser_ptr->parseUrl(ctx.url, request);
     return 0;
 }
 
