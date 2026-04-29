@@ -183,7 +183,7 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     resp->body().setContentType(GetStaticType(suffix_type));
 
-    const std::string target_path = "/home/app/tmp/web_static/" + suffix_type + "/" + file_name;
+    const std::string target_path = "web/" + suffix_type + "/" + file_name;
 
     /// TODO: 可使用sendfile优化 减少拷贝
     std::fstream tmp_f(target_path, std::ios::in | std::ios::binary);

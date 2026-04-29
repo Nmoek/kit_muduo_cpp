@@ -84,7 +84,7 @@ struct ContentType
             case kOctetStream: return "application/octet-stream";
             case kHtml: return "text/html";
             case kCss: return "text/css";
-            case kJavaScript: return "text/js";
+            case kJavaScript: return "text/javascript";
 
             default: return "application/json";
         }

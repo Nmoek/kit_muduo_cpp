@@ -9,6 +9,8 @@
 #ifndef __KIT_HTTP_PARSER_H__
 #define __KIT_HTTP_PARSER_H__
 
+#include "net/call_backs.h"
+
 #include <llhttp.h>
 #include <string>
 #include <unordered_map>
@@ -76,6 +78,7 @@ class LLhttpParser: public HttpParser
 public:
     struct HeaderContext {
         std::string cur_header;
+        std::string url;
         std::unordered_map<std::string, std::string> headers;
     };
 
@@ -94,6 +97,8 @@ private:
 
     static int onUrl(llhttp_t* parser, const char *data, size_t len);
 
+    static int onUrlComplete(llhttp_t* parser);
+
     static int onVersion(llhttp_t* parser, const char *data, size_t len);
 
     static int onVersionComplete(llhttp_t* parser);
@@ -107,6 +112,12 @@ private:
     static int onBody(llhttp_t* parser, const char *data, size_t len);
     // 该回调函数必须设置
     static int onMessageComplete(llhttp_t* parser);
+
+
+    void parseQueryParams(const std::string &query, const HttpRequestPtr &request);
+
+
+    void parseUrl(const std::string &url, const HttpRequestPtr &request);
 
 private:
     /// @brief llhttp库句柄
