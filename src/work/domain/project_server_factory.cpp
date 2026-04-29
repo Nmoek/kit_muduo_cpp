@@ -29,10 +29,7 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
     EventLoopThread t(nullptr, std::to_string(p.m_id) + "http_loop");
     EventLoop * loop = t.startLoop();
 
-    // 默认绑定到eth0 IP上
-    const std::string& local_ip = InetAddress::GetInterfaceIpv4("eth0").toIp();
-
-    const InetAddress& address = InetAddress(p.m_listenPort, local_ip);
+    const InetAddress& address = InetAddress(p.m_listenPort);
 
     PJ_F_INFO("Creating HttpProjectServer, project_id[%d] address[%s]\n", p.m_id, address.toIpPort().c_str());
     
@@ -73,10 +70,7 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
     EventLoopThread t(nullptr, std::to_string(p.m_id) + "tcp_loop");
     EventLoop * loop = t.startLoop();
 
-    // 默认绑定到eth0 IP上
-    const std::string& local_ip = InetAddress::GetInterfaceIpv4("eth0").toIp();
-
-    const InetAddress& address = InetAddress(p.m_listenPort, local_ip);
+    const InetAddress& address = InetAddress(p.m_listenPort);
 
     PJ_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s]\n", p.m_id, address.toIpPort().c_str());
     

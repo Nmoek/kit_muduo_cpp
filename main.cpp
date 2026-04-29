@@ -101,23 +101,26 @@ static std::shared_ptr<Application> InitApp()
 
 void setup_asan_report() 
 {
+#if ASAN_DEBUG
     // 注册信号处理函数
     signal(SIGUSR1, [](int sig) {
 
         std::cerr << "触发内存泄漏检查..." << std::endl;
-#if ASAN_DEBUG
+
         __lsan_do_recoverable_leak_check();  // 主动执行泄漏检查
-#endif
     });
+#endif
 }
 
 int main(int argc, char* argv[])
 {
     std::shared_ptr<Application> app = nullptr;
     std::shared_ptr<kit_muduo::http::HttpServer> server = nullptr;
-    
+
+
     // ASan触发检查
     setup_asan_report();
+
 
     try {
         InitLog();

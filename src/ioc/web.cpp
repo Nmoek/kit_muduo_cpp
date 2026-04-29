@@ -22,10 +22,8 @@ std::shared_ptr<HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
     ProtocolHandler *protocHdl)
 {
 
-    const std::string& local_ip = InetAddress::GetInterfaceIpv4("eth0").toIp();
-
     // TODO 使用配置文件
-    auto server = std::make_shared<HttpServer>(loop, InetAddress(5555, local_ip), "http_server", true, TcpServer::Option::KReusePort);
+    auto server = std::make_shared<HttpServer>(loop, InetAddress(5555), "http_server", true, TcpServer::Option::KReusePort);
     server->setThreadNum(4);
 
     auto static_svl = std::make_shared<StaticFileServlet>();
