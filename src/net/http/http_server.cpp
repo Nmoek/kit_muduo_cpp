@@ -62,53 +62,98 @@ RouteResult HttpServer::addRoute(const HttpRequest::Method method, const std::st
     return addRoute(ToMethodMask(method), url, std::make_shared<FunctionServlet>(cb));
 }
 
-void HttpServer::Get(const std::string &url, HttpServlet::Ptr svl)
+bool HttpServer::Get(const std::string &url, HttpServlet::Ptr svl)
 {
-    addRoute(ExpectHttpMethods::Get, url, std::move(svl));
-    return;
+    auto res = addRoute(ExpectHttpMethods::Get, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
 
-void HttpServer::Get(const std::string &url, const FunctionServlet::CallBack &cb)
+bool HttpServer::Get(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    addRoute(ExpectHttpMethods::Get, url, std::make_shared<FunctionServlet>(cb));
-    return;
+    auto res = addRoute(ExpectHttpMethods::Get, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
-void HttpServer::Post(const std::string &url, HttpServlet::Ptr svl)
+bool HttpServer::Post(const std::string &url, HttpServlet::Ptr svl)
 {
-    addRoute(ExpectHttpMethods::Post, url, std::move(svl));
-    return;
-}
-
-void HttpServer::Post(const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    addRoute(ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
-    return;
-}
-
-void HttpServer::GetAndPost(const std::string &url, HttpServlet::Ptr svl)
-{
-    addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::move(svl));
-    return;
-}
-
-void HttpServer::GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
-    return;
+    auto res = addRoute(ExpectHttpMethods::Post, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
 
-
-void HttpServer::Delete(const std::string &url, HttpServlet::Ptr svl)
+bool HttpServer::Post(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    addRoute(ExpectHttpMethods::Delete, url, std::move(svl));
-    return;
+    auto res = addRoute(ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
 
-void HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack &cb)
+bool HttpServer::GetAndPost(const std::string &url, HttpServlet::Ptr svl)
 {
-    addRoute(ExpectHttpMethods::Delete, url, std::make_shared<FunctionServlet>(cb));
-    return;
+    auto res = addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;}
+
+bool HttpServer::GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb)
+{
+    auto res = addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
+
+
+bool HttpServer::Delete(const std::string &url, HttpServlet::Ptr svl)
+{
+    auto res = addRoute(ExpectHttpMethods::Delete, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;}
+
+bool HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack &cb)
+{
+    auto res = addRoute(ExpectHttpMethods::Delete, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;}
 
 void HttpServer::onConnect(TcpConnectionPtr conn)
 {

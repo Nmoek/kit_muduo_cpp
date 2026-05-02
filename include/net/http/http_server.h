@@ -49,17 +49,17 @@ public:
 
     RouteResult addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb);
     
-    void Get(const std::string &url, HttpServlet::Ptr svl);
-    void Get(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool Get(const std::string &url, HttpServlet::Ptr svl);
+    bool Get(const std::string &url, const FunctionServlet::CallBack &cb);
 
-    void Post(const std::string &url, HttpServlet::Ptr svl);
-    void Post(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool Post(const std::string &url, HttpServlet::Ptr svl);
+    bool Post(const std::string &url, const FunctionServlet::CallBack &cb);
 
-    void GetAndPost(const std::string &url, HttpServlet::Ptr svl);
-    void GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool GetAndPost(const std::string &url, HttpServlet::Ptr svl);
+    bool GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb);
     
-    void Delete(const std::string &url, HttpServlet::Ptr svl);
-    void Delete(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool Delete(const std::string &url, HttpServlet::Ptr svl);
+    bool Delete(const std::string &url, const FunctionServlet::CallBack &cb);
 
 
 private:
