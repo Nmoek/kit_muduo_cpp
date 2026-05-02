@@ -34,6 +34,51 @@ std::string RouteKindName(RouteKind kind)
     }
 }
 
+bool IsDynamicParamStart(const std::string &pattern, size_t pos)
+{
+    return pattern[pos] == ':'
+        && (pos == 0 || pattern[pos - 1] == '/')
+        && pos + 1 < pattern.size()
+        && pattern[pos + 1] != '/';
+}
+
+bool ContainsDynamicParam(const std::string &pattern)
+{
+    for(size_t i = 0; i < pattern.size(); ++i)
+    {
+        if(IsDynamicParamStart(pattern, i))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool SegmentHasGlobSyntax(const std::string &segment)
+{
+    return !segment.empty() && segment.find_first_of("*?[") == 0;
+}
+
+bool ContainsGlobSegment(const std::string &pattern)
+{
+    size_t start = 0;
+    while(start <= pattern.size())
+    {
+        const size_t slash = pattern.find('/', start);
+        const size_t end = slash == std::string::npos ? pattern.size() : slash;
+        if(SegmentHasGlobSyntax(pattern.substr(start, end - start)))
+        {
+            return true;
+        }
+        if(slash == std::string::npos)
+        {
+            break;
+        }
+        start = slash + 1;
+    }
+    return false;
+}
+
 } // namespace
 
 MethodMask ToMethodMask(HttpRequest::Method method)
@@ -439,11 +484,11 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
 
 RouteKind HttpServletDispatch::routeKind(const std::string &pattern) const
 {
-    if(pattern.find(':') != std::string::npos)
+    if(ContainsDynamicParam(pattern))
     {
         return RouteKind::Regex;
     }
-    if(pattern.find_first_of("*?[]") != std::string::npos)
+    if(ContainsGlobSegment(pattern))
     {
         return RouteKind::Glob;
     }

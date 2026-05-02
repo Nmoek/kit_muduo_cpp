@@ -229,6 +229,34 @@ TEST(TestRouter, DynamicRouteEscapesStaticRegexChars)
     ASSERT_EQ(hit_resp->body().toString(), "match");
 }
 
+TEST(TestRouter, ColonInsideStaticSegmentIsExactRoute)
+{
+    DispatchFixture f;
+
+    ASSERT_TRUE(f.dispatch.addRoute(ExpectHttpMethods::Get, "/v1:batchGet", Servlet("exact")).ok());
+
+    auto exact_resp = f.Request("/v1:batchGet", HttpRequest::Method::kGet);
+    ASSERT_EQ(exact_resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(exact_resp->body().toString(), "exact");
+
+    auto miss_resp = f.Request("/v1anything", HttpRequest::Method::kGet);
+    ASSERT_EQ(miss_resp->stateCode().toInt(), StateCode::k404NotFound);
+}
+
+TEST(TestRouter, GlobWildcardInsideStaticSegmentIsExactRoute)
+{
+    DispatchFixture f;
+
+    ASSERT_TRUE(f.dispatch.addRoute(ExpectHttpMethods::Get, "/files/v1*beta", Servlet("exact")).ok());
+
+    auto exact_resp = f.Request("/files/v1*beta", HttpRequest::Method::kGet);
+    ASSERT_EQ(exact_resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(exact_resp->body().toString(), "exact");
+
+    auto miss_resp = f.Request("/files/v1ZZbeta", HttpRequest::Method::kGet);
+    ASSERT_EQ(miss_resp->stateCode().toInt(), StateCode::k404NotFound);
+}
+
 TEST(TestRouter, DynamicRouteCanBindMethodMask)
 {
     DispatchFixture f;
@@ -287,6 +315,9 @@ TEST(TestRouter, GlobRouteCanMatchStaticFiles)
     auto resp = f.Request("/html/index.html", HttpRequest::Method::kGet);
     ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
     ASSERT_EQ(resp->body().toString(), "glob");
+
+    auto nested_resp = f.Request("/html/nested/index.html", HttpRequest::Method::kGet);
+    ASSERT_EQ(nested_resp->stateCode().toInt(), StateCode::k404NotFound);
 }
 
 int main(int argc, char **argv)

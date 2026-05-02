@@ -58,7 +58,7 @@ bool GlobRouterMatcher::Match(HttpContextPtr ctx)
 
 bool GlobRouterMatcher::MatchPath(const std::string &path) const
 {
-    return ::fnmatch(_pattern.c_str(), path.c_str(), 0) == 0;
+    return ::fnmatch(_pattern.c_str(), path.c_str(), FNM_PATHNAME) == 0;
 }
 
 
