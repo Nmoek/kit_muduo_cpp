@@ -296,11 +296,15 @@ int LLhttpParser::onHeadersComplete(llhttp_t* parser)
 
     // headers字段赋值
     if(ReqType == parser_ptr->_type)
+    {
         request->setHeaders(ctx.headers);
+    }
     else
+    {
         response->setHeaders(ctx.headers);
+    }
     
-        // 状态转换
+    // 状态转换
     parser_ptr->_context->setState(HttpContext::kExpectBody);
     return 0;
 }
@@ -312,14 +316,16 @@ int LLhttpParser::onBody(llhttp_t* parser, const char *data, size_t len)
     HttpResponsePtr response = parser_ptr->_context->response();
 
     const std::string &s = std::string(data, len);
-    int64_t content_len = atoi(request->getHeader("Content-Length").c_str());
+    int64_t content_len = atoi(parser_ptr->_type == ReqType ?request->getHeader("Content-Length").c_str() : response->getHeader("Content-Length").c_str());
+
     const std::string &content_type_str = parser_ptr->_type == ReqType ? request->getHeader("Content-Type") : response->getHeader("Content-Type");
 
     // TODO：需要分情况检查Content-Length是否应该被包含
     // 当前处理默认必须包含
     if(content_len <= 0 || content_type_str.empty())
     {
-        HTTP_ERROR() << "Content-Length/Content-Type is invalid!" << std::endl;
+        HTTP_F_ERROR("Content-Length: %d, Content-Type:%s \n", content_len, content_type_str.c_str());
+
         return -1;
     }
 

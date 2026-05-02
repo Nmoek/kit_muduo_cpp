@@ -100,7 +100,7 @@ struct ContentType
             return ContentType(kJsonType);
         if(-1 != contentTypeStr.find("xml"))
             return ContentType(kXmlType);
-        if(-1 != contentTypeStr.find("plaint"))
+        if(-1 != contentTypeStr.find("plain"))
             return ContentType(kPlainType);
         if(-1 != contentTypeStr.find("jpeg"))
             return ContentType(kImageJpgType);
@@ -136,6 +136,7 @@ struct StateCode
         k400BadRequest = 400,
         k403Forbidden = 403,
         k404NotFound = 404,
+        k405MethodNotAllowed = 405,
         k454SessionNotFound = 454,
         k455MethodNotValid = 455,
         //5XX

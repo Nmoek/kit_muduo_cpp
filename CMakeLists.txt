@@ -28,9 +28,26 @@ set(CMAKE_CXX_FLAGS  "$ENV{CXXFLAGS} \
     -Wcast-align")
 
 
-# 测试用例默认关闭
-option(MUDUO_TEST "make muduo test file" OFF)
-option(WORK_TEST "make work test file" OFF)
+# 测试 target 默认关闭。
+# MUDUO_TEST=ON 构建全部 muduo 测试；MUDUO_TEST.HTTP=ON 只构建对应子测试。
+option(MUDUO_TEST "build all muduo tests" OFF)
+option(MUDUO_TEST.TIME_STAMP "build test_time_stamp" OFF)
+option(MUDUO_TEST.INET_ADDRESS "build test_inet_address" OFF)
+option(MUDUO_TEST.THREAD "build test_thread" OFF)
+option(MUDUO_TEST.EVENT_LOOP_THREAD "build test_event_loop_thread" OFF)
+option(MUDUO_TEST.SOCKET "build test_socket" OFF)
+option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
+option(MUDUO_TEST.TIMER "build test_timer" OFF)
+option(MUDUO_TEST.TCP_SERVER "build test_tcp_server" OFF)
+option(MUDUO_TEST.HTTP "build test_http" OFF)
+option(MUDUO_TEST.LLHTTP "build test_llhttp" OFF)
+option(MUDUO_TEST.THREAD_POOL "build test_thread_pool" OFF)
+option(MUDUO_TEST.CONVERT "build test_convert" OFF)
+option(MUDUO_TEST.ROUTER "build test_router" OFF)
+option(MUDUO_TEST.VARIANT "build test_variant" OFF)
+option(MUDUO_TEST.ASAN "build test_asan" OFF)
+option(MUDUO_TEST.UDP "build test_udp" OFF)
+option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -173,117 +190,85 @@ set(DEPENDS
 
 # **********************************tests**********************************#
 
-if(MUDUO_TEST)
+function(add_kit_test module_option test_option target_name)
+    set(_module_enabled OFF)
+    set(_test_enabled OFF)
 
-    # time_stamp  时间戳测试 test_time_stamp
-    add_executable(test_time_stamp tests/test_time_stamp.cpp)
-    add_dependencies(test_time_stamp ${DEPENDS})
-    redefine_file_macro(test_time_stamp)   #重定义 __FILE__
-    target_link_libraries(test_time_stamp ${LIB_LIB})
+    if(DEFINED ${module_option})
+        set(_module_enabled "${${module_option}}")
+    endif()
 
-    # inet_address 网络地址测试 test_inet_address
-    add_executable(test_inet_address tests/test_inet_address.cpp)
-    add_dependencies(test_inet_address ${DEPENDS})
-    redefine_file_macro(test_inet_address)   #重定义 __FILE__
-    target_link_libraries(test_inet_address ${LIB_LIB})
+    if(DEFINED ${test_option})
+        set(_test_enabled "${${test_option}}")
+    endif()
 
-    # Thread 线程测试 test_thread
-    add_executable(test_thread tests/test_thread.cpp)
-    add_dependencies(test_thread ${DEPENDS})
-    redefine_file_macro(test_thread)   #重定义 __FILE__
-    target_link_libraries(test_thread ${LIB_LIB})
+    if(_module_enabled OR _test_enabled)
+        add_executable(${target_name} ${ARGN})
+        add_dependencies(${target_name} ${DEPENDS})
+        redefine_file_macro(${target_name})   #重定义 __FILE__
+        target_link_libraries(${target_name} ${LIB_LIB})
+    endif()
+endfunction()
 
-    # EventLoopThread 线程测试 test_event_loop_thread
-    add_executable(test_event_loop_thread tests/test_event_loop_thread.cpp)
-    add_dependencies(test_event_loop_thread ${DEPENDS})
-    redefine_file_macro(test_event_loop_thread)   #重定义 __FILE__
-    target_link_libraries(test_event_loop_thread ${LIB_LIB})
+# time_stamp  时间戳测试 test_time_stamp
+add_kit_test(MUDUO_TEST MUDUO_TEST.TIME_STAMP test_time_stamp tests/test_time_stamp.cpp)
 
-    # socket测试 test_socket
-    add_executable(test_socket tests/test_socket.cpp)
-    add_dependencies(test_socket ${DEPENDS})
-    redefine_file_macro(test_socket)   #重定义 __FILE__
-    target_link_libraries(test_socket ${LIB_LIB})
+# inet_address 网络地址测试 test_inet_address
+add_kit_test(MUDUO_TEST MUDUO_TEST.INET_ADDRESS test_inet_address tests/test_inet_address.cpp)
 
-    # Buffer测试 test_buffer
-    add_executable(test_buffer tests/test_buffer.cpp)
-    add_dependencies(test_buffer ${DEPENDS})
-    redefine_file_macro(test_buffer)   #重定义 __FILE__
-    target_link_libraries(test_buffer ${LIB_LIB})
+# Thread 线程测试 test_thread
+add_kit_test(MUDUO_TEST MUDUO_TEST.THREAD test_thread tests/test_thread.cpp)
 
-    # Timer测试 test_timer
-    add_executable(test_timer tests/test_timer.cpp)
-    add_dependencies(test_timer ${DEPENDS})
-    redefine_file_macro(test_timer)   #重定义 __FILE__
-    target_link_libraries(test_timer ${LIB_LIB})
+# EventLoopThread 线程测试 test_event_loop_thread
+add_kit_test(MUDUO_TEST MUDUO_TEST.EVENT_LOOP_THREAD test_event_loop_thread tests/test_event_loop_thread.cpp)
 
-    # TcpServer测试 test_tcp_server
-    add_executable(test_tcp_server tests/test_tcp_server.cpp)
-    add_dependencies(test_tcp_server ${DEPENDS})
-    redefine_file_macro(test_tcp_server)   #重定义 __FILE__
-    target_link_libraries(test_tcp_server ${LIB_LIB})
+# socket测试 test_socket
+add_kit_test(MUDUO_TEST MUDUO_TEST.SOCKET test_socket tests/test_socket.cpp)
 
-    # http测试 test_http
-    add_executable(test_http tests/http/test_http.cpp)
-    add_dependencies(test_http ${DEPENDS})
-    redefine_file_macro(test_http)   #重定义 __FILE__
-    target_link_libraries(test_http ${LIB_LIB})
+# Buffer测试 test_buffer
+add_kit_test(MUDUO_TEST MUDUO_TEST.BUFFER test_buffer tests/test_buffer.cpp)
 
-    # llhttp测试 test_llhttp
-    add_executable(test_llhttp tests/http/test_llhttp.cpp)
-    add_dependencies(test_llhttp ${DEPENDS})
-    redefine_file_macro(test_llhttp)   #重定义 __FILE__
-    target_link_libraries(test_llhttp ${LIB_LIB})
+# Timer测试 test_timer
+add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)
 
-    # thread_pool 测试 test_thread_pool
-    add_executable(test_thread_pool tests/test_thread_pool.cpp ${WORK_SRC})
-    add_dependencies(test_thread_pool ${DEPENDS})
-    redefine_file_macro(test_thread_pool)   #重定义 __FILE__
-    target_link_libraries(test_thread_pool ${LIB_LIB})
+# TcpServer测试 test_tcp_server
+add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
 
+# http测试 test_http
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP test_http tests/http/test_http.cpp)
 
-    # 格式转换 测试 test_convert
-    add_executable(test_convert tests/test_convert.cpp ${WORK_SRC})
-    add_dependencies(test_convert ${DEPENDS})
-    redefine_file_macro(test_convert)   #重定义 __FILE__
-    target_link_libraries(test_convert ${LIB_LIB})
+# llhttp测试 test_llhttp
+add_kit_test(MUDUO_TEST MUDUO_TEST.LLHTTP test_llhttp tests/http/test_llhttp.cpp)
 
-    add_executable(test_router tests/http/test_router.cpp)
-    add_dependencies(test_router ${DEPENDS})
-    redefine_file_macro(test_router)   #重定义 __FILE__
-    target_link_libraries(test_router ${LIB_LIB})
+# thread_pool 测试 test_thread_pool
+add_kit_test(MUDUO_TEST MUDUO_TEST.THREAD_POOL test_thread_pool tests/test_thread_pool.cpp ${WORK_SRC})
 
-    #variant 自定义类型包装器
-    add_executable(test_variant tests/test_variant.cpp ${WORK_SRC})
-    add_dependencies(test_variant ${DEPENDS})
-    redefine_file_macro(test_variant)   #重定义 __FILE__
+# 格式转换 测试 test_convert
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONVERT test_convert tests/test_convert.cpp ${WORK_SRC})
+
+# http router 测试 test_router
+add_kit_test(MUDUO_TEST MUDUO_TEST.ROUTER test_router tests/http/test_router.cpp)
+
+# variant 自定义类型包装器
+add_kit_test(MUDUO_TEST MUDUO_TEST.VARIANT test_variant tests/test_variant.cpp ${WORK_SRC})
+if(MUDUO_TEST OR MUDUO_TEST.VARIANT)
     target_compile_definitions(test_variant PRIVATE ${DEF})
-    target_link_libraries(test_variant ${LIB_LIB})
-
-    
-    #test_asan 内存泄漏工具
-    add_executable(test_asan tests/test_asan.cpp ${WORK_SRC})
-    add_dependencies(test_asan ${DEPENDS})
-    redefine_file_macro(test_asan)   #重定义 __FILE__
-    target_link_libraries(test_asan ${LIB_LIB})
-
-    #test_udp udp集成测试
-    add_executable(test_udp tests/test_udp.cpp ${WORK_SRC})
-    add_dependencies(test_udp ${DEPENDS})
-    redefine_file_macro(test_udp)   #重定义 __FILE__
-    target_link_libraries(test_udp ${LIB_LIB})
-    add_test(NAME test_udp COMMAND test_udp)
-
-
-    #test_lru_cache LRU缓存测试
-    add_executable(test_lru_cache tests/test_lru_cache.cpp ${WORK_SRC})
-    add_dependencies(test_lru_cache ${DEPENDS})
-    redefine_file_macro(test_lru_cache)   #重定义 __FILE__
-    target_link_libraries(test_lru_cache ${LIB_LIB})
-    add_test(NAME test_lru_cache COMMAND test_lru_cache)
-
 endif()
 
+# test_asan 内存泄漏工具
+add_kit_test(MUDUO_TEST MUDUO_TEST.ASAN test_asan tests/test_asan.cpp ${WORK_SRC})
+
+# test_udp udp集成测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.UDP test_udp tests/test_udp.cpp ${WORK_SRC})
+if(MUDUO_TEST OR MUDUO_TEST.UDP)
+    add_test(NAME test_udp COMMAND test_udp)
+endif()
+
+# test_lru_cache LRU缓存测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache.cpp ${WORK_SRC})
+if(MUDUO_TEST OR MUDUO_TEST.LRU_CACHE)
+    add_test(NAME test_lru_cache COMMAND test_lru_cache)
+endif()
 
 
 # **********************************example**********************************#

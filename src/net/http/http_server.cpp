@@ -8,11 +8,11 @@
  */
 #include "net/http/http_server.h"
 #include "net/http/http_context.h"
+#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "base/content_parser.h"
-#include "net/http/http_router.h"
 
 namespace kit_muduo {
 namespace http {
@@ -46,127 +46,67 @@ void HttpServer::start()
     _server.start();
 }
 
-static RouterMatcher::Ptr CreateMatcherHelper(const std::string &pattern_url)
+RouteResult HttpServer::addRoute(MethodMask methods, const std::string &url, HttpServlet::Ptr svl)
 {
-    if(std::string::npos != pattern_url.find(":"))
+    auto result = _dispatch->addRoute(methods, url, std::move(svl));
+    if(!result.ok())
     {
-        HTTP_DEBUG() << pattern_url << " ==============> " << "RegexRouterMatcher" << std::endl;
-        return std::make_shared<RegexRouterMatcher>(pattern_url);
+        HTTP_F_ERROR("HttpServer addRoute failed: url[%s], methods[%s], reason[%s]\n",
+                     url.c_str(), BuildAllowHeader(methods).c_str(), result.message.c_str());
     }
-    else if(std::string::npos != pattern_url.find_first_of("*?[]") )
-    {
-        HTTP_DEBUG() << pattern_url << " ==============> " << "GlobRouterMatcher" << std::endl;
-        return std::make_shared<GlobRouterMatcher>(pattern_url);
-    }
-
-    return nullptr;
+    return result;
 }
 
-void HttpServer::addRoute(const std::string &url, HttpServlet::Ptr svl)
+RouteResult HttpServer::addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    RouterMatcher::Ptr matcher = nullptr;
-    try {
-
-        matcher = CreateMatcherHelper(url);
-
-    } catch(const std::exception &e) {
-        HTTP_F_ERROR("create matcher failed! %s, url:%s\n", e.what(), url.c_str()); 
-        return;
-    }
-    
-    // TODO 是否可以切换成工厂模式?
-    addRoute(url, svl, matcher);
+    return addRoute(ToMethodMask(method), url, std::make_shared<FunctionServlet>(cb));
 }
-
-void HttpServer::addRoute(const std::string &url, HttpServlet::Ptr svl, RouterMatcher::Ptr matcher)
-{
-    if(!matcher)  //默认是精准匹配
-    {
-        _dispatch->addServlet(url, svl);
-    }
-    else
-    {
-        _dispatch->addDynamicServlet(matcher, svl);
-    }
-    return;
-}
-
-void HttpServer::addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(method.toInt());
-
-    addRoute(url, svl);
-    return;
-}
-
-void HttpServer::delRoute(const std::string &url, const HttpRequest::Method method)
-{
-    _dispatch->delServlet(url, method.toInt());
-    return;
-}
-
 
 void HttpServer::Get(const std::string &url, HttpServlet::Ptr svl)
 {
-    svl->addExpectedMethod(HttpRequest::Method::kGet);
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Get, url, std::move(svl));
     return;
 }
 
 void HttpServer::Get(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kGet);
-
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Get, url, std::make_shared<FunctionServlet>(cb));
     return;
 }
 void HttpServer::Post(const std::string &url, HttpServlet::Ptr svl)
 {
-    svl->addExpectedMethod(HttpRequest::Method::kPost);
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Post, url, std::move(svl));
     return;
 }
 
 void HttpServer::Post(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kPost);
-
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
     return;
 }
 
 void HttpServer::GetAndPost(const std::string &url, HttpServlet::Ptr svl)
 {
-    svl->addExpectedMethod(HttpRequest::Method::kGet | HttpRequest::Method::kPost);
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::move(svl));
     return;
 }
 
 void HttpServer::GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kPost);
-
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
     return;
 }
 
 
 void HttpServer::Delete(const std::string &url, HttpServlet::Ptr svl)
 {
-    svl->addExpectedMethod(HttpRequest::Method::kDelete);
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Delete, url, std::move(svl));
     return;
 }
 
 void HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kDelete);
-    addRoute(url, svl);
+    addRoute(ExpectHttpMethods::Delete, url, std::make_shared<FunctionServlet>(cb));
     return;
 }
 
@@ -243,11 +183,6 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
         // {
             // 实际业务分发
             dispatch->handle(conn, ctx);
-
-        // }
-        // else
-        // {
-        //     BadRequest403Servlet svl403; // 没有权限
 
         // }
 

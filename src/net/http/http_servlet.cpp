@@ -10,18 +10,95 @@
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_context.h"
+#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/tcp_connection.h"
 #include "net/http/http_router.h"
 
+#include <algorithm>
+#include <fstream>
+#include <sstream>
 
 namespace kit_muduo::http {
 
+namespace {
+
+std::string RouteKindName(RouteKind kind)
+{
+    switch(kind)
+    {
+        case RouteKind::Exact: return "exact";
+        case RouteKind::Regex: return "regex";
+        case RouteKind::Glob:  return "glob";
+        default: return "unknown";
+    }
+}
+
+} // namespace
+
+MethodMask ToMethodMask(HttpRequest::Method method)
+{
+    switch(method.toInt())
+    {
+        case HttpRequest::Method::kGet: return ExpectHttpMethods::Get;
+        case HttpRequest::Method::kPost: return ExpectHttpMethods::Post;
+        case HttpRequest::Method::kHead: return ExpectHttpMethods::Head;
+        case HttpRequest::Method::kPut: return ExpectHttpMethods::Put;
+        case HttpRequest::Method::kDelete: return ExpectHttpMethods::Delete;
+        default: return ExpectHttpMethods::None;
+    }
+}
+
+bool MethodAllowed(MethodMask expected, HttpRequest::Method actual)
+{
+    MethodMask actual_mask = ToMethodMask(actual);
+    return actual_mask != ExpectHttpMethods::None && (expected & actual_mask) != 0;
+}
+
+std::string BuildAllowHeader(MethodMask methods)
+{
+    std::string allow;
+    auto append = [&allow](const char *method) {
+        if(!allow.empty())
+        {
+            allow += ", ";
+        }
+        allow += method;
+    };
+
+    if(methods & ExpectHttpMethods::Get)
+    {
+        append("GET");
+    }
+    if(methods & ExpectHttpMethods::Post)
+    {
+        append("POST");
+    }
+    if(methods & ExpectHttpMethods::Head)
+    {
+        append("HEAD");
+    }
+    if(methods & ExpectHttpMethods::Put)
+    {
+        append("PUT");
+    }
+    if(methods & ExpectHttpMethods::Delete)
+    {
+        append("DELETE");
+    }
+
+    return allow;
+}
+
+HttpServlet::HttpServlet(const std::string &name, const std::string &server_name)
+    :_name(name)
+    ,_server_name(server_name)
+{ }
 
 /***********FunctionServlet************ */
 
-FunctionServlet::FunctionServlet(const CallBack &callbcak, const std::string &name)
-    :HttpServlet(name)
+FunctionServlet::FunctionServlet(const CallBack &callbcak, const std::string &name, const std::string &server_name)
+    :HttpServlet(name, server_name)
     ,_callback(callbcak)
 {
 
@@ -35,15 +112,14 @@ void FunctionServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 /***********FunctionServlet************ */
 
 /***********HelloServlet************ */
-HelloServlet::HelloServlet(const std::string &serverName, const std::string &name)
-    :HttpServlet(name)
-    ,_serverName(serverName)
+HelloServlet::HelloServlet(const std::string &server_name, const std::string &name)
+    :HttpServlet(name, server_name)
 {
 
 }
 
 
-void HelloServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+void HelloServlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
@@ -56,7 +132,7 @@ void HelloServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "<body>"
   "<div style=\"text-align:center\">"
     "<h1>Hello, Welcome my server!</h1>"
-    "<p>" + _serverName + "</p>"
+    "<p>kit server</p>"
   "</div>"
 "</body>"
 "</html>";
@@ -64,19 +140,23 @@ void HelloServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->body().appendData(body);
 }
 
+void HelloServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
 /***********HelloServlet************ */
 
 /**********NotFound404Servlet********** */
 
-NotFound404Servlet::NotFound404Servlet(const std::string &serverName, const std::string &name)
-    :HttpServlet(name)
-    ,_serverName(serverName)
+NotFound404Servlet::NotFound404Servlet()
+    :HttpServlet("NotFound404Servlet", "kit_server")
 {
 
 }
 
 
-void NotFound404Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+void NotFound404Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
@@ -90,7 +170,7 @@ void NotFound404Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "<body>"
   "<div style=\"text-align:center\">"
     "<h1>404 Not Found</h1>"
-    "<p>" + _serverName + "</p>"
+    "<p> kit_server </p>"
   "</div>"
 "</body>"
 "</html>";
@@ -98,16 +178,19 @@ void NotFound404Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->body().appendData(body);
 }
 
+void NotFound404Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
 /**********NotFound404Servlet********** */
 
-BadRequest400Servlet::BadRequest400Servlet(const std::string &serverName, const std::string &name)
-    :HttpServlet(name)
-    ,_serverName(serverName)
+BadRequest400Servlet::BadRequest400Servlet()
+    :HttpServlet("BadRequest400Servlet", "kit_server")
 {
 
 }
 
-void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+void BadRequest400Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto resp = ctx->response();
 
@@ -117,10 +200,14 @@ void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->body().reset();
 }
 
+void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
 
-ServerErr500Servlet::ServerErr500Servlet(const std::string &serverName, const std::string &name)
-    :HttpServlet(name)
-    ,_serverName(serverName)
+
+ServerErr500Servlet::ServerErr500Servlet()
+    :HttpServlet("ServerErr500Servlet", "kit_server")
 {
 
 }
@@ -130,7 +217,7 @@ void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     auto resp = ctx->response();
 
     resp->setVersion(Version::kHttp11);
-    resp->setStateCode(StateCode::k404NotFound);
+    resp->setStateCode(StateCode::k500InternalServerError);
     resp->setConnectionClosed(true);
     resp->addHeader("Content-Type", "text/html");
 
@@ -140,16 +227,16 @@ void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "<body>"
   "<div style=\"text-align:center\">"
     "<h1>500 Server Error</h1>"
-    "<p>" + _serverName + "</p>"
+    "<p>kit server</p>"
   "</div>"
 "</body>"
 "</html>";
 
     resp->body().appendData(body);
 }
-StaticFileServlet::StaticFileServlet(const std::string &serverName, const std::string &name)
-    :HttpServlet(name)
-    ,_serverName(serverName)
+
+StaticFileServlet::StaticFileServlet()
+    :HttpServlet("FileServlet", "kit_server")
 {}
 
 static int32_t GetStaticType(const std::string &suffix_type)
@@ -206,229 +293,258 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 }
 
 /***********ServletDispatch************ */
+
 HttpServletDispatch::HttpServletDispatch()
-    :_defaultSvl(std::make_shared<HelloServlet>())
+    :_defaultSvl(std::make_shared<NotFound404Servlet>())
 {
 
 }
 
-static inline int32_t MethodConver(int32_t method)
-{
-    switch(method)
-    {
-        case HttpRequest::Method::kGet: return HTTP_METHOD_GET;
-        case HttpRequest::Method::kPost: return HTTP_METHOD_POST;
-        case HttpRequest::Method::kPut: return HTTP_METHOD_PUT;
-        case HttpRequest::Method::kDelete: return HTTP_METHOD_DELETE;
-        default:
-            return HTTP_METHOD_NULL;
-    }
-}
-
-static inline bool CheckMethodValid(int32_t src, int32_t tar)
-{
-    return src != HTTP_METHOD_NULL && (src & tar);
-}
 
 void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
-    auto svl = RouterMatch(ctx);
+    MatchResult result = match(ctx);
 
-    if(svl)
+    if(result.status == MatchStatus::Found && result.servlet)
     {
-        // 校验请求合法性
-        if(svl->expectedMethod() == req->method()())
-        {
-            HTTP_F_DEBUG("conn[%s], path[%s] HttpServlet[%s] handling...... \n", conn->name().c_str(), req->path().c_str(), svl->name().c_str());
-            svl->handle(conn, ctx);
-        }
-        else
-        {
-            BadRequest400Servlet svl400;
-
-            HTTP_F_ERROR("http method invalid! %s 0x%x | %s ---> 0x%x \n", req->path().c_str(), MethodConver(req->method()()), req->method().toString(), svl->expectedMethod());
-            
-            svl400.handle(conn, ctx);
-        }
-    }
-    else
-    {
-        HTTP_DEBUG() << req->path() << " default svl handle!" << std::endl;
-        _defaultSvl->handle(conn, ctx);
-    }
-
-
-}
-
-void HttpServletDispatch::addServlet(const std::string &url, HttpServlet::Ptr svl)
-{
-    HTTP_INFO() << url << "|" << svl->expectedMethod() << "|"<< "--->" << svl << std::endl;
-    std::unique_lock<std::mutex> lock(_mapMtx);
-    _servlets.emplace(url, svl);
-}
-
-void HttpServletDispatch::addServlet(const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    std::unique_lock<std::mutex> lock(_mapMtx);
-    _servlets.emplace(url, std::make_shared<FunctionServlet>(cb));
-}
-
-void HttpServletDispatch::delServlet(const std::string &url, int32_t method)
-{
-    std::unique_lock<std::mutex> lock(_mapMtx);
-    auto svls = _servlets.equal_range(url);
-    for(auto &it = svls.first;it != svls.second;++it)
-    {
-        if(it->second->expectedMethod() == method)
-        {
-            _servlets.erase(it);
-            return;
-        }
-    }
-    HTTP_DEBUG() << "delServlet faild: " << url << ", " << method << std::endl;
-}
-
-void HttpServletDispatch::delAllServlet(const std::string &url)
-{
-    std::unique_lock<std::mutex> lock(_mapMtx);
-    auto n = _servlets.erase(url);
-    HTTP_DEBUG() << "delAllServlet faild: " << url << ", size=" << n << std::endl;
-}
-
-
-
-HttpServlet::Ptr HttpServletDispatch::getServlet(const std::string &url, int32_t method)
-{
-    std::unique_lock<std::mutex> lock(_mapMtx);
-    auto svls = _servlets.equal_range(url);
-    for(auto &it = svls.first;it != svls.second;++it)
-    {
-        if(it->second->expectedMethod() == method)
-        {
-            return it->second;
-        }
-    }
-    HTTP_DEBUG() << "getServlet faild: " << url << ", " << method << std::endl;
-    return nullptr;
-}
-std::vector<HttpServlet::Ptr> HttpServletDispatch::getAllServlet(const std::string &url)
-{
-    std::vector<HttpServlet::Ptr> mv;
-    std::unique_lock<std::mutex> lock(_mapMtx);
-    auto svls = _servlets.equal_range(url);
-    for(auto &it = svls.first; it != svls.second;++it)
-    {
-        mv.emplace_back(it->second);
-    }
-
-    return mv;
-
-}
-
-void HttpServletDispatch::addDynamicServlet(RouterMatcher::Ptr mathcer, HttpServlet::Ptr svl)
-{
-    std::unique_lock<std::mutex> lock(_vecMtx);
-
-    auto it = std::find_if(_dynamicServlets.begin(), _dynamicServlets.end(), [=](const auto &rs) {
-
-        HTTP_DEBUG() << "(" << rs.first->pattern() << ", " << rs.second->expectedMethod() << ")" << "--- (" << mathcer->pattern() << ", " << svl->expectedMethod() <<")" << std::endl;
+        HTTP_F_DEBUG("conn[%s], path[%s] HttpServlet[%s] handling...... \n", conn->name().c_str(), req->path().c_str(), result.servlet->name().c_str());
         
-        // 路径校验 + 方法校验
-        return rs.first->pattern() == mathcer->pattern() 
-            && rs.second->expectedMethod() == svl->expectedMethod();
-    });
+        result.servlet->handle(conn, ctx);
+        return;
+    }
 
-    if(it != _dynamicServlets.end())
+
+    if(result.status == MatchStatus::PathFoundMethodNotAllowed)
     {
-        it->first = mathcer;
-        it->second = svl;
+        auto resp = ctx->response();
+        resp->setVersion(Version::kHttp11);
+
+        resp->setStateCode(StateCode::k405MethodNotAllowed);
+        resp->addHeader("Allow", BuildAllowHeader(result.allowed_methods));
+        resp->addHeader("Content-Length", "0");
+
+        HTTP_F_WARN("http method not allowed! path[%s], method[%s], allow[%s]\n", req->path().c_str(), req->method().toString(), BuildAllowHeader(result.allowed_methods).c_str());
+        
+        return;
     }
-    else
-    {
-        _dynamicServlets.emplace_back(mathcer, svl);
-    }
-    return;
+
+    HTTP_DEBUG() << req->path() << " default svl handle!" << std::endl;
+    _defaultSvl->handle(conn, ctx);
 }
 
-void HttpServletDispatch::addDynamicServlet(RouterMatcher::Ptr mathcer, const FunctionServlet::CallBack &cb)
+RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string &pattern, HttpServlet::Ptr servlet)
 {
-    std::unique_lock<std::mutex> lock(_vecMtx);
-    auto svl = std::make_shared<FunctionServlet>(cb);
-
-    addDynamicServlet(mathcer, svl);
-    return;
-}
-
-void HttpServletDispatch::delDynamicServlet(const std::string &pattern_url, int32_t method)
-{
-    std::unique_lock<std::mutex> lock(_vecMtx);
-
-    auto it = std::find_if(_dynamicServlets.begin(), _dynamicServlets.end(), [=](const auto &rs){
-        return rs.first->pattern() == pattern_url
-            && rs.second->expectedMethod() ==  method;
-    });
-    if(it != _dynamicServlets.end())
+    RouteResult result;
+    if(pattern.empty())
     {
-        _dynamicServlets.erase(it);
+        result.status = RouteStatus::InvalidArgument;
+        result.message = "route pattern is empty";
+        HTTP_F_ERROR("addRoute failed: pattern is empty\n");
+        return result;
     }
-    else
+    if(!servlet)
     {
-        HTTP_F_INFO("%d %s pattern url is not exist!", method,pattern_url.c_str());
+        result.status = RouteStatus::InvalidArgument;
+        result.message = "route servlet is null";
+        HTTP_F_ERROR("addRoute failed: servlet is null, pattern[%s]\n", pattern.c_str());
+        return result;
     }
-    return;
-}
-
-std::pair<RouterMatcher::Ptr, HttpServlet::Ptr>& HttpServletDispatch::getDynamicServlet(const std::string &pattern_url, int32_t method)
-{
-    std::unique_lock<std::mutex> lock(_vecMtx);
-
-    auto it = std::find_if(_dynamicServlets.begin(), _dynamicServlets.end(), [=](const auto &rs){
-        return rs.first->pattern() == pattern_url
-            && rs.second->expectedMethod() ==  method;
-    });
-    return *it;
-}
-
-
-HttpServlet::Ptr HttpServletDispatch::RouterMatch(HttpContextPtr ctx)
-{
-    auto req = ctx->request();
-    const std::string &url = req->path();
-
+    if((methods & ExpectHttpMethods::All) == ExpectHttpMethods::None || (methods & ~ExpectHttpMethods::All) != 0)
     {
-        std::unique_lock<std::mutex> map_lock(_mapMtx);
-        // 1. 精准匹配
-        auto it = _servlets.find(url);
-        if(it != _servlets.end())
-            return it->second;
+        result.status = RouteStatus::InvalidArgument;
+        result.message = "route method mask is invalid";
+        HTTP_F_ERROR("addRoute failed: invalid method mask[0x%x], pattern[%s]\n", methods, pattern.c_str());
+        return result;
     }
 
-    // 2. 模糊匹配 + 动态匹配
+    RouteKind kind = routeKind(pattern);
+    RouterMatcher::Ptr matcher = createMatcher(kind, pattern);
+    if(kind != RouteKind::Exact && !matcher)
     {
-        std::unique_lock<std::mutex> vec_lock(_vecMtx);
+        result.status = RouteStatus::InvalidArgument;
+        result.message = "create route matcher failed";
+        HTTP_F_ERROR("addRoute failed: create matcher failed, pattern[%s]\n", pattern.c_str());
+        return result;
+    }
 
-        for(int i = 0;i < _dynamicServlets.size();++i)
+    std::unique_lock<std::mutex> lock(route_mtx_);
+    MethodMask conflict_methods = ExpectHttpMethods::None;
+
+    if(kind == RouteKind::Exact)
+    {
+        auto &routes = exact_routes_[pattern];
+        if(hasMethodConflict(routes, methods, &conflict_methods))
         {
-            auto &it = _dynamicServlets[i];
-            if(!it.first || !it.second)
-            {
-                HTTP_F_WARN("idx[%d] RouterMatcher is null! \n", i);
-                continue;
-            }
+            result.status = RouteStatus::Conflict;
+            result.message = "route method conflict";
+            HTTP_F_ERROR("addRoute conflict: kind[%s], pattern[%s], new_methods[%s], conflict_methods[%s]\n",
+                         RouteKindName(kind).c_str(), pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
+            return result;
+        }
 
-            const std::string& pattern1 = it.first->pattern();
-            int32_t expectedMethod = it.second->expectedMethod();
-
-            HTTP_DEBUG() << expectedMethod << ", " << pattern1 << std::endl;
-            if((req->method()() ==  expectedMethod) && it.first->Match(ctx))
+        RouteEntry entry;
+        entry.id = next_route_id_++;
+        entry.kind = kind;
+        entry.pattern = pattern;
+        entry.methods = methods;
+        entry.servlet = std::move(servlet);
+        entry.priority = next_priority_++;
+        routes.emplace_back(std::move(entry));
+        result.route_id = routes.back().id;
+    }
+    else
+    {
+        std::vector<RouteEntry> same_pattern_routes;
+        for(const auto &route : dynamic_routes_)
+        {
+            if(route.pattern == pattern)
             {
-                return it.second;
+                same_pattern_routes.emplace_back(route);
             }
+        }
+        if(hasMethodConflict(same_pattern_routes, methods, &conflict_methods))
+        {
+            result.status = RouteStatus::Conflict;
+            result.message = "route method conflict";
+            HTTP_F_ERROR("addRoute conflict: kind[%s], pattern[%s], new_methods[%s], conflict_methods[%s]\n",
+                         RouteKindName(kind).c_str(), pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
+            return result;
+        }
+
+        RouteEntry entry;
+        entry.id = next_route_id_++;
+        entry.kind = kind;
+        entry.pattern = pattern;
+        entry.methods = methods;
+        entry.matcher = std::move(matcher);
+        entry.servlet = std::move(servlet);
+        entry.priority = next_priority_++;
+        dynamic_routes_.emplace_back(std::move(entry));
+        result.route_id = dynamic_routes_.back().id;
+    }
+
+    HTTP_F_INFO("addRoute success: id[%llu], kind[%s], pattern[%s], methods[%s]\n",
+                static_cast<unsigned long long>(result.route_id),
+                RouteKindName(kind).c_str(),
+                pattern.c_str(),
+                BuildAllowHeader(methods).c_str());
+    return result;
+}
+
+RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string &pattern, const FunctionServlet::CallBack &cb)
+{
+    return addRoute(methods, pattern, std::make_shared<FunctionServlet>(cb));
+}
+
+RouteKind HttpServletDispatch::routeKind(const std::string &pattern) const
+{
+    if(pattern.find(':') != std::string::npos)
+    {
+        return RouteKind::Regex;
+    }
+    if(pattern.find_first_of("*?[]") != std::string::npos)
+    {
+        return RouteKind::Glob;
+    }
+    return RouteKind::Exact;
+}
+
+RouterMatcher::Ptr HttpServletDispatch::createMatcher(RouteKind kind, const std::string &pattern) const
+{
+    try
+    {
+        switch(kind)
+        {
+            case RouteKind::Regex:
+                return std::make_shared<RegexRouterMatcher>(pattern);
+            case RouteKind::Glob:
+                return std::make_shared<GlobRouterMatcher>(pattern);
+            case RouteKind::Exact:
+                return nullptr;
+            default:
+                return nullptr;
+        }
+    }
+    catch(const std::exception &e)
+    {
+        HTTP_F_ERROR("create matcher failed! %s, pattern:%s\n", e.what(), pattern.c_str());
+        return nullptr;
+    }
+}
+
+HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
+{
+    MatchResult result;
+    auto req = ctx->request();
+    const std::string url = req->path();
+
+    std::unique_lock<std::mutex> lock(route_mtx_);
+
+    auto exact_it = exact_routes_.find(url);
+    if(exact_it != exact_routes_.end())
+    {
+        for(const auto &route : exact_it->second)
+        {
+            result.allowed_methods |= route.methods;
+            if(MethodAllowed(route.methods, req->method()))
+            {
+                result.status = MatchStatus::Found;
+                result.servlet = route.servlet;
+                result.allowed_methods = route.methods;
+                return result;
+            }
+        }
+
+        result.status = MatchStatus::PathFoundMethodNotAllowed;
+        return result;
+    }
+
+    for(auto &route : dynamic_routes_)
+    {
+        if(!route.matcher || !route.servlet)
+        {
+            HTTP_F_WARN("route id[%llu] matcher or servlet is null! \n", static_cast<unsigned long long>(route.id));
+            continue;
+        }
+        if(!route.matcher->MatchPath(url))
+        {
+            continue;
+        }
+
+        result.allowed_methods |= route.methods;
+        if(MethodAllowed(route.methods, req->method()))
+        {
+            route.matcher->Match(ctx);
+            result.status = MatchStatus::Found;
+            result.servlet = route.servlet;
+            result.allowed_methods = route.methods;
+            return result;
         }
     }
 
-    return nullptr;
+    if(result.allowed_methods != ExpectHttpMethods::None)
+    {
+        result.status = MatchStatus::PathFoundMethodNotAllowed;
+    }
+
+    return result;
+}
+
+bool HttpServletDispatch::hasMethodConflict(const std::vector<RouteEntry> &routes, MethodMask methods, MethodMask *conflict_methods) const
+{
+    MethodMask conflict = ExpectHttpMethods::None;
+    for(const auto &route : routes)
+    {
+        conflict |= (route.methods & methods);
+    }
+
+    if(conflict_methods)
+    {
+        *conflict_methods = conflict;
+    }
+
+    return conflict != ExpectHttpMethods::None;
 }
 
 /***********ServletDispatch************ */

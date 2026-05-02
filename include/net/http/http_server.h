@@ -23,8 +23,6 @@
 
 namespace kit_muduo::http {
 
-class RouterMatcher;
-
 class HttpServer: Noncopyable
 {
 public:
@@ -47,13 +45,9 @@ public:
     TcpConnectionPtr getConnection(const std::string &name) { return _server.getConnection(name); }
 
 
-    void addRoute(const std::string &url, HttpServlet::Ptr svl);
+    RouteResult addRoute(MethodMask methods, const std::string &url, HttpServlet::Ptr svl);
 
-    void addRoute(const std::string &url, HttpServlet::Ptr svl, std::shared_ptr<RouterMatcher> matcher);
-
-    void addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb);
-    
-    void delRoute(const std::string &url, const HttpRequest::Method method);
+    RouteResult addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb);
     
     void Get(const std::string &url, HttpServlet::Ptr svl);
     void Get(const std::string &url, const FunctionServlet::CallBack &cb);

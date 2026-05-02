@@ -57,9 +57,9 @@ public:
     HttpRequestPtr request() { return _request; }
     HttpResponsePtr response() { return _response; }
 
-    std::string Param(const std::string& key) const
+    std::string routeParam(const std::string& key) const
     {
-       return _request->getQureyParam(key);
+       return _request->getRouteParam(key);
     }
 
     /**

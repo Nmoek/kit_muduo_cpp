@@ -14,6 +14,7 @@
 #include "net/http/http_response.h"
 #include "net/http/http_server.h"
 #include "net/event_loop.h"
+#include "net/http/http_util.h"
 
 #include <gtest/gtest.h>
 
@@ -25,6 +26,7 @@ static const char g_test_req[] = \
 "Host: www.chenshuo.com\r\n" \
 "User-Agent: kit_muduo\r\n" \
 "Content-Length: 15\r\n" \
+"Content-Type: text/plain\r\n" \
 "Accept-Encoding: UTF-8\r\n" \
 "\r\n561wefwe65f1ewf";
 
@@ -132,6 +134,7 @@ TEST(TestHttpReq, create_data)
     orireq.addHeader("XData", "666");
     std::string body = "12345678";
     orireq.body().appendData(body);
+    orireq.body().setContentType(ContentType::kPlainType);
     orireq.addHeader("Content-Length", std::to_string(body.size()));
 
 
@@ -191,9 +194,9 @@ TEST(TestHttpResp, create_data)
     oriresp.setStateCode(StateCode::k200Ok);
     oriresp.addHeader("XData", "999");
     oriresp.body().appendData("123456", strlen("123456"));
+    oriresp.body().setContentType(ContentType::kPlainType);
     std::cout << oriresp.toString() << std::endl;
     std::cout << "----------------\n";
-
 
     HttpContext context;
 
@@ -239,15 +242,15 @@ TEST(TestHttpServer, DISABLED_servlet)
     auto sd = server.getServletDispatch();
 
     // 添加固定的服务
-    sd->addServlet("/hello", std::make_shared<HelloServlet>("kit_proxy_server/1.0.0"));
+    sd->addRoute(ExpectHttpMethods::Get, "/hello", std::make_shared<HelloServlet>("kit_proxy_server/1.0.0"));
 
     // 自定义函数形式
-    sd->addServlet("/custom", [](TcpConnectionPtr conn,  HttpContextPtr ctx) {
+    sd->addRoute(ExpectHttpMethods::Get, "/custom", [](TcpConnectionPtr conn,  HttpContextPtr ctx) {
 
         auto resp = ctx->response();
         resp->setVersion(Version::kHttp11);
         resp->setStateCode(StateCode::k200Ok);
-        resp->addHeader("Content-Type", "text/plaint");
+        resp->addHeader("Content-Type", "text/plain");
 
         std::string body = "this is a custom servlet!!";
         resp->body().appendData(body);

@@ -93,13 +93,13 @@ std::string HttpResponse::toString()
     }
 
     ContentType content_type = body_.contentType();
-    if(content_type())
+    if(ContentType::kUnknowType != content_type.toInt())
     {
         // 默认字符集 utf-8
         std::string content_type_str = content_type.toString();
         content_type_str += "; ";
         content_type_str += "charset=utf-8";
-        if(ContentType::kMultiForm == content_type())
+        if(ContentType::kMultiForm == content_type.toInt())
         {
             content_type_str += "; ";
             content_type_str += "boundary=----WebKitFormBoundaryNQJ0YrO2NeaUfM7n";

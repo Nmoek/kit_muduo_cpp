@@ -34,7 +34,12 @@ ExactRouterMatcher::ExactRouterMatcher(const std::string& pattern)
 
 bool ExactRouterMatcher::Match(HttpContextPtr ctx)
 {
-    return _pattern == ctx->request()->path();
+    return MatchPath(ctx->request()->path());
+}
+
+bool ExactRouterMatcher::MatchPath(const std::string &path) const
+{
+    return _pattern == path;
 }
 
 
@@ -48,7 +53,12 @@ bool GlobRouterMatcher::Match(HttpContextPtr ctx)
 {
     HTTP_F_DEBUG("GlobRouterMatcher::Match %s %s \n", _pattern.c_str(), ctx->request()->path().c_str());
     
-    return ::fnmatch(_pattern.c_str(), ctx->request()->path().c_str(), 0) == 0;
+    return MatchPath(ctx->request()->path());
+}
+
+bool GlobRouterMatcher::MatchPath(const std::string &path) const
+{
+    return ::fnmatch(_pattern.c_str(), path.c_str(), 0) == 0;
 }
 
 
@@ -58,9 +68,7 @@ RegexRouterMatcher::RegexRouterMatcher(const std::string& pattern, const std::st
     ,_replaceRegex(":[^/]+")
     ,_paramRegex(":([^/]+)")
 {
-    _targetPattern = "^";
-    _targetPattern += std::regex_replace(pattern, _replaceRegex, _replacePattern);
-    _targetPattern += "$";
+    _targetPattern = BuildTargetPattern(pattern, &_paramNames);
 
 
     std::regex r{_targetPattern};
@@ -81,16 +89,17 @@ bool RegexRouterMatcher::Match(HttpContextPtr ctx)
 
     if (std::regex_match(url, matches, _targetRegex)) 
     {
-        // 对照原始模版 提取动态参数 
-        auto param_it = std::sregex_iterator(_pattern.begin(), _pattern.end(), _paramRegex);
         auto match_it = ++matches.begin(); // 跳过完整匹配
 
-        while(param_it != std::sregex_iterator() && match_it != matches.end())
+        for(const auto &param_name : _paramNames)
         {
-            req->addQureyParam((*param_it)[1].str(), match_it->str());
-            HTTP_F_DEBUG("regex match: %s : %s \n", (*param_it)[1].str().c_str(), match_it->str().c_str());
-            
-            ++param_it;
+            if(match_it == matches.end())
+            {
+                break;
+            }
+
+            req->addRouteParam(param_name, match_it->str());
+            HTTP_F_DEBUG("regex match: %s : %s \n", param_name.c_str(), match_it->str().c_str());
             ++match_it;
         }
         HTTP_F_DEBUG("regex match success! %s \n", url.c_str());
@@ -102,6 +111,72 @@ bool RegexRouterMatcher::Match(HttpContextPtr ctx)
     }
 
     return true;
+}
+
+bool RegexRouterMatcher::MatchPath(const std::string &path) const
+{
+    return std::regex_match(path, _targetRegex);
+}
+
+std::string RegexRouterMatcher::BuildTargetPattern(const std::string &pattern, std::vector<std::string> *param_names)
+{
+    std::string target = "^";
+    for(size_t i = 0; i < pattern.size();)
+    {
+        if(pattern[i] == ':')
+        {
+            const size_t name_start = i + 1;
+            size_t name_end = name_start;
+            while(name_end < pattern.size() && pattern[name_end] != '/')
+            {
+                ++name_end;
+            }
+
+            if(name_end > name_start)
+            {
+                if(param_names)
+                {
+                    param_names->emplace_back(pattern.substr(name_start, name_end - name_start));
+                }
+                target += "([^/]+)";
+                i = name_end;
+                continue;
+            }
+        }
+
+        if(IsRegexSpecialChar(pattern[i]))
+        {
+            target.push_back('\\');
+        }
+        target.push_back(pattern[i]);
+        ++i;
+    }
+    target += "$";
+    return target;
+}
+
+bool RegexRouterMatcher::IsRegexSpecialChar(char ch)
+{
+    switch(ch)
+    {
+        case '\\':
+        case '^':
+        case '$':
+        case '.':
+        case '|':
+        case '?':
+        case '*':
+        case '+':
+        case '(':
+        case ')':
+        case '[':
+        case ']':
+        case '{':
+        case '}':
+            return true;
+        default:
+            return false;
+    }
 }
 
 }
