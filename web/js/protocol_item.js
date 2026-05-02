@@ -450,130 +450,27 @@ var customTcpProtocolItemGrids = {
     }
 };
 
-// xml文本解析辅助函数
-function formatXMLHelper(xmlString) {
-    // 使用DOMParser解析XML
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlString, "application/xml");
-    
-    // 检查解析错误
-    const parserError = xmlDoc.querySelector("parsererror");
-    if (parserError) {
-        throw new Error("XML解析错误: " + parserError.textContent);
-    }
-    
-    // 递归格式化节点
-    function formatNode(node, indentLevel) {
-        const indent = ' '.repeat(indentLevel * 4);
-        let output = '';
-        
-        // 处理元素节点
-        if (node.nodeType === Node.ELEMENT_NODE) {
-            // 开始标签
-            output += `${indent}<${node.tagName}`;
-            
-            // 添加属性
-            for (let i = 0; i < node.attributes.length; i++) {
-                const attr = node.attributes[i];
-                output += ` ${attr.name}="${attr.value}"`;
-            }
-            
-            // 检查子节点
-            const childNodes = node.childNodes;
-            let hasElementChildren = false;
-            let textContent = '';
-            
-            for (let i = 0; i < childNodes.length; i++) {
-                const child = childNodes[i];
-                if (child.nodeType === Node.ELEMENT_NODE) {
-                    hasElementChildren = true;
-                } else if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) {
-                    textContent += child.textContent.trim();
-                }
-            }
-            
-            if (hasElementChildren || textContent) {
-                output += '>\n';
-                
-                // 处理子节点
-                for (let i = 0; i < childNodes.length; i++) {
-                    const child = childNodes[i];
-                    if (child.nodeType === Node.ELEMENT_NODE || 
-                    (child.nodeType === Node.TEXT_NODE && child.textContent.trim())) {
-                        output += formatNode(child, indentLevel + 1);
-                    }
-                }
-                
-                output += `${indent}</${node.tagName}>\n`;
-            } else {
-                output += ' />\n';
-            }
-        } 
-        // 处理文本节点
-        else if (node.nodeType === Node.TEXT_NODE) {
-            const text = node.textContent.trim();
-            if (text) {
-                output += `${indent}${text}\n`;
-            }
-        }
-        // 处理注释节点
-        else if (node.nodeType === Node.COMMENT_NODE) {
-            output += `${indent}<!--${node.data}-->\n`;
-        }
-        // 处理文档类型节点
-        else if (node.nodeType === Node.DOCUMENT_TYPE_NODE) {
-            output += `${indent}<!DOCTYPE ${node.name}>\n`;
-        }
-        // 处理处理指令节点（如 <?xml ... ?>）
-        else if (node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) {
-            output += `${indent}<?${node.target} ${node.data}?>\n`;
-        }
-        
-        return output;
-    }
-    
-    // 从文档元素开始格式化
-    return formatNode(xmlDoc.documentElement, 0);
-};
-
 /**
  * 生成body编辑框
  * @param {*} body_type 
  * @param {*} body_data 
  */
-function createProtocolItemBodyModal(body_type, body_data, handleCb) {
+function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {}) {
 
-    /* TODO: 不同格式文本解析 又能单独拆分一套控件出来 */
-    // 需要根据body_type 预处理一下body数据
-    let currentBody = '';
+    let currentBody = KitProxy.bodySyntax
+        ? KitProxy.bodySyntax.decodeBodyData(body_data)
+        : new TextDecoder().decode(body_data || new Uint8Array());
+
     try {
-        if(body_data && body_data.length > 0) {
-
-            // 注意: 如果属于文本数据 需要先解码成字符串
-            if('json' === body_type) {
-                const root = JSON.parse(new TextDecoder().decode(body_data));
-                currentBody = JSON.stringify(root, null, 2);
-
-
-            } else if('xml' == body_type) {
-
-                currentBody = formatXMLHelper(new TextDecoder().decode(body_data));
-
-            } else if('binary' == body_type) {
-            
-            
-            }
-
+        if(currentBody && KitProxy.bodySyntax) {
+            currentBody = KitProxy.bodySyntax.format(currentBody, body_type);
         }
     } catch(error) {
         console.error('请求体数据解析出错! ', error.message);
-        currentBody = body_data;
     }
     
     console.info("body_type: ", body_type);
     console.info("body: ", currentBody);
-
-    // TODO: 文本框可以根据不同body类型进行自适应切换显示，并且提供对应的格式校验功能
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
@@ -585,15 +482,8 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb) {
             </div>
             <div class="modal-body">
                 <div class="form-group">
-                    <label>Body类型</label>
-                    <select id="body-type">
-                        <option value="json">JSON</option>
-                        <!-- <option value="xml">Xml</option> -->
-                    </select>
-                </div>
-                <div class="form-group">
                     <label>Body内容</label>
-                    <textarea id="body-content" placeholder="输入校验请求Body内容..." style="min-height: 200px"></textarea>
+                    <div id="body-editor-host"></div>
                 </div>
                 <div class="form-actions">
                     <button type="button" class="cancel-btn">取消</button>
@@ -605,8 +495,15 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb) {
     
     document.body.appendChild(modal);
 
-    document.getElementById('body-type').value = body_type;
-    document.getElementById('body-content').value = currentBody;
+    const bodyEditor = KitProxy.bodyEditor.create(modal.querySelector('#body-editor-host'), {
+        idPrefix: 'protocol-body',
+        value: currentBody,
+        bodyType: body_type,
+        allowedTypes: KitProxy.protocolTypes && typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function'
+            ? KitProxy.protocolTypes.getBodyTypeOptions(options.protocolType || 'HTTP')
+            : undefined,
+        placeholder: options.placeholder || '输入 Body 内容...',
+    });
 
     
     // 处理确定按钮
@@ -614,13 +511,14 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb) {
         e.stopPropagation();
         e.preventDefault();
 
-        const newBodyType = document.getElementById('body-type').value;
-        const newBody = document.getElementById('body-content').value.trim();
-
-        if(newBodyType === 'json' && !KitProxy.utils.validateJsonText(newBody)) {
-            alert('Body内容不是合法 JSON，请检查后再提交');
+        const validation = bodyEditor.validate();
+        if(!validation.valid) {
+            alert(validation.message);
             return;
         }
+
+        const newBodyType = bodyEditor.getType();
+        const newBody = bodyEditor.getValue().trim();
 
         await handleCb(newBodyType, newBody);
 

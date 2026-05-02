@@ -14,6 +14,7 @@
      *   bindServiceExtraActions?: Function;
      *   renderAddServiceExtraControl?: Function;
      *   collectAddServiceExtraPayload?: Function;
+     *   bodyTypeOptions?: Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>;
      * }} options
      */
     function register(projectProtocolType, options) {
@@ -117,16 +118,46 @@
         };
     }
 
+    /**
+     * @param {number | string} projectProtocolType
+     * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+     */
+    function getBodyTypeOptions(projectProtocolType) {
+        const entry = getByProjectProtocolType(projectProtocolType) || getByProtocolItemType(projectProtocolType);
+        const defaultOptions = [
+            { value: 'json', label: 'JSON', enabled: true },
+            { value: 'xml', label: 'XML', enabled: true },
+            { value: 'text', label: 'Text', enabled: true },
+            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
+        ];
+
+        return entry && Array.isArray(entry.bodyTypeOptions)
+            ? entry.bodyTypeOptions
+            : defaultOptions;
+    }
+
     register(ProtocolType.HTTP, {
         protocolItemType: 'HTTP',
         addProtocolModal: global.httpProtocolModal,
         protocolItemGrid: global.httpProtocolItemGrids,
+        bodyTypeOptions: [
+            { value: 'json', label: 'JSON', enabled: true },
+            { value: 'xml', label: 'XML', enabled: true },
+            { value: 'text', label: 'Text', enabled: true },
+            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
+        ],
     });
 
     register(ProtocolType.CUSTOM_TCP, {
         protocolItemType: 'TCP',
         addProtocolModal: global.customTcpProtocolModal,
         protocolItemGrid: global.customTcpProtocolItemGrids,
+        bodyTypeOptions: [
+            { value: 'json', label: 'JSON', enabled: true },
+            { value: 'xml', label: 'XML', enabled: true },
+            { value: 'text', label: 'Text', enabled: true },
+            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
+        ],
         serviceExtraFieldsHTML: function(project) {
             return `
                 <div class="service-field project-pattern" id="pattern-info-${project.id}" title="该信息点击可编辑">
@@ -255,6 +286,7 @@
         bindServiceExtraActions,
         renderAddServiceExtraControl,
         collectAddServiceExtraPayload,
+        getBodyTypeOptions,
     };
 
     global.ProtocolTypeRegistry = KitProxy.protocolTypes;

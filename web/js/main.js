@@ -1,4 +1,8 @@
 const servicePageState = KitProxy.pagination.createState();
+const serviceFilterState = KitProxy.serviceFilters
+    ? KitProxy.serviceFilters.createState()
+    : { filters: { startDate: '', endDate: '', status: 'all', protocolType: 'all' }, active: false };
+let currentPageProjects = [];
 
 // 更新协议项显示
 function updateProtocolItem(id_str, protocol) {
@@ -509,6 +513,9 @@ function bindProtocolBodyEditor(protocolItem) {
                     bodyIndicator.classList.remove('has');
                     bodyIndicator.classList.add('no');
                 }
+            }, {
+                protocolType: protocolItem.dataset.protocolType || 'HTTP',
+                placeholder: req_or_resp === 1 ? '输入校验请求Body内容...' : '输入目标响应Body内容...',
             });
         });
     });
@@ -1191,7 +1198,7 @@ async function addProject(project) {
  * @param {number} mode
  * @param {string | number} pattern_type
  */
-function serviceCardHTML(id, name, protocol, port, mode, pattern_type, status = false) {
+function serviceCardHTML(id, name, protocol, port, mode, pattern_type, status = false, ctime = '') {
 
 
     console.info(id, name, protocol, port, mode, pattern_type, status);
@@ -1232,6 +1239,10 @@ return `<div class="service-header">
                     <span class="field-value status ${status ? 'status-active' : 'status-inactive'}">
                         ${status ? '开启' : '未开启'}
                     </span>
+                </div>
+                <div class="service-field project-create-time">
+                    <span class="field-label">创建时间</span>
+                    <span class="field-value">${ctime || '未知'}</span>
                 </div>
                 ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
             </div>
@@ -1402,7 +1413,7 @@ function addServiceCard(project, pos = -1) {
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
 
-    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.pattern_type, project.status);
+    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.pattern_type, project.status, project.ctime);
 
     /* 标题编辑功能 */
     const titleElement = serviceCard.querySelector('.service-title');
@@ -1473,6 +1484,110 @@ function refreshServiceCards(projects) {
     });
 }
 
+function renderServiceEmptyState(message) {
+    const serviceCards = document.querySelector('.service-cards');
+    if (!serviceCards) return;
+
+    const emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+    emptyState.innerHTML = `
+        <div class="empty-message">
+            <p>${message}</p>
+        </div>
+    `;
+    serviceCards.appendChild(emptyState);
+}
+
+function updateServiceFilterSummary(visibleCount, totalCount) {
+    const summary = document.getElementById('service-filter-summary');
+    if (!summary || !KitProxy.serviceFilters) return;
+
+    const description = KitProxy.serviceFilters.describe(serviceFilterState.filters);
+    const suffix = serviceFilterState.active
+        ? `，当前页匹配 ${visibleCount}/${totalCount} 条`
+        : `，当前页 ${totalCount} 条`;
+    summary.textContent = `当前页筛选：${description}${suffix}`;
+}
+
+function setServiceFilterError(message) {
+    const errorBox = document.getElementById('service-filter-error');
+    if (!errorBox) return;
+
+    errorBox.textContent = message || '';
+    errorBox.style.display = message ? 'block' : 'none';
+}
+
+function renderCurrentPageServices() {
+    const serviceCards = document.querySelector('.service-cards');
+    if (!serviceCards) return;
+
+    const totalCount = currentPageProjects.length;
+    const visibleProjects = serviceFilterState.active && KitProxy.serviceFilters
+        ? KitProxy.serviceFilters.apply(currentPageProjects, serviceFilterState.filters)
+        : currentPageProjects.slice();
+
+    serviceCards.innerHTML = '';
+    refreshServiceCards(visibleProjects);
+
+    if (visibleProjects.length === 0) {
+        renderServiceEmptyState(totalCount === 0 ? '暂无测试服务，点击按钮添加' : '当前页无匹配测试服务');
+    }
+
+    updateServiceFilterSummary(visibleProjects.length, totalCount);
+}
+
+function applyServiceFiltersFromDOM() {
+    if (!KitProxy.serviceFilters) return;
+
+    const filters = KitProxy.serviceFilters.readFromDOM(document);
+    const validation = KitProxy.serviceFilters.validate(filters);
+
+    if (!validation.valid) {
+        setServiceFilterError(validation.message);
+        return;
+    }
+
+    setServiceFilterError('');
+    serviceFilterState.filters = filters;
+    serviceFilterState.active = KitProxy.serviceFilters.hasActiveFilters(filters);
+    renderCurrentPageServices();
+}
+
+function resetServiceFilters() {
+    const startInput = document.getElementById('filter-create-start');
+    const endInput = document.getElementById('filter-create-end');
+    const statusSelect = document.getElementById('filter-status');
+    const protocolTypeSelect = document.getElementById('filter-protocol-type');
+
+    if (startInput) startInput.value = '';
+    if (endInput) endInput.value = '';
+    if (statusSelect) statusSelect.value = 'all';
+    if (protocolTypeSelect) protocolTypeSelect.value = 'all';
+
+    serviceFilterState.filters = {
+        startDate: '',
+        endDate: '',
+        status: 'all',
+        protocolType: 'all',
+    };
+    serviceFilterState.active = false;
+    setServiceFilterError('');
+    renderCurrentPageServices();
+}
+
+function bindServiceFilterActions() {
+    const applyBtn = document.getElementById('apply-service-filter');
+    const resetBtn = document.getElementById('reset-service-filter');
+
+    if (applyBtn) {
+        applyBtn.addEventListener('click', applyServiceFiltersFromDOM);
+    }
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetServiceFilters);
+    }
+}
+
 /**
  * 渲染服务列表分页条。
  */
@@ -1508,10 +1623,10 @@ async function loadAllProjects(page = servicePageState.currentPage) {
 
         console.info('获取的项目列表:', projects);
 
-        // 更新页面显示
-        serviceCards.innerHTML = '';
-        refreshServiceCards(KitProxy.pagination.takeVisibleItems(projects, servicePageState));
-        checkEmptyState();
+        currentPageProjects = KitProxy.pagination.takeVisibleItems(projects, servicePageState);
+
+        // 更新页面显示。筛选器只作用于当前页，不改变后端分页请求参数。
+        renderCurrentPageServices();
         renderServicePagination();
 
     } catch(error) {
@@ -1530,6 +1645,8 @@ async function loadAllProjects(page = servicePageState.currentPage) {
 document.addEventListener('DOMContentLoaded', function() {
     const serviceCards = document.querySelector('.service-cards');
     if (!serviceCards) return;
+
+    bindServiceFilterActions();
 
     // 监听添加服务按钮点击
     document.getElementById('add-service')?.addEventListener('click',  async function() {

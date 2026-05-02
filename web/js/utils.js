@@ -100,6 +100,7 @@
         // 用于 Body 导入等“textarea + 确定/取消”的轻量弹窗，业务状态由 onConfirm 回调处理。
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
+        const useBodyEditor = options.useBodyEditor && KitProxy.bodyEditor;
         modal.innerHTML = `
             <div class="${options.modalClassName || 'add-protocol-item-modal import-modal'}">
                 <div class="modal-header">
@@ -107,7 +108,9 @@
                     <button class="close-modal">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <textarea placeholder="${options.placeholder || '请在此输入内容...'}"></textarea>
+                    ${useBodyEditor
+                        ? '<div class="body-editor-host"></div>'
+                        : `<textarea placeholder="${options.placeholder || '请在此输入内容...'}"></textarea>`}
                     <div class="form-actions">
                         <button type="button" class="cancel-btn">取消</button>
                         <button type="button" class="confirm-btn">确定</button>
@@ -116,14 +119,36 @@
             </div>
         `;
 
+        let bodyEditor = null;
         const textarea = modal.querySelector('textarea');
-        textarea.value = options.value || '';
+        if (useBodyEditor) {
+            bodyEditor = KitProxy.bodyEditor.create(modal.querySelector('.body-editor-host'), {
+                idPrefix: options.idPrefix || 'body-import',
+                value: options.value || '',
+                bodyType: options.bodyType || 'json',
+                allowedTypes: options.allowedTypes,
+                placeholder: options.placeholder || '请在此输入内容...',
+            });
+        } else if (textarea) {
+            textarea.value = options.value || '';
+        }
         document.body.appendChild(modal);
 
         const closeModal = bindModalCloseActions(modal);
         modal.querySelector('.confirm-btn').addEventListener('click', function() {
+            if (bodyEditor) {
+                const validation = bodyEditor.validate();
+                if (!validation.valid) {
+                    alert(validation.message);
+                    return;
+                }
+            }
+
             if (typeof options.onConfirm === 'function') {
-                options.onConfirm(textarea.value);
+                options.onConfirm(
+                    bodyEditor ? bodyEditor.getValue() : textarea.value,
+                    bodyEditor ? bodyEditor.getType() : options.bodyType,
+                );
             }
             closeModal();
         });
@@ -286,7 +311,7 @@
         const bodyKey = body === 1 ? 'protocol_req_body' : 'protocol_resp_body';
         let bodyValue = '';
 
-        if (bodyType.includes('json') && bodyData[0] === '{') {
+        if (bodyType.includes('json')) {
             bodyValue = JSON.stringify(JSON.parse(bodyData));
         } else if (bodyType.includes('xml')) {
             bodyValue = bodyData;

@@ -59,8 +59,16 @@ function bindBodyImportButtons(modal) {
                 title: `导入${bodyName}Body内容`,
                 placeholder: `请在此输入${bodyName}Body内容...`,
                 value: targetField.dataset.importedContent || '',
+                bodyType: targetField.value || 'json',
+                allowedTypes: KitProxy.protocolTypes && typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function'
+                    ? KitProxy.protocolTypes.getBodyTypeOptions(modal.dataset.projectProtocolType)
+                    : undefined,
+                useBodyEditor: true,
                 modalClassName: 'add-protocol-item-modal import-modal',
-                onConfirm: function(content) {
+                onConfirm: function(content, bodyType) {
+                    if (bodyType && targetField.querySelector(`option[value="${bodyType}"]`)) {
+                        targetField.value = bodyType;
+                    }
                     updateBodyImportState(targetField, targetId, content);
                 },
             });
@@ -76,6 +84,7 @@ var httpProtocolModal = {
     create: function(/** @type {{ id: any; }} */ serviceCard) {
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
+        modal.dataset.projectProtocolType = String(ProtocolType.HTTP);
         modal.innerHTML = `
             <div class="add-protocol-item-modal">
                 <div class="modal-header">
@@ -110,8 +119,9 @@ var httpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="request-body-type">
-                                        <option value="json">Json</option>
-                                        <!-- <option value="xml">Xml</option> -->
+                                        <option value="json">JSON</option>
+                                        <option value="xml">XML</option>
+                                        <option value="text">Text</option>
                                     </select>
                                     <button type="button" class="import-btn" data-target="request-body-type">导入</button>
                                 </div>
@@ -124,8 +134,9 @@ var httpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="response-body-type">
-                                        <option value="json">Json</option>
-                                        <!-- <option value="xml">Xml</option> -->
+                                        <option value="json">JSON</option>
+                                        <option value="xml">XML</option>
+                                        <option value="text">Text</option>
                                     </select>
                                     <button type="button" class="import-btn" data-target="response-body-type">导入</button>
                                 </div>
@@ -172,12 +183,18 @@ var httpProtocolModal = {
                     throw new Error('请求路径必须以 / 开头');
                 }
 
-                if(requestBodyType === 'json' && !KitProxy.utils.validateJsonText(requestBody)) {
-                    throw new Error('校验请求Body不是合法 JSON');
+                const requestValidation = KitProxy.bodySyntax
+                    ? KitProxy.bodySyntax.validate(requestBody, requestBodyType)
+                    : { valid: KitProxy.utils.validateJsonText(requestBody), message: '校验请求Body不是合法 JSON' };
+                if(!requestValidation.valid) {
+                    throw new Error(`校验请求Body格式错误：${requestValidation.message}`);
                 }
 
-                if(responseBodyType === 'json' && !KitProxy.utils.validateJsonText(responseBody)) {
-                    throw new Error('目标响应Body不是合法 JSON');
+                const responseValidation = KitProxy.bodySyntax
+                    ? KitProxy.bodySyntax.validate(responseBody, responseBodyType)
+                    : { valid: KitProxy.utils.validateJsonText(responseBody), message: '目标响应Body不是合法 JSON' };
+                if(!responseValidation.valid) {
+                    throw new Error(`目标响应Body格式错误：${responseValidation.message}`);
                 }
 
                 const projectId = ExtractId(serviceCard.id);
@@ -238,6 +255,7 @@ var customTcpProtocolModal = {
 
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
+        modal.dataset.projectProtocolType = String(ProtocolType.CUSTOM_TCP);
         modal.innerHTML = `
             <div class="add-protocol-item-modal">
                 <div class="modal-header">
@@ -282,8 +300,9 @@ var customTcpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="request-body-type">
-                                        <option value="json">Json</option>
-                                        <!-- <option value="xml">Xml</option> -->
+                                        <option value="json">JSON</option>
+                                        <option value="xml">XML</option>
+                                        <option value="text">Text</option>
                                     </select>
                                     <button type="button" class="import-btn" data-target="request-body-type">导入</button>
                                 </div>
@@ -296,8 +315,9 @@ var customTcpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="response-body-type">
-                                        <option value="json">Json</option>
-                                        <!-- <option value="xml">Xml</option> -->
+                                        <option value="json">JSON</option>
+                                        <option value="xml">XML</option>
+                                        <option value="text">Text</option>
                                     </select>
                                     <button type="button" class="import-btn" data-target="response-body-type">导入</button>
                                 </div>
@@ -434,12 +454,18 @@ var customTcpProtocolModal = {
                     throw new Error('响应功能码必须以 H 开头');
                 }
 
-                if(requestBodyType === 'json' && !KitProxy.utils.validateJsonText(requestBody)) {
-                    throw new Error('校验请求Body不是合法 JSON');
+                const requestValidation = KitProxy.bodySyntax
+                    ? KitProxy.bodySyntax.validate(requestBody, requestBodyType)
+                    : { valid: KitProxy.utils.validateJsonText(requestBody), message: '校验请求Body不是合法 JSON' };
+                if(!requestValidation.valid) {
+                    throw new Error(`校验请求Body格式错误：${requestValidation.message}`);
                 }
 
-                if(responseBodyType === 'json' && !KitProxy.utils.validateJsonText(responseBody)) {
-                    throw new Error('目标响应Body不是合法 JSON');
+                const responseValidation = KitProxy.bodySyntax
+                    ? KitProxy.bodySyntax.validate(responseBody, responseBodyType)
+                    : { valid: KitProxy.utils.validateJsonText(responseBody), message: '目标响应Body不是合法 JSON' };
+                if(!responseValidation.valid) {
+                    throw new Error(`目标响应Body格式错误：${responseValidation.message}`);
                 }
 
                 const projectId = ExtractId(serviceCard.id);

@@ -44,6 +44,8 @@ function loadCoreScripts(context) {
         'js/config.js',
         'js/constants.js',
         'js/utils.js',
+        'js/body_editor.js',
+        'js/service_filters.js',
         'js/mock_data.js',
         'js/api.js',
         'js/pagination.js',
@@ -271,5 +273,98 @@ describe('V1.2 pagination and protocol registry', () => {
         expect(modalFactory).toBeTruthy();
         expect(grid.className).toContain('http');
         expect(grid.querySelector('[data-field-name="path"] .value').textContent).toBe('/api/test');
+    });
+});
+
+describe('V1.3 service filters and body editor', () => {
+    it('服务筛选支持状态、协议种类和日期范围', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const projects = [
+            { id: 1, protocol_type: 1, status: 1, ctime: '2025-08-11 07:55:15' },
+            { id: 2, protocol_type: 2, status: 0, ctime: '2025-08-12 07:55:15' },
+            { id: 3, protocol_type: 1, status: 0, ctime: '' },
+        ];
+
+        expect(context.KitProxy.serviceFilters.apply(projects, {
+            startDate: '2025-08-11',
+            endDate: '2025-08-11',
+            status: 'active',
+            protocolType: '1',
+        })).toEqual([projects[0]]);
+
+        expect(context.KitProxy.serviceFilters.validate({
+            startDate: '2025-08-12',
+            endDate: '2025-08-11',
+            status: 'all',
+            protocolType: 'all',
+        }).valid).toBe(false);
+    });
+
+    it('Body 语法校验支持 JSON、XML、Text 和空 Body', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        expect(context.KitProxy.bodySyntax.validate('{"ok": true}', 'json').valid).toBe(true);
+        const jsonError = context.KitProxy.bodySyntax.validate('{\n  bad\n}', 'json');
+        expect(jsonError.valid).toBe(false);
+        expect(jsonError.message).toContain('第');
+        expect(jsonError.message).toContain('JSON');
+
+        expect(context.KitProxy.bodySyntax.validate('<root><a /></root>', 'xml').valid).toBe(true);
+        const xmlError = context.KitProxy.bodySyntax.validate('<root><a></root>', 'xml');
+        expect(xmlError.valid).toBe(false);
+        expect(xmlError.message).toContain('XML');
+
+        expect(context.KitProxy.bodySyntax.validate('plain text', 'text').valid).toBe(true);
+        expect(context.KitProxy.bodySyntax.validate('', 'json').valid).toBe(true);
+    });
+
+    it('Body 输入组件能切换类型、校验并格式化', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const host = context.document.createElement('div');
+        context.document.body.appendChild(host);
+        const editor = context.KitProxy.bodyEditor.create(host, {
+            value: '{"ok":true}',
+            bodyType: 'json',
+            allowedTypes: ['json', 'xml', 'text'],
+        });
+
+        expect(editor.validate().valid).toBe(true);
+        host.querySelector('.body-editor-format').click();
+        expect(editor.getValue()).toContain('\n');
+
+        editor.setType('text');
+        editor.setValue('not json');
+        expect(editor.validate().valid).toBe(true);
+    });
+
+    it('新增协议项 FormData 支持 XML 和 Text Body 类型', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const formData = context.KitProxy.utils.createAddProtocolFormData({
+            cfg_header: {
+                name: '接口XML',
+                type: 'HTTP',
+                project_id: 1,
+                req_body_type: 'xml',
+                resp_body_type: 'text',
+            },
+            req_cfg: {
+                method: 'POST',
+                path: '/api/xml',
+            },
+            resp_cfg: {},
+            request_body: '<root><ok /></root>',
+            response_body: 'done',
+        });
+
+        expect(JSON.parse(formData.get('protocol_cfg_header')).req_body_type).toBe('xml');
+        expect(formData.get('protocol_req_body')).toBe('<root><ok /></root>');
+        expect(formData.get('protocol_resp_body')).toBe('done');
     });
 });

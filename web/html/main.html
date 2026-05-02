@@ -20,10 +20,48 @@
         </aside>
         <main class="content">
             <div class="service-manager-header">
-                <h2>测试服务管理</h2>
+                <div class="page-title-block">
+                    <h2>测试服务管理</h2>
+                    <p>管理待测协议服务，并进入对应协议项配置</p>
+                </div>
                 <button id="add-service" class="add-btn">+ 添加测试服务</button>
             </div>
             <div class="service-platform">
+                <section class="service-filter-panel" aria-label="测试服务筛选">
+                    <div class="filter-grid">
+                        <div class="filter-field">
+                            <label for="filter-create-start">创建日期开始</label>
+                            <input type="date" id="filter-create-start">
+                        </div>
+                        <div class="filter-field">
+                            <label for="filter-create-end">创建日期结束</label>
+                            <input type="date" id="filter-create-end">
+                        </div>
+                        <div class="filter-field">
+                            <label for="filter-status">运行状态</label>
+                            <select id="filter-status">
+                                <option value="all">全部状态</option>
+                                <option value="active">开启</option>
+                                <option value="inactive">未开启</option>
+                            </select>
+                        </div>
+                        <div class="filter-field">
+                            <label for="filter-protocol-type">协议种类</label>
+                            <select id="filter-protocol-type">
+                                <option value="all">全部协议</option>
+                                <option value="1">HTTP</option>
+                                <option value="2">自定义TCP</option>
+                                <option value="3">HTTPS</option>
+                            </select>
+                        </div>
+                        <div class="filter-actions">
+                            <button type="button" id="apply-service-filter" class="filter-apply-btn">应用筛选</button>
+                            <button type="button" id="reset-service-filter" class="filter-reset-btn">重置</button>
+                        </div>
+                    </div>
+                    <div id="service-filter-error" class="filter-error" aria-live="polite"></div>
+                    <div id="service-filter-summary" class="filter-summary">当前页筛选：未启用筛选</div>
+                </section>
                 <div class="service-cards">
                     <!-- 测试服务卡片将通过JS动态添加 -->
                 </div>
@@ -35,6 +73,8 @@
     <script src="../js/config.js"></script>
     <script src="../js/constants.js"></script>
     <script src="../js/utils.js"></script>
+    <script src="../js/body_editor.js"></script>
+    <script src="../js/service_filters.js"></script>
     <script src="../js/mock_data.js"></script>
     <script src="../js/api.js"></script>
     <script src="../js/pagination.js"></script>
