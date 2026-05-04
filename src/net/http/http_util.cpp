@@ -23,7 +23,7 @@ std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
     {k454SessionNotFound, "Session Not Found"},
     {k455MethodNotValid,             "Method Not Valid"},
     {k500InternalServerError,        "Internal Server Error"},
-    {k503ServicUnavailable, "Servic Unavailable"}
+    {k503ServiceUnavailable, "Service Unavailable"}
 };
 
 

@@ -8,6 +8,7 @@
  */
 #include "net/http/http_server.h"
 #include "net/http/http_context.h"
+#include "net/http/http_servlet.h"
 #include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
@@ -242,24 +243,24 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     if(_isPool)
     {
-        auto f = _businessThreadPool.submitTaskTimeOut(300, work_func, conn, ctx, _dispatch);
+        auto submit_result = _businessThreadPool.trySubmitTask(300, work_func, conn, ctx, _dispatch);
+
+        if(!submit_result.ok())
+        {
+            HTTP_F_WARN("submit task error! fd[%d][%s], path[%s] \n", conn->fd(), conn->name().c_str(), ctx->request()->path().c_str());
+
+            ServiceUnavailable503Servlet::Handle(conn, ctx);
+            conn->send(ctx->response()->toString());
+            conn->shutdown();
+            return;
+        }
+
     }
     else
     {
         work_func(conn, ctx, _dispatch);
     }
 
-
-    // if(!f.get())    //如果负载过高需要回复  降级处理
-    // {
-    //     DVSVL_F_WARN("Application::handleRequest submitTask timeout fd[%d][%s], path[%s] \n", conn->fd(), conn->name().c_str());
-
-    //     ServerErr500Servlet s500;
-    //     HttpResponsePtr resp_ptr = std::make_shared<HttpResponse>();
-    //     s500.handle(conn, nullptr, resp_ptr);
-    //     conn->send(resp_ptr->toString());
-    //     conn->shutdown();
-    // }
 }
 
 #else

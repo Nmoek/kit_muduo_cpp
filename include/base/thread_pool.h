@@ -73,6 +73,21 @@ public:
         CACHE_MOD    ,  //动态扩容模式
     };
 
+    enum SubmitStatus {
+        kOK,
+        kStopping,
+        kTimeout,
+    };
+
+    template<class T>
+    struct SubmitResult
+    {
+        SubmitStatus status{kOK};
+        std::future<T> result_future{};
+
+        bool ok() const { return status == SubmitStatus::kOK; }
+    };
+
 public:
 
     ThreadPool(int32_t initThreadCount = std::thread::hardware_concurrency());
@@ -126,35 +141,29 @@ public:
     int32_t getThreadMaxIdleInterval() const;
 
     /**
-     * @brief 带超时提交任务
+     * @brief 带超时提交任务并返回提交状态
      * @tparam FuncType 任务函数类型
      * @tparam Args 任务函数可变参数
      * @param interval_ms 超时时间
      * @param func
      * @param args
-     * @return std::future<decltype(func(args...))>
+     * @return SubmitResult<decltype(func(args...))> 
      */
     template<typename FuncType, typename... Args>
-    auto submitTaskTimeOut(int32_t interval_ms, FuncType &&func, Args&&... args) -> std::future<decltype(func(args...))>
+    auto trySubmitTask(int32_t interval_ms, FuncType &&func, Args&&... args) -> SubmitResult<decltype(func(args...))>
     {
         using ReturnType = decltype(func(args...));
         auto task = std::make_shared<std::packaged_task<ReturnType()>>(
             std::bind(std::forward<FuncType>(func), std::forward<Args>(args)...)
         );
-
-        // 这里是制作一个空的返回对象
-        auto nullTask = std::make_shared<std::packaged_task<ReturnType()>>(
-            []() -> ReturnType {
-                return ReturnType();
-            });
-
-        auto nullResult = nullTask->get_future();
-        
-        // 原地执行 否则future不返回
-        (*nullTask)();
+        auto result = SubmitResult<ReturnType>();
+        result.status = SubmitStatus::kOK;
 
         if(!isRun_)
-            return nullResult;
+        {
+            result.status = SubmitStatus::kStopping;
+            return result;
+        }
 
 
         std::unique_lock<std::mutex> lock(taskQueMutex_);
@@ -178,13 +187,16 @@ public:
                     addThread();
                 }
 
-                return nullResult;
+                result.status = SubmitStatus::kTimeout;
+                return result;
             }
         }
 
         if(!isRun_)
-            return nullResult;
-
+        {
+            result.status = SubmitStatus::kStopping;
+            return result;
+        }
 
         // taskQue_.push(ptask);
         taskQue_.emplace([task](){ (*task)(); });
@@ -197,9 +209,11 @@ public:
         {
             addThread();
         }
-
-        return task->get_future();
+        
+        result.result_future = std::move(task->get_future());
+        return result;
     }
+
 
     /**
      * @brief 阻塞提交任务
@@ -210,9 +224,9 @@ public:
      * @return std::future<decltype(func(args...))>
      */
     template<class FuncType, class ...Args>
-    auto submitTask(FuncType &&func, Args&& ...args) -> std::future<decltype(func(args...))>
+    auto submitTask(FuncType &&func, Args&& ...args) -> SubmitResult<decltype(func(args...))>
     {
-        return submitTaskTimeOut(-1, std::forward<FuncType>(func), std::forward<Args>(args)...);
+        return trySubmitTask(-1, std::forward<FuncType>(func), std::forward<Args>(args)...);
     }
 
 private:

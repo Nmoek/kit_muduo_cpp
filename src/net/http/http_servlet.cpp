@@ -257,7 +257,7 @@ ServerErr500Servlet::ServerErr500Servlet()
 
 }
 
-void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+void ServerErr500Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto resp = ctx->response();
 
@@ -272,6 +272,46 @@ void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "<body>"
   "<div style=\"text-align:center\">"
     "<h1>500 Server Error</h1>"
+    "<p>kit server</p>"
+  "</div>"
+"</body>"
+"</html>";
+
+    resp->body().appendData(body);
+}
+
+void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
+ServiceUnavailable503Servlet::ServiceUnavailable503Servlet()
+    :HttpServlet("ServiceUnavailable503Svl", "kit_server")
+{
+
+}
+
+
+void ServiceUnavailable503Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
+void ServiceUnavailable503Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k503ServiceUnavailable);
+    resp->setConnectionClosed(true);
+    resp->addHeader("Content-Type", "text/html");
+
+    std::string body =
+"<html>"
+"<head><title>503 Service Unavailable</title></head>"
+"<body>"
+  "<div style=\"text-align:center\">"
+    "<h1>503 Service Unavailable</h1>"
     "<p>kit server</p>"
   "</div>"
 "</body>"

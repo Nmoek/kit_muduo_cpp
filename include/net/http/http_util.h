@@ -141,7 +141,7 @@ struct StateCode
         k455MethodNotValid = 455,
         //5XX
         k500InternalServerError = 500,
-        k503ServicUnavailable = 503,
+        k503ServiceUnavailable = 503,
         kMax,
     };
 

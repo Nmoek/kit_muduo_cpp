@@ -172,6 +172,21 @@ public:
 
     void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
 
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+
+};
+
+class ServiceUnavailable503Servlet: public HttpServlet
+{
+public:
+    ServiceUnavailable503Servlet();
+
+    ~ServiceUnavailable503Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+
 };
 
 /**
