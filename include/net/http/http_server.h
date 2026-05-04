@@ -28,6 +28,14 @@ class HttpServer: Noncopyable
 public:
     using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
 
+    struct BusinessThreadPoolConfig
+    {
+        int32_t threadMaxThreshold{0};
+        int32_t taskQueueMaxThreshold{0};
+        int32_t threadMaxIdleInterval{0};
+        int32_t submitTimeoutMs{0};
+    };
+
     HttpServer(kit_muduo::EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool = true, TcpServer::Option option = TcpServer::Option::kNoRusePort);
 
     ~HttpServer() = default;
@@ -39,6 +47,9 @@ public:
     void setHttpCallback(const HttpCallBack &cb) { _httpCallBack = std::move(cb); }
 
     void setThreadNum(int32_t nums) { _server.setThreadNum(nums); }
+
+    // 启动前配置 HTTP 业务线程池，便于测试和按服务负载调整容量。
+    void setBusinessThreadPoolConfig(const BusinessThreadPoolConfig &config);
 
     std::shared_ptr<HttpServletDispatch> getServletDispatch() { return _dispatch; }
 
@@ -75,6 +86,7 @@ private:
     ThreadPool _businessThreadPool;// 注意: 这个是http业务额外的线程池，和处理网络连接evnet_loop的线程池侧重点不一样
     std::shared_ptr<HttpServletDispatch> _dispatch;
     bool _isPool;   // 是否使用线程池
+    BusinessThreadPoolConfig _businessThreadPoolConfig;
 };
 
 

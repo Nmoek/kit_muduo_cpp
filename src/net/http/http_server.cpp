@@ -24,6 +24,12 @@ HttpServer::HttpServer(EventLoop *loop, const InetAddress &addr, const std::stri
     ,_httpCallBack(nullptr)
     ,_dispatch(std::make_shared<HttpServletDispatch>())
     ,_isPool(isPool)
+    ,_businessThreadPoolConfig{
+        static_cast<int32_t>(3 * std::thread::hardware_concurrency()),
+        static_cast<int32_t>(30 * std::thread::hardware_concurrency()),
+        2,
+        300
+    }
 {
     _server.setConnectionCallback(std::bind(&HttpServer::onConnect, this, std::placeholders::_1));
 
@@ -36,15 +42,19 @@ void HttpServer::start()
 {
     if(_isPool)
     {
-        // TODO 线程池配置
         _businessThreadPool.setMode(ThreadPool::CACHE_MOD);
-        _businessThreadPool.setThreadMaxThreshHold(3 * std::thread::hardware_concurrency());
-        _businessThreadPool.setTaskQueMaxThreshHold(30 * std::thread::hardware_concurrency());
-        _businessThreadPool.setThreadMaxIdleInterval(2);
+        _businessThreadPool.setThreadMaxThreshHold(_businessThreadPoolConfig.threadMaxThreshold);
+        _businessThreadPool.setTaskQueMaxThreshHold(_businessThreadPoolConfig.taskQueueMaxThreshold);
+        _businessThreadPool.setThreadMaxIdleInterval(_businessThreadPoolConfig.threadMaxIdleInterval);
         _businessThreadPool.start();
     }
 
     _server.start();
+}
+
+void HttpServer::setBusinessThreadPoolConfig(const BusinessThreadPoolConfig &config)
+{
+    _businessThreadPoolConfig = config;
 }
 
 RouteResult HttpServer::addRoute(MethodMask methods, const std::string &url, HttpServlet::Ptr svl)
@@ -243,7 +253,7 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     if(_isPool)
     {
-        auto submit_result = _businessThreadPool.trySubmitTask(300, work_func, conn, ctx, _dispatch);
+        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, work_func, conn, ctx, _dispatch);
 
         if(!submit_result.ok())
         {

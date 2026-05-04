@@ -15,11 +15,217 @@
 #include "net/http/http_server.h"
 #include "net/event_loop.h"
 #include "net/http/http_util.h"
+#include "base/event_loop_thread.h"
 
 #include <gtest/gtest.h>
 
+#include <arpa/inet.h>
+#include <chrono>
+#include <cerrno>
+#include <cstring>
+#include <future>
+#include <netinet/in.h>
+#include <string>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <thread>
+#include <unistd.h>
+
 using namespace kit_muduo;
 using namespace kit_muduo::http;
+
+namespace {
+
+struct FdGuard
+{
+    explicit FdGuard(int32_t input_fd = -1)
+        :fd(input_fd)
+    {}
+
+    ~FdGuard()
+    {
+        if(fd >= 0)
+        {
+            ::close(fd);
+        }
+    }
+
+    int32_t fd;
+};
+
+struct PickPortResult
+{
+    bool ok{false};
+    uint16_t port{0};
+    std::string error;
+};
+
+PickPortResult PickUnusedLoopbackPort()
+{
+    PickPortResult result;
+    FdGuard listen_fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    if(listen_fd.fd < 0)
+    {
+        result.error = "create socket failed: ";
+        result.error += std::strerror(errno);
+        return result;
+    }
+
+    int32_t on = 1;
+    ::setsockopt(listen_fd.fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+    sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    if(::bind(listen_fd.fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0)
+    {
+        result.error = "bind loopback failed: ";
+        result.error += std::strerror(errno);
+        return result;
+    }
+
+    socklen_t addr_len = sizeof(addr);
+    if(::getsockname(listen_fd.fd, reinterpret_cast<sockaddr*>(&addr), &addr_len) < 0)
+    {
+        result.error = "getsockname failed: ";
+        result.error += std::strerror(errno);
+        return result;
+    }
+
+    result.ok = true;
+    result.port = ::ntohs(addr.sin_port);
+    return result;
+}
+
+int32_t ConnectLoopback(uint16_t port)
+{
+    for(int32_t i = 0; i < 50; ++i)
+    {
+        int32_t fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if(fd < 0)
+        {
+            return -1;
+        }
+
+        timeval timeout;
+        timeout.tv_sec = 2;
+        timeout.tv_usec = 0;
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+        sockaddr_in addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = ::htons(port);
+        addr.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+
+        if(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0)
+        {
+            return fd;
+        }
+
+        ::close(fd);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    return -1;
+}
+
+bool SendAll(int32_t fd, const std::string &data)
+{
+    const char *cur = data.data();
+    size_t left = data.size();
+    while(left > 0)
+    {
+        ssize_t n = ::send(fd, cur, left, 0);
+        if(n < 0)
+        {
+            if(errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+
+        cur += n;
+        left -= static_cast<size_t>(n);
+    }
+
+    return true;
+}
+
+std::string ReadAll(int32_t fd)
+{
+    std::string data;
+    char buf[4096];
+    while(true)
+    {
+        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if(n > 0)
+        {
+            data.append(buf, static_cast<size_t>(n));
+            continue;
+        }
+        if(n == 0)
+        {
+            break;
+        }
+        if(errno == EINTR)
+        {
+            continue;
+        }
+        break;
+    }
+
+    return data;
+}
+
+class HttpServerTestGuard
+{
+public:
+    HttpServerTestGuard(EventLoop *loop, std::shared_ptr<HttpServer> *server)
+        :loop_(loop)
+        ,server_(server)
+        ,cleaned_(false)
+    {}
+
+    ~HttpServerTestGuard()
+    {
+        cleanup();
+    }
+
+    void cleanup()
+    {
+        if(cleaned_ || loop_ == nullptr)
+        {
+            return;
+        }
+
+        std::promise<void> done;
+        auto done_future = done.get_future();
+        loop_->runInLoop([this, &done](){
+            if(server_)
+            {
+                server_->reset();
+            }
+            loop_->quit();
+            done.set_value();
+        });
+
+        done_future.wait_for(std::chrono::seconds(2));
+        cleaned_ = true;
+    }
+
+private:
+    EventLoop *loop_;
+    std::shared_ptr<HttpServer> *server_;
+    bool cleaned_;
+};
+
+} // namespace
 
 static const char g_test_req[] = \
 "GET /index.html HTTP/1.1\r\n" \
@@ -217,6 +423,67 @@ TEST(TestHttpResp, create_data)
     TEST_INFO() << "Body: "<< "|" << resp->body().toString() << "|" << std::endl;
 
 
+}
+
+TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
+{
+    auto port_result = PickUnusedLoopbackPort();
+    if(!port_result.ok)
+    {
+        GTEST_SKIP() << "loopback TCP socket unavailable: " << port_result.error;
+    }
+    const uint16_t port = port_result.port;
+
+    EventLoopThread loop_thread(nullptr, "http_submit_failure_test");
+    EventLoop *loop = loop_thread.startLoop();
+    ASSERT_NE(loop, nullptr);
+
+    std::shared_ptr<HttpServer> server;
+    HttpServerTestGuard guard(loop, &server);
+    std::promise<void> started;
+    auto started_future = started.get_future();
+
+    loop->runInLoop([&](){
+        InetAddress addr(port, "127.0.0.1");
+        server = std::make_shared<HttpServer>(loop, addr, "http-submit-failure-test", true, TcpServer::KReusePort);
+        server->setThreadNum(0);
+        server->setBusinessThreadPoolConfig(HttpServer::BusinessThreadPoolConfig{
+            1,
+            0,
+            2,
+            10
+        });
+        server->Get("/slow", [](TcpConnectionPtr conn, HttpContextPtr ctx) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            auto resp = ctx->response();
+            resp->setVersion(Version::kHttp11);
+            resp->setStateCode(StateCode::k200Ok);
+            resp->setConnectionClosed(true);
+            resp->body().appendData("ok");
+        });
+        server->start();
+        started.set_value();
+    });
+
+    ASSERT_EQ(started_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    FdGuard client_fd(ConnectLoopback(port));
+    ASSERT_GE(client_fd.fd, 0);
+
+    const std::string request =
+        "GET /slow HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    ASSERT_TRUE(SendAll(client_fd.fd, request));
+
+    const std::string response = ReadAll(client_fd.fd);
+    ASSERT_NE(response.find("HTTP/1.1 503 Service Unavailable\r\n"), std::string::npos)
+        << response;
+    ASSERT_NE(response.find("Connection: close\r\n"), std::string::npos)
+        << response;
+
+    guard.cleanup();
 }
 
 TEST(TestHttpServer, DISABLED_listen)
