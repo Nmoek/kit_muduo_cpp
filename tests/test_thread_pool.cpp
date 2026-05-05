@@ -10,6 +10,8 @@
 #include "./test_log.h"
 
 #include "gtest/gtest.h"
+#include <future>
+#include <unistd.h>
 
 using namespace kit_muduo;
 
@@ -82,11 +84,58 @@ TEST(TestThreadPool, TrySubmitTask)
     ASSERT_EQ(r3.result_future.get(), "future success3");
     ASSERT_EQ(r4.result_future.get(), "future success4");
     ASSERT_EQ(r5.result_future.get(), "future success5");
+    
     pool.stop();
 
     auto r7 = pool.trySubmitTask(200, test_func, 7);
     ASSERT_EQ(r7.status, ThreadPool::SubmitStatus::kStopping);
 
+}
+
+
+TEST(TestThreadPool, CacheWorkerIdleExitDoesNotBreakPool)
+{
+    ThreadPool pool(1);
+    pool.setMode(ThreadPool::CACHE_MOD);
+    pool.setThreadMaxThreshHold(3);
+    pool.setTaskQueMaxThreshHold(1);
+    pool.setThreadMaxIdleInterval(1);
+    pool.start();
+
+    std::promise<int32_t> p1;
+    auto f1 = p1.get_future();
+    std::promise<int32_t> p2;
+    auto f2 = p2.get_future();
+
+    auto r1 = pool.submitTask([f = std::move(f1)]() mutable{
+        EXPECT_EQ(f.get(), 1);
+    });
+    ASSERT_EQ(r1.status, ThreadPool::SubmitStatus::kOK);
+
+    auto r2 = pool.submitTask([f = std::move(f2)]() mutable{
+        EXPECT_EQ(f.get(), 2);
+    });
+    ASSERT_EQ(r2.status, ThreadPool::SubmitStatus::kOK);
+    p1.set_value(1);
+    p2.set_value(2);
+    ASSERT_NO_THROW(r1.result_future.get());
+    ASSERT_NO_THROW(r2.result_future.get());
+
+    sleep(2);
+    std::promise<int32_t> p3;
+    auto f3 = p3.get_future();
+    auto r3 = pool.submitTask([f = std::move(f3)]() mutable {
+        EXPECT_EQ(f.get(), 3);
+    });
+    ASSERT_EQ(r3.status, ThreadPool::SubmitStatus::kOK);
+    p3.set_value(3);
+    ASSERT_NO_THROW(r3.result_future.get());
+
+    pool.stop();
+    auto r4 = pool.submitTask([](){
+        TEST_DEBUG() << "hello \n";
+    });
+    ASSERT_EQ(r4.status, ThreadPool::SubmitStatus::kStopping);
 }
 
 int main(int argc, char **argv)

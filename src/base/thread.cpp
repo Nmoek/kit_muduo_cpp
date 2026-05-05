@@ -70,9 +70,11 @@ void Thread::join()
     if(!_thread->joinable())
     {
         THREAD_WARN() << "thread isn't joinable" << std::endl;
+        return;
     }
-    _joined = true;
     _thread->join();
+    _joined = true;
+
 }
 
 void Thread::setDefaultName()
