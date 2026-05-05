@@ -189,31 +189,34 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
         return;
     }
 
-    // 这里使用HttpContext的目的是分段解析Http报文
-    if(!context->parseRequest(*buf, receiveTime))
+    while(buf->readableBytes() > 0)
     {
-        HTTP_ERROR() << "http request parse error! " << std::endl;
-        BadRequest400Servlet svl;
+        size_t before_len = buf->readableBytes();
 
-        svl.handle(conn, context);
-        conn->send(context->response()->toString());
-        conn->shutdown();
+        if(!context->parseRequest(*buf, receiveTime))
+        {
+            HTTP_ERROR() << "http request parse error! " << std::endl;
+       
+            BadRequest400Servlet::Handle(conn, context);
+            conn->send(context->response()->toString());
+            conn->shutdown();
 
-        context.reset(new HttpContext());
-    }
+            return;
+        }
 
-    if(context->gotAll())
-    {
-        // TODO： 需要对请求的方法等进行校验
-        // 1. 检查请求方法
-        // 2. TODO检查其他什么要素?
+        // 未解析完 等待更多数据
+        if(!context->gotAll())
+        {
+            HTTP_F_DEBUG("http data not complete! %lu --> %lu \n", before_len, buf->readableBytes());
+            break;
+        }
 
-        std::shared_ptr<HttpContext> ctx2;
-        ctx2.swap(context);
+        _httpCallBack(conn, context);
         // 重置conn中的上下文
-        conn->setContext(std::make_shared<HttpContext>());
-        _httpCallBack(conn, ctx2);
+        context = std::make_shared<HttpContext>();
+        conn->setContext(context);
     }
+
 
 }
 

@@ -328,6 +328,67 @@ TEST(TestHttpReq, query_params_segmented_url)
     EXPECT_STREQ(req->getQureyParam("name").c_str(), "kit muduo");
 }
 
+TEST(TestHttpReq, buffer_partial_body_keeps_parser_state)
+{
+    static const char first_part[] =
+    "POST /partial HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "Content-Length: 5\r\n"
+    "Content-Type: text/plain\r\n"
+    "\r\nhe";
+    static const char second_part[] = "llo";
+
+    HttpContext context;
+    Buffer buf;
+    auto now = TimeStamp::Now();
+
+    buf.append(first_part, strlen(first_part));
+    EXPECT_EQ(context.parseRequest(buf, now), true);
+    EXPECT_EQ(context.gotAll(), false);
+    EXPECT_EQ(buf.readableBytes(), 0);
+    EXPECT_STREQ(context.request()->body().toString().c_str(), "he");
+
+    buf.append(second_part, strlen(second_part));
+    EXPECT_EQ(context.parseRequest(buf, now), true);
+    EXPECT_EQ(context.gotAll(), true);
+    EXPECT_EQ(buf.readableBytes(), 0);
+
+    auto req = context.request();
+    EXPECT_STREQ(req->method().toString(), "POST");
+    EXPECT_STREQ(req->path().c_str(), "/partial");
+    EXPECT_STREQ(req->body().toString().c_str(), "hello");
+}
+
+TEST(TestHttpReq, buffer_pipelining_leaves_next_request_readable)
+{
+    const std::string first_req =
+    "GET /one HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "\r\n";
+    const std::string second_req =
+    "GET /two HTTP/1.1\r\n"
+    "Host: localhost\r\n"
+    "\r\n";
+
+    Buffer buf;
+    buf.append(first_req.data(), first_req.size());
+    buf.append(second_req.data(), second_req.size());
+
+    auto now = TimeStamp::Now();
+    HttpContext first_context;
+    EXPECT_EQ(first_context.parseRequest(buf, now), true);
+    EXPECT_EQ(first_context.gotAll(), true);
+    EXPECT_STREQ(first_context.request()->path().c_str(), "/one");
+    EXPECT_EQ(buf.readableBytes(), second_req.size());
+    EXPECT_EQ(buf.lookAllAsString(), second_req);
+
+    HttpContext second_context;
+    EXPECT_EQ(second_context.parseRequest(buf, now), true);
+    EXPECT_EQ(second_context.gotAll(), true);
+    EXPECT_STREQ(second_context.request()->path().c_str(), "/two");
+    EXPECT_EQ(buf.readableBytes(), 0);
+}
+
 
 TEST(TestHttpReq, create_data)
 {
@@ -423,6 +484,127 @@ TEST(TestHttpResp, create_data)
     TEST_INFO() << "Body: "<< "|" << resp->body().toString() << "|" << std::endl;
 
 
+}
+
+TEST(TestHttpResp, body_without_content_type_defaults_to_octet_stream)
+{
+    static const char test_resp[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Length: 6\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "abcdef";
+
+    HttpContext context;
+    Buffer buf;
+    buf.append(test_resp, strlen(test_resp));
+
+    auto now = TimeStamp::Now();
+    EXPECT_EQ(context.parseResponse(buf, now), true);
+    EXPECT_EQ(context.gotAll(), true);
+    EXPECT_EQ(buf.readableBytes(), 0);
+
+    auto resp = context.response();
+    EXPECT_STREQ(resp->stateCode().toString().c_str(), "200");
+    EXPECT_STREQ(resp->body().toString().c_str(), "abcdef");
+    EXPECT_EQ(resp->body().contentType()(), ContentType::kOctetStream);
+}
+
+TEST(TestHttpResp, binary_body_without_content_type_preserves_bytes)
+{
+    static const char header[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Length: 5\r\n"
+    "\r\n";
+    const std::string body("a\0b\0c", 5);
+
+    Buffer buf;
+    buf.append(header, strlen(header));
+    buf.append(body.data(), body.size());
+
+    HttpContext context;
+    auto now = TimeStamp::Now();
+    EXPECT_EQ(context.parseResponse(buf, now), true);
+    EXPECT_EQ(context.gotAll(), true);
+    EXPECT_EQ(buf.readableBytes(), 0);
+
+    auto resp = context.response();
+    EXPECT_EQ(resp->body().toString(), body);
+    EXPECT_EQ(resp->body().data().size(), body.size());
+    EXPECT_EQ(resp->body().contentType()(), ContentType::kOctetStream);
+}
+
+TEST(TestHttpServer, pipelined_requests_are_dispatched_separately)
+{
+    auto port_result = PickUnusedLoopbackPort();
+    if(!port_result.ok)
+    {
+        GTEST_SKIP() << "loopback TCP socket unavailable: " << port_result.error;
+    }
+    const uint16_t port = port_result.port;
+
+    EventLoopThread loop_thread(nullptr, "http_pipeline_test");
+    EventLoop *loop = loop_thread.startLoop();
+    ASSERT_NE(loop, nullptr);
+
+    std::shared_ptr<HttpServer> server;
+    HttpServerTestGuard guard(loop, &server);
+    std::promise<void> started;
+    auto started_future = started.get_future();
+
+    loop->runInLoop([&](){
+        InetAddress addr(port, "127.0.0.1");
+        server = std::make_shared<HttpServer>(loop, addr, "http-pipeline-test", false, TcpServer::KReusePort);
+        server->setThreadNum(0);
+        server->setHttpCallback([](TcpConnectionPtr conn, HttpContextPtr ctx) {
+            auto req = ctx->request();
+            auto resp = ctx->response();
+            resp->setVersion(Version::kHttp11);
+            resp->setStateCode(StateCode::k200Ok);
+            resp->body().appendData(req->path());
+            if(req->path() == "/two")
+            {
+                resp->setConnectionClosed(true);
+            }
+            conn->send(resp->toString());
+            if(resp->connectionClosed())
+            {
+                conn->shutdown();
+            }
+        });
+        server->start();
+        started.set_value();
+    });
+
+    ASSERT_EQ(started_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    FdGuard client_fd(ConnectLoopback(port));
+    ASSERT_GE(client_fd.fd, 0);
+
+    const std::string requests =
+        "GET /one HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "\r\n"
+        "GET /two HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Connection: close\r\n"
+        "\r\n";
+    ASSERT_TRUE(SendAll(client_fd.fd, requests));
+
+    const std::string response = ReadAll(client_fd.fd);
+    const size_t first_resp = response.find("HTTP/1.1 200 OK\r\n");
+    ASSERT_NE(first_resp, std::string::npos) << response;
+
+    const size_t first_body = response.find("\r\n\r\n/one", first_resp);
+    ASSERT_NE(first_body, std::string::npos) << response;
+
+    const size_t second_resp = response.find("HTTP/1.1 200 OK\r\n", first_resp + 1);
+    ASSERT_NE(second_resp, std::string::npos) << response;
+
+    const size_t second_body = response.find("\r\n\r\n/two", second_resp);
+    ASSERT_NE(second_body, std::string::npos) << response;
+
+    guard.cleanup();
 }
 
 TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
