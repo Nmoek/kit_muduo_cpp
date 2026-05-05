@@ -228,6 +228,9 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.SOCKET test_socket tests/test_socket.cpp)
 
 # Buffer测试 test_buffer
 add_kit_test(MUDUO_TEST MUDUO_TEST.BUFFER test_buffer tests/test_buffer.cpp)
+if(MUDUO_TEST OR MUDUO_TEST.BUFFER)
+    add_test(NAME test_buffer COMMAND test_buffer)
+endif()
 
 # Timer测试 test_timer
 add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)

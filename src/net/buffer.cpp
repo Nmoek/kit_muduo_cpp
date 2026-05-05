@@ -30,7 +30,7 @@ ssize_t Buffer::readFd(int32_t fd, int32_t *savedErrno)
     {
         *savedErrno = errno;
     }
-    else if(n < writeable_len)
+    else if(n <= writeable_len)
     {
         _writeIndex += n;
     }

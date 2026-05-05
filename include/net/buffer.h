@@ -127,8 +127,8 @@ public:
 
     std::vector<char> resetAsData(size_t len)
     {
-        std::vector<char> res(_buffer.begin() + _readIndex, _buffer.begin() + _readIndex + len);
-        reset(len);
+        std::vector<char> res(peek(), peek() + std::min(len, readableBytes()));
+        reset(std::min(len, readableBytes()));
         return res;
     }
 
