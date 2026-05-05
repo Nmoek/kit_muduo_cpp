@@ -10,6 +10,7 @@
 #include "base/util.h"
 #include "base/base_log.h"
 
+#include <cerrno>
 #include <semaphore.h>
 #include <unistd.h>
 
@@ -18,72 +19,91 @@ namespace kit_muduo {
 std::atomic_int Thread::_createdNum(0);
 
 Thread::Thread(ThreadFunc func, const std::string &name)
-    :_started(false)
-    ,_joined(false)
-    ,_pid(0)
-    ,_func(func)
-    ,_name(name)
+    :started_(false)
+    ,joined_(false)
+    ,pid_(0)
+    ,func_(func)
+    ,name_(name)
 {
     setDefaultName();
 }
 
 Thread::~Thread()
 {
-    if(_started && !_joined)
+    if(started_ && !joined_)
     {
-        _thread->detach();
+        thread_->detach();
     }
 }
 
 void Thread::start()
 {
-    _started = true;
+    started_ = true;
     sem_t sem;
-    sem_init(&sem, false, 0);
+    if(sem_init(&sem, 0, 0) != 0)
+    {
+        THREAD_F_ERROR("sem_init failed: %d:%s\n", errno, strerror(errno));
+        abort();
+    }
 
-    _thread = std::make_shared<std::thread>([&](){
+    thread_ = std::make_shared<std::thread>([this, 
+        name = name_, 
+        func = func_,
+        &sem](){
         try
         {
+            this->pid_ = GetThreadPid();
 
-            _pid = GetThreadPid();
-            const char* tmp_namp = _name.c_str();
-            if(strlen(tmp_namp) > 0)
-                ::pthread_setname_np(::pthread_self(), tmp_namp);
+            if(!name.empty() && strlen(name.c_str()) > 0)
+            {
+                ::pthread_setname_np(::pthread_self(), name.c_str());
+            }
 
             sem_post(&sem);
-            if(_func)
-                _func();
+            if(func)
+            {
+                func();
+            }
         }
         catch (std::exception &e)
         {
-            THREAD_ERROR() << "exception happend: " << e.what() << std::endl;
+            THREAD_F_ERROR("!!![EXCEPTION]!!! func run error: %s \n", e.what());
         }
     });
 
     // 注意: 必须确保子线程起来后才能继续往下
-    sem_wait(&sem);
-    usleep(100);
+    while(-1 == sem_wait(&sem))
+    {
+        if(EINTR == errno)
+        {
+            continue;
+        }
+        THREAD_F_ERROR("sem_wait failed: %d:%s\n", errno, strerror(errno));
+        usleep(100);
+        break;
+    }
+    sem_destroy(&sem);
 }
 
 void Thread::join()
 {
-    if(!_thread->joinable())
+    if(!thread_ || !thread_->joinable())
     {
         THREAD_WARN() << "thread isn't joinable" << std::endl;
         return;
     }
-    _thread->join();
-    _joined = true;
+    thread_->join();
+    joined_ = true;
 
 }
 
 void Thread::setDefaultName()
 {
     int num = ++_createdNum;
-    if(_name.empty())
+    if(name_.empty())
     {
-        _name += "mu_thread_";
-        _name += std::to_string(num);
+        name_ += "mu_thread_";
+        name_ += std::to_string(num);
     }
 }
 
