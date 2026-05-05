@@ -142,11 +142,10 @@ public:
         {
             return false;
         }
-        
+
         const K& key = list_.back().first;
         out_value = list_.back().second;
-        lock.unlock();
-
+ 
         // 延迟提升
         std::lock_guard<std::mutex> lock2(pending_mutex_);
         // 末尾刚访问过的key不进行提升
