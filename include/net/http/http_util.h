@@ -12,6 +12,7 @@
 #include "base/content_parser.h"
 
 #include <bits/stdint-intn.h>
+#include <cctype>
 #include <string>
 #include <assert.h>
 #include <memory>
@@ -94,19 +95,25 @@ struct ContentType
     // TODO 接口名称改一下
     // const char * toStr() const { return toString().c_str(); }
 
-    static ContentType FromString(const std::string &contentTypeStr)
+    static ContentType FromString( const std::string &contentTypeStr)
     {
-        if(-1 != contentTypeStr.find("json"))
+        std::string tmp;
+        for(auto &c : contentTypeStr)
+        {
+            tmp += std::isalpha(c) ? std::tolower(c) : c;
+        }
+
+        if(-1 != tmp.find("json"))
             return ContentType(kJsonType);
-        if(-1 != contentTypeStr.find("xml"))
+        if(-1 != tmp.find("xml"))
             return ContentType(kXmlType);
-        if(-1 != contentTypeStr.find("plain"))
+        if(-1 != tmp.find("plain"))
             return ContentType(kPlainType);
-        if(-1 != contentTypeStr.find("jpeg"))
+        if(-1 != tmp.find("jpeg"))
             return ContentType(kImageJpgType);
-        if(-1 != contentTypeStr.find("multipart"))
+        if(-1 != tmp.find("multipart"))
             return ContentType(kMultiForm);
-        if(-1 != contentTypeStr.find("stream"))
+        if(-1 != tmp.find("stream"))
             return ContentType(kOctetStream);
 
         return ContentType(kUnknowType);
@@ -164,7 +171,7 @@ struct StateCode
 
     static StateCode FromString(const std::string &str)
     {
-        int32_t code = std::stoi(str);
+        int32_t code = std::atoi(str.c_str());
         auto it = s_m_codeMessageMap.find(code);
 
         return it == s_m_codeMessageMap.end() ? StateCode() : StateCode(code);

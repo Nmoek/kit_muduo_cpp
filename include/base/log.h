@@ -10,6 +10,7 @@
 #ifndef __LOG_H__
 #define __LOG_H__
 
+#include <atomic>
 #include <string>
 #include <pthread.h>
 #include <list>
@@ -97,19 +98,19 @@ public:
      * @brief 设置日志器级别
      * @param level
      */
-    void setLevel(const LogLevel::Level level) { _level = level; }
+    void setLevel(const LogLevel::Level level) { _level.store(level); }
 
     /**
      * @brief 获取日志器级别
      * @return LogLevel::Level
      */
-    LogLevel::Level getLevel() const { return _level; }
+    LogLevel::Level getLevel() const { return static_cast<LogLevel::Level>(_level.load()); }
 
 private:
     /// @brief 日志器名字 默认=“root”
     std::string _name{""};
     /// @brief 日志器级别
-    LogLevel::Level _level{LogLevel::DEBUG};
+    std::atomic_int32_t _level;
     /// @brief 日志输出器合集
     std::list<LogAppender::Ptr> _appenders;
     /// @brief 输出器锁

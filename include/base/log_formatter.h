@@ -147,7 +147,7 @@ public:
         char timeStr[32] = {0};
         char buf[96] = {0};
 
-        tm = *localtime(&t);
+        tm = *localtime_r(&t, &tm);
         strftime(timeStr, sizeof(timeStr), _timeFormat.c_str(), &tm);
 
         snprintf(buf, sizeof(buf), "%s.%03d", timeStr, (int)(pattr->getTimeStamp() % 1000));
