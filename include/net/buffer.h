@@ -8,8 +8,10 @@
  */
 #ifndef __KIT_BUFFER_H__
 #define __KIT_BUFFER_H__
-#include <bits/stdint-intn.h>
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <sys/types.h>
 #include <vector>
 #include <string>
 
@@ -244,8 +246,8 @@ private:
 
 private:
     std::vector<char> _buffer;
-    int32_t _readIndex;
-    int32_t _writeIndex;
+    size_t _readIndex;
+    size_t _writeIndex;
 };
 
 }   // kit_muduo

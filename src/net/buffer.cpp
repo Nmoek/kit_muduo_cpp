@@ -14,7 +14,7 @@ namespace kit_muduo {
 
 ssize_t Buffer::readFd(int32_t fd, int32_t *savedErrno)
 {
-    char extraBuf[64 * 1024] = {0}; // 64K
+    char extraBuf[64 * 1024]; // 64K
     struct iovec vec[2];
     const size_t writeable_len = writableBytes();
 
@@ -30,14 +30,14 @@ ssize_t Buffer::readFd(int32_t fd, int32_t *savedErrno)
     {
         *savedErrno = errno;
     }
-    else if(n <= writeable_len)
+    else if(static_cast<size_t>(n) <= writeable_len)
     {
-        _writeIndex += n;
+        _writeIndex += static_cast<size_t>(n);
     }
     else    // n > writeable_len
     {
         _writeIndex = _buffer.size();
-        append(extraBuf, n - writeable_len);
+        append(extraBuf, static_cast<size_t>(n) - writeable_len);
     }
     return n;
 }

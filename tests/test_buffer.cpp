@@ -111,6 +111,28 @@ TEST(TestBuffer, ResetAsDataClampsToReadableBytes)
     ASSERT_EQ(b.prependBytes(), 8u);
 }
 
+TEST(TestBuffer, InitialSizeKeepsSizeTArithmeticStable)
+{
+    const size_t init_size = 4096;
+    Buffer b(init_size);
+
+    ASSERT_EQ(b.readableBytes(), 0u);
+    ASSERT_EQ(b.prependBytes(), 8u);
+    ASSERT_EQ(b.writableBytes(), init_size);
+
+    const std::string data = "large-buffer-index";
+    b.append(data.data(), data.size());
+
+    ASSERT_EQ(b.readableBytes(), data.size());
+    ASSERT_EQ(b.writableBytes(), init_size - data.size());
+    ASSERT_EQ(b.lookAllAsString(), data);
+
+    b.reset(data.size());
+    ASSERT_EQ(b.readableBytes(), 0u);
+    ASSERT_EQ(b.prependBytes(), 8u);
+    ASSERT_EQ(b.writableBytes(), init_size);
+}
+
 TEST(TestBuffer, ReadFdExactWritableBytes)
 {
     Buffer b;
