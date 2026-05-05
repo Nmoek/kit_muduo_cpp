@@ -144,6 +144,7 @@ set(NET_SRC
     src/net/sample_timer_queue.cpp
     src/net/net_data_converter.cpp
     src/net/udp_datagram.cpp
+    src/net/async_udp_datagram.cpp
     src/net/udp_server.cpp
     
     ${NET_HTTP_SRC}

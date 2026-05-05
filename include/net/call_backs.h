@@ -18,6 +18,7 @@ namespace kit_muduo {
 
 class TcpConnection;
 class UdpDatagram;
+class AsyncUdpDatagram;
 class Buffer;
 class TimeStamp;
 class TcpServer;
@@ -36,6 +37,7 @@ class HttpServer;
 using TcpServerPtr = std::shared_ptr<TcpServer>;
 using TcpConnectionPtr = std::shared_ptr<TcpConnection>;
 using UdpDatagramPtr = std::shared_ptr<UdpDatagram>;
+using AsyncUdpDatagramPtr = std::shared_ptr<AsyncUdpDatagram>;
 using ContextPtr = std::shared_ptr<void>;
 
 /**********HTTP************/
