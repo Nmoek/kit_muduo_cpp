@@ -38,6 +38,7 @@ option(MUDUO_TEST.EVENT_LOOP_THREAD "build test_event_loop_thread" OFF)
 option(MUDUO_TEST.SOCKET "build test_socket" OFF)
 option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
+option(MUDUO_TEST.LOG "build test_log" OFF)
 option(MUDUO_TEST.TCP_SERVER "build test_tcp_server" OFF)
 option(MUDUO_TEST.HTTP "build test_http" OFF)
 option(MUDUO_TEST.LLHTTP "build test_llhttp" OFF)
@@ -230,6 +231,12 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.BUFFER test_buffer tests/test_buffer.cpp)
 
 # Timer测试 test_timer
 add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)
+
+# Log测试 test_log
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
+if(MUDUO_TEST OR MUDUO_TEST.LOG)
+    add_test(NAME test_log COMMAND test_log)
+endif()
 
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
