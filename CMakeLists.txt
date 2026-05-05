@@ -35,6 +35,7 @@ option(MUDUO_TEST.TIME_STAMP "build test_time_stamp" OFF)
 option(MUDUO_TEST.INET_ADDRESS "build test_inet_address" OFF)
 option(MUDUO_TEST.THREAD "build test_thread" OFF)
 option(MUDUO_TEST.EVENT_LOOP_THREAD "build test_event_loop_thread" OFF)
+option(MUDUO_TEST.POLL_POLLER "build test_poll_poller" OFF)
 option(MUDUO_TEST.SOCKET "build test_socket" OFF)
 option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
@@ -222,6 +223,12 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.THREAD test_thread tests/test_thread.cpp)
 
 # EventLoopThread 线程测试 test_event_loop_thread
 add_kit_test(MUDUO_TEST MUDUO_TEST.EVENT_LOOP_THREAD test_event_loop_thread tests/test_event_loop_thread.cpp)
+
+# PollPoller 回归测试 test_poll_poller
+add_kit_test(MUDUO_TEST MUDUO_TEST.POLL_POLLER test_poll_poller tests/test_poll_poller.cpp)
+if(MUDUO_TEST OR MUDUO_TEST.POLL_POLLER)
+    add_test(NAME test_poll_poller COMMAND test_poll_poller)
+endif()
 
 # socket测试 test_socket
 add_kit_test(MUDUO_TEST MUDUO_TEST.SOCKET test_socket tests/test_socket.cpp)

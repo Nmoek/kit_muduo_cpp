@@ -48,6 +48,8 @@ public:
 private:
     void fillActiveEvent(ChannelList *channelList);
 
+    int32_t getRealFd(int32_t pollFd);
+
 private:
     using EventList = std::vector<struct pollfd>;
     EventList _eventList;
