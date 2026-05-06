@@ -133,8 +133,6 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
                         // 先解队列锁
                         lock.unlock();
 
-                        TPOOL_DEBUG() << "notEmpty_ wait timeout, not get task!" << std::endl;
-
                         if(markThreadExited(generateId))
                         {
                             need_exit = true;
@@ -170,7 +168,7 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
         }
 
         
-        TPOOL_F_INFO("wait task size=%d, isRun=%d \n", task_que_.size(), is_running_.load());
+        TPOOL_F_DEBUG("wait task size=%d, isRun=%d \n", task_que_.size(), is_running_.load());
 
         auto task = task_que_.front();
         task_que_.pop();

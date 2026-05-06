@@ -28,9 +28,9 @@ std::shared_ptr<HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
 
     auto static_svl = std::make_shared<StaticFileServlet>();
     //静态资源处理
-    server->Get("*.html", static_svl);
-    server->Get("*.css", static_svl);
-    server->Get("*.js", static_svl);
+    server->Get("/html/*.html", static_svl);
+    server->Get("/css/*.css", static_svl);
+    server->Get("/js/*.js", static_svl);
 
 
     projHdl->RegisterRoutes(server);

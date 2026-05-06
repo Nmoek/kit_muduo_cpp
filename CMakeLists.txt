@@ -62,6 +62,11 @@ option(MUDUO_TEST.ASAN "build test_asan" OFF)
 option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
 option(MUDUO_TEST.CONTENT_PARSER "build test_content_parser" OFF)
+option(WORK_TEST "build all work tests" OFF)
+option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
+option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
+option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
+option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -274,6 +279,7 @@ function(add_kit_test module_option test_option target_name)
         add_executable(${target_name} ${ARGN})
         add_dependencies(${target_name} ${DEPENDS})
         redefine_file_macro(${target_name})   #重定义 __FILE__
+        target_compile_definitions(${target_name} PRIVATE ${DEF})
         target_link_libraries(${target_name} ${LIB_LIB})
     endif()
 endfunction()
@@ -292,27 +298,21 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.EVENT_LOOP_THREAD test_event_loop_thread test
 
 # PollPoller 回归测试 test_poll_poller
 add_kit_test(MUDUO_TEST MUDUO_TEST.POLL_POLLER test_poll_poller tests/test_poll_poller.cpp)
-if(MUDUO_TEST OR MUDUO_TEST.POLL_POLLER)
-    add_test(NAME test_poll_poller COMMAND test_poll_poller)
-endif()
+
 
 # socket测试 test_socket
 add_kit_test(MUDUO_TEST MUDUO_TEST.SOCKET test_socket tests/test_socket.cpp)
 
 # Buffer测试 test_buffer
 add_kit_test(MUDUO_TEST MUDUO_TEST.BUFFER test_buffer tests/test_buffer.cpp)
-if(MUDUO_TEST OR MUDUO_TEST.BUFFER)
-    add_test(NAME test_buffer COMMAND test_buffer)
-endif()
+
 
 # Timer测试 test_timer
 add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)
 
 # Log测试 test_log
 add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
-if(MUDUO_TEST OR MUDUO_TEST.LOG)
-    add_test(NAME test_log COMMAND test_log)
-endif()
+
 
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
@@ -334,59 +334,33 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.ROUTER test_router tests/http/test_router.cpp
 
 # variant 自定义类型包装器
 add_kit_test(MUDUO_TEST MUDUO_TEST.VARIANT test_variant tests/test_variant.cpp ${WORK_SRC})
-if(MUDUO_TEST OR MUDUO_TEST.VARIANT)
-    target_compile_definitions(test_variant PRIVATE ${DEF})
-endif()
+
 
 # test_asan 内存泄漏工具
 add_kit_test(MUDUO_TEST MUDUO_TEST.ASAN test_asan tests/test_asan.cpp ${WORK_SRC})
 
 # test_udp udp集成测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.UDP test_udp tests/test_udp.cpp ${WORK_SRC})
-if(MUDUO_TEST OR MUDUO_TEST.UDP)
-    add_test(NAME test_udp COMMAND test_udp)
-endif()
+
 
 # test_lru_cache LRU缓存测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache.cpp ${WORK_SRC})
-if(MUDUO_TEST OR MUDUO_TEST.LRU_CACHE)
-    add_test(NAME test_lru_cache COMMAND test_lru_cache)
-endif()
 
 # test_content_parser multipart解析器测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_PARSER test_content_parser tests/test_content_parser.cpp ${WORK_SRC})
-if(MUDUO_TEST OR MUDUO_TEST.CONTENT_PARSER)
-    add_test(NAME test_content_parser COMMAND test_content_parser)
-endif()
 
+#sqlite3测试相关配置是否生效
+add_kit_test(WORK_TEST WORK_TEST.SQLITE3 test_sqlite3 tests/db/test_sqlite3.cpp ${WORK_SRC})
 
-if(WORK_TEST)
+# sqlite_orm 测试 test_sqlite_orm
+add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM test_sqlite_orm tests/db/test_sqlite_orm.cpp ${WORK_SRC})
 
-    #sqlite3测试相关配置是否生效
-    add_executable(test_sqlite3 tests/db/test_sqlite3.cpp ${WORK_SRC})
-    add_dependencies(test_sqlite3 ${DEPENDS})
-    redefine_file_macro(test_sqlite3)   #重定义 __FILE__
-    target_compile_definitions(test_sqlite3 PRIVATE ${DEF})
-    target_link_libraries(test_sqlite3 ${LIB_LIB})
+# web端测试服务 测试 test_web_project
+add_kit_test(WORK_TEST WORK_TEST.WEB_PROJECT test_web_project tests/work/web/test_web_project.cpp ${WORK_SRC})
 
-    # sqlite_orm 测试 test_sqlite_orm
-    add_executable(test_sqlite_orm tests/db/test_sqlite_orm.cpp ${WORK_SRC})
-    add_dependencies(test_sqlite_orm ${DEPENDS})
-    redefine_file_macro(test_sqlite_orm)   #重定义 __FILE__
-    target_link_libraries(test_sqlite_orm ${LIB_LIB})
+# custom_tcp服务器实例 test_custom_project_server
+add_kit_test(WORK_TEST WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})
 
-    add_executable(test_web_project tests/work/web/test_web_project.cpp ${WORK_SRC})
-    add_dependencies(test_web_project ${DEPENDS})
-    redefine_file_macro(test_web_project)   #重定义 __FILE__
-    target_link_libraries(test_web_project ${LIB_LIB})
-
-    # custom_tcp服务器实例
-    add_executable(test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})
-    add_dependencies(test_custom_project_server ${DEPENDS})
-    redefine_file_macro(test_custom_project_server)   #重定义 __FILE__
-    target_compile_definitions(test_custom_project_server PRIVATE ${DEF})
-    target_link_libraries(test_custom_project_server ${LIB_LIB})
-endif()
 
 # app服务器实例
 add_executable(kit_protocol_test_platform main.cpp ${WORK_SRC})
