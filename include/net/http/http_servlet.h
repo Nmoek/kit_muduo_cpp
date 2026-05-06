@@ -59,6 +59,15 @@ struct RouteResult {
     bool ok() const { return status == RouteStatus::Ok; }
 };
 
+/// 路由信息快照，供查询接口返回。
+struct RouteInfo {
+    uint64_t id{0};
+    RouteKind kind{RouteKind::Exact};
+    std::string pattern;
+    MethodMask methods{ExpectHttpMethods::None};
+    std::string methods_str;  // 可读形式，如 "GET, POST"
+};
+
 enum class MatchStatus {
     Found,
     PathFoundMethodNotAllowed,
@@ -218,6 +227,31 @@ public:
     RouteResult addRoute(MethodMask methods, const std::string &pattern, HttpServlet::Ptr servlet);
     RouteResult addRoute(MethodMask methods, const std::string &pattern, const FunctionServlet::CallBack &cb);
 
+    // ---- 删 ----
+
+    /// 按 route_id 精确删除（addRoute 返回的 RouteResult 中有 id）。
+    /// @return true 找到并删除，false id 不存在。
+    bool removeRoute(uint64_t route_id);
+
+    /// 按 pattern + method mask 精确匹配删除。
+    /// @return 删除的条目数（0 表示无匹配）。
+    size_t removeRoute(const std::string &pattern, MethodMask methods);
+
+    /// 删除该 pattern 下所有 method 的条目。
+    /// @return 删除的条目数。
+    size_t removeRoute(const std::string &pattern);
+
+    // ---- 查 ----
+
+    /// 按 id 查询单条路由。id 不存在时返回 id==0 的 RouteInfo。
+    RouteInfo getRoute(uint64_t route_id) const;
+
+    /// 列出所有已注册路由的快照。
+    std::vector<RouteInfo> listRoutes() const;
+
+    /// 列出指定 pattern 下所有 method 的路由。
+    std::vector<RouteInfo> listRoutes(const std::string &pattern) const;
+
 private:
     struct RouteEntry {
         uint64_t id{0};
@@ -245,7 +279,7 @@ private:
     std::vector<RouteEntry> dynamic_routes_;
     uint64_t next_route_id_{1};
     int next_priority_{0};
-    std::mutex route_mtx_;
+    mutable std::mutex route_mtx_;
 
 };
 
