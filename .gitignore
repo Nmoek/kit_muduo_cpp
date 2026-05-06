@@ -21,3 +21,4 @@
 
 *.sqlite
 *.patch
+.gitattributes

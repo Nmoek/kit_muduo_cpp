@@ -163,8 +163,38 @@ bool HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack 
         HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
         return false;
     }
-    
+
     return true;}
+
+bool HttpServer::removeRoute(uint64_t route_id)
+{
+    return _dispatch->removeRoute(route_id);
+}
+
+size_t HttpServer::removeRoute(const std::string &pattern, MethodMask methods)
+{
+    return _dispatch->removeRoute(pattern, methods);
+}
+
+size_t HttpServer::removeRoute(const std::string &pattern)
+{
+    return _dispatch->removeRoute(pattern);
+}
+
+RouteInfo HttpServer::getRoute(uint64_t route_id) const
+{
+    return _dispatch->getRoute(route_id);
+}
+
+std::vector<RouteInfo> HttpServer::listRoutes() const
+{
+    return _dispatch->listRoutes();
+}
+
+std::vector<RouteInfo> HttpServer::listRoutes(const std::string &pattern) const
+{
+    return _dispatch->listRoutes(pattern);
+}
 
 void HttpServer::onConnect(TcpConnectionPtr conn)
 {

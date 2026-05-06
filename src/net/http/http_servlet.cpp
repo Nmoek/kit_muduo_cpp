@@ -632,6 +632,229 @@ bool HttpServletDispatch::hasMethodConflict(const std::vector<RouteEntry> &route
     return conflict != ExpectHttpMethods::None;
 }
 
+bool HttpServletDispatch::removeRoute(uint64_t route_id)
+{
+    std::unique_lock<std::mutex> lock(route_mtx_);
+
+    // exact_routes_
+    for (auto it = exact_routes_.begin(); it != exact_routes_.end(); )
+    {
+        auto &vec = it->second;
+        for (auto vit = vec.begin(); vit != vec.end(); ++vit)
+        {
+            if (vit->id == route_id)
+            {
+                vec.erase(vit);
+                if (vec.empty())
+                {
+                    it = exact_routes_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+                return true;
+            }
+        }
+        ++it;
+    }
+
+    // dynamic_routes_
+    for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); ++it)
+    {
+        if (it->id == route_id)
+        {
+            dynamic_routes_.erase(it);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+size_t HttpServletDispatch::removeRoute(const std::string &pattern, MethodMask methods)
+{
+    std::unique_lock<std::mutex> lock(route_mtx_);
+    size_t removed = 0;
+
+    // exact_routes_
+    auto exact_it = exact_routes_.find(pattern);
+    if (exact_it != exact_routes_.end())
+    {
+        auto &vec = exact_it->second;
+        for (auto vit = vec.begin(); vit != vec.end(); )
+        {
+            if (vit->methods == methods)
+            {
+                vit = vec.erase(vit);
+                ++removed;
+            }
+            else
+            {
+                ++vit;
+            }
+        }
+        if (vec.empty())
+        {
+            exact_routes_.erase(exact_it);
+        }
+    }
+
+    // dynamic_routes_
+    for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); )
+    {
+        if (it->pattern == pattern && it->methods == methods)
+        {
+            it = dynamic_routes_.erase(it);
+            ++removed;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    return removed;
+}
+
+size_t HttpServletDispatch::removeRoute(const std::string &pattern)
+{
+    std::unique_lock<std::mutex> lock(route_mtx_);
+    size_t removed = 0;
+
+    // exact_routes_
+    auto exact_it = exact_routes_.find(pattern);
+    if (exact_it != exact_routes_.end())
+    {
+        removed += exact_it->second.size();
+        exact_routes_.erase(exact_it);
+    }
+
+    // dynamic_routes_
+    for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); )
+    {
+        if (it->pattern == pattern)
+        {
+            it = dynamic_routes_.erase(it);
+            ++removed;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    return removed;
+}
+
+RouteInfo HttpServletDispatch::getRoute(uint64_t route_id) const
+{
+    std::unique_lock<std::mutex> lock(route_mtx_);
+
+    for (const auto &pair : exact_routes_)
+    {
+        for (const auto &route : pair.second)
+        {
+            if (route.id == route_id)
+            {
+                RouteInfo info;
+                info.id = route.id;
+                info.kind = route.kind;
+                info.pattern = route.pattern;
+                info.methods = route.methods;
+                info.methods_str = BuildAllowHeader(route.methods);
+                return info;
+            }
+        }
+    }
+
+    for (const auto &route : dynamic_routes_)
+    {
+        if (route.id == route_id)
+        {
+            RouteInfo info;
+            info.id = route.id;
+            info.kind = route.kind;
+            info.pattern = route.pattern;
+            info.methods = route.methods;
+            info.methods_str = BuildAllowHeader(route.methods);
+            return info;
+        }
+    }
+
+    return RouteInfo{};
+}
+
+std::vector<RouteInfo> HttpServletDispatch::listRoutes() const
+{
+    std::unique_lock<std::mutex> lock(route_mtx_);
+    std::vector<RouteInfo> result;
+
+    for (const auto &pair : exact_routes_)
+    {
+        for (const auto &route : pair.second)
+        {
+            RouteInfo info;
+            info.id = route.id;
+            info.kind = route.kind;
+            info.pattern = route.pattern;
+            info.methods = route.methods;
+            info.methods_str = BuildAllowHeader(route.methods);
+            result.push_back(std::move(info));
+        }
+    }
+
+    for (const auto &route : dynamic_routes_)
+    {
+        RouteInfo info;
+        info.id = route.id;
+        info.kind = route.kind;
+        info.pattern = route.pattern;
+        info.methods = route.methods;
+        info.methods_str = BuildAllowHeader(route.methods);
+        result.push_back(std::move(info));
+    }
+
+    return result;
+}
+
+std::vector<RouteInfo> HttpServletDispatch::listRoutes(const std::string &pattern) const
+{
+    std::unique_lock<std::mutex> lock(route_mtx_);
+    std::vector<RouteInfo> result;
+
+    auto exact_it = exact_routes_.find(pattern);
+    if (exact_it != exact_routes_.end())
+    {
+        for (const auto &route : exact_it->second)
+        {
+            RouteInfo info;
+            info.id = route.id;
+            info.kind = route.kind;
+            info.pattern = route.pattern;
+            info.methods = route.methods;
+            info.methods_str = BuildAllowHeader(route.methods);
+            result.push_back(std::move(info));
+        }
+    }
+
+    for (const auto &route : dynamic_routes_)
+    {
+        if (route.pattern == pattern)
+        {
+            RouteInfo info;
+            info.id = route.id;
+            info.kind = route.kind;
+            info.pattern = route.pattern;
+            info.methods = route.methods;
+            info.methods_str = BuildAllowHeader(route.methods);
+            result.push_back(std::move(info));
+        }
+    }
+
+    return result;
+}
+
 /***********ServletDispatch************ */
 
 

@@ -320,6 +320,187 @@ TEST(TestRouter, GlobRouteCanMatchStaticFiles)
     ASSERT_EQ(nested_resp->stateCode().toInt(), StateCode::k404NotFound);
 }
 
+// ==================================================================
+// 删除/查询接口测试
+// ==================================================================
+
+TEST(TestRouter, RemoveRouteById_ExactRoute)
+{
+    DispatchFixture f;
+
+    auto result = f.dispatch.addRoute(ExpectHttpMethods::Get, "/api/items", Servlet("items"));
+    ASSERT_TRUE(result.ok());
+
+    // 删除前可正常访问
+    auto before = f.Request("/api/items", HttpRequest::Method::kGet);
+    ASSERT_EQ(before->stateCode().toInt(), StateCode::k200Ok);
+
+    // 按 id 删除
+    ASSERT_TRUE(f.dispatch.removeRoute(result.route_id));
+
+    // 删除后返回 404
+    auto after = f.Request("/api/items", HttpRequest::Method::kGet);
+    ASSERT_EQ(after->stateCode().toInt(), StateCode::k404NotFound);
+}
+
+TEST(TestRouter, RemoveRouteById_DynamicRoute)
+{
+    DispatchFixture f;
+
+    auto result = f.dispatch.addRoute(ExpectHttpMethods::Get, "/user/:id", Servlet("user"));
+    ASSERT_TRUE(result.ok());
+
+    auto before = f.Request("/user/42", HttpRequest::Method::kGet);
+    ASSERT_EQ(before->stateCode().toInt(), StateCode::k200Ok);
+
+    ASSERT_TRUE(f.dispatch.removeRoute(result.route_id));
+
+    auto after = f.Request("/user/42", HttpRequest::Method::kGet);
+    ASSERT_EQ(after->stateCode().toInt(), StateCode::k404NotFound);
+}
+
+TEST(TestRouter, RemoveRouteById_NonexistentId)
+{
+    DispatchFixture f;
+
+    // 删除不存在的 id 返回 false
+    ASSERT_FALSE(f.dispatch.removeRoute(99999));
+}
+
+TEST(TestRouter, RemoveRouteByPatternAndMethod)
+{
+    DispatchFixture f;
+
+    f.dispatch.addRoute(ExpectHttpMethods::Get, "/api/data", Servlet("get"));
+    f.dispatch.addRoute(ExpectHttpMethods::Post, "/api/data", Servlet("post"));
+
+    // 删 GET，POST 仍可用
+    size_t removed = f.dispatch.removeRoute("/api/data", ExpectHttpMethods::Get);
+    ASSERT_EQ(removed, 1u);
+
+    // GET 已删但 POST 仍占用该 path，应返回 405（非 404）
+    auto get_resp = f.Request("/api/data", HttpRequest::Method::kGet);
+    ASSERT_EQ(get_resp->stateCode().toInt(), StateCode::k405MethodNotAllowed);
+
+    auto post_resp = f.Request("/api/data", HttpRequest::Method::kPost);
+    ASSERT_EQ(post_resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(post_resp->body().toString(), "post");
+}
+
+TEST(TestRouter, RemoveRouteByPatternAndMethod_NoMatch)
+{
+    DispatchFixture f;
+
+    f.dispatch.addRoute(ExpectHttpMethods::Get, "/only", Servlet("get"));
+
+    // method 不匹配，删除 0 条
+    size_t removed = f.dispatch.removeRoute("/only", ExpectHttpMethods::Post);
+    ASSERT_EQ(removed, 0u);
+
+    // 路由仍在
+    auto resp = f.Request("/only", HttpRequest::Method::kGet);
+    ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
+}
+
+TEST(TestRouter, RemoveRouteByPattern_AllMethods)
+{
+    DispatchFixture f;
+
+    f.dispatch.addRoute(ExpectHttpMethods::Get, "/multi", Servlet("get"));
+    f.dispatch.addRoute(ExpectHttpMethods::Post, "/multi", Servlet("post"));
+    f.dispatch.addRoute(ExpectHttpMethods::Delete, "/other", Servlet("other"));
+
+    // 按 pattern 删除，/multi 下 2 条全部移除
+    size_t removed = f.dispatch.removeRoute("/multi");
+    ASSERT_EQ(removed, 2u);
+
+    // /multi 的 GET、POST 都 404
+    ASSERT_EQ(f.Request("/multi", HttpRequest::Method::kGet)->stateCode().toInt(), StateCode::k404NotFound);
+    ASSERT_EQ(f.Request("/multi", HttpRequest::Method::kPost)->stateCode().toInt(), StateCode::k404NotFound);
+
+    // /other 不受影响
+    ASSERT_EQ(f.Request("/other", HttpRequest::Method::kDelete)->stateCode().toInt(), StateCode::k200Ok);
+}
+
+TEST(TestRouter, ListRoutes_Empty)
+{
+    DispatchFixture f;
+
+    auto routes = f.dispatch.listRoutes();
+    ASSERT_TRUE(routes.empty());
+}
+
+TEST(TestRouter, ListRoutes_WithRegistrations)
+{
+    DispatchFixture f;
+
+    f.dispatch.addRoute(ExpectHttpMethods::Get, "/a", Servlet("a"));
+    f.dispatch.addRoute(ExpectHttpMethods::Post, "/b", Servlet("b"));
+    f.dispatch.addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, "/c", Servlet("c"));
+
+    auto routes = f.dispatch.listRoutes();
+    ASSERT_EQ(routes.size(), 3u);
+
+    // 验证 methods_str 可读
+    for (const auto &r : routes)
+    {
+        ASSERT_FALSE(r.methods_str.empty());
+        ASSERT_NE(r.id, 0u);
+    }
+}
+
+TEST(TestRouter, ListRoutes_ByPattern)
+{
+    DispatchFixture f;
+
+    f.dispatch.addRoute(ExpectHttpMethods::Get, "/shared", Servlet("get"));
+    f.dispatch.addRoute(ExpectHttpMethods::Post, "/shared", Servlet("post"));
+    f.dispatch.addRoute(ExpectHttpMethods::Get, "/unrelated", Servlet("other"));
+
+    auto shared = f.dispatch.listRoutes("/shared");
+    ASSERT_EQ(shared.size(), 2u);
+
+    auto none = f.dispatch.listRoutes("/notexist");
+    ASSERT_TRUE(none.empty());
+}
+
+TEST(TestRouter, GetRoute_ById)
+{
+    DispatchFixture f;
+
+    auto result = f.dispatch.addRoute(ExpectHttpMethods::Get, "/target", Servlet("hit"));
+    ASSERT_TRUE(result.ok());
+
+    auto info = f.dispatch.getRoute(result.route_id);
+    ASSERT_NE(info.id, 0u);
+    ASSERT_EQ(info.pattern, "/target");
+    ASSERT_EQ(info.methods, ExpectHttpMethods::Get);
+    ASSERT_EQ(info.methods_str, "GET");
+}
+
+TEST(TestRouter, GetRoute_ByIdNotFound)
+{
+    DispatchFixture f;
+
+    auto info = f.dispatch.getRoute(99999);
+    ASSERT_EQ(info.id, 0u); // id==0 表示未找到
+}
+
+TEST(TestRouter, ListRoutes_AfterRemoveByIdDoesNotAppear)
+{
+    DispatchFixture f;
+
+    auto r1 = f.dispatch.addRoute(ExpectHttpMethods::Get, "/keep", Servlet("keep"));
+    auto r2 = f.dispatch.addRoute(ExpectHttpMethods::Post, "/remove", Servlet("remove"));
+
+    ASSERT_TRUE(f.dispatch.removeRoute(r2.route_id));
+
+    auto routes = f.dispatch.listRoutes();
+    ASSERT_EQ(routes.size(), 1u);
+    ASSERT_EQ(routes[0].id, r1.route_id);
+    ASSERT_EQ(routes[0].pattern, "/keep");
+}
+
 int main(int argc, char **argv)
 {
     testing::InitGoogleTest(&argc, argv);

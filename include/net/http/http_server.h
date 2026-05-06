@@ -72,6 +72,16 @@ public:
     bool Delete(const std::string &url, HttpServlet::Ptr svl);
     bool Delete(const std::string &url, const FunctionServlet::CallBack &cb);
 
+    // ---- 删 ----
+    bool removeRoute(uint64_t route_id);
+    size_t removeRoute(const std::string &pattern, MethodMask methods);
+    size_t removeRoute(const std::string &pattern);
+
+    // ---- 查 ----
+    RouteInfo getRoute(uint64_t route_id) const;
+    std::vector<RouteInfo> listRoutes() const;
+    std::vector<RouteInfo> listRoutes(const std::string &pattern) const;
+
 
 private:
     void onConnect(TcpConnectionPtr conn);
