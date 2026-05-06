@@ -229,7 +229,7 @@ struct DetailReq {
             PC_F_ERROR("multiform name: detail_req_header not found! \n");
             return false;
         }
-        req.header = std::move(nljson::parse(it->second.data).get<DetailReqHeader>());
+        req.header = nljson::parse(it->second.data).get<DetailReqHeader>();
 
         it = parts.find("detail_cfg_data");
         if(it == parts.end())  // 可能会传入空的detail_cfg_data
@@ -499,7 +499,7 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
     int64_t protocol_id = 0;
     try {
         // TODO boost万能转换
-        protocol_id = std::stol(ctx->Param("protocol_id"));
+        protocol_id = std::stol(ctx->routeParam("protocol_id"));
         if(protocol_id <= 0)
             throw;
 
@@ -849,7 +849,7 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     int64_t project_id = 0;
     try {
         // TODO boost万能转换
-        project_id = std::stol(ctx->Param("project_id"));
+        project_id = std::stol(ctx->routeParam("project_id"));
         if(project_id <= 0)
             throw;
 
@@ -898,7 +898,7 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
     int64_t protocol_id = 0;
     try {
         // TODO boost万能转换
-        protocol_id = std::stol(ctx->Param("protocol_id"));
+        protocol_id = std::stol(ctx->routeParam("protocol_id"));
         if(protocol_id <= 0)
             throw;
 

@@ -93,7 +93,7 @@ void HttpProjectServer::DelProtocolItem(int64_t protocol_id)
     }
     
     auto req = http_item->getReq();
-    _http_server->delRoute(req->path(), req->method());
+    _http_server->removeRoute(req->path(), req->method().toInt());
 
     return;
 }
@@ -142,8 +142,7 @@ void HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljs
     lock.unlock();
 
     // 删除路由
-    _http_server->delRoute(old_path, old_method);
-
+    _http_server->removeRoute(old_path,old_method.toInt());
     // 重新添加路由
     AddProtocolItem(std::make_shared<HttpProtocolItem>(p));
 

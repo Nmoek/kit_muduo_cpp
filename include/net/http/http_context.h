@@ -62,6 +62,11 @@ public:
        return _request->getRouteParam(key);
     }
 
+    std::string queryParam(const std::string& key) const
+    {
+       return _request->getQureyParam(key);
+    }
+
     /**
      * @brief  从HttpRequest中自动根据Content-Type解析出body
      * @param[in] body 

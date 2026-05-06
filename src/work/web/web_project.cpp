@@ -271,7 +271,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     p.m_status = ProjectStatus::ON_STATUS; // 新增一定是有效的 TODO后期根据实际保活探测决定
     p.m_patternType = static_cast<CustomTcpPatternType>(request.pattern_type);
 
-    std::string tmp_str = std::move(request.pattern_info.dump());
+    std::string tmp_str(request.pattern_info.dump());
     const std::vector<char> pattern_info(tmp_str.begin(), tmp_str.end());
     p.m_patternInfo = std::move(pattern_info);
 
@@ -335,7 +335,7 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     // user_id怎么获取??
     // 使用的是query param模式不需要进行body解析
     // 获取测试服务主键id
-    std::string val1 = ctx->Param("project_id");
+    std::string val1 = ctx->routeParam("project_id");
     // std::string val2 = ctx->Param("user_id"); // ??
     if(val1.empty())
     {
@@ -403,7 +403,7 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     int64_t project_id = 0;
     try {
         // TODO boost万能转换
-        project_id = std::stol(ctx->Param("project_id"));
+        project_id = std::stol(ctx->routeParam("project_id"));
         if(project_id <= 0)
             throw;
 
@@ -514,7 +514,7 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     int64_t project_id = 0;
     try {
         // TODO boost万能转换
-        project_id = std::stol(ctx->Param("project_id"));
+        project_id = std::stol(ctx->routeParam("project_id"));
         if(project_id <= 0)
             throw;
 
@@ -582,7 +582,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
-    int64_t project_id = stoi(ctx->Param("project_id"));
+    int64_t project_id = stoi(ctx->routeParam("project_id"));
 
     std::vector<char> pattern_info;
     try {
