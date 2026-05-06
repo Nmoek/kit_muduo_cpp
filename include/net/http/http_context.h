@@ -105,7 +105,7 @@ public:
     bool BindWithMultiForm(T *obj)
     {
         const auto &data = _request->body().data();
-        auto parts = MultiFormConvert::parse(std::string(data.begin(), data.end()), _request->getHeader("Content-Type"));
+        auto parts = MultiFormParser::parse(data.data(), data.size(), _request->getHeader("Content-Type"));
         
         return T::from_multi_form(parts, *obj);
     }

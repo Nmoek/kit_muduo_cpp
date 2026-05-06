@@ -50,6 +50,7 @@ option(MUDUO_TEST.VARIANT "build test_variant" OFF)
 option(MUDUO_TEST.ASAN "build test_asan" OFF)
 option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
+option(MUDUO_TEST.CONTENT_PARSER "build test_content_parser" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -286,6 +287,12 @@ endif()
 add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache.cpp ${WORK_SRC})
 if(MUDUO_TEST OR MUDUO_TEST.LRU_CACHE)
     add_test(NAME test_lru_cache COMMAND test_lru_cache)
+endif()
+
+# test_content_parser multipart解析器测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_PARSER test_content_parser tests/test_content_parser.cpp ${WORK_SRC})
+if(MUDUO_TEST OR MUDUO_TEST.CONTENT_PARSER)
+    add_test(NAME test_content_parser COMMAND test_content_parser)
 endif()
 
 

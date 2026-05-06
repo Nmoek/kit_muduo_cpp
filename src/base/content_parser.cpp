@@ -15,6 +15,9 @@
 
 namespace kit_muduo {
 
+static constexpr char k2CRLF[] = "\r\n\r\n";
+static constexpr char k2LF[] = "\n\n";
+
 using namespace http;
 
 const std::string CONTENT_DISPOSITION = "Content-Disposition:";
@@ -159,6 +162,239 @@ void MultiFormConvert::parse_header_line(const std::string& line, FormPart& part
     value.erase(value.find_last_not_of(" \t") + 1);
     
     part.headers[key] = value;
+}
+
+/***********MultiPartParser************ */
+
+MultiFormParser::PartMap MultiFormParser::parse(const char* data, size_t len,
+                                                 const std::string& content_type)
+{
+    PartMap parts;
+
+    const std::string boundary = extract_boundary(content_type);
+    if (boundary.empty()) return parts;
+
+    const std::string bstr = "--" + boundary;
+    const size_t bstr_len = bstr.size();
+
+    const char* p = data;
+    const char* const end = data + len;
+
+    // --- 定位第一个 boundary（不强制要求 CRLF / LF 前缀） ---
+    const char* first = std::search(p, end, bstr.c_str(), bstr.c_str() + bstr_len);
+    if (first == end) return parts;
+
+    // 跳过 preamble
+    p = first + bstr_len;
+
+    bool is_final = false;
+    p = skip_boundary_suffix(p, end, is_final);
+    if (is_final) return parts;
+
+    // --- 后续 boundary 必须以 LF 或 CRLF 为前缀 ---
+    // 搜索 "\n--boundary" 可同时覆盖 "\n--" 和 "\r\n--"。
+    const std::string marker = "\n" + bstr;
+    const size_t marker_len = marker.size();
+
+    // boundary 行后缀合法字符集合：\r, \n, -, 空格, \t。
+    // 若搜到 boundary 后下一个字符不在其中，说明是二进制 part 数据中的误匹配。
+    auto is_valid_boundary_suffix_char = [](char c) {
+        return c == '\r' || c == '\n' || c == '-' || c == ' ' || c == '\t';
+    };
+
+    while (p < end)
+    {
+        const char* body_start = p;
+        const char* next = nullptr;
+
+        // 扫描下一个真正的 boundary，跳过二进制 part 数据中的误匹配
+        const char* scan = p;
+        while (true)
+        {
+            scan = std::search(scan, end, marker.c_str(), marker.c_str() + marker_len);
+            if (scan == end)
+            {
+                next = nullptr;
+                break;
+            }
+            // 验证："\n--boundary" 之后必须是合法的后缀字符
+            const char* after = scan + marker_len;
+            if (after >= end || is_valid_boundary_suffix_char(*after))
+            {
+                next = scan;
+                break;
+            }
+            // 误匹配，前进一个字节继续搜索
+            ++scan;
+        }
+
+        if (!next) break; // epilogue（或格式错误）—— 忽略
+
+        // body 区间为 [body_start, next)，但需剥离 boundary CRLF 前缀中的 '\r'
+        size_t body_len = static_cast<size_t>(next - body_start);
+        if (body_len > 0 && *(next - 1) == '\r')
+        {
+            --body_len;
+        }
+
+        FormPart part = parse_part(body_start, body_len);
+        if (!part.name.empty())
+        {
+            parts[part.name] = std::move(part);
+        }
+
+        p = next + marker_len;
+        p = skip_boundary_suffix(p, end, is_final);
+        if (is_final) break;
+    }
+
+    return parts;
+}
+
+const char* MultiFormParser::skip_boundary_suffix(const char* p, const char* end,
+                                                    bool& is_final)
+{
+    // 可选 LWSP（RFC 2046 §5.1.1）
+    while (p < end && (*p == ' ' || *p == '\t')) ++p;
+
+    is_final = false;
+    if (p + 1 < end && p[0] == '-' && p[1] == '-')
+    {
+        is_final = true;
+        p += 2;
+        // "--" 之后可选 LWSP
+        while (p < end && (*p == ' ' || *p == '\t')) ++p;
+    }
+
+    p = skip_crlf(p, end);
+    return p;
+}
+
+const char* MultiFormParser::skip_crlf(const char* p, const char* end)
+{
+    if (p < end && *p == '\r') ++p;
+    if (p < end && *p == '\n') ++p;
+    return p;
+}
+
+std::string MultiFormParser::extract_boundary(const std::string& content_type)
+{
+    const std::string key = "boundary=";
+    size_t pos = content_type.find(key);
+    if (pos == std::string::npos) return {};
+
+    pos += key.size();
+    if (pos >= content_type.size()) return {};
+
+    if (content_type[pos] == '"')
+    {
+        ++pos;
+        size_t end_q = content_type.find('"', pos);
+        if (end_q == std::string::npos) return {};
+        return content_type.substr(pos, end_q - pos);
+    }
+
+    size_t end_semi = content_type.find(';', pos);
+    if (end_semi == std::string::npos) end_semi = content_type.size();
+    return trim(content_type.substr(pos, end_semi - pos));
+}
+
+FormPart MultiFormParser::parse_part(const char* data, size_t len)
+{
+    FormPart part;
+
+    // 找到 header / body 分隔符
+    const char* body_start = nullptr;
+
+    const char* sep = std::search(data, data + len, k2CRLF, k2CRLF + strlen(k2CRLF));
+    if (sep != data + len)
+    {
+        body_start = sep + 4;
+    }
+    else
+    {
+        sep = std::search(data, data + len, k2LF, k2LF + strlen(k2LF));
+        if (sep != data + len)
+        {
+            body_start = sep + 2;
+        }
+        else
+        {
+            // 未找到分隔符 —— 整个内容都是 headers（罕见但合法）
+            body_start = data + len;
+        }
+    }
+
+    // --- 解析 headers（ASCII 文本） ---
+    std::string headers_section(data, sep - data);
+    {
+        std::istringstream iss(headers_section);
+        std::string line;
+        while (std::getline(iss, line))
+        {
+            if (line.empty()) continue;
+
+            // 去除行尾 \r
+            if (line.size() >= 1 && line.back() == '\r')
+                line.pop_back();
+
+            if (line.find("Content-Disposition:") == 0)
+            {
+                parse_content_disposition(line, part);
+            }
+            else if (line.find("Content-Type:") == 0)
+            {
+                part.content_type = trim(line.substr(13)); // strlen("Content-Type:")
+            }
+            else
+            {
+                parse_custom_header(line, part);
+            }
+        }
+    }
+
+    // --- body：原始字节（二进制安全） ---
+    size_t body_len = static_cast<size_t>((data + len) - body_start);
+    part.data.assign(body_start, body_start + body_len);
+
+    return part;
+}
+
+void MultiFormParser::parse_content_disposition(const std::string& line,
+                                                  FormPart& part)
+{
+    auto extract_quoted = [&line](const char* attr) -> std::string {
+        size_t pos = line.find(attr);
+        if (pos == std::string::npos) return {};
+        pos += std::strlen(attr); // 跳过 'name="' 或 'filename="'
+        size_t end_q = line.find('"', pos);
+        if (end_q == std::string::npos) return {};
+        return line.substr(pos, end_q - pos);
+    };
+
+    part.name = extract_quoted("name=\"");
+    part.filename = extract_quoted("filename=\"");
+}
+
+void MultiFormParser::parse_custom_header(const std::string& line,
+                                            FormPart& part)
+{
+    size_t colon = line.find(':');
+    if (colon == std::string::npos || colon == 0) return;
+
+    std::string key = trim(line.substr(0, colon));
+    std::string value = trim(line.substr(colon + 1));
+
+    if (!key.empty())
+        part.headers[key] = value;
+}
+
+std::string MultiFormParser::trim(const std::string& s)
+{
+    size_t first = s.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    size_t last = s.find_last_not_of(" \t\r\n");
+    return s.substr(first, last - first + 1);
 }
 
 }   //kit_muduo
