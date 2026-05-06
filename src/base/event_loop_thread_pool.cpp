@@ -9,6 +9,7 @@
 #include "base/event_loop_thread_pool.h"
 #include "base/event_loop_thread.h"
 #include "base/base_log.h"
+#include <cassert>
 
 namespace kit_muduo {
 
@@ -51,6 +52,7 @@ void EventLoopThreadPool::start(const ThreadInitCb &callback)
 
 EventLoop* EventLoopThreadPool::getNextLoop()
 {
+    assert(_baseLoop->isInLoopThread());
     _next = _loops.empty() ? 0 : (_next + 1) % _threadNums;
     if(!_loops.empty() )
         THREAD_F_DEBUG("getNextLoop empyt[%d], next[%d - %p]\n", _loops.empty(),_next, _loops[_next]);

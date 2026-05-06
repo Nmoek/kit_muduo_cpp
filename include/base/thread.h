@@ -30,13 +30,13 @@ public:
     void start();
     void join();
 
-    bool started() const { return _started; }
-    bool joined() const { return _joined; }
+    bool started() const { return started_; }
+    bool joined() const { return joined_; }
     static int32_t createdNum() { return _createdNum; }
 
-    std::string name() const { return _name; }
+    std::string name() const { return name_; }
 
-    pid_t pid() const { return _pid; }
+    pid_t pid() const { return pid_; }
 
 private:
     void setDefaultName();
@@ -45,12 +45,12 @@ private:
     static std::atomic_int _createdNum;
 
 private:
-    bool _started;
-    bool _joined;
-    std::shared_ptr<std::thread> _thread;
-    pid_t _pid;
-    ThreadFunc _func;
-    std::string _name;
+    bool started_;
+    bool joined_;
+    std::shared_ptr<std::thread> thread_;
+    pid_t pid_;
+    ThreadFunc func_;
+    std::string name_;
 
 };
 

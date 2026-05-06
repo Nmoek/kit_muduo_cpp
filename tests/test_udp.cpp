@@ -12,6 +12,7 @@
 #include "net/inet_address.h"
 #include "net/event_loop.h"
 #include "net/socket.h"
+#include "net/async_udp_datagram.h"
 #include "net/udp_datagram.h"
 #include "base/thread.h"
 
@@ -129,14 +130,14 @@ TEST_F(UdpDatagramTest, SyncSendToAndRecvFrom)
     const std::string response = "hello client";
 
     const int32_t server_fd = Socket::CreateUdpIpv4(false);
-    UdpDatagram server(nullptr, "udp_sync_server", server_fd);
-    server.bind(makeLoopbackAddress(0));
+    UdpDatagram server("udp_sync_server", server_fd);
+    ASSERT_TRUE(server.bind(makeLoopbackAddress(0)));
     setRecvTimeoutMs(server.fd(), 1000);
     const InetAddress server_addr = InetAddress::GetLocalAddr(server.fd());
 
     const int32_t client_fd = Socket::CreateUdpIpv4(false);
-    UdpDatagram client(nullptr, "udp_sync_client", client_fd);
-    client.bind(makeLoopbackAddress(0));
+    UdpDatagram client("udp_sync_client", client_fd);
+    ASSERT_TRUE(client.bind(makeLoopbackAddress(0)));
     setRecvTimeoutMs(client.fd(), 1000);
     const InetAddress client_addr = InetAddress::GetLocalAddr(client.fd());
 
@@ -190,8 +191,9 @@ TEST_F(UdpDatagramTest, AsyncReceiveCallback)
     };
 
     EventLoop loop;
-    auto server = std::make_shared<UdpDatagram>(&loop, "udp_async_server", Socket::CreateUdpIpv4());
-    server->bind(makeLoopbackAddress(0));
+    auto server = AsyncUdpDatagram::Create(&loop, "udp_async_server", Socket::CreateUdpIpv4());
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(server->bind(makeLoopbackAddress(0)));
     const InetAddress server_addr = InetAddress::GetLocalAddr(server->fd());
 
     std::promise<AsyncRecvResult> recv_promise;
@@ -211,13 +213,14 @@ TEST_F(UdpDatagramTest, AsyncReceiveCallback)
     std::promise<InetAddress> client_addr_promise;
     std::future<InetAddress> client_addr_future = client_addr_promise.get_future();
     Thread client_thread([&]() {
-        UdpDatagram client(nullptr, "udp_async_client", Socket::CreateUdpIpv4(false));
-        client.bind(makeLoopbackAddress(0));
+        UdpDatagram client("udp_async_client", Socket::CreateUdpIpv4(false));
+        ASSERT_TRUE(client.bind(makeLoopbackAddress(0)));
         client_addr_promise.set_value(InetAddress::GetLocalAddr(client.fd()));
         (void)client.sendTo(request.data(), request.size(), server_addr);
     });
     client_thread.start();
 
+    server->start();
     loop.runAfter(2000, [&loop]() {
         loop.quit();
     });
@@ -266,15 +269,15 @@ TEST_F(UdpDatagramTest, AsyncSendCallback)
     };
 
     EventLoop loop;
-    auto sender = std::make_shared<UdpDatagram>(&loop, "udp_async_sender", Socket::CreateUdpIpv4());
-    sender->bind(makeLoopbackAddress(0));
+    auto sender = AsyncUdpDatagram::Create(&loop, "udp_async_sender", Socket::CreateUdpIpv4());
+    ASSERT_NE(sender, nullptr);
+    ASSERT_TRUE(sender->bind(makeLoopbackAddress(0)));
     const InetAddress sender_addr = InetAddress::GetLocalAddr(sender->fd());
 
     std::promise<void> write_done_promise;
     std::future<void> write_done_future = write_done_promise.get_future();
     sender->setWriteCompleteCallback([&]() {
         write_done_promise.set_value();
-        loop.quit();
     });
 
     std::promise<InetAddress> receiver_addr_promise;
@@ -283,8 +286,8 @@ TEST_F(UdpDatagramTest, AsyncSendCallback)
     std::future<AsyncSendRecvResult> recv_result_future = recv_result_promise.get_future();
 
     Thread receiver_thread([&]() {
-        UdpDatagram receiver(nullptr, "udp_async_receiver", Socket::CreateUdpIpv4(false));
-        receiver.bind(makeLoopbackAddress(0));
+        UdpDatagram receiver("udp_async_receiver", Socket::CreateUdpIpv4(false));
+        ASSERT_TRUE(receiver.bind(makeLoopbackAddress(0)));
         struct timeval timeout = {};
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
@@ -304,6 +307,7 @@ TEST_F(UdpDatagramTest, AsyncSendCallback)
     ASSERT_EQ(receiver_addr_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
     const InetAddress receiver_addr = receiver_addr_future.get();
 
+    sender->start();
     Thread business_thread([&]() {
         sender->send(message.data(), message.size(), receiver_addr);
     });
@@ -317,13 +321,102 @@ TEST_F(UdpDatagramTest, AsyncSendCallback)
 
     ASSERT_EQ(write_done_future.wait_for(std::chrono::seconds(0)), std::future_status::ready)
         << "write complete callback timeout";
-    ASSERT_EQ(recv_result_future.wait_for(std::chrono::seconds(0)), std::future_status::ready)
+    ASSERT_EQ(recv_result_future.wait_for(std::chrono::seconds(2)), std::future_status::ready)
         << "receiver recvFrom timeout or failed";
 
     const AsyncSendRecvResult recv_result = recv_result_future.get();
     ASSERT_GT(recv_result.recv_size, 0) << "receiver recvFrom timeout or failed";
     EXPECT_EQ(recv_result.message, message);
     EXPECT_EQ(recv_result.peer_addr.toPort(), sender_addr.toPort());
+    loop.quit();
+}
+
+TEST_F(UdpDatagramTest, QueuedSendAfterOwnerResetDoesNotUseDanglingThis)
+{
+    std::string skip_reason;
+    if (!isUdpSocketAvailable(&skip_reason))
+    {
+        GTEST_SKIP() << skip_reason;
+    }
+
+    EventLoop loop;
+    auto sender = AsyncUdpDatagram::Create(&loop, "udp_lifetime_sender", Socket::CreateUdpIpv4());
+    ASSERT_NE(sender, nullptr);
+    ASSERT_TRUE(sender->bind(makeLoopbackAddress(0)));
+
+    UdpDatagram receiver("udp_lifetime_receiver", Socket::CreateUdpIpv4(false));
+    ASSERT_TRUE(receiver.bind(makeLoopbackAddress(0)));
+    const InetAddress receiver_addr = InetAddress::GetLocalAddr(receiver.fd());
+
+    std::promise<void> release_blocker;
+    auto release_blocker_future = release_blocker.get_future().share();
+    std::promise<void> send_returned;
+    auto send_returned_future = send_returned.get_future();
+    std::shared_future<void> send_returned_shared = send_returned_future.share();
+
+    sender->start();
+    loop.queueInLoop([&]() {
+        release_blocker_future.wait();
+    });
+
+    Thread business_thread([&]() {
+        const std::string message = "queued udp lifetime";
+        sender->send(message.data(), message.size(), receiver_addr);
+        send_returned.set_value();
+    });
+    business_thread.start();
+
+    loop.runAfter(100, [&loop]() {
+        loop.quit();
+    });
+    Thread owner_thread([&]() {
+        ASSERT_EQ(send_returned_shared.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        sender.reset();
+        release_blocker.set_value();
+    });
+    owner_thread.start();
+    loop.loop();
+
+    business_thread.join();
+    owner_thread.join();
+    SUCCEED();
+}
+
+TEST_F(UdpDatagramTest, PendingWriteCompleteAfterOwnerResetDoesNotUseDanglingThis)
+{
+    std::string skip_reason;
+    if (!isUdpSocketAvailable(&skip_reason))
+    {
+        GTEST_SKIP() << skip_reason;
+    }
+
+    EventLoop loop;
+    auto sender = AsyncUdpDatagram::Create(&loop, "udp_write_complete_lifetime", Socket::CreateUdpIpv4());
+    ASSERT_NE(sender, nullptr);
+    ASSERT_TRUE(sender->bind(makeLoopbackAddress(0)));
+
+    UdpDatagram receiver("udp_write_complete_receiver", Socket::CreateUdpIpv4(false));
+    ASSERT_TRUE(receiver.bind(makeLoopbackAddress(0)));
+    const InetAddress receiver_addr = InetAddress::GetLocalAddr(receiver.fd());
+
+    bool callback_called = false;
+    sender->setWriteCompleteCallback([&]() {
+        callback_called = true;
+    });
+
+    sender->start();
+    loop.queueInLoop([&]() {
+        const std::string message = "direct udp lifetime";
+        sender->send(message.data(), message.size(), receiver_addr);
+        sender.reset();
+        loop.runAfter(100, [&loop]() {
+            loop.quit();
+        });
+    });
+
+    loop.wakeup();
+    loop.loop();
+    EXPECT_FALSE(callback_called);
 }
 
 int main(int argc, char **argv)

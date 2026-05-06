@@ -78,7 +78,9 @@ void PollPoller::updateChannel(Channel *channel)
         p->events = static_cast<short>(channel->events());
         // 如果不监听任何事件 poll忽略该套接字
         if(channel->isNonEvent())
+        {
             p->fd = -fd-1;  //保证永远<0
+        }
     }
 
 }
@@ -91,8 +93,10 @@ void PollPoller::removeChannel(Channel *channel)
 {
     int32_t fd = channel->fd();
     int32_t idx = channel->index();
-    int32_t exchange_fd = _eventList.back().fd;
+    int32_t exchange_poll_fd = _eventList.back().fd;
+    int32_t exchange_real_fd = getRealFd(exchange_poll_fd);
 
+    channel->setIndex(-1);
     size_t n = _channels.erase(fd);
     assert(n == 1);
     assert(idx >= 0 && idx < _eventList.size());
@@ -109,11 +113,20 @@ void PollPoller::removeChannel(Channel *channel)
         _eventList.pop_back();
 
         // 更新数组索引
-        Channel *swapChannel = _channels[exchange_fd];
-        swapChannel->setIndex(idx);
+        auto it = _channels.find(exchange_real_fd);
+        if(it != _channels.end())
+        {
+            Channel *swapChannel = it->second;
+            swapChannel->setIndex(idx);
+        }
+        else
+        {
+            POLLER_F_ERROR("poll not match channel! idx[%d], poll_fd[%d], real_fd[%d]\n", idx, exchange_poll_fd, exchange_real_fd);
+        }
+
     }
 
-    POLLER_F_DEBUG("poll del swap fd[%d], idx[%d] <-- back fd[%d]\n", fd, idx, exchange_fd);
+    POLLER_F_DEBUG("poll del swap fd[%d], idx[%d] <-- back pollfd[%d] realfd[%d]\n", fd, idx, exchange_poll_fd, exchange_real_fd);
 
     return;
 }
@@ -124,8 +137,18 @@ void PollPoller::fillActiveEvent(ChannelList *channelList)
     for(int i = 0;i < _eventList.size();++i)
     {
         if(0 == _eventList[i].revents)
+        {
             continue;
-        Channel *c = Poller::_channels[_eventList[i].fd];
+        }
+        int32_t fd = getRealFd(_eventList[i].fd);
+        auto it = _channels.find(fd);
+        if(it == _channels.end())
+        {
+            POLLER_F_ERROR("PollPoller::fillActiveEvent fd[%d] not found\n", fd);
+            continue;
+        }
+
+        Channel *c = it->second;
 
         POLLER_F_DEBUG("PollPoller::fillActiveEvent fd[%d] %p \n", _eventList[i].fd, c);
 
@@ -133,6 +156,12 @@ void PollPoller::fillActiveEvent(ChannelList *channelList)
         channelList->push_back(c);
     }
     return;
+}
+
+
+int32_t PollPoller::getRealFd(int32_t pollFd)
+{
+    return pollFd < 0 ? -pollFd - 1 : pollFd;
 }
 
 }   //kit_muduo

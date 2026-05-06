@@ -15,6 +15,7 @@ namespace kit_muduo
 
 Logger::Logger(const std::string &name)
     :_name(name)
+    ,_level(LogLevel::DEBUG)
 {
     addAppender(std::make_shared<ConsoleAppender>());
 
@@ -117,9 +118,12 @@ Logger::Ptr LogManager::getLogger(const std::string& name)
     std::unique_lock<std::mutex> lock(_loggersMtx);
     auto it = _loggers.find(name);
     if(it != _loggers.end())
+    {
         return it->second;
-    lock.unlock();
-    return addLogger(name);
+    }
+    auto logger = std::make_shared<Logger>(name);
+    _loggers[name] = logger;
+    return logger;
 }
 
 void LogManager::delLogger(const std::string& name)

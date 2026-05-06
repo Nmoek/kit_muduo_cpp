@@ -14,6 +14,7 @@
 #include <string>
 #include <memory>
 #include <regex>
+#include <vector>
 
 namespace kit_muduo
 {
@@ -37,6 +38,7 @@ public:
     std::string pattern() const { return _pattern; }
 
     virtual bool Match(HttpContextPtr ctx) = 0;
+    virtual bool MatchPath(const std::string &path) const = 0;
 
 protected:
     /// @brief 原始匹配的模版 精准 模糊 动态
@@ -54,6 +56,7 @@ public:
     ExactRouterMatcher(const std::string& pattern);
 
     bool Match(HttpContextPtr ctx) override;
+    bool MatchPath(const std::string &path) const override;
     
 };
 
@@ -69,6 +72,7 @@ public:
     GlobRouterMatcher(const std::string& pattern);
 
     bool Match(HttpContextPtr ctx) override;
+    bool MatchPath(const std::string &path) const override;
     
 };
 
@@ -85,10 +89,15 @@ public:
     RegexRouterMatcher(const std::string& pattern, const std::string& replace = "([^/]+)");
 
     bool Match(HttpContextPtr ctx) override;
+    bool MatchPath(const std::string &path) const override;
 
 private:
+    static std::string BuildTargetPattern(const std::string &pattern, std::vector<std::string> *param_names);
+    static bool IsRegexSpecialChar(char ch);
+
     std::string _targetPattern;
     std::string _replacePattern;
+    std::vector<std::string> _paramNames;
     /// @brief 目标模版 表达式
     std::regex _targetRegex;
     /// @brief 替换模版 表达式

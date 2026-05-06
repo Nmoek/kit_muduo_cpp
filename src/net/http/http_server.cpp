@@ -8,11 +8,12 @@
  */
 #include "net/http/http_server.h"
 #include "net/http/http_context.h"
+#include "net/http/http_servlet.h"
+#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "base/content_parser.h"
-#include "net/http/http_router.h"
 
 namespace kit_muduo {
 namespace http {
@@ -23,6 +24,12 @@ HttpServer::HttpServer(EventLoop *loop, const InetAddress &addr, const std::stri
     ,_httpCallBack(nullptr)
     ,_dispatch(std::make_shared<HttpServletDispatch>())
     ,_isPool(isPool)
+    ,_businessThreadPoolConfig{
+        static_cast<int32_t>(3 * std::thread::hardware_concurrency()),
+        static_cast<int32_t>(30 * std::thread::hardware_concurrency()),
+        2,
+        300
+    }
 {
     _server.setConnectionCallback(std::bind(&HttpServer::onConnect, this, std::placeholders::_1));
 
@@ -35,140 +42,129 @@ void HttpServer::start()
 {
     if(_isPool)
     {
-        // TODO 线程池配置
         _businessThreadPool.setMode(ThreadPool::CACHE_MOD);
-        _businessThreadPool.setThreadMaxThreshHold(3 * std::thread::hardware_concurrency());
-        _businessThreadPool.setTaskQueMaxThreshHold(30 * std::thread::hardware_concurrency());
-        _businessThreadPool.setThreadMaxIdleInterval(2);
+        _businessThreadPool.setThreadMaxThreshHold(_businessThreadPoolConfig.threadMaxThreshold);
+        _businessThreadPool.setTaskQueMaxThreshHold(_businessThreadPoolConfig.taskQueueMaxThreshold);
+        _businessThreadPool.setThreadMaxIdleInterval(_businessThreadPoolConfig.threadMaxIdleInterval);
         _businessThreadPool.start();
     }
 
     _server.start();
 }
 
-static RouterMatcher::Ptr CreateMatcherHelper(const std::string &pattern_url)
+void HttpServer::setBusinessThreadPoolConfig(const BusinessThreadPoolConfig &config)
 {
-    if(std::string::npos != pattern_url.find(":"))
-    {
-        HTTP_DEBUG() << pattern_url << " ==============> " << "RegexRouterMatcher" << std::endl;
-        return std::make_shared<RegexRouterMatcher>(pattern_url);
-    }
-    else if(std::string::npos != pattern_url.find_first_of("*?[]") )
-    {
-        HTTP_DEBUG() << pattern_url << " ==============> " << "GlobRouterMatcher" << std::endl;
-        return std::make_shared<GlobRouterMatcher>(pattern_url);
-    }
-
-    return nullptr;
+    _businessThreadPoolConfig = config;
 }
 
-void HttpServer::addRoute(const std::string &url, HttpServlet::Ptr svl)
+RouteResult HttpServer::addRoute(MethodMask methods, const std::string &url, HttpServlet::Ptr svl)
 {
-    RouterMatcher::Ptr matcher = nullptr;
-    try {
+    auto result = _dispatch->addRoute(methods, url, std::move(svl));
+    if(!result.ok())
+    {
+        HTTP_F_ERROR("HttpServer addRoute failed: url[%s], methods[%s], reason[%s]\n",
+                     url.c_str(), BuildAllowHeader(methods).c_str(), result.message.c_str());
+    }
+    return result;
+}
 
-        matcher = CreateMatcherHelper(url);
+RouteResult HttpServer::addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb)
+{
+    return addRoute(ToMethodMask(method), url, std::make_shared<FunctionServlet>(cb));
+}
 
-    } catch(const std::exception &e) {
-        HTTP_F_ERROR("create matcher failed! %s, url:%s\n", e.what(), url.c_str()); 
-        return;
+bool HttpServer::Get(const std::string &url, HttpServlet::Ptr svl)
+{
+    auto res = addRoute(ExpectHttpMethods::Get, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
     }
     
-    // TODO 是否可以切换成工厂模式?
-    addRoute(url, svl, matcher);
+    return true;
 }
 
-void HttpServer::addRoute(const std::string &url, HttpServlet::Ptr svl, RouterMatcher::Ptr matcher)
+bool HttpServer::Get(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    if(!matcher)  //默认是精准匹配
+    auto res = addRoute(ExpectHttpMethods::Get, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
     {
-        _dispatch->addServlet(url, svl);
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
     }
-    else
+    
+    return true;
+}
+bool HttpServer::Post(const std::string &url, HttpServlet::Ptr svl)
+{
+    auto res = addRoute(ExpectHttpMethods::Post, url, std::move(svl));
+    if(!res.ok())
     {
-        _dispatch->addDynamicServlet(matcher, svl);
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
     }
-    return;
+    
+    return true;
 }
 
-void HttpServer::addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb)
+bool HttpServer::Post(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(method.toInt());
-
-    addRoute(url, svl);
-    return;
+    auto res = addRoute(ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
 
-void HttpServer::delRoute(const std::string &url, const HttpRequest::Method method)
+bool HttpServer::GetAndPost(const std::string &url, HttpServlet::Ptr svl)
 {
-    _dispatch->delServlet(url, method.toInt());
-    return;
-}
+    auto res = addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;}
 
-
-void HttpServer::Get(const std::string &url, HttpServlet::Ptr svl)
+bool HttpServer::GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    svl->addExpectedMethod(HttpRequest::Method::kGet);
-    addRoute(url, svl);
-    return;
+    auto res = addRoute(ExpectHttpMethods::Get | ExpectHttpMethods::Post, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;
 }
 
-void HttpServer::Get(const std::string &url, const FunctionServlet::CallBack &cb)
+
+bool HttpServer::Delete(const std::string &url, HttpServlet::Ptr svl)
 {
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kGet);
+    auto res = addRoute(ExpectHttpMethods::Delete, url, std::move(svl));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;}
 
-    addRoute(url, svl);
-    return;
-}
-void HttpServer::Post(const std::string &url, HttpServlet::Ptr svl)
+bool HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack &cb)
 {
-    svl->addExpectedMethod(HttpRequest::Method::kPost);
-    addRoute(url, svl);
-    return;
-}
-
-void HttpServer::Post(const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kPost);
-
-    addRoute(url, svl);
-    return;
-}
-
-void HttpServer::GetAndPost(const std::string &url, HttpServlet::Ptr svl)
-{
-    svl->addExpectedMethod(HttpRequest::Method::kGet | HttpRequest::Method::kPost);
-    addRoute(url, svl);
-    return;
-}
-
-void HttpServer::GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kPost);
-
-    addRoute(url, svl);
-    return;
-}
-
-
-void HttpServer::Delete(const std::string &url, HttpServlet::Ptr svl)
-{
-    svl->addExpectedMethod(HttpRequest::Method::kDelete);
-    addRoute(url, svl);
-    return;
-}
-
-void HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack &cb)
-{
-    auto svl = std::make_shared<FunctionServlet>(cb);
-    svl->addExpectedMethod(HttpRequest::Method::kDelete);
-    addRoute(url, svl);
-    return;
-}
+    auto res = addRoute(ExpectHttpMethods::Delete, url, std::make_shared<FunctionServlet>(cb));
+    if(!res.ok())
+    {
+        HTTP_F_ERROR("addRoute error! %s \n", res.message.c_str());
+        return false;
+    }
+    
+    return true;}
 
 void HttpServer::onConnect(TcpConnectionPtr conn)
 {
@@ -193,31 +189,34 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
         return;
     }
 
-    // 这里使用HttpContext的目的是分段解析Http报文
-    if(!context->parseRequest(*buf, receiveTime))
+    while(buf->readableBytes() > 0)
     {
-        HTTP_ERROR() << "http request parse error! " << std::endl;
-        BadRequest400Servlet svl;
+        size_t before_len = buf->readableBytes();
 
-        svl.handle(conn, context);
-        conn->send(context->response()->toString());
-        conn->shutdown();
+        if(!context->parseRequest(*buf, receiveTime))
+        {
+            HTTP_ERROR() << "http request parse error! " << std::endl;
+       
+            BadRequest400Servlet::Handle(conn, context);
+            conn->send(context->response()->toString());
+            conn->shutdown();
 
-        context.reset(new HttpContext());
-    }
+            return;
+        }
 
-    if(context->gotAll())
-    {
-        // TODO： 需要对请求的方法等进行校验
-        // 1. 检查请求方法
-        // 2. TODO检查其他什么要素?
+        // 未解析完 等待更多数据
+        if(!context->gotAll())
+        {
+            HTTP_F_DEBUG("http data not complete! %lu --> %lu \n", before_len, buf->readableBytes());
+            break;
+        }
 
-        std::shared_ptr<HttpContext> ctx2;
-        ctx2.swap(context);
+        _httpCallBack(conn, context);
         // 重置conn中的上下文
-        conn->setContext(std::make_shared<HttpContext>());
-        _httpCallBack(conn, ctx2);
+        context = std::make_shared<HttpContext>();
+        conn->setContext(context);
     }
+
 
 }
 
@@ -245,11 +244,6 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
             dispatch->handle(conn, ctx);
 
         // }
-        // else
-        // {
-        //     BadRequest403Servlet svl403; // 没有权限
-
-        // }
 
         // TODO 这里都要改 send 接口不应该是string
         conn->send(resp_ptr->toString());
@@ -262,24 +256,24 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     if(_isPool)
     {
-        auto f = _businessThreadPool.submitTaskTimeOut(300, work_func, conn, ctx, _dispatch);
+        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, work_func, conn, ctx, _dispatch);
+
+        if(!submit_result.ok())
+        {
+            HTTP_F_WARN("submit task error! fd[%d][%s], path[%s] \n", conn->fd(), conn->name().c_str(), ctx->request()->path().c_str());
+
+            ServiceUnavailable503Servlet::Handle(conn, ctx);
+            conn->send(ctx->response()->toString());
+            conn->shutdown();
+            return;
+        }
+
     }
     else
     {
         work_func(conn, ctx, _dispatch);
     }
 
-
-    // if(!f.get())    //如果负载过高需要回复  降级处理
-    // {
-    //     DVSVL_F_WARN("Application::handleRequest submitTask timeout fd[%d][%s], path[%s] \n", conn->fd(), conn->name().c_str());
-
-    //     ServerErr500Servlet s500;
-    //     HttpResponsePtr resp_ptr = std::make_shared<HttpResponse>();
-    //     s500.handle(conn, nullptr, resp_ptr);
-    //     conn->send(resp_ptr->toString());
-    //     conn->shutdown();
-    // }
 }
 
 #else

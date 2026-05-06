@@ -126,6 +126,7 @@ private:
     llhttp_settings_t _settings;
     /// @brief 头部字段解析
     HeaderContext _headerCtx;
+    bool is_paused_;
 };
 
 

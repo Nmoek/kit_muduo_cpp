@@ -8,8 +8,10 @@
  */
 #ifndef __KIT_BUFFER_H__
 #define __KIT_BUFFER_H__
-#include <bits/stdint-intn.h>
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <sys/types.h>
 #include <vector>
 #include <string>
 
@@ -127,8 +129,8 @@ public:
 
     std::vector<char> resetAsData(size_t len)
     {
-        std::vector<char> res(_buffer.begin() + _readIndex, _buffer.begin() + _readIndex + len);
-        reset(len);
+        std::vector<char> res(peek(), peek() + std::min(len, readableBytes()));
+        reset(std::min(len, readableBytes()));
         return res;
     }
 
@@ -244,8 +246,8 @@ private:
 
 private:
     std::vector<char> _buffer;
-    int32_t _readIndex;
-    int32_t _writeIndex;
+    size_t _readIndex;
+    size_t _writeIndex;
 };
 
 }   // kit_muduo

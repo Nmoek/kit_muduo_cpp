@@ -11,7 +11,7 @@
 
 #include "base/noncopyable.h"
 #include "net/call_backs.h"
-#include "net/udp_datagram.h"
+#include "net/async_udp_datagram.h"
 #include "base/thread_pool.h"
 
 #include <memory>
@@ -60,7 +60,7 @@ private:
     EventLoop *base_loop_;
     std::string name_;
     const InetAddress local_addr_;
-    std::unique_ptr<UdpDatagram> acceptor_;
+    AsyncUdpDatagramPtr acceptor_;
     std::unique_ptr<ThreadPool> work_thread_pool_;
 
     std::atomic_int started_;

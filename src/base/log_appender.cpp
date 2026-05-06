@@ -72,6 +72,8 @@ void ConsoleAppender::log(LogAttr::Ptr pattr)
 /*********FileAppender***********/
 FileAppender::FileAppender(const std::string &fileName)
     :_fileName(fileName)
+    ,_curSize(0)
+    ,_writeMaxSize(kWriteMaxSize)
 {
 
 }
@@ -105,7 +107,7 @@ void FileAppender::log(LogAttr::Ptr pattr)
             const std::string& log_data = _formatter->format(pattr);
             _curSize += log_data.size();
             _f << log_data;
-            if(_curSize >= 1*1024*1024)
+            if(_curSize >= _writeMaxSize)
             {
                 _f.flush();
                 _curSize = 0;

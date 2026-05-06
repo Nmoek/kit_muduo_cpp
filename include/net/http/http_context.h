@@ -57,9 +57,9 @@ public:
     HttpRequestPtr request() { return _request; }
     HttpResponsePtr response() { return _response; }
 
-    std::string Param(const std::string& key) const
+    std::string routeParam(const std::string& key) const
     {
-       return _request->getQureyParam(key);
+       return _request->getRouteParam(key);
     }
 
     /**
@@ -105,7 +105,7 @@ public:
     bool BindWithMultiForm(T *obj)
     {
         const auto &data = _request->body().data();
-        auto parts = MultiFormConvert::parse(std::string(data.begin(), data.end()), _request->getHeader("Content-Type"));
+        auto parts = MultiFormParser::parse(data.data(), data.size(), _request->getHeader("Content-Type"));
         
         return T::from_multi_form(parts, *obj);
     }

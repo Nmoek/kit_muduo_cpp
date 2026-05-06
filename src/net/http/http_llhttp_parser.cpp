@@ -6,6 +6,7 @@
  * @date 2025-06-08 20:39:58
  * @copyright Copyright (c) 2025 Kewin Li
  */
+#include "llhttp.h"
 #include "net/http/http_parser.h"
 #include "net/http/http_context.h"
 #include "net/http/http_request.h"
@@ -69,6 +70,7 @@ static std::string UrlDecode(const std::string &value)
 
 LLhttpParser::LLhttpParser(HttpContext *context)
     :HttpParser(context)
+    ,is_paused_(false)
 {
     llhttp_settings_init(&_settings);
     _settings.on_method = &LLhttpParser::onMethod;
@@ -91,29 +93,53 @@ LLhttpParser::LLhttpParser(HttpContext *context)
 
 bool LLhttpParser::parse(const std::string &data)
 {
-    // 开启解析
-    // 注意需要把\0去掉
-    llhttp_errno err = llhttp_execute(&_parser, data.c_str(), data.size());
-    if (err == HPE_OK)
-    {
-        HTTP_DEBUG() << "Successfully parsed!\n";
-    }
-    else
-    {
-        HTTP_ERROR() << "Parse error: " << llhttp_errno_name(err) << ", "
-            << llhttp_get_error_reason(&_parser)
-            << ", err pos:" << "`" << llhttp_get_error_pos(&_parser) << "`"
-            << std::endl;
-
-        return false;
-    }
-    return true;
+    Buffer buf;
+    buf.append(data.data(), data.size());
+    return parse(buf);
 }
 
 bool LLhttpParser::parse(Buffer &buf)
 {
-    const std::string& data = buf.resetAllAsString();
-    return parse(data);
+    const char *data = buf.peek();
+    const size_t len = buf.readableBytes();
+
+    if(is_paused_)
+    {
+        is_paused_ = false;
+        llhttp_resume(&_parser);
+    }
+
+    // 开启解析
+    // 注意需要把\0去掉
+    llhttp_errno err = llhttp_execute(&_parser, data, len);
+
+    const char *err_pos = llhttp_get_error_pos(&_parser);
+    size_t consumed_len = len;
+    if(err_pos != nullptr && err_pos >= data && err_pos <= data + len)
+    {
+        consumed_len = static_cast<size_t>(err_pos - data);
+        assert(consumed_len <= len);
+    }
+
+    // 特别注意: HPE_OK不代表解析到完整报文，只代表当前输入的数据没有问题
+    if(err == HPE_OK)
+    {
+        buf.reset(consumed_len);
+        return true;
+    }
+
+    // 解析到完整报文一定会HPE_PAUSED
+    if(err == HPE_PAUSED || err == HPE_PAUSED_UPGRADE)
+    {
+        is_paused_ = true;
+        buf.reset(consumed_len);
+        return true;
+    }
+
+    // 解析错误时是否 reset consumed 要谨慎。当前上层会 400+shutdown，
+    // 可以消费已解析部分，也可以保留给日志。最小改动建议先不保留。
+    buf.reset(consumed_len);
+    return false;
 }
 
 int LLhttpParser::onMethod(llhttp_t* parser, const char *data, size_t len)
@@ -296,11 +322,15 @@ int LLhttpParser::onHeadersComplete(llhttp_t* parser)
 
     // headers字段赋值
     if(ReqType == parser_ptr->_type)
+    {
         request->setHeaders(ctx.headers);
+    }
     else
+    {
         response->setHeaders(ctx.headers);
+    }
     
-        // 状态转换
+    // 状态转换
     parser_ptr->_context->setState(HttpContext::kExpectBody);
     return 0;
 }
@@ -311,32 +341,36 @@ int LLhttpParser::onBody(llhttp_t* parser, const char *data, size_t len)
     HttpRequestPtr request = parser_ptr->_context->request();
     HttpResponsePtr response = parser_ptr->_context->response();
 
-    const std::string &s = std::string(data, len);
-    int64_t content_len = atoi(request->getHeader("Content-Length").c_str());
+#if 0
+    int64_t content_len = atoi(parser_ptr->_type == ReqType ?request->getHeader("Content-Length").c_str() : response->getHeader("Content-Length").c_str());
+#endif
+
     const std::string &content_type_str = parser_ptr->_type == ReqType ? request->getHeader("Content-Type") : response->getHeader("Content-Type");
 
-    // TODO：需要分情况检查Content-Length是否应该被包含
-    // 当前处理默认必须包含
+
+    const ContentType content_type = content_type_str.empty()
+    ? ContentType(ContentType::kOctetStream)
+    : ContentType::FromString(content_type_str);
+
+    // 需要分情况检查Content-Length是否应该被包含
+#if 0
     if(content_len <= 0 || content_type_str.empty())
     {
-        HTTP_ERROR() << "Content-Length/Content-Type is invalid!" << std::endl;
-        return -1;
+        HTTP_F_ERROR("Content-Length: %d, Content-Type:%s \n", content_len, content_type_str.c_str());
+         return -1;
     }
-
-    const ContentType &content_type = ContentType::FromString(content_type_str);
+#endif
 
     if(ReqType == parser_ptr->_type)
     {
         request->body().setContentType(content_type);
-        request->body().appendData(s);
+        request->body().appendData(data, len);
     }
     else 
     {
         response->body().setContentType(content_type);
-        response->body().appendData(s);
+        response->body().appendData(data, len);
     }
-
-    HTTP_F_DEBUG("Body[%d]: %s \n", parser_ptr->_type, s.c_str());
 
     return 0;
 }
@@ -356,7 +390,7 @@ int LLhttpParser::onMessageComplete(llhttp_t* parser)
     // 解析完成
     parser_ptr->_context->setState(HttpContext::kGotAll);
 
-    return 0;
+    return HPE_PAUSED;
 }
 
 

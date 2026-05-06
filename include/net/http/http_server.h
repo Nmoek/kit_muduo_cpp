@@ -23,12 +23,18 @@
 
 namespace kit_muduo::http {
 
-class RouterMatcher;
-
 class HttpServer: Noncopyable
 {
 public:
     using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
+
+    struct BusinessThreadPoolConfig
+    {
+        int32_t threadMaxThreshold{0};
+        int32_t taskQueueMaxThreshold{0};
+        int32_t threadMaxIdleInterval{0};
+        int32_t submitTimeoutMs{0};
+    };
 
     HttpServer(kit_muduo::EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool = true, TcpServer::Option option = TcpServer::Option::kNoRusePort);
 
@@ -42,30 +48,29 @@ public:
 
     void setThreadNum(int32_t nums) { _server.setThreadNum(nums); }
 
+    // 启动前配置 HTTP 业务线程池，便于测试和按服务负载调整容量。
+    void setBusinessThreadPoolConfig(const BusinessThreadPoolConfig &config);
+
     std::shared_ptr<HttpServletDispatch> getServletDispatch() { return _dispatch; }
 
     TcpConnectionPtr getConnection(const std::string &name) { return _server.getConnection(name); }
 
 
-    void addRoute(const std::string &url, HttpServlet::Ptr svl);
+    RouteResult addRoute(MethodMask methods, const std::string &url, HttpServlet::Ptr svl);
 
-    void addRoute(const std::string &url, HttpServlet::Ptr svl, std::shared_ptr<RouterMatcher> matcher);
-
-    void addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb);
+    RouteResult addRoute(const HttpRequest::Method method, const std::string &url, const FunctionServlet::CallBack &cb);
     
-    void delRoute(const std::string &url, const HttpRequest::Method method);
-    
-    void Get(const std::string &url, HttpServlet::Ptr svl);
-    void Get(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool Get(const std::string &url, HttpServlet::Ptr svl);
+    bool Get(const std::string &url, const FunctionServlet::CallBack &cb);
 
-    void Post(const std::string &url, HttpServlet::Ptr svl);
-    void Post(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool Post(const std::string &url, HttpServlet::Ptr svl);
+    bool Post(const std::string &url, const FunctionServlet::CallBack &cb);
 
-    void GetAndPost(const std::string &url, HttpServlet::Ptr svl);
-    void GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool GetAndPost(const std::string &url, HttpServlet::Ptr svl);
+    bool GetAndPost(const std::string &url, const FunctionServlet::CallBack &cb);
     
-    void Delete(const std::string &url, HttpServlet::Ptr svl);
-    void Delete(const std::string &url, const FunctionServlet::CallBack &cb);
+    bool Delete(const std::string &url, HttpServlet::Ptr svl);
+    bool Delete(const std::string &url, const FunctionServlet::CallBack &cb);
 
 
 private:
@@ -81,6 +86,7 @@ private:
     ThreadPool _businessThreadPool;// 注意: 这个是http业务额外的线程池，和处理网络连接evnet_loop的线程池侧重点不一样
     std::shared_ptr<HttpServletDispatch> _dispatch;
     bool _isPool;   // 是否使用线程池
+    BusinessThreadPoolConfig _businessThreadPoolConfig;
 };
 
 

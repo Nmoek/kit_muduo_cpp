@@ -86,6 +86,14 @@ public:
 
     void addQureyParam(const std::string &key, const std::string &val) { query_params_[key] = val; }
 
+    std::string getRouteParam(const std::string &key) const
+    {
+        auto it = route_params_.find(key);
+        return it == route_params_.end() ? "" : it->second;
+    }
+
+    void addRouteParam(const std::string &key, const std::string &val) { route_params_[key] = val; }
+
 
     Version version() const { return version_; }
     void setVersion(int32_t versionVal) { version_.set(versionVal); }
@@ -125,6 +133,8 @@ protected:
     std::string path_;
     /// @brief 请求参数
     ParamMap query_params_;
+    /// @brief 动态路由参数
+    ParamMap route_params_;
     /// @brief 协议版本
     Version version_;
     /// @brief 头部字段

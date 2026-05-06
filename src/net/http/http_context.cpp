@@ -65,7 +65,7 @@ bool HttpContext::parseResponse(Buffer &buf, TimeStamp receiveTime)
     bool ok = _parser->parse(buf);
     if(ok)
     {
-        _request->setReceiveTime(receiveTime);
+        _response->setReceiveTime(receiveTime);
     }
     return ok;
 }
@@ -76,7 +76,7 @@ bool HttpContext::parseResponse(const std::string &data, TimeStamp receiveTime)
     bool ok = _parser->parse(data);
     if(ok)
     {
-        _request->setReceiveTime(receiveTime);
+        _response->setReceiveTime(receiveTime);
     }
     return ok;
 }

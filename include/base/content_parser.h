@@ -169,7 +169,7 @@ struct FormPart {
 /**
  * @brief Parser for multipart/form-data content
  */
-class MultiFormConvert 
+class MultiFormConvert
 {
 public:
     using PartMap = std::unordered_map<std::string, FormPart>;
@@ -180,7 +180,7 @@ public:
      * @param content_type The Content-Type header containing boundary
      * @return Vector of parsed form parts
      */
-    static PartMap parse(const std::string& content, 
+    static PartMap parse(const std::string& content,
                                      const std::string& content_type);
 
 
@@ -189,21 +189,81 @@ private:
      * @brief Extract boundary from Content-Type header
      */
     static std::string extract_boundary(const std::string& content_type);
-    
+
     /**
      * @brief Parse a single part of multipart data
      */
     static FormPart parse_part(const std::string& part_data);
-    
+
     /**
      * @brief Parse Content-Disposition header
      */
     static void parse_content_disposition(const std::string& line, FormPart& part);
-    
+
     /**
      * @brief Parse other part headers
      */
     static void parse_header_line(const std::string& line, FormPart& part);
+};
+
+/**
+ * @brief multipart/form-data 二进制安全解析器 (RFC 7578 / 2046).
+ *
+ * 相比旧的字符串方案 MultiFormConvert 的改进：
+ *  - 接受原始字节 (const char* + size_t)，二进制内容不经过 std::string。
+ *  - 按 "\n--boundary" 扫描边界（覆盖 \r\n 和 \n），并验证后缀字符合法性，
+ *    大幅降低二进制文件内容误匹配边界的概率。
+ *  - 零额外拷贝：part header 按文本解析，part body 直接从输入 buffer 切片。
+ *  - 所有 trim 操作 npos 安全。
+ */
+class MultiFormParser
+{
+public:
+    using PartMap = std::unordered_map<std::string, FormPart>;
+
+    /// 主接口：解析原始 multipart body 字节。
+    /// @param data  指向完整 multipart body 的指针
+    /// @param len   data 的字节长度
+    /// @param content_type  Content-Type 头值（需包含 "boundary="）
+    /// @return 字段名 → FormPart 的映射。name 为空的 part 会被跳过。
+    ///         同名 field 多次出现时，最后一个生效（匹配常见 HTML 表单语义）。
+    static PartMap parse(const char* data, size_t len,
+                         const std::string& content_type);
+
+    /// 便捷重载。
+    static PartMap parse(const std::string& content,
+                         const std::string& content_type)
+    {
+        return parse(content.data(), content.size(), content_type);
+    }
+
+private:
+    /// 跳过 boundary 行后缀：可选 LWSP、可选 "--"、可选 LWSP，最后 CRLF 或 LF。
+    /// @param[out] is_final  检测到关闭标记 "--" 时设为 true。
+    /// @return 指向 boundary 行结束后的指针。
+    static const char* skip_boundary_suffix(const char* p, const char* end,
+                                            bool& is_final);
+
+    /// 跳过一个行结束序列（CRLF 或 LF）。
+    static const char* skip_crlf(const char* p, const char* end);
+
+    /// 从 Content-Type 头中提取 boundary 值。
+    static std::string extract_boundary(const std::string& content_type);
+
+    /// 解析单个 part 的 headers + body。
+    static FormPart parse_part(const char* data, size_t len);
+
+    /// 解析 Content-Disposition 行。
+    static void parse_content_disposition(const std::string& line,
+                                           FormPart& part);
+
+    /// 解析通用 header 行（key: value）。
+    static void parse_custom_header(const std::string& line,
+                                     FormPart& part);
+
+    /// 去除首尾空白字符（SP、HTAB、CR、LF）。
+    /// 字符串全为空白时返回空串。
+    static std::string trim(const std::string& s);
 };
 
 

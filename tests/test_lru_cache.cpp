@@ -10,11 +10,71 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
+#include <atomic>
 #include "base/lru_cache.h"
 #include "base/thread.h"
 
 
 using namespace kit_muduo;
+
+namespace {
+
+struct CopyTrackedKey
+{
+    int value{0};
+    static std::atomic<int> copy_count;
+
+    CopyTrackedKey() = default;
+    explicit CopyTrackedKey(int v)
+        :value(v)
+    {}
+
+    CopyTrackedKey(const CopyTrackedKey &other)
+        :value(other.value)
+    {
+        ++copy_count;
+    }
+
+    CopyTrackedKey& operator=(const CopyTrackedKey &other)
+    {
+        if(this != &other)
+        {
+            value = other.value;
+            ++copy_count;
+        }
+        return *this;
+    }
+
+    CopyTrackedKey(CopyTrackedKey &&other) noexcept = default;
+    CopyTrackedKey& operator=(CopyTrackedKey &&other) noexcept = default;
+
+    bool operator==(const CopyTrackedKey &other) const
+    {
+        return value == other.value;
+    }
+
+    bool operator!=(const CopyTrackedKey &other) const
+    {
+        return !(*this == other);
+    }
+};
+
+std::atomic<int> CopyTrackedKey::copy_count{0};
+
+} // namespace
+
+namespace std {
+
+template<>
+struct hash<CopyTrackedKey>
+{
+    size_t operator()(const CopyTrackedKey &key) const noexcept
+    {
+        return std::hash<int>()(key.value);
+    }
+};
+
+} // namespace std
 
 TEST(TestLruCache, PutAndEliminate)
 {
@@ -172,6 +232,26 @@ TEST(TestLruCache, ClearAndPromote)
     ASSERT_TRUE(cache.tryGet(5, val));
     ASSERT_EQ(val, 5);
 
+}
+
+TEST(TestLruCache, TailCopiesKeyBeforeUnlock)
+{
+    CopyTrackedKey::copy_count.store(0);
+
+    LruCache<CopyTrackedKey, int> cache(4);
+    cache.put(CopyTrackedKey(1), 10);
+    cache.put(CopyTrackedKey(2), 20);
+    cache.put(CopyTrackedKey(3), 30);
+
+    int val = -1;
+    ASSERT_TRUE(cache.tail(val));
+    ASSERT_EQ(val, 10);
+    ASSERT_GE(CopyTrackedKey::copy_count.load(), 1);
+
+    cache.promote();
+    val = -1;
+    ASSERT_TRUE(cache.head(val));
+    ASSERT_EQ(val, 10);
 }
 
 TEST(TestLruCache, MutilThreadTryGet)

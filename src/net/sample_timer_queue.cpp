@@ -192,7 +192,14 @@ void SampleTimerQueue::handleRead()
     _cancelingTimers.clear();
     for(auto &it : expired_timers)
     {
+        // 特别小心: 定时器回调中的取消操作 会影响当前这一批当时的定时器 需要额外判断
+        if(_cancelingTimers.find(it.second->sequence()) != _cancelingTimers.end())
+        {
+            TIMER_F_INFO("timer[%d] has canneled from other timer!\n", it.second->sequence());
+            continue;
+        }
         it.second->run();
+        _runningTimers.erase(it.second->sequence());
     }
     _callingExipiredTimers = false;
     // 清空到时队列

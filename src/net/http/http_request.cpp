@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "net/http/http_request.h"
+#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "base/util.h"
 
@@ -76,7 +77,14 @@ std::string HttpRequest::toString()
     ss << kCRLF;
 
     if(body_.data().size())
+    {
         headers_["Content-Length"] = std::to_string(body_.data().size());
+    }
+
+    if(ContentType::kUnknowType != body_.contentType().toInt())
+    {
+        headers_["Content-Type"] = body_.contentType().toString();
+    }
 
     // Headers
     for(auto &it : headers_)

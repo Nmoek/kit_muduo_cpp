@@ -22,20 +22,25 @@ UdpServer::UdpServer(EventLoop *loop, const InetAddress &addr, const std::string
     :base_loop_(loop)
     ,name_(name)
     ,local_addr_(addr)
-    ,acceptor_(std::make_unique
-    <UdpDatagram>(loop, name, Socket::CreateUdpIpv4()))
+    ,acceptor_(AsyncUdpDatagram::Create(loop, name, Socket::CreateUdpIpv4()))
     ,work_thread_pool_(std::make_unique<ThreadPool>())
     ,started_(0)
     ,message_callback_(nullptr)
 {
-    acceptor_->setMessageCallback(std::bind(&UdpServer::newDatagram, this,  std::placeholders::_1, std::placeholders::_2,
-        std::placeholders::_3));
-
+    if(acceptor_)
+    {
+        acceptor_->setMessageCallback(std::bind(&UdpServer::newDatagram, this,  std::placeholders::_1, std::placeholders::_2,
+            std::placeholders::_3));
+    }
 }
 
 UdpServer::~UdpServer()
 {
-
+    if(acceptor_)
+    {
+        acceptor_->setMessageCallback(nullptr);
+        acceptor_->forceClose();
+    }
 }
 
 void UdpServer::start()
@@ -49,8 +54,13 @@ void UdpServer::start()
 
     work_thread_pool_->start();
 
-    base_loop_->runInLoop([this](){
-        acceptor_->bind(local_addr_);    
+    auto acceptor = acceptor_;
+    InetAddress local_addr = local_addr_;
+    base_loop_->runInLoop([acceptor, local_addr](){
+        if(acceptor && acceptor->bind(local_addr))
+        {
+            acceptor->start();
+        }
     });
 }
 

@@ -43,7 +43,7 @@ uint64_t GetCurrentUs()
 std::string Timer2Str(time_t ts, const std::string& format)
 {
     struct tm tm;
-    tm = *localtime(&ts);
+    tm = *localtime_r(&ts, &tm);
     char buf[100];
     strftime(buf, sizeof(buf), format.c_str(), &tm);
 

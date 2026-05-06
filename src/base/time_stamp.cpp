@@ -26,8 +26,9 @@ std::string TimeStamp::toString() const
     time_t now = real_time_ms_ + 8*60*60;
     time_t remain = now % 1000;
     now /= 1000;
-    struct tm *tm = localtime(&now);
-    ::strftime(buf, 128, "%Y-%m-%d %H:%M:%S", tm);
+    struct tm tm;
+    tm = *localtime_r(&now, &tm);
+    ::strftime(buf, 128, "%Y-%m-%d %H:%M:%S", &tm);
     std::string res(buf);
     res += ".";
     res += std::to_string(remain);
@@ -95,8 +96,9 @@ time_t TimeStamp::Str2TimeStamp(const std::string &timeStr)
 std::string TimeStamp::TimeStamp2Str(time_t timeStamp)
 {
     char buf[128] = {0};
-    struct tm *tm = localtime(&timeStamp);
-    ::strftime(buf, 128, "%Y-%m-%d %H:%M:%S", tm);
+    struct tm tm;
+    tm = *localtime_r(&timeStamp, &tm);
+    ::strftime(buf, 128, "%Y-%m-%d %H:%M:%S", &tm);
     return buf;
 }
     

@@ -99,6 +99,11 @@ public:
 
     void log(LogAttr::Ptr pattr) override;
 
+    void setWriteMaxSize(uint64_t max_size) { _writeMaxSize = max_size; }
+
+public:
+    static constexpr uint64_t kWriteMaxSize = 1*1024*1024;
+
 private:
     /// @brief 输出文件路径
     std::string _fileName;
@@ -106,6 +111,7 @@ private:
     std::fstream _f;
     /// @brief 当前一次性写入的大小
     uint64_t _curSize;
+    uint64_t _writeMaxSize;
 };
 
 //TODO: 网络传输(分布式)
