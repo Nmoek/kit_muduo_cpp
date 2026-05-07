@@ -45,6 +45,9 @@
      * @param {string} message
      */
     function renderPageError(message) {
+        const escape = KitProxy.utils && KitProxy.utils.escapeHTML
+            ? KitProxy.utils.escapeHTML
+            : function(value) { return String(value == null ? '' : value); };
         const errorBox = document.getElementById('protocol-page-error');
         const addBtn = document.getElementById('add-protocol-item');
         const title = document.getElementById('protocol-items-title');
@@ -57,7 +60,7 @@
         if (errorBox) {
             errorBox.style.display = 'block';
             errorBox.innerHTML = `
-                <p>${message}</p>
+                <p>${escape(message)}</p>
                 <a class="back-link" href="${buildMainPageUrl()}">返回测试服务列表</a>
             `;
         }
@@ -67,6 +70,9 @@
      * @param {any} project
      */
     function renderProjectContext(project) {
+        const escape = KitProxy.utils && KitProxy.utils.escapeHTML
+            ? KitProxy.utils.escapeHTML
+            : function(value) { return String(value == null ? '' : value); };
         const root = getPageRoot();
         const title = document.getElementById('protocol-items-title');
         const meta = document.getElementById('protocol-service-meta');
@@ -79,7 +85,7 @@
         }
 
         if (title) {
-            title.textContent = `协议项管理：${project.name}`;
+            title.textContent = `协议项管理：${project.name || ''}`;
         }
 
         if (backLink) {
@@ -94,20 +100,20 @@
             meta.innerHTML = `
                 <div class="service-field project-protocol-type">
                     <span class="field-label">协议种类</span>
-                    <span class="field-value">${ProtocolTypeStr[project.protocol_type] || '未知协议'}</span>
+                    <span class="field-value">${escape(ProtocolTypeStr[project.protocol_type] || '未知协议')}</span>
                 </div>
                 <div class="service-field project-mode">
                     <span class="field-label">测试模式</span>
-                    <span class="field-value">${ProjectModeStr[project.mode] || '未知模式'}</span>
+                    <span class="field-value">${escape(ProjectModeStr[project.mode] || '未知模式')}</span>
                 </div>
                 <div class="service-field project-${project.mode === ProjectMode.SERVER ? 'listen-port' : 'target-ip'}">
                     <span class="field-label">${project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口'}</span>
-                    <span class="field-value">${project.mode === ProjectMode.SERVER ? project.listen_port : project.target_ip || '未设置'}</span>
+                    <span class="field-value">${escape(project.mode === ProjectMode.SERVER ? project.listen_port : project.target_ip || '未设置')}</span>
                 </div>
                 <div class="service-field project-status">
                     <span class="field-label">服务状态</span>
                     <span class="field-value status ${project.status ? 'status-active' : 'status-inactive'}">
-                        ${project.status ? '开启' : '未开启'}
+                        ${escape(project.status ? '开启' : '未开启')}
                     </span>
                 </div>
                 ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}

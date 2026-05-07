@@ -90,6 +90,675 @@
     }
 }
 
+/* V1.4 final TCP Pattern field layout. Must stay last in this legacy stylesheet. */
+.config-pattern-modal {
+    width: min(1040px, 96vw);
+}
+
+.config-pattern-modal .modal-body {
+    max-height: calc(92vh - 62px);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.pattern-field-info {
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #ffffff;
+}
+
+.pattern-field-info .pattern-field-info-header {
+    margin: 0;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.pattern-field-info .pattern-list,
+.pattern-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-height: min(420px, 48vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #ffffff;
+}
+
+.pattern-field-info .pattern-list:not(:has(> :nth-child(4))) {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.pattern-field-container {
+    display: block;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.pattern-field-container:last-child {
+    border-bottom: 0;
+}
+
+.pattern-field-info .pattern-field,
+.pattern-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 0;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+}
+
+.pattern-field-info .pattern-field:hover,
+.pattern-field:hover {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.pattern-field-container.is-readonly .pattern-field {
+    background: #f8fbff;
+}
+
+.pattern-field-main {
+    display: grid;
+    grid-template-columns: minmax(210px, 0.85fr) minmax(360px, 1.4fr);
+    gap: 12px;
+    min-width: 0;
+}
+
+.pattern-field-identity,
+.pattern-field-spec {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.pattern-field-identity {
+    grid-template-columns: 72px minmax(130px, 1fr);
+}
+
+.pattern-field-spec {
+    grid-template-columns: 76px 76px minmax(110px, 0.7fr) minmax(150px, 1fr);
+}
+
+.pattern-cell {
+    min-width: 0;
+}
+
+.pattern-cell label {
+    display: block;
+    margin: 0 0 5px;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.pattern-field-info .pattern-field input,
+.pattern-field-info .pattern-field select,
+.pattern-cell input,
+.pattern-cell select {
+    flex: initial;
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 9px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--v13-text, #172033);
+    font-size: 13px;
+    box-shadow: none;
+}
+
+.pattern-field-info .pattern-field-value-container,
+.pattern-field-value-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+}
+
+.pattern-field-value-display-btn {
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #f8fbff;
+    color: #667085;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.pattern-cell-actions {
+    align-self: end;
+}
+
+.pattern-field-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+}
+
+.pattern-field-actions button,
+.pattern-field-container .del-field-btn {
+    min-width: 42px;
+    min-height: 34px;
+    padding: 0 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.pattern-field-container .del-field-btn {
+    margin: 0;
+    background: #fff5f3;
+    color: var(--v13-danger, #d92d20);
+    border: 1px solid #ffd5cf;
+}
+
+@media (max-width: 960px) {
+    .pattern-field-info .pattern-field,
+    .pattern-field {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .pattern-field-main {
+        grid-template-columns: 1fr;
+    }
+
+    .pattern-cell-actions {
+        align-self: stretch;
+    }
+
+    .pattern-field-actions {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 560px) {
+    .pattern-field-identity,
+    .pattern-field-spec {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* V1.4 TCP Pattern and Body editor final overrides. */
+.config-pattern-modal {
+    width: min(1080px, 96vw);
+    max-width: 96vw;
+    max-height: 92vh;
+    overflow: hidden;
+}
+
+.config-pattern-modal .modal-body {
+    max-height: calc(92vh - 62px);
+    overflow: auto;
+}
+
+.config-pattern-modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.pattern-least-length-group {
+    max-width: 260px;
+}
+
+.pattern-summary {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(120px, 1fr));
+    gap: 10px;
+}
+
+.pattern-summary-item {
+    padding: 10px 12px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #f8fbff;
+}
+
+.pattern-summary-item span {
+    display: block;
+    margin-bottom: 4px;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.pattern-summary-item strong {
+    color: var(--v13-text, #172033);
+    font-size: 14px;
+}
+
+.pattern-summary-item.is-ok strong {
+    color: var(--v13-success, #16865f);
+}
+
+.pattern-summary-item.is-error strong {
+    color: var(--v13-danger, #d92d20);
+}
+
+.pattern-layout-section,
+.pattern-field-info {
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #ffffff;
+}
+
+.pattern-section-title,
+.pattern-field-info .pattern-field-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+    color: #344054;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.pattern-field-toolbar {
+    display: flex;
+    gap: 8px;
+}
+
+.pattern-field-toolbar button,
+.pattern-field-actions button {
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #ffffff;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.pattern-byte-layout {
+    display: flex;
+    gap: 8px;
+    min-height: 82px;
+    padding: 12px;
+    overflow-x: auto;
+}
+
+.pattern-byte-block {
+    flex: 0 0 max(118px, calc(var(--pattern-span, 1) * 34px));
+    padding: 8px 10px;
+    border: 1px solid #b9d3f0;
+    border-radius: var(--v13-radius, 8px);
+    background: #eef7ff;
+    color: var(--v13-text, #172033);
+}
+
+.pattern-byte-block.is-error {
+    border-color: #ffb4aa;
+    background: #fff6f5;
+}
+
+.pattern-byte-block strong,
+.pattern-byte-block span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pattern-byte-offset {
+    color: #667085;
+    font-size: 12px;
+}
+
+.pattern-layout-empty {
+    display: flex;
+    align-items: center;
+    color: #667085;
+    font-size: 13px;
+}
+
+.pattern-field-info .pattern-list,
+.pattern-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-height: 360px;
+    overflow: auto;
+}
+
+.pattern-field-info .pattern-list:not(:has(> :nth-child(4))) {
+    overflow: auto;
+}
+
+.pattern-field-container {
+    display: block;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.pattern-field-container:last-child {
+    border-bottom: 0;
+}
+
+.pattern-field-info .pattern-field,
+.pattern-field {
+    display: grid;
+    grid-template-columns: 70px minmax(140px, 1.4fr) 100px 100px 130px minmax(160px, 1fr) 160px;
+    gap: 8px;
+    align-items: end;
+    padding: 10px 12px;
+    background: #ffffff;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.pattern-field-info .pattern-field:hover,
+.pattern-field:hover {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.pattern-field-container.is-readonly .pattern-field {
+    background: #f8fbff;
+}
+
+.pattern-cell label {
+    display: block;
+    margin-bottom: 5px;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.pattern-field-info .pattern-field input,
+.pattern-field-info .pattern-field select,
+.pattern-cell input,
+.pattern-cell select {
+    width: 100%;
+    height: 34px;
+    min-width: 0;
+    padding: 0 8px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #ffffff;
+    color: var(--v13-text, #172033);
+    font-size: 13px;
+}
+
+.pattern-field-info .pattern-field-value-container,
+.pattern-field-value-container {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+}
+
+.pattern-field-value-display-btn {
+    flex: 0 0 32px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #f8fbff;
+    color: #667085;
+    font-weight: 800;
+}
+
+.pattern-field-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.pattern-field-container .del-field-btn {
+    margin: 0;
+    background: #fff5f3;
+    color: var(--v13-danger, #d92d20);
+    border: 1px solid #ffd5cf;
+}
+
+.pattern-validation-errors {
+    display: none;
+    padding: 10px 12px;
+    border: 1px solid #ffd5cf;
+    border-radius: var(--v13-radius, 8px);
+    background: #fff6f5;
+    color: var(--v13-danger, #d92d20);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.body-editor-lines,
+.body-editor-highlight,
+.body-editor-highlight-code,
+.body-editor-textarea {
+    font-family: var(--code-font, "JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    font-variant-ligatures: none;
+    letter-spacing: 0;
+    tab-size: 2;
+}
+
+@media (max-width: 1080px) {
+    .pattern-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pattern-field-info .pattern-field,
+    .pattern-field {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .pattern-summary,
+    .pattern-field-info .pattern-field,
+    .pattern-field {
+        grid-template-columns: 1fr;
+    }
+
+    .pattern-field-info .pattern-field-info-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .pattern-field-toolbar {
+        flex-direction: column;
+    }
+}
+
+/* V1.4 TCP Pattern field editor final layout. Kept last to override legacy repeated rules above. */
+.config-pattern-modal {
+    width: min(1040px, 96vw);
+}
+
+.config-pattern-modal .modal-body {
+    max-height: calc(92vh - 62px);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.pattern-field-info {
+    overflow: hidden;
+}
+
+.pattern-field-info .pattern-list,
+.pattern-list {
+    gap: 0;
+    max-height: min(420px, 48vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #ffffff;
+}
+
+.pattern-field-container {
+    display: block;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.pattern-field-container:last-child {
+    border-bottom: 0;
+}
+
+.pattern-field-info .pattern-field,
+.pattern-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 0;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+}
+
+.pattern-field-container.is-readonly .pattern-field {
+    background: #f8fbff;
+}
+
+.pattern-field-main {
+    display: grid;
+    grid-template-columns: minmax(210px, 0.85fr) minmax(360px, 1.4fr);
+    gap: 12px;
+    min-width: 0;
+}
+
+.pattern-field-identity,
+.pattern-field-spec {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.pattern-field-identity {
+    grid-template-columns: 72px minmax(130px, 1fr);
+}
+
+.pattern-field-spec {
+    grid-template-columns: 76px 76px minmax(110px, 0.7fr) minmax(150px, 1fr);
+}
+
+.pattern-cell {
+    min-width: 0;
+}
+
+.pattern-cell label {
+    display: block;
+    margin: 0 0 5px;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.pattern-field-info .pattern-field input,
+.pattern-field-info .pattern-field select,
+.pattern-cell input,
+.pattern-cell select {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 9px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--v13-text, #172033);
+    font-size: 13px;
+    box-shadow: none;
+}
+
+.pattern-field-value-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+}
+
+.pattern-field-value-display-btn {
+    width: 34px;
+    height: 34px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #f8fbff;
+    color: #667085;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.pattern-cell-actions {
+    align-self: end;
+}
+
+.pattern-field-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+}
+
+.pattern-field-actions button,
+.pattern-field-container .del-field-btn {
+    min-width: 42px;
+    min-height: 34px;
+    padding: 0 9px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.pattern-field-container .del-field-btn {
+    margin: 0;
+    background: #fff5f3;
+    color: var(--v13-danger, #d92d20);
+    border: 1px solid #ffd5cf;
+}
+
+@media (max-width: 960px) {
+    .pattern-field-info .pattern-field,
+    .pattern-field {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+    }
+
+    .pattern-field-main {
+        grid-template-columns: 1fr;
+    }
+
+    .pattern-cell-actions {
+        align-self: stretch;
+    }
+
+    .pattern-field-actions {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 560px) {
+    .pattern-field-identity,
+    .pattern-field-spec {
+        grid-template-columns: 1fr;
+    }
+}
+
 .form-group {
     margin-bottom: 0.8rem;
     display: flex;
@@ -458,6 +1127,209 @@
 }
 
 /* 当子元素不超过3个时不显示滚动条 */
+
+/* V1.3 modal theme override */
+.modal-overlay {
+    background: rgba(15, 35, 58, 0.42);
+    backdrop-filter: blur(3px);
+    padding: 20px;
+}
+
+.add-service-modal,
+.add-protocol-item-modal,
+.edit-method-modal,
+.config-pattern-modal,
+.edit-path-modal,
+.tcp-pattern-change-modal,
+.edit-body-modal,
+.import-modal {
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    box-shadow: 0 24px 70px rgba(25, 54, 92, 0.22);
+    color: var(--v13-text, #172033);
+}
+
+.add-service-modal,
+.add-protocol-item-modal {
+    width: min(880px, 96vw);
+    min-width: 0;
+}
+
+.edit-body-modal {
+    width: min(820px, 96vw);
+    max-width: 96vw;
+}
+
+.import-modal {
+    position: static;
+    transform: none;
+    width: min(760px, 96vw);
+    max-width: 96vw;
+    padding: 0;
+}
+
+.modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+    background: #f8fbff;
+    border-radius: var(--v13-radius, 8px) var(--v13-radius, 8px) 0 0;
+}
+
+.modal-header h3 {
+    color: var(--v13-text, #172033);
+    font-size: 17px;
+    font-weight: 800;
+}
+
+.close-modal {
+    color: #667085;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    line-height: 1;
+}
+
+.close-modal:hover {
+    background: #e8f3ff;
+    color: #1f6ed4;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.form-columns-container {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+    gap: 14px;
+    padding: 0;
+    margin-bottom: 16px;
+}
+
+.form-group {
+    margin-bottom: 0;
+    padding: 0;
+    gap: 6px;
+}
+
+.form-group::after {
+    display: none;
+}
+
+.form-group .body-type-header,
+.form-group .pattern-header,
+.form-group label {
+    color: #344054;
+    font-weight: 700;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    border-color: var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+}
+
+.form-actions {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.add-protocol-item-modal .body-type-container,
+.pattern-container {
+    align-items: stretch;
+}
+
+.add-protocol-item-modal .body-type-container select,
+.pattern-container select {
+    min-height: 36px;
+}
+
+.import-status {
+    color: var(--v13-success, #16865f);
+    background: #e8f8f1;
+    border-color: #bce8d4;
+}
+
+.edit-body-modal .body-editor,
+.import-modal .body-editor {
+    margin-top: 2px;
+}
+
+.edit-body-modal .form-group > label {
+    margin-bottom: 8px;
+}
+
+.import-modal textarea {
+    border-color: var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+}
+
+/* 导入弹窗内的 Body Editor 不能继承普通 textarea 样式，否则输入层和高亮层会错位。 */
+.import-modal .body-editor-input-wrap,
+.import-modal .body-editor-code-wrap {
+    height: 260px;
+    min-height: 0;
+}
+
+.import-modal .body-editor-lines {
+    height: 260px;
+    min-height: 0;
+    padding: 12px 8px;
+    font-family: var(--code-font, "JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.import-modal .body-editor-highlight,
+.import-modal .body-editor-textarea {
+    box-sizing: border-box;
+    height: 260px;
+    min-height: 0;
+    max-height: 260px;
+    margin: 0;
+    padding: 12px;
+    border: 0;
+    border-radius: 0;
+    resize: none;
+    font-family: var(--code-font, "JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    font-size: 14px;
+    line-height: 20px;
+    letter-spacing: 0;
+    tab-size: 2;
+    white-space: pre;
+    overflow: auto;
+}
+
+.import-modal .body-editor-highlight-code {
+    margin: 0;
+    font: inherit;
+    line-height: inherit;
+    white-space: pre;
+}
+
+.import-modal .body-editor-textarea:focus {
+    border: 0;
+}
+
+@media (max-width: 768px) {
+    .modal-overlay {
+        align-items: flex-start;
+        overflow-y: auto;
+    }
+
+    .form-columns-container {
+        grid-template-columns: 1fr;
+    }
+
+    .form-actions {
+        flex-direction: column-reverse;
+    }
+
+    .form-actions button {
+        width: 100%;
+    }
+}
 .pattern-field-info .pattern-list:not(:has(> :nth-child(4))) {
     overflow-y: hidden;
 }
@@ -585,5 +1457,523 @@
         font-size: 12px;
         width: 100%;
         min-width: 100%;
+    }
+}
+
+/* V1.3 final modal overrides. Kept last because this stylesheet has legacy repeated rules. */
+.modal-overlay {
+    background: rgba(15, 35, 58, 0.42);
+    backdrop-filter: blur(3px);
+    padding: 20px;
+}
+
+.add-service-modal,
+.add-protocol-item-modal,
+.edit-method-modal,
+.config-pattern-modal,
+.edit-path-modal,
+.tcp-pattern-change-modal,
+.edit-body-modal,
+.import-modal {
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    box-shadow: 0 24px 70px rgba(25, 54, 92, 0.22);
+    color: var(--v13-text, #172033);
+}
+
+.add-service-modal,
+.add-protocol-item-modal {
+    width: min(880px, 96vw);
+    min-width: 0;
+}
+
+.edit-body-modal,
+.import-modal {
+    position: static;
+    transform: none;
+    width: min(820px, 96vw);
+    max-width: 96vw;
+    padding: 0;
+}
+
+.modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+    background: #f8fbff;
+}
+
+.modal-body {
+    padding: 20px;
+}
+
+.form-columns-container {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+    gap: 14px;
+    padding: 0;
+    margin-bottom: 16px;
+}
+
+.form-actions {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--v13-border, #d9e6f5);
+}
+
+@media (max-width: 768px) {
+    .form-columns-container {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* V1.4 TCP pattern field configuration redesign. This block must stay after the legacy modal overrides. */
+.config-pattern-modal {
+    width: min(1080px, 96vw);
+    max-width: 96vw;
+    max-height: 92vh;
+    overflow: hidden;
+}
+
+.config-pattern-modal .modal-body {
+    max-height: calc(92vh - 62px);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.config-pattern-modal .config-pattern-modal-form {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.config-pattern-modal .pattern-field-info {
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #ffffff;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field-info-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+    background: #f8fbff;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field-info-header label {
+    margin: 0;
+    color: #344054;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.2;
+}
+
+.config-pattern-modal .pattern-field-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.config-pattern-modal .pattern-field-toolbar button,
+.config-pattern-modal .pattern-field-actions button {
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #ffffff;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease, background 0.16s ease;
+}
+
+.config-pattern-modal .pattern-field-toolbar button:hover,
+.config-pattern-modal .pattern-field-actions button:hover {
+    border-color: #9cc5f2;
+    background: #f8fbff;
+    color: #1f6ed4;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-height: min(420px, 48vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: #ffffff;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    scrollbar-color: #b9c7d8 #f3f7fc;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list:not(:has(> :nth-child(4))) {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list::-webkit-scrollbar-track {
+    background: #f3f7fc;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list::-webkit-scrollbar-thumb {
+    border: 2px solid #f3f7fc;
+    border-radius: 999px;
+    background: #b9c7d8;
+}
+
+.config-pattern-modal .pattern-field-container {
+    display: block;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.config-pattern-modal .pattern-field-container:last-child {
+    border-bottom: 0;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 0;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+    transition: background 0.16s ease;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field:hover {
+    border-color: transparent;
+    background: #fbfdff;
+    box-shadow: none;
+}
+
+.config-pattern-modal .pattern-field-container.is-readonly .pattern-field {
+    background: #f8fbff;
+}
+
+.config-pattern-modal .pattern-field-main {
+    display: grid;
+    grid-template-columns: minmax(216px, 0.84fr) minmax(430px, 1.55fr);
+    gap: 12px;
+    align-items: end;
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-field-identity,
+.config-pattern-modal .pattern-field-spec {
+    display: grid;
+    gap: 8px;
+    align-items: end;
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-field-identity {
+    grid-template-columns: 72px minmax(132px, 1fr);
+}
+
+.config-pattern-modal .pattern-field-spec {
+    grid-template-columns: 76px 76px minmax(120px, 0.82fr) minmax(160px, 1fr);
+}
+
+.config-pattern-modal .pattern-cell {
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-cell label {
+    display: block;
+    margin: 0 0 5px;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.15;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field input,
+.config-pattern-modal .pattern-field-info .pattern-field select {
+    flex: initial;
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    padding: 0 9px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #ffffff;
+    color: var(--v13-text, #172033);
+    font-size: 13px;
+    line-height: 34px;
+    box-shadow: none;
+    box-sizing: border-box;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field select {
+    appearance: auto;
+    padding-right: 8px;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field input:focus,
+.config-pattern-modal .pattern-field-info .pattern-field select:focus {
+    outline: none;
+    border-color: #6daee8;
+    box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.12);
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field input:disabled,
+.config-pattern-modal .pattern-field-info .pattern-field select:disabled,
+.config-pattern-modal .pattern-field-info .pattern-field input[readonly] {
+    border-color: #e3edf8;
+    background: #f7fafc;
+    color: #667085;
+    opacity: 1;
+}
+
+.config-pattern-modal .pattern-field-value-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #f8fbff;
+    color: #667085;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.config-pattern-modal .pattern-cell-actions {
+    align-self: end;
+}
+
+.config-pattern-modal .pattern-field-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: nowrap;
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-field-container .del-field-btn {
+    margin: 0;
+    border-color: #ffd5cf;
+    background: #fff5f3;
+    color: var(--v13-danger, #d92d20);
+}
+
+.config-pattern-modal .pattern-field-actions button:disabled,
+.config-pattern-modal .pattern-field-container .del-field-btn:disabled {
+    border-color: #e3edf8;
+    background: #f7fafc;
+    color: #98a2b3;
+    cursor: not-allowed;
+}
+
+@media (max-width: 1100px) {
+    .config-pattern-modal .pattern-field-main {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+    }
+}
+
+@media (max-width: 760px) {
+    .config-pattern-modal .pattern-field-info .pattern-field {
+        grid-template-columns: minmax(0, 1fr);
+        align-items: stretch;
+    }
+
+    .config-pattern-modal .pattern-field-actions {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 560px) {
+    .config-pattern-modal .pattern-field-info .pattern-field-info-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .config-pattern-modal .pattern-field-identity,
+    .config-pattern-modal .pattern-field-spec {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+/* Final TCP Pattern editor grid. Keep this block last so legacy modal rules cannot split field rows. */
+.config-pattern-modal {
+    --pattern-field-grid: 70px minmax(130px, 1.1fr) 100px 84px minmax(108px, 0.84fr) minmax(150px, 1.18fr) 132px;
+    width: min(1120px, 96vw);
+}
+
+.config-pattern-modal .pattern-field-info {
+    overflow: hidden;
+}
+
+.config-pattern-modal .pattern-field-grid-labels {
+    display: grid;
+    grid-template-columns: var(--pattern-field-grid);
+    gap: 8px;
+    align-items: center;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+    background: #f8fbff;
+}
+
+.config-pattern-modal .pattern-field-grid-labels span,
+.config-pattern-modal .pattern-field-labels label {
+    min-width: 0;
+    margin: 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #e9eef5;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list {
+    max-height: min(420px, 48vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field {
+    display: grid;
+    grid-template-columns: var(--pattern-field-grid);
+    gap: 8px;
+    align-items: end;
+    width: 100%;
+    min-width: 0;
+    padding: 10px 14px;
+    border: 0;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: none;
+}
+
+.config-pattern-modal .pattern-field-main,
+.config-pattern-modal .pattern-field-identity,
+.config-pattern-modal .pattern-field-spec {
+    display: contents;
+}
+
+.config-pattern-modal .pattern-cell {
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-cell label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field input,
+.config-pattern-modal .pattern-field-info .pattern-field select {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    box-sizing: border-box;
+}
+
+.config-pattern-modal .pattern-field-value-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 6px;
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+}
+
+.config-pattern-modal .pattern-field-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    justify-content: initial;
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-field-actions button,
+.config-pattern-modal .pattern-field-container .del-field-btn {
+    min-width: 0;
+    width: 100%;
+    height: 34px;
+    padding: 0 6px;
+    white-space: nowrap;
+}
+
+.config-pattern-modal .pattern-field-container.is-readonly .pattern-field {
+    background: #f8fbff;
+}
+
+@media (max-width: 920px) {
+    .config-pattern-modal .pattern-field-grid-labels,
+    .config-pattern-modal .pattern-field-labels {
+        display: none;
+    }
+
+    .config-pattern-modal .pattern-field-info .pattern-field {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+        align-items: stretch;
+    }
+
+    .config-pattern-modal .pattern-cell label {
+        position: static;
+        display: block;
+        width: auto;
+        height: auto;
+        margin: 0 0 5px;
+        padding: 0;
+        overflow: visible;
+        clip: auto;
+        color: #667085;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.15;
+        white-space: normal;
+    }
+
+    .config-pattern-modal .pattern-field-actions {
+        grid-template-columns: repeat(3, minmax(86px, 1fr));
     }
 }

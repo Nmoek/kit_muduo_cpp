@@ -1,10 +1,11 @@
-const servicePageState = KitProxy.pagination.createState();
+const servicePageState = KitProxy.pagination.createState(10);
+const serviceFilterState = KitProxy.serviceFilters
+    ? KitProxy.serviceFilters.createState()
+    : { filters: { startDate: '', endDate: '', status: 'all', protocolType: 'all' }, active: false };
+let currentPageProjects = [];
 
 // 更新协议项显示
 function updateProtocolItem(id_str, protocol) {
-
-    console.info('updateProtocolItem: ', protocol);
-
     const protocolItem = document.getElementById(id_str);
 
     protocolItem.querySelector(".protocol-name").textContent = protocol.name;
@@ -371,60 +372,12 @@ function bindProtocolTitleEdit(protocolItem) {
     const protocolTitle = protocolItem.querySelector('.protocol-name.editable');
     if (!protocolTitle) return;
 
-    const editControls = document.createElement('div');
-    editControls.className = 'title-edit-controls';
-    editControls.style.display = 'none';
-    editControls.innerHTML = `
-        <button class="save-btn">✓</button>
-        <button class="cancel-btn">✗</button>
-    `;
-    protocolTitle.parentNode.appendChild(editControls);
-
-    let originalTitle = protocolTitle.textContent;
-
-    function exitEditMode(save = false) {
-        if (!save) {
-            protocolTitle.textContent = originalTitle;
-        }
-        protocolTitle.contentEditable = false;
-        editControls.style.display = 'none';
-    }
-
-    protocolTitle.addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (e.target === protocolTitle && !protocolTitle.isContentEditable) {
-
-            originalTitle = protocolTitle.textContent;
-            protocolTitle.contentEditable = true;
-            protocolTitle.focus();
-            editControls.style.display = 'flex';
-        }
-    });
-
-    editControls.querySelector('.save-btn').addEventListener('click', async function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const ok = await updateProtocolName(protocolItem.id, protocolTitle.textContent);
-        if(ok) {
-            alert('标题编辑成功！');
-        } else {
-            protocolTitle.textContent = originalTitle;
-            alert('标题编辑失败!');
-        }
-
-        exitEditMode(true);
-    });
-
-    editControls.querySelector('.cancel-btn').addEventListener('click', function(e) {
-        e.stopPropagation();
-        exitEditMode(false);
-    });
-
-    document.addEventListener('click', function(e) {
-        if (protocolTitle.isContentEditable && !protocolTitle.contains(e.target) && !editControls.contains(e.target)) {
-            exitEditMode(false);
-        }
+    KitProxy.utils.bindInlineTitleEditor({
+        titleElement: protocolTitle,
+        onSave: function(newTitle) {
+            return updateProtocolName(protocolItem.id, newTitle);
+        },
+        emptyMessage: '协议项名称不能为空',
     });
 }
 
@@ -509,6 +462,9 @@ function bindProtocolBodyEditor(protocolItem) {
                     bodyIndicator.classList.remove('has');
                     bodyIndicator.classList.add('no');
                 }
+            }, {
+                protocolType: protocolItem.dataset.protocolType || 'HTTP',
+                placeholder: req_or_resp === 1 ? '输入校验请求Body内容...' : '输入目标响应Body内容...',
             });
         });
     });
@@ -528,14 +484,15 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
     protocolItem.dataset.protocolType = protocol.type;
 
     // 注意: 这里只需改变卡片内部子项的呈现，不需要更改整个布局
+    const escape = KitProxy.utils.escapeHTML;
     protocolItem.innerHTML =`
         <div class="protocol-header">
             <div>
-                <span class="protocol-tag ${protocol.type.toLowerCase()}">${protocol.type}</span>
-                <span class="protocol-name editable" data-default="Undef默认测试协议项">${protocol.name}</span>
+                <span class="protocol-tag ${escape(protocol.type.toLowerCase())}">${escape(protocol.type)}</span>
+                <span class="protocol-name editable" data-default="Undef默认测试协议项">${escape(protocol.name)}</span>
                 <div class="protocol-time">
-                    <span class="last-update-time">最后一次修改时间: ${protocol.utime}</span>
-                    <span class="create-time">创建时间: ${protocol.ctime}</span>
+                    <span class="last-update-time">最后一次修改时间: ${escape(protocol.utime || '未知')}</span>
+                    <span class="create-time">创建时间: ${escape(protocol.ctime || '未知')}</span>
                 </div>
             </div>
         </div>
@@ -736,7 +693,6 @@ function openTcpPatternConfig(targetField, statusElement) {
     const patternInfoText = targetField.dataset.patternInfos || JSON.stringify(getDefaultTcpPatternInfo());
     const inputPatternInfosMap = buildTcpPatternModalInput(patternInfoText);
 
-    console.log('specialPatternFieldMap: ', inputPatternInfosMap);
     createCustomTcpPatternModal(targetField, '头部特殊字段', inputPatternInfosMap, statusElement, true);
 }
 
@@ -895,7 +851,6 @@ function bindAddServiceDynamicControls(modal) {
     if (protocolTypeSelect && formContainer) {
         protocolTypeSelect.addEventListener('change', function() {
             const type = Number(this.value);
-            console.info('选择的协议类型: ', type);
             renderProjectPatternControl(formContainer, type);
         });
     }
@@ -955,7 +910,6 @@ function collectAddServicePayload(modal) {
 
 async function updateTcpPatternInfoReq(pattern_type, pattern_fields) {
     // 当前后端接口规划里尚未明确“更新 TCP Pattern”的独立路径，V1 先保持原有占位行为。
-    console.info('updateTcpPatternInfoReq placeholder:', pattern_type, pattern_fields);
     return true;
 }
 
@@ -963,7 +917,6 @@ async function getTcpPatternInfoReq(project_id) {
     
     try {
         const patternInfo = await KitProxy.api.getProjectPatternInfo(project_id);
-        console.log('获取TCP格式信息请求成功:', patternInfo);
         return patternInfo;
 
     }catch(error) {
@@ -977,7 +930,6 @@ async function updateProjectNameReq(project_id, name) {
 
     try {
         await KitProxy.api.updateProjectName(project_id, name);
-        console.log('修改测试服务标题请求成功');
 
     } catch (error) {
         console.error('修改测试服务标题请求失败:', error.message);
@@ -1024,9 +976,7 @@ async function addProjectReq(project) {
     
     try {
 
-        console.info('addProjectReq body: ', project);
         const addResult = await KitProxy.api.addProject(project);
-        console.log('服务添加成功:', addResult);
         return addResult;
 
     } catch (error) {
@@ -1039,7 +989,6 @@ async function addProjectReq(project) {
 async function getProjectList(offset, limit) {
     try {
         const projects = await KitProxy.api.getProjectList(offset, limit);
-        console.log('获取测试服务列表成功:', projects);
         return projects;
     } catch (error) {
         console.error('获取项目列表出错:', error);
@@ -1056,10 +1005,6 @@ async function getProjectReq(project_id) {
         if(!Array.isArray(projects) || projects.length <= 0) {
             throw new Error('获取单个测试服务请求为null');
         }
-        console.log("projects.length: ", projects.length);
-        
-        console.log('获取单个测试服务请求成功:', projects);
-
         return projects;
     } catch (error) {
         console.error('获取单个测试服务请求失败:', error);
@@ -1117,7 +1062,6 @@ async function delProjectReq(project_id) {
 
     try {
         await KitProxy.api.deleteProject(project_id);
-        console.log('删除测试服务成功');
 
         return true;
     } catch (error) {
@@ -1161,11 +1105,9 @@ async function addProject(project) {
     try {
         // 1. 先添加服务
         const addResult = await addProjectReq(project);
-        console.info('添加完成的单个项目id:', addResult.project_id);
 
         // 2. 再获取单个项
         project = await getProjectReq(addResult.project_id);
-        console.info('获取的单个项目:', project);
 
     } catch (error) {
         console.error('添加测试服务失败: ', error);
@@ -1191,90 +1133,77 @@ async function addProject(project) {
  * @param {number} mode
  * @param {string | number} pattern_type
  */
-function serviceCardHTML(id, name, protocol, port, mode, pattern_type, status = false) {
-
-
-    console.info(id, name, protocol, port, mode, pattern_type, status);
-
+function serviceCardHTML(id, name, protocol, port, mode, pattern_type, status = false, ctime = '', targetIp = '') {
     const project = {
         id,
         protocol_type: protocol,
         pattern_type,
     };
+    const escape = KitProxy.utils.escapeHTML;
+    const displayName = name || `默认测试服务${id}`;
+    const endpointLabel = mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
+    const endpointValue = mode === ProjectMode.SERVER ? port || '未设置' : targetIp || '未设置';
+    const protocolText = ProtocolTypeStr[protocol] || '未知协议';
+    const modeText = ProjectModeStr[mode] || '未知模式';
+    const statusText = status ? '开启' : '未开启';
+    const createTime = ctime || '未知';
 
-return `<div class="service-header">
-            <h3 class="service-title editable" data-default="Undef默认测试服务">${name || `默认测试服务${id}`}</h3>
-            <div class="title-edit-controls" style="display:none">
-                <button class="save-btn">✓</button>
-                <button class="cancel-btn">✗</button>
+    return `
+        <div class="service-list-row">
+            <div class="service-main-cell">
+                <div class="service-primary-row">
+                    <h3 class="service-title editable" data-default="Undef默认测试服务">${escape(displayName)}</h3>
+                    <div class="service-sub-meta">
+                        <span class="service-sub-pill project-id">
+                            <span class="meta-label">服务ID</span>
+                            <span class="meta-value">${escape(id)}</span>
+                        </span>
+                        <span class="service-sub-pill project-create-time">
+                            <span class="meta-label">创建时间</span>
+                            <span class="meta-value field-value">${escape(createTime)}</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="service-meta-strip service-info-strip">
+                    <span class="service-meta-item service-detail-chip project-protocol-type" data-protocol_type="${escape(protocol)}">
+                        <span class="meta-label">协议</span>
+                        <span class="meta-value field-value">${escape(protocolText)}</span>
+                    </span>
+                    <span class="service-meta-item service-detail-chip project-mode">
+                        <span class="meta-label">模式</span>
+                        <span class="meta-value field-value">${escape(modeText)}</span>
+                    </span>
+                    <span class="service-meta-item service-detail-chip project-${mode === ProjectMode.SERVER ? 'listen-port' : 'target-ip'}">
+                        <span class="meta-label">${escape(endpointLabel)}</span>
+                        <span class="meta-value field-value">${escape(endpointValue)}</span>
+                    </span>
+                    <span class="service-meta-item service-detail-chip project-status">
+                        <span class="meta-label">状态</span>
+                        <span class="meta-value field-value status ${status ? 'status-active' : 'status-inactive'}">${escape(statusText)}</span>
+                    </span>
+                    ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
+                </div>
+            </div>
+            <div class="service-action-cell service-actions-container">
+                <button type="button" class="view-protocols-btn">查看协议项</button>
+                <button type="button" class="delete-service-btn">删除</button>
             </div>
         </div>
-            <div class="service-form">
-            <div class="service-fields-container">
-                <div class="service-field project-protocol-type" data-protocol_type='${protocol}'>
-                    <span class="field-label">协议种类</span>
-                    <span class="field-value">${ProtocolTypeStr[protocol]}</span>
-                </div>
-                <div class="service-field project-mode">
-                    <span class="field-label">测试模式</span>
-                    <span class="field-value">${ProjectModeStr[mode]}</span>
-                </div>
-                <div class="service-field project-${mode === ProjectMode.SERVER ? 'listen-port' : 'target-ip'}">
-                    <span class="field-label">${mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口'}</span>
-                    <span class="field-value">${port || '未设置'}</span>
-                </div>
-                <div class="service-field project-protocol-cnt" style="display: none;">
-                <span class="field-label">协议数量</span>
-                <span class="field-value">0</span>
-                </div>
-                <div class="service-field project-status">
-                    <span class="field-label">服务状态</span>
-                    <span class="field-value status ${status ? 'status-active' : 'status-inactive'}">
-                        ${status ? '开启' : '未开启'}
-                    </span>
-                </div>
-                ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
-            </div>
-            <div class="service-actions-container">
-                <button class="view-protocols-btn">查看协议项</button>
-                <button class="delete-service-btn">删除</button>
-            </div>
-        </div>`
+    `;
 }
 
 
 
 // 动态更新页面数据
 function updateServiceCard(id_str, project) {
-
-    // 字段转换
-    let mode_str;
-    let protocol_str;
-
-    console.info('updateServiceCard: ', project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.status);
-
-
-    if(1 === project.mode) {
-        mode_str = '服务器模式'
-    }else if (2 === project.mode) {
-        mode_str = '客户端模式'
-    } else {
-        mode_str = '未知模式'
-    }
-
-    if(1 === project.protocol_type) {
-        protocol_str = 'HTTP'
-    }else if(2 ===  project.protocol_type) {
-        protocol_str = '自定义TCP'
-    } else if(3 ===  project.protocol_type){
-        protocol_str = 'HTTPS'
-    } else {
-        protocol_str = "未知协议"
-    }
-
     const serviceCard = document.getElementById(id_str);
+    if (!serviceCard) return;
 
-    serviceCard.querySelector(".service-title").textContent = project.name;
+    const title = serviceCard.querySelector(".service-title");
+    if (title) {
+        title.textContent = project.name || '';
+        title.dataset.titleValue = project.name || '';
+    }
 
     // TODO: 待考虑 是否能修改
     // serviceCard.querySelector(".project-protocol-type .field-value").textContent = protocol_str;
@@ -1289,8 +1218,11 @@ function updateServiceCard(id_str, project) {
     // serviceCard.querySelector(".project-protocol-cnt .field-value").textContent = project.protocol_cnt || '0';
     // TODO: 待考虑 是否能修改
 
-    serviceCard.querySelector(".project-status .field-value").textContent = project.status === 1 ? '开启' : '未开启';
-    serviceCard.querySelector(".project-status .field-value").className = `field-value status ${project.status === 1 ? 'status-active' : 'status-inactive'}`;
+    const statusValue = serviceCard.querySelector(".project-status .field-value");
+    if (statusValue) {
+        statusValue.textContent = project.status === 1 ? '开启' : '未开启';
+        statusValue.className = `meta-value field-value status ${project.status === 1 ? 'status-active' : 'status-inactive'}`;
+    }
     
 }
 
@@ -1319,30 +1251,27 @@ function buildProtocolItemsUrl(projectId) {
     return `protocol_items.html?${params.toString()}`;
 }
 
-/**
- * 服务页点击服务卡片或按钮时进入该服务的协议项页。
- * @param {HTMLDivElement} serviceCard
- * @param {any} project
- */
 function bindOpenProtocolItemsAction(serviceCard, project) {
-    function openProtocolItems() {
-        window.location.href = buildProtocolItemsUrl(project.id);
-    }
-
     const viewBtn = serviceCard.querySelector('.view-protocols-btn');
     if (viewBtn) {
         viewBtn.addEventListener('click', function(e) {
             e.preventDefault();
             e.stopPropagation();
-            openProtocolItems();
+            const targetUrl = buildProtocolItemsUrl(project.id);
+            serviceCard.dataset.protocolItemsUrl = targetUrl;
+            const navigateEvent = new CustomEvent('service-card:navigate-protocol-items', {
+                bubbles: true,
+                cancelable: true,
+                detail: {
+                    projectId: project.id,
+                    url: targetUrl,
+                },
+            });
+            serviceCard.dispatchEvent(navigateEvent);
+            if (navigateEvent.defaultPrevented) return;
+            window.location.href = targetUrl;
         });
     }
-
-    serviceCard.addEventListener('click', function(e) {
-        const ignored = e.target.closest('button, .service-title, .title-edit-controls, .project-pattern');
-        if (ignored) return;
-        openProtocolItems();
-    });
 }
 
 function bindServiceDeleteAction(serviceCard) {
@@ -1402,61 +1331,18 @@ function addServiceCard(project, pos = -1) {
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
 
-    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.pattern_type, project.status);
+    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.pattern_type, project.status, project.ctime, project.target_ip);
 
-    /* 标题编辑功能 */
     const titleElement = serviceCard.querySelector('.service-title');
-    const editControls = serviceCard.querySelector('.title-edit-controls');
-    let originalTitle = titleElement.textContent;
-
-    function exitEditMode(save = false) {
-        if (!save) {
-            titleElement.textContent = originalTitle;
-        }
-        titleElement.contentEditable = false;
-        editControls.style.display = 'none';
+    if (titleElement && KitProxy.utils.bindInlineTitleEditor) {
+        KitProxy.utils.bindInlineTitleEditor({
+            titleElement,
+            onSave: function(newTitle) {
+                return updateProjectName(serviceCard.id, newTitle);
+            },
+            emptyMessage: '服务名称不能为空',
+        });
     }
-
-    titleElement.addEventListener('click', function(e) {
-        e.stopPropagation();
-        if (e.target === titleElement && !titleElement.isContentEditable) {
-            originalTitle = titleElement.textContent;
-            titleElement.contentEditable = true;
-            titleElement.focus();
-            editControls.style.display = 'flex';
-        }
-    });
-
-    document.addEventListener('click', function(e) {
-        if (titleElement.isContentEditable && !titleElement.contains(e.target) && !editControls.contains(e.target)) {
-            exitEditMode(false);
-        }
-    });
-
-    serviceCard.querySelector('.save-btn').addEventListener('click', async function(e) {
-        e.stopPropagation();
-
-        const ok = await updateProjectName(serviceCard.id, titleElement.textContent)
-        if(ok) {
-            alert('标题编辑成功！');
-        } else {
-            titleElement.textContent = originalTitle;
-            alert('标题编辑失败!');
-        }
-
-        exitEditMode(true);
-    });
-
-    serviceCard.querySelector('.cancel-btn').addEventListener('click', function(e) {
-        e.stopPropagation();
-        exitEditMode(false);
-    });
-
-    // 阻止点击标题时展开卡片
-    titleElement.addEventListener('click', function(e) {
-        e.stopPropagation();
-    });
-    /* 标题编辑功能 */
 
     ProtocolTypeRegistry.bindServiceExtraActions(serviceCard, project);
     bindOpenProtocolItemsAction(serviceCard, project);
@@ -1471,6 +1357,127 @@ function refreshServiceCards(projects) {
     projects.forEach(project => {
         addServiceCard(project);
     });
+}
+
+function renderServiceEmptyState(message) {
+    const serviceCards = document.querySelector('.service-cards');
+    if (!serviceCards) return;
+    const escape = KitProxy.utils.escapeHTML;
+
+    const emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+    emptyState.innerHTML = `
+        <div class="empty-message">
+            <p>${escape(message)}</p>
+        </div>
+    `;
+    serviceCards.appendChild(emptyState);
+}
+
+function updateServiceFilterSummary(visibleCount, totalCount) {
+    const summary = document.getElementById('service-filter-summary');
+    if (!summary || !KitProxy.serviceFilters) return;
+
+    const description = KitProxy.serviceFilters.describe(serviceFilterState.filters);
+    const suffix = serviceFilterState.active
+        ? `，当前页匹配 ${visibleCount}/${totalCount} 条，每页 ${servicePageState.pageSize} 条`
+        : `，当前页 ${totalCount} 条，每页 ${servicePageState.pageSize} 条`;
+    summary.textContent = `当前页筛选：${description}${suffix}`;
+}
+
+function setServiceFilterError(message) {
+    const errorBox = document.getElementById('service-filter-error');
+    if (!errorBox) return;
+
+    errorBox.textContent = message || '';
+    errorBox.style.display = message ? 'block' : 'none';
+}
+
+function renderCurrentPageServices() {
+    const serviceCards = document.querySelector('.service-cards');
+    if (!serviceCards) return;
+
+    const totalCount = currentPageProjects.length;
+    const visibleProjects = serviceFilterState.active && KitProxy.serviceFilters
+        ? KitProxy.serviceFilters.apply(currentPageProjects, serviceFilterState.filters)
+        : currentPageProjects.slice();
+
+    serviceCards.innerHTML = '';
+    refreshServiceCards(visibleProjects);
+
+    if (visibleProjects.length === 0) {
+        renderServiceEmptyState(totalCount === 0 ? '暂无测试服务，点击按钮添加' : '当前页无匹配测试服务');
+    }
+
+    updateServiceFilterSummary(visibleProjects.length, totalCount);
+}
+
+function applyServiceFiltersFromDOM() {
+    if (!KitProxy.serviceFilters) return;
+
+    const filters = KitProxy.serviceFilters.readFromDOM(document);
+    const validation = KitProxy.serviceFilters.validate(filters);
+
+    if (!validation.valid) {
+        setServiceFilterError(validation.message);
+        return;
+    }
+
+    setServiceFilterError('');
+    serviceFilterState.filters = filters;
+    serviceFilterState.active = KitProxy.serviceFilters.hasActiveFilters(filters);
+    renderCurrentPageServices();
+}
+
+function resetServiceFilters() {
+    const startInput = document.getElementById('filter-create-start');
+    const endInput = document.getElementById('filter-create-end');
+    const statusSelect = document.getElementById('filter-status');
+    const protocolTypeSelect = document.getElementById('filter-protocol-type');
+
+    if (startInput) startInput.value = '';
+    if (endInput) endInput.value = '';
+    if (statusSelect) statusSelect.value = 'all';
+    if (protocolTypeSelect) protocolTypeSelect.value = 'all';
+
+    serviceFilterState.filters = {
+        startDate: '',
+        endDate: '',
+        status: 'all',
+        protocolType: 'all',
+    };
+    serviceFilterState.active = false;
+    setServiceFilterError('');
+    renderCurrentPageServices();
+}
+
+function bindServiceFilterActions() {
+    const applyBtn = document.getElementById('apply-service-filter');
+    const resetBtn = document.getElementById('reset-service-filter');
+    const pageSizeSelect = document.getElementById('service-page-size');
+
+    if (applyBtn) {
+        applyBtn.addEventListener('click', applyServiceFiltersFromDOM);
+    }
+
+    if (resetBtn) {
+        resetBtn.addEventListener('click', resetServiceFilters);
+    }
+
+    if (pageSizeSelect) {
+        pageSizeSelect.value = String(servicePageState.pageSize);
+        pageSizeSelect.addEventListener('change', function() {
+            const nextPageSize = Number(this.value);
+            if (![10, 20, 50].includes(nextPageSize)) {
+                this.value = String(servicePageState.pageSize);
+                return;
+            }
+
+            servicePageState.pageSize = nextPageSize;
+            servicePageState.currentPage = 1;
+            loadAllProjects(1);
+        });
+    }
 }
 
 /**
@@ -1506,12 +1513,10 @@ async function loadAllProjects(page = servicePageState.currentPage) {
             throw new Error("数据格式错误");
         }
 
-        console.info('获取的项目列表:', projects);
+        currentPageProjects = KitProxy.pagination.takeVisibleItems(projects, servicePageState);
 
-        // 更新页面显示
-        serviceCards.innerHTML = '';
-        refreshServiceCards(KitProxy.pagination.takeVisibleItems(projects, servicePageState));
-        checkEmptyState();
+        // 更新页面显示。筛选器只作用于当前页，不改变后端分页请求参数。
+        renderCurrentPageServices();
         renderServicePagination();
 
     } catch(error) {
@@ -1530,6 +1535,9 @@ async function loadAllProjects(page = servicePageState.currentPage) {
 document.addEventListener('DOMContentLoaded', function() {
     const serviceCards = document.querySelector('.service-cards');
     if (!serviceCards) return;
+    if (window.KitProxy && window.KitProxy.__disableAutoInitMain) return;
+
+    bindServiceFilterActions();
 
     // 监听添加服务按钮点击
     document.getElementById('add-service')?.addEventListener('click',  async function() {

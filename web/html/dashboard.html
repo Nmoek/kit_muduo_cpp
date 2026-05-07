@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>控制面板</title>
+    <link rel="stylesheet" href="../css/main.css">
     <link rel="stylesheet" href="../css/dashboard.css">
 </head>
 <body>
@@ -18,20 +19,37 @@
             </nav>
         </aside>
         <main class="content">
+            <div class="service-manager-header dashboard-header">
+                <div class="page-title-block">
+                    <h2>控制面板</h2>
+                    <p>查看平台设备与运行状态概览</p>
+                </div>
+            </div>
             <div class="dashboard-container">
-                <h1>控制面板</h1>
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <h3>设备总数</h3>
+                        <div class="stat-card-header">
+                            <h3>设备总数</h3>
+                            <span class="stat-tag">全部设备</span>
+                        </div>
                         <p class="stat-value">12</p>
+                        <p class="stat-desc">当前纳入测试平台管理的设备数量</p>
                     </div>
                     <div class="stat-card">
-                        <h3>在线设备</h3>
+                        <div class="stat-card-header">
+                            <h3>在线设备</h3>
+                            <span class="stat-tag success">在线</span>
+                        </div>
                         <p class="stat-value">8</p>
+                        <p class="stat-desc">正在保持连接的设备数量</p>
                     </div>
                     <div class="stat-card">
-                        <h3>系统状态</h3>
+                        <div class="stat-card-header">
+                            <h3>系统状态</h3>
+                            <span class="stat-tag success">运行中</span>
+                        </div>
                         <p class="stat-value online">正常</p>
+                        <p class="stat-desc">后端测试服务当前运行状态</p>
                     </div>
                 </div>
             </div>

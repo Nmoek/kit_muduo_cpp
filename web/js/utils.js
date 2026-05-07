@@ -68,6 +68,15 @@
         }
     }
 
+    function escapeHTML(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function bindModalCloseActions(modal, options = {}) {
         // 动态 innerHTML 模态框都遵守 close-modal/cancel-btn 约定，统一关闭逻辑能减少重复事件代码。
         if (!modal) return function noop() {};
@@ -100,14 +109,17 @@
         // 用于 Body 导入等“textarea + 确定/取消”的轻量弹窗，业务状态由 onConfirm 回调处理。
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
+        const useBodyEditor = options.useBodyEditor && KitProxy.bodyEditor;
         modal.innerHTML = `
             <div class="${options.modalClassName || 'add-protocol-item-modal import-modal'}">
                 <div class="modal-header">
-                    <h3>${options.title || '导入内容'}</h3>
+                    <h3>${escapeHTML(options.title || '导入内容')}</h3>
                     <button class="close-modal">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <textarea placeholder="${options.placeholder || '请在此输入内容...'}"></textarea>
+                    ${useBodyEditor
+                        ? '<div class="body-editor-host"></div>'
+                        : `<textarea placeholder="${escapeHTML(options.placeholder || '请在此输入内容...')}"></textarea>`}
                     <div class="form-actions">
                         <button type="button" class="cancel-btn">取消</button>
                         <button type="button" class="confirm-btn">确定</button>
@@ -116,19 +128,266 @@
             </div>
         `;
 
+        let bodyEditor = null;
         const textarea = modal.querySelector('textarea');
-        textarea.value = options.value || '';
+        if (useBodyEditor) {
+            bodyEditor = KitProxy.bodyEditor.create(modal.querySelector('.body-editor-host'), {
+                idPrefix: options.idPrefix || 'body-import',
+                value: options.value || '',
+                bodyType: options.bodyType || 'json',
+                allowedTypes: options.allowedTypes,
+                placeholder: options.placeholder || '请在此输入内容...',
+            });
+        } else if (textarea) {
+            textarea.value = options.value || '';
+        }
         document.body.appendChild(modal);
 
         const closeModal = bindModalCloseActions(modal);
         modal.querySelector('.confirm-btn').addEventListener('click', function() {
+            if (bodyEditor) {
+                const validation = bodyEditor.validate();
+                if (!validation.valid) {
+                    alert(validation.message);
+                    return;
+                }
+            }
+
             if (typeof options.onConfirm === 'function') {
-                options.onConfirm(textarea.value);
+                options.onConfirm(
+                    bodyEditor ? bodyEditor.getValue() : textarea.value,
+                    bodyEditor ? bodyEditor.getType() : options.bodyType,
+                );
             }
             closeModal();
         });
 
         return modal;
+    }
+
+    let activeInlineTitleEditor = null;
+    let inlineTitleDocumentBound = false;
+
+    function ensureInlineTitleDocumentListener() {
+        if (inlineTitleDocumentBound || typeof document === 'undefined') return;
+
+        document.addEventListener('mousedown', function(event) {
+            if (!activeInlineTitleEditor || !activeInlineTitleEditor.isEditing()) return;
+            if (activeInlineTitleEditor.contains(event.target)) return;
+            activeInlineTitleEditor.cancel();
+        });
+
+        inlineTitleDocumentBound = true;
+    }
+
+    function bindInlineTitleEditor(options) {
+        if (!options || !options.titleElement) {
+            throw new Error('行内标题编辑器缺少 titleElement');
+        }
+
+        const titleElement = options.titleElement;
+        const maxLength = Number(options.maxLength || 64);
+        const emptyMessage = options.emptyMessage || '名称不能为空';
+        const onSave = typeof options.onSave === 'function'
+            ? options.onSave
+            : function noopSave() { return true; };
+
+        let controlsContainer = options.controlsContainer || null;
+        if (!controlsContainer) {
+            controlsContainer = document.createElement('span');
+            controlsContainer.className = 'inline-title-controls';
+            titleElement.insertAdjacentElement('afterend', controlsContainer);
+        }
+
+        controlsContainer.classList.add('inline-title-controls');
+        controlsContainer.style.display = 'none';
+        controlsContainer.innerHTML = `
+            <button type="button" class="inline-title-save">保存</button>
+            <button type="button" class="inline-title-cancel">取消</button>
+            <span class="inline-title-error" aria-live="polite"></span>
+        `;
+
+        const saveButton = controlsContainer.querySelector('.inline-title-save');
+        const cancelButton = controlsContainer.querySelector('.inline-title-cancel');
+        const errorElement = controlsContainer.querySelector('.inline-title-error');
+
+        let editing = false;
+        let saving = false;
+        let originalTitle = '';
+        let inputElement = null;
+
+        function getDisplayTitle() {
+            return String(titleElement.dataset.titleValue || titleElement.textContent || '').trim();
+        }
+
+        function setTitleText(value) {
+            const normalizedValue = String(value == null ? '' : value);
+            titleElement.textContent = normalizedValue;
+            titleElement.dataset.titleValue = normalizedValue;
+        }
+
+        function setBusy(isBusy) {
+            saving = Boolean(isBusy);
+            if (saveButton) saveButton.disabled = saving;
+            if (cancelButton) cancelButton.disabled = saving;
+            if (inputElement) inputElement.disabled = saving;
+        }
+
+        function showError(message) {
+            if (!errorElement) return;
+            errorElement.textContent = message || '';
+            controlsContainer.classList.toggle('has-error', Boolean(message));
+            titleElement.classList.toggle('has-title-error', Boolean(message));
+        }
+
+        function cleanupInput(text) {
+            titleElement.classList.remove('is-editing');
+            titleElement.removeAttribute('aria-busy');
+            setTitleText(text);
+            controlsContainer.style.display = 'none';
+            controlsContainer.classList.remove('is-message-only');
+            showError('');
+            inputElement = null;
+            editing = false;
+            saving = false;
+            if (activeInlineTitleEditor === editorApi) {
+                activeInlineTitleEditor = null;
+            }
+        }
+
+        function showFailureMessage(message) {
+            controlsContainer.style.display = 'inline-flex';
+            controlsContainer.classList.add('is-message-only');
+            showError(message || '保存失败');
+        }
+
+        function enterEditMode(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            if (saving) return;
+
+            if (activeInlineTitleEditor && activeInlineTitleEditor !== editorApi && activeInlineTitleEditor.isEditing()) {
+                activeInlineTitleEditor.cancel();
+            }
+
+            if (editing) {
+                if (inputElement) inputElement.focus();
+                return;
+            }
+
+            ensureInlineTitleDocumentListener();
+            originalTitle = getDisplayTitle();
+            editing = true;
+            activeInlineTitleEditor = editorApi;
+
+            titleElement.textContent = '';
+            titleElement.classList.add('is-editing');
+            titleElement.setAttribute('aria-busy', 'false');
+            controlsContainer.classList.remove('is-message-only');
+
+            inputElement = document.createElement('input');
+            inputElement.type = 'text';
+            inputElement.className = 'inline-title-input';
+            inputElement.value = originalTitle;
+            inputElement.maxLength = maxLength;
+            inputElement.setAttribute('aria-label', options.ariaLabel || '编辑名称');
+            titleElement.appendChild(inputElement);
+            controlsContainer.style.display = 'inline-flex';
+            showError('');
+
+            inputElement.addEventListener('click', function(inputEvent) {
+                inputEvent.stopPropagation();
+            });
+
+            inputElement.addEventListener('keydown', function(keyEvent) {
+                if (keyEvent.key === 'Enter') {
+                    keyEvent.preventDefault();
+                    editorApi.save();
+                } else if (keyEvent.key === 'Escape') {
+                    keyEvent.preventDefault();
+                    editorApi.cancel();
+                }
+            });
+
+            inputElement.addEventListener('input', function() {
+                showError('');
+            });
+
+            inputElement.focus();
+            inputElement.select();
+        }
+
+        const editorApi = {
+            isEditing: function() {
+                return editing;
+            },
+            contains: function(target) {
+                return titleElement.contains(target) || controlsContainer.contains(target);
+            },
+            cancel: function() {
+                if (!editing || saving) return;
+                cleanupInput(originalTitle);
+            },
+            save: async function() {
+                if (!editing || saving || !inputElement) return false;
+
+                const nextTitle = inputElement.value.trim();
+                if (!nextTitle) {
+                    showError(emptyMessage);
+                    inputElement.focus();
+                    return false;
+                }
+
+                if (nextTitle === originalTitle) {
+                    cleanupInput(originalTitle);
+                    return true;
+                }
+
+                try {
+                    setBusy(true);
+                    titleElement.setAttribute('aria-busy', 'true');
+                    const result = await onSave(nextTitle);
+                    if (result === false) {
+                        cleanupInput(originalTitle);
+                        showFailureMessage('保存失败');
+                        return false;
+                    }
+                    cleanupInput(nextTitle);
+                    return true;
+                } catch (error) {
+                    cleanupInput(originalTitle);
+                    showFailureMessage(error && error.message ? error.message : '保存失败');
+                    return false;
+                } finally {
+                    setBusy(false);
+                }
+            },
+        };
+
+        titleElement.classList.add('editable');
+        titleElement.dataset.titleValue = getDisplayTitle();
+        titleElement.addEventListener('click', enterEditMode);
+
+        if (saveButton) {
+            saveButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                editorApi.save();
+            });
+        }
+
+        if (cancelButton) {
+            cancelButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                editorApi.cancel();
+            });
+        }
+
+        return editorApi;
     }
 
     function ExtractId(idStr) {
@@ -286,7 +545,7 @@
         const bodyKey = body === 1 ? 'protocol_req_body' : 'protocol_resp_body';
         let bodyValue = '';
 
-        if (bodyType.includes('json') && bodyData[0] === '{') {
+        if (bodyType.includes('json')) {
             bodyValue = JSON.stringify(JSON.parse(bodyData));
         } else if (bodyType.includes('xml')) {
             bodyValue = bodyData;
@@ -336,8 +595,10 @@
         showLoading,
         hideLoading,
         removeDomNode,
+        escapeHTML,
         bindModalCloseActions,
         createTextImportModal,
+        bindInlineTitleEditor,
         ExtractId,
         checkEmptyState,
         loadModal,
@@ -357,6 +618,7 @@
     global.showLoading = showLoading;
     global.hideLoading = hideLoading;
     global.removeDomNode = removeDomNode;
+    global.escapeHTML = escapeHTML;
     global.ExtractId = ExtractId;
     global.checkEmptyState = checkEmptyState;
     global.loadModal = loadModal;
