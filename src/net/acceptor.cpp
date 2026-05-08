@@ -11,6 +11,7 @@
 #include "net/inet_address.h"
 #include "net/net_log.h"
 
+#include <cassert>
 #include <cstdlib>
 #include <unistd.h>
 
@@ -27,14 +28,13 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     _acceptSocket.setReusePort(reuseport);
     _acceptSocket.setTcpNoDelay(true);
 
-    if(!_acceptSocket.bindAddress(addr))
-    {
-        abort();
-    }
+    assert(_acceptSocket.bindAddress(addr));
+  
+    _bind_addr = InetAddress::GetLocalAddr(_acceptSocket.fd());
 
     _acceptChannel.setReadCallback(std::bind(&Acceptor::handleRead, this));
 
-    CHANNEL_F_DEBUG("Acceptor::fd[%d] \n", _acceptSocket.fd());
+    CHANNEL_F_DEBUG("Acceptor::fd[%d][%s] \n", _acceptSocket.fd(), _bind_addr.toIpPort().c_str());
 
 }
 

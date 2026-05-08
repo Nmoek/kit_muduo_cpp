@@ -25,12 +25,22 @@ EventLoopThread::EventLoopThread(EventLoopThread::ThreadInitCb callback, const s
 
 EventLoopThread::~EventLoopThread()
 {
+    quit();
+}
+
+
+void EventLoopThread::quit()
+{
+    if(_exiting)
+    {
+        return;
+    }
+
     _exiting = true;
     if(_loop)
     {
         _loop->quit();
         _thread.join();
-        _loop.reset();
     }
 }
 

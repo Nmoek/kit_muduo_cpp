@@ -67,6 +67,7 @@ option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
 option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
 option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
+option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -360,6 +361,9 @@ add_kit_test(WORK_TEST WORK_TEST.WEB_PROJECT test_web_project tests/work/web/tes
 
 # custom_tcp服务器实例 test_custom_project_server
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})
+
+# 测试服务实例工厂测试 test_project_server_factory
+add_kit_test(WORK_TEST WORK_TEST.PJ_SERVER_FAC test_project_server_factory tests/work/domain/test_project_server_factory.cpp ${WORK_SRC})
 
 
 # app服务器实例

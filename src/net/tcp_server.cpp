@@ -28,7 +28,6 @@ static inline EventLoop* CheckNullLoop(EventLoop *p)
 
 TcpServer::TcpServer(EventLoop *loop, const InetAddress &addr, const std::string &name, Option option)
     :_baseLoop(CheckNullLoop(loop))
-    ,_ipPort(addr.toIpPort())
     ,_name(name)
     ,_acceptor(std::make_unique<Acceptor>(loop, addr, option == KReusePort))
     ,_threadPool(std::make_shared<EventLoopThreadPool>(loop, name))
@@ -89,6 +88,11 @@ void TcpServer::start()
     _baseLoop->runInLoop([this](){
         _acceptor->listen();
     });
+}
+
+const InetAddress& TcpServer::getBindAddr() const 
+{ 
+    return _acceptor->getBindAddr(); 
 }
 
 void TcpServer::addConnection(const std::string &name, TcpConnectionPtr conn)

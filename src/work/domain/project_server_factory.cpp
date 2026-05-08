@@ -26,25 +26,16 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
 {
     // 本地模式下 需要单开线程开启一个新server
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
-    EventLoopThread t(nullptr, std::to_string(p.m_id) + "http_loop");
-    EventLoop * loop = t.startLoop();
 
-    const InetAddress& address = InetAddress(p.m_listenPort);
-
-    PJ_F_INFO("Creating HttpProjectServer, project_id[%d] address[%s]\n", p.m_id, address.toIpPort().c_str());
+    // 注意： 端口后续都不进行指定 服务器自己绑定空闲端口
+    // const InetAddress& address = InetAddress(p.m_listenPort);
     
     try {
-        std::string server_name = "pj";
-        server_name += std::to_string(p.m_id);
-        server_name += "_http_server";
+        auto pj_server = std::make_shared<HttpProjectServer>(p.m_id);
+ 
+        PJ_F_INFO("Creating HttpProjectServer, project_id[%d] address[%s]\n", p.m_id, pj_server->getBindAddr().toIpPort().c_str());
 
-        auto http_server = std::make_shared<http::HttpServer>(
-            loop, address, server_name, false, kit_muduo::TcpServer::KReusePort
-        );
-        http_server->setThreadNum(0); // 使用单线程模式
-        http_server->start();
-
-        return std::make_shared<HttpProjectServer>(p.m_id, http_server);
+        return pj_server;
     } catch (const std::exception& e) {
         PJ_ERROR() << "Failed to create HttpProjectServer: " << e.what() << std::endl;
         return nullptr;
@@ -67,28 +58,14 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
     
     // 本地模式下 需要单开线程开启一个新server
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
-    EventLoopThread t(nullptr, std::to_string(p.m_id) + "tcp_loop");
-    EventLoop * loop = t.startLoop();
 
-    const InetAddress& address = InetAddress(p.m_listenPort);
-
-    PJ_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s]\n", p.m_id, address.toIpPort().c_str());
-    
     try {
-        std::string server_name = "pj";
-        server_name += std::to_string(p.m_id);
-        server_name += "_tcp_server";
-
-        auto tcp_server = std::make_shared<TcpServer>(
-            loop, address, server_name, TcpServer::KReusePort
-        );
-        tcp_server->setThreadNum(0); // 使用单线程模式
-        tcp_server->start();
-
-        PJ_ERROR() << "m_patternType: " << (int32_t)p.m_patternType << ", " << nlohmann::json::parse(p.m_patternInfo).dump(4) << std::endl;
-        
         // 创建自定义TCP服务器 必须带解析格式  否则无法解析
-        return std::make_shared<CustomTcpProjectServer>(p.m_id, tcp_server, p.m_patternType, p.m_patternInfo);
+        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternType, p.m_patternInfo);
+
+        PJ_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternType[%d], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), p.m_patternType, nlohmann::json::parse(p.m_patternInfo).dump().c_str());
+
+        return pj_server;
         
     } catch (const std::exception& e) {
         PJ_ERROR() << "Failed to create CustomTcpProjectServer: " << std::endl << e.what() << std::endl;

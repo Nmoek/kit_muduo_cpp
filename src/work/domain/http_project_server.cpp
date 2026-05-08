@@ -7,6 +7,9 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 
+#include "net/event_loop.h"
+#include "net/inet_address.h"
+#include "net/socket.h"
 #include "web/web_log.h"
 #include "domain/project_server.h"
 #include "net/http/http_server.h"
@@ -28,18 +31,42 @@ using nljson = nlohmann::json;
 
 
 
+namespace {
+
+inline static EventLoop* CheckLoop(EventLoop *loop)
+{
+    assert(loop);
+    return loop;
+}
+    
+}
+
+
 namespace kit_domain {
 
-HttpProjectServer::HttpProjectServer(int64_t project_id, kit_muduo::HttpServerPtr http_server)
+HttpProjectServer::HttpProjectServer(int64_t project_id)
     :ProjectServer(project_id)
-    ,_http_server(http_server)
+    ,http_server_(std::make_shared<http::HttpServer>(
+        CheckLoop(loop_thread_.startLoop()), 
+        InetAddress(0, "0.0.0.0"), 
+        "pj" + std::to_string(project_id_) + "http", 
+        false, 
+        kit_muduo::TcpServer::KReusePort
+    ))
 {
- 
+    http_server_->setThreadNum(0); // 使用单线程模式
+    http_server_->start();
+}
+
+
+const kit_muduo::InetAddress& HttpProjectServer::getBindAddr() const 
+{
+    return http_server_->getBindAddr(); 
 }
 
 kit_muduo::EventLoop *HttpProjectServer::getLoop() const 
 {
-    return _http_server->getLoop();
+    return http_server_->getLoop();
 }
 
 void HttpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
@@ -53,14 +80,14 @@ void HttpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
 
     // 1. 校验内容缓存
     {
-        std::lock_guard<std::mutex> lock(_mtx);
-        _protocol_items.emplace(item->getId(), item);
+        std::lock_guard<std::mutex> lock(mtx_);
+        protocol_items_.emplace(item->getId(), item);
     }
 
     // 2. 路由注册  TODO 这里似乎没有去重,重新考虑一下怎么设计
     auto req = http_item->getReq();
 
-    _http_server->addRoute(req->method(), req->path(),  std::bind(&HttpProjectServer::HttpProjectProcess, this, std::placeholders::_1, std::placeholders::_2));
+    http_server_->addRoute(req->method(), req->path(),  std::bind(&HttpProjectServer::HttpProjectProcess, this, std::placeholders::_1, std::placeholders::_2));
 
     PJSERVER_DEBUG() << "HttpProjectServer::AddProtocolItem ok" << std::endl;
 
@@ -73,16 +100,16 @@ void HttpProjectServer::DelProtocolItem(int64_t protocol_id)
     std::shared_ptr<kit_domain::ProtocolItem> item = nullptr;
     // 先删缓存
     {
-        std::lock_guard<std::mutex> lock(_mtx);
+        std::lock_guard<std::mutex> lock(mtx_);
 
-        auto it = _protocol_items.find(protocol_id);
-        if(it == _protocol_items.end())
+        auto it = protocol_items_.find(protocol_id);
+        if(it == protocol_items_.end())
         {
             PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
             return;
         }
         item = it->second;
-        _protocol_items.erase(it);
+        protocol_items_.erase(it);
     }
     // 再删路由
     auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(item);
@@ -93,26 +120,26 @@ void HttpProjectServer::DelProtocolItem(int64_t protocol_id)
     }
     
     auto req = http_item->getReq();
-    _http_server->removeRoute(req->path(), req->method().toInt());
+    http_server_->removeRoute(req->path(), req->method().toInt());
 
     return;
 }
 
 std::shared_ptr<ProtocolItem> HttpProjectServer::GetProtocolItem(int64_t protocol_id)
 {
-    std::lock_guard<std::mutex> lock(_mtx);
-    auto it = _protocol_items.find(protocol_id);
-    return it == _protocol_items.end() ? nullptr : it->second;
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = protocol_items_.find(protocol_id);
+    return it == protocol_items_.end() ? nullptr : it->second;
 }
 
 void HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json)
 {
 
     /*注意: 只有涉及协议头修改才需要重新配置路由 */
-    std::unique_lock<std::mutex> lock(_mtx);
+    std::unique_lock<std::mutex> lock(mtx_);
     
-    auto it = _protocol_items.find(protocol_id);
-    if(it == _protocol_items.end())
+    auto it = protocol_items_.find(protocol_id);
+    if(it == protocol_items_.end())
         return;
 
     auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
@@ -137,12 +164,12 @@ void HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljs
         }
     }
 
-    _protocol_items.erase(it);
+    protocol_items_.erase(it);
     
     lock.unlock();
 
     // 删除路由
-    _http_server->removeRoute(old_path,old_method.toInt());
+    http_server_->removeRoute(old_path,old_method.toInt());
     // 重新添加路由
     AddProtocolItem(std::make_shared<HttpProtocolItem>(p));
 
@@ -152,10 +179,10 @@ void HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljs
 
 void HttpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json)
 {
-    std::lock_guard<std::mutex> lock(_mtx);
+    std::lock_guard<std::mutex> lock(mtx_);
     
-    auto it = _protocol_items.find(protocol_id);
-    if(it == _protocol_items.end())
+    auto it = protocol_items_.find(protocol_id);
+    if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
         return;
@@ -179,9 +206,9 @@ void HttpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nlj
 
 void HttpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data)
 {
-    std::lock_guard<std::mutex> lock(_mtx);
-    auto it = _protocol_items.find(protocol_id);
-    if(it == _protocol_items.end())
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = protocol_items_.find(protocol_id);
+    if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
         return;
@@ -190,14 +217,14 @@ void HttpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const Pro
     p->m_reqBodyType = body_type;
     p->m_reqBodyData = std::move(req_body_data);
     
-    _protocol_items[protocol_id] = std::make_shared<HttpProtocolItem>(p);
+    protocol_items_[protocol_id] = std::make_shared<HttpProtocolItem>(p);
 }
 
 void HttpProjectServer::UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type,const std::vector<char> &resp_body_data)
 {
-    std::lock_guard<std::mutex> lock(_mtx);
-    auto it = _protocol_items.find(protocol_id);
-    if(it == _protocol_items.end())
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = protocol_items_.find(protocol_id);
+    if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
         return;
@@ -206,7 +233,7 @@ void HttpProjectServer::UpdateRespBodyProtocolItem(int64_t protocol_id, const Pr
     p->m_respBodyType = body_type;
     p->m_respBodyData = std::move(resp_body_data);
     
-    _protocol_items[protocol_id] = std::make_shared<HttpProtocolItem>(p);
+    protocol_items_[protocol_id] = std::make_shared<HttpProtocolItem>(p);
 }
 
 /**
@@ -327,7 +354,7 @@ void HttpProjectServer::HttpProjectProcess(TcpConnectionPtr conn, HttpContextPtr
     // 实际请求的信息:
     //
 
-    auto it = std::find_if(_protocol_items.begin(), _protocol_items.end(), [req](auto &it){
+    auto it = std::find_if(protocol_items_.begin(), protocol_items_.end(), [req](auto &it){
         auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it.second);
         if(http_item)
         {
@@ -343,7 +370,7 @@ void HttpProjectServer::HttpProjectProcess(TcpConnectionPtr conn, HttpContextPtr
         return false;
     });
 
-    if(it == _protocol_items.end())
+    if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("url[%s] protocol item is nullptr! \n", req->path().c_str());
         

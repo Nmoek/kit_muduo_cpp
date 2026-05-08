@@ -31,6 +31,8 @@ public:
 
     EventLoop* startLoop();
 
+    void quit();
+
 private:
     void threadFunc();
 

@@ -7,16 +7,17 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/project_server.h"
+#include <string>
 
 
 namespace kit_domain {
 
 ProjectServer::ProjectServer(int64_t project_id)
-    :_project_id(project_id)
+    :project_id_(project_id)
+    ,loop_thread_(nullptr, std::string("pj" + std::to_string(project_id) + "loop"))
 { 
 
 }
-
 
 
 }

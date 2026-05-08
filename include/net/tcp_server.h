@@ -60,6 +60,12 @@ public:
     void start();
 
     /**
+     * @brief 获取随机绑定的监听地址
+     * @return const InetAddress& 
+     */
+    const InetAddress& getBindAddr() const;
+
+    /**
      * @brief 获取事件循环句柄
      * @return EventLoop*
      */
@@ -71,7 +77,6 @@ public:
 
     void delConnection(const std::string &name);
 
-
 private:
     void newConnection(int32_t sockfd, const InetAddress& peerAddr);
     void removeConnection(const TcpConnectionPtr& conn);
@@ -81,7 +86,6 @@ private:
     using ConnectMap = std::unordered_map<std::string, TcpConnectionPtr>;
 
     EventLoop *_baseLoop;
-    std::string _ipPort;
     std::string _name;
     std::unique_ptr<Acceptor> _acceptor;
     std::shared_ptr<EventLoopThreadPool> _threadPool;

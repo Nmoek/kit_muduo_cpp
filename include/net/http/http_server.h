@@ -11,6 +11,7 @@
 
 
 #include "base/noncopyable.h"
+#include "net/inet_address.h"
 #include "net/tcp_server.h"
 #include "net/http/http_servlet.h"
 #include "net/http/http_request.h"
@@ -41,6 +42,8 @@ public:
     ~HttpServer() = default;
 
     void start();
+
+    const InetAddress& getBindAddr() const { return _server.getBindAddr(); }
 
     kit_muduo::EventLoop *getLoop() const { return _server.getLoop(); }
 

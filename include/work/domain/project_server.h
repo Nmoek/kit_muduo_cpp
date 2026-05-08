@@ -9,6 +9,7 @@
 #ifndef __KIT_DOMAIN_PROJECT_SERVER_H__
 #define __KIT_DOMAIN_PROJECT_SERVER_H__
 
+#include "base/event_loop_thread.h"
 #include "net/call_backs.h"
 #include "work/domain/type.h"
 #include "net/inet_address.h"
@@ -46,15 +47,17 @@ class ProjectServer
 {
 public:
 
-    ProjectServer() = default;
-
     ProjectServer(int64_t project_id);
 
     virtual ~ProjectServer() = default;
 
-    int64_t getProjectId() const { return _project_id; }
+    int64_t getProjectId() const { return project_id_; }
+
+    void stop() { loop_thread_.quit(); }
 
     virtual kit_muduo::EventLoop *getLoop() const = 0;
+
+    virtual const kit_muduo::InetAddress& getBindAddr() const = 0;
 
     virtual void AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) = 0;
     virtual void DelProtocolItem(int64_t protocol_id) = 0;
@@ -71,11 +74,13 @@ public:
 
 protected:
     /// @brief 测试服务id
-    int64_t _project_id;
+    int64_t project_id_;
+    /// @brief 事件循环线程
+    kit_muduo::EventLoopThread loop_thread_;
 
     /// @brief 测试服务上依附的配置好的测试项
-    std::unordered_map<int64_t, std::shared_ptr<ProtocolItem>> _protocol_items;
-    std::mutex _mtx;
+    std::unordered_map<int64_t, std::shared_ptr<ProtocolItem>> protocol_items_;
+    std::mutex mtx_;
 };
 
 
@@ -84,7 +89,9 @@ class HttpProjectServer:
 {
 public:
 
-    HttpProjectServer(int64_t project_id, kit_muduo::HttpServerPtr http_server);
+    HttpProjectServer(int64_t project_id);
+
+    const kit_muduo::InetAddress& getBindAddr() const override;
 
     kit_muduo::EventLoop *getLoop() const override;
 
@@ -107,7 +114,7 @@ private:
     void HttpProjectProcess(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx);
 
 private:
-    kit_muduo::HttpServerPtr _http_server;
+    kit_muduo::HttpServerPtr http_server_;
 };
 
 
@@ -119,7 +126,9 @@ public:
      * @param project_id 项目ID
      * @param tcp_server TCP服务器指针
      */
-    CustomTcpProjectServer(int64_t project_id, kit_muduo::TcpServerPtr tcp_server, const CustomTcpPatternType pattern_type, const std::vector<char> &info);
+    CustomTcpProjectServer(int64_t project_id, const CustomTcpPatternType pattern_type, const std::vector<char> &info);
+
+    const kit_muduo::InetAddress& getBindAddr() const override;
 
     kit_muduo::EventLoop *getLoop() const override;
 
@@ -156,15 +165,15 @@ private:
 
 private:
     /// @brief 实际运行TCP服务器
-    kit_muduo::TcpServerPtr _tcp_server;
+    kit_muduo::TcpServerPtr tcp_server_;
     /// @brief 格式信息
-    std::shared_ptr<CustomTcpPattern> _pattern_info;
+    std::shared_ptr<CustomTcpPattern> pattern_info_;
     /// @brief 格式信息锁
-    std::mutex _pattern_info_mtx;
+    std::mutex pattern_info_mtx_;
 
     /// @brief 基于请求功能码的协议项映射表
     // 和协议列表共用一把锁
-    std::unordered_map<std::string, std::shared_ptr<CustomTcpProtocolItem>> _func_codes;
+    std::unordered_map<std::string, std::shared_ptr<CustomTcpProtocolItem>> func_codes_;
 
 
     /*和HTPP一样也抽象一个解析器类型出来  以免后续有新的解析方法 */
