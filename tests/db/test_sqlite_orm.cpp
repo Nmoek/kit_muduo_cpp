@@ -1,15 +1,85 @@
 
 #include "../test_log.h"
+#include "dao/init.h"
 #include "sqlite_orm/sqlite_orm.h"
 #include "nlohmann/json.hpp"
 
 #include <gtest/gtest.h>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <stdexcept>
 #include <string>
 #include <memory>
+
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 using nljson = nlohmann::json;
 
 using namespace sqlite_orm;
+
+namespace {
+
+constexpr const char *kOrmTestDbPath = "/tmp/kit_sqlite_orm_test.sqlite";
+constexpr const char *kInitDbTestDir = "/tmp/kit_init_sqlite_db_test";
+constexpr const char *kInitDbTestPath = "/tmp/kit_init_sqlite_db_test/kit.sqlite";
+
+void RemoveSqliteFiles(const std::string &path)
+{
+    std::remove(path.c_str());
+    std::remove((path + "-wal").c_str());
+    std::remove((path + "-shm").c_str());
+}
+
+void PrepareInitDbTestDir()
+{
+    RemoveSqliteFiles(kInitDbTestPath);
+    ::rmdir(kInitDbTestDir);
+    if(::mkdir(kInitDbTestDir, 0700) != 0 && errno != EEXIST)
+    {
+        throw std::runtime_error(std::string("mkdir failed: ") + std::strerror(errno));
+    }
+}
+
+void CleanupInitDbTestDir()
+{
+    RemoveSqliteFiles(kInitDbTestPath);
+    ::rmdir(kInitDbTestDir);
+}
+
+class ScopedWorkingDirectory
+{
+public:
+    explicit ScopedWorkingDirectory(const char *path)
+    {
+        char cwd[PATH_MAX] = {};
+        if(::getcwd(cwd, sizeof(cwd)) == nullptr)
+        {
+            throw std::runtime_error(std::string("getcwd failed: ") + std::strerror(errno));
+        }
+        old_dir_ = cwd;
+
+        if(::chdir(path) != 0)
+        {
+            throw std::runtime_error(std::string("chdir failed: ") + std::strerror(errno));
+        }
+    }
+
+    ~ScopedWorkingDirectory()
+    {
+        if(!old_dir_.empty() && ::chdir(old_dir_.c_str()) != 0)
+        {
+            TEST_INFO() << "restore cwd failed: " << std::strerror(errno) << std::endl;
+        }
+    }
+
+private:
+    std::string old_dir_;
+};
+
+}   // namespace
 
 struct Employee {
     int id;
@@ -23,7 +93,7 @@ struct Employee {
 };
 
 #define KIT_TEST_SQLITE_ORM() \
-sqlite_orm::make_storage("/mnt/nfs/proxy_db/test1.sqlite",\
+sqlite_orm::make_storage(kOrmTestDbPath,\
     sqlite_orm::make_table("COMPANY",\
             sqlite_orm::make_column("ID", &Employee::id, sqlite_orm::primary_key().autoincrement()),\
             sqlite_orm::make_column("FIRST", &Employee::first, sqlite_orm::not_null()),\
@@ -37,11 +107,25 @@ sqlite_orm::make_storage("/mnt/nfs/proxy_db/test1.sqlite",\
 using TestDbType = decltype(KIT_TEST_SQLITE_ORM());
 
 
+TEST(TestOrm, InitSqliteDbUsesWalAndPreservesSchema)
+{
+    PrepareInitDbTestDir();
+    {
+        ScopedWorkingDirectory cwd(kInitDbTestDir);
+        auto db = kit_dao::InitSqliteDb();
+        ASSERT_NE(db, nullptr);
+
+        auto journal_mode = db->pragma.get_pragma<std::string>("journal_mode");
+        ASSERT_EQ(journal_mode, "wal");
+    }
+    CleanupInitDbTestDir();
+}
+
 TEST(TestOrm, test1)
 {
     auto sqliteDb = KIT_TEST_SQLITE_ORM();
 
-    auto tables = sqliteDb.sync_schema();
+    auto tables = sqliteDb.sync_schema(true);
     for(auto &t : tables)
     {
         TEST_INFO() << t.first << ", status= " << t.second << std::endl;
@@ -137,6 +221,11 @@ TEST(TestOrm, test1)
 
 int main(int argc, char **argv)
 {
+    RemoveSqliteFiles(kOrmTestDbPath);
+    CleanupInitDbTestDir();
     testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    const int result = RUN_ALL_TESTS();
+    RemoveSqliteFiles(kOrmTestDbPath);
+    CleanupInitDbTestDir();
+    return result;
 }

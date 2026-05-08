@@ -19,7 +19,14 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
     // TODO 配置数据库路径
     auto db = std::make_shared<SqliteOrmType>(SQLITE_ORM_TABLE_INIT_DEF());
 
-    auto tables = db->sync_schema();
+    db->pragma.journal_mode(sqlite_orm::journal_mode::WAL);
+    auto journal_mode = db->pragma.get_pragma<std::string>("journal_mode");
+    if(journal_mode != "wal" && journal_mode != "WAL")
+    {
+        DAODB_WARN() << "set journal_mode=WAL failed, actual journal_mode:" << journal_mode << std::endl;
+    }
+
+    auto tables = db->sync_schema(true);
     for(const auto &t : tables)
     {
         DAODB_INFO() << "table[" << t.first << "]:" << t.second << std::endl;
@@ -35,10 +42,15 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
     }
 
     // 数据库配置打印
-    auto journal_mode = db->pragma.get_pragma<std::string>("journal_mode");
+    auto synchronous = db->pragma.get_pragma<int>("synchronous");
+    auto cache_size = db->pragma.get_pragma<int>("cache_size");
+    auto mmap_size = db->pragma.get_pragma<int>("mmap_size");
     auto compile_options = db->pragma.get_pragma<std::vector<std::string>>("compile_options");
     
     DAODB_DEBUG() << "journal_mode:" << journal_mode << std::endl;
+    DAODB_DEBUG() << "synchronous:" << synchronous << std::endl;
+    DAODB_DEBUG() << "cache_size:" << cache_size << std::endl;
+    DAODB_DEBUG() << "mmap_size:" << mmap_size << std::endl;
 
     for(auto & c : compile_options)
         DAODB_DEBUG() << "compile_options:" << c << std::endl;

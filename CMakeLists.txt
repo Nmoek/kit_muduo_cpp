@@ -233,11 +233,11 @@ set(WORK_SRC
 
 # defines
 set(DEF
-    # ${SQLITE3_DEF}
 )
 
 add_library(kit_muduo SHARED ${MUDUO_SRC})
 redefine_file_macro(kit_muduo)   #重定义 __FILE__
+target_compile_definitions(kit_muduo PRIVATE ${DEF} ${SQLITE3_DEF})
 
 
 # lib 
