@@ -1265,28 +1265,22 @@
     border-radius: var(--v13-radius, 8px);
 }
 
-/* 导入弹窗内的 Body Editor 不能继承普通 textarea 样式，否则输入层和高亮层会错位。 */
-.import-modal .body-editor-input-wrap,
-.import-modal .body-editor-code-wrap {
+/* 导入弹窗内的 Body Editor 使用自己的代码编辑器布局，不能继承普通 textarea 样式。 */
+.import-modal .body-editor-input-wrap {
+    --body-editor-gutter-width: 46px;
+    --body-editor-font-size: 14px;
+    --body-editor-line-height: 20px;
+    --body-editor-editor-padding: 12px;
+    --body-editor-min-height: 260px;
+
     height: 260px;
-    min-height: 0;
+    min-height: 260px;
 }
 
-.import-modal .body-editor-lines {
-    height: 260px;
-    min-height: 0;
-    padding: 12px 8px;
-    font-family: var(--code-font, "JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
-    font-size: 14px;
-    line-height: 20px;
-}
-
+.import-modal .body-editor-lines,
 .import-modal .body-editor-highlight,
 .import-modal .body-editor-textarea {
     box-sizing: border-box;
-    height: 260px;
-    min-height: 0;
-    max-height: 260px;
     margin: 0;
     padding: 12px;
     border: 0;
@@ -1298,11 +1292,9 @@
     letter-spacing: 0;
     tab-size: 2;
     white-space: pre;
-    overflow: auto;
 }
 
 .import-modal .body-editor-highlight-code {
-    margin: 0;
     font: inherit;
     line-height: inherit;
     white-space: pre;

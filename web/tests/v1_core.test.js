@@ -60,6 +60,19 @@ function loadCoreScripts(context) {
     ].forEach(filePath => runScript(context, filePath));
 }
 
+/**
+ * @param {vm.Context} context
+ */
+function loadProtocolListScripts(context) {
+    [
+        'js/tcp_pattern_modal.js',
+        'js/protocol_item.js',
+        'js/protocol_registry.js',
+        'js/main.js',
+        'js/protocol_items.js',
+    ].forEach(filePath => runScript(context, filePath));
+}
+
 describe('V1 utils', () => {
     /**
      * @type {vm.Context}
@@ -537,6 +550,40 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         expect(host.querySelector('.body-editor').classList.contains('is-highlight-disabled')).toBe(true);
     });
 
+    it('Body 编辑器使用统一滚动容器承载行号、输入层和高亮层', () => {
+        const host = context.document.createElement('div');
+        context.document.body.appendChild(host);
+        const editor = context.KitProxy.bodyEditor.create(host, {
+            idPrefix: 'protocol-body',
+            value: '第一行\n第二行\n第三行',
+            bodyType: 'text',
+        });
+        const css = fs.readFileSync(path.join(repoRoot, 'css/main.css'), 'utf8');
+
+        expect(host.querySelector('.body-editor-input-wrap .body-editor-scroll-content')).toBeTruthy();
+        expect(host.querySelector('.body-editor-code-wrap .body-editor-highlight')).toBeTruthy();
+        expect(host.querySelector('.body-editor-code-wrap .body-editor-textarea')).toBeTruthy();
+        expect(host.querySelector('.body-editor-textarea').getAttribute('wrap')).toBe('off');
+        expect(host.querySelectorAll('.body-editor-line-number')).toHaveLength(3);
+
+        editor.setValue('a\nb\nc\nd');
+        expect(host.querySelectorAll('.body-editor-line-number')).toHaveLength(4);
+        expect(host.querySelector('.body-editor').style.getPropertyValue('--body-editor-content-height')).toBe('104px');
+        expect(host.querySelector('.body-editor').style.getPropertyValue('--body-editor-code-min-width')).toBe('4ch');
+
+        editor.setValue('中文\nabc');
+        expect(host.querySelector('.body-editor').style.getPropertyValue('--body-editor-code-min-width')).toBe('7ch');
+
+        expect(css).toContain('.body-editor-lines');
+        expect(css).toContain('.body-editor-scroll-content');
+        expect(css).toContain('position: sticky;');
+        expect(css).toContain('line-height: 20px;');
+        expect(css).toContain('overflow: auto;');
+        expect(css).toContain('overflow: hidden;');
+        expect(css).toContain('.body-editor-highlight-code');
+        expect(css).toContain('line-height: inherit;');
+    });
+
     it('Body 导入弹窗使用 Body Editor 控件而不是普通 textarea', () => {
         context.KitProxy.utils.createTextImportModal({
             title: '导入响应Body内容',
@@ -580,5 +627,405 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         card.querySelector('.view-protocols-btn').click();
         expect(card.dataset.protocolItemsUrl).toBe('protocol_items.html?apiMode=mock&projectId=1');
         expect(navigatedUrl).toBe('protocol_items.html?apiMode=mock&projectId=1');
+    });
+});
+
+describe('V1.5 protocol item form page and compact cards', () => {
+    it('协议项页添加按钮跳转到独立表单页', async () => {
+        const dom = new JSDOM(`<!doctype html><html><body>
+            <button id="add-protocol-item" disabled>添加协议项</button>
+            <a id="back-service-list"></a>
+            <h2 id="protocol-items-title"></h2>
+            <div id="protocol-page-error"></div>
+            <div class="protocol-items-page">
+                <div id="protocol-service-meta"></div>
+                <div class="protocol-list"></div>
+                <div id="protocol-pagination"></div>
+            </div>
+        </body></html>`, {
+            url: 'http://localhost/html/protocol_items.html?apiMode=mock&projectId=1',
+        });
+        const context = vm.createContext(dom.window);
+        context.console = console;
+        context.fetch = vi.fn();
+        context.TextEncoder = TextEncoder;
+        context.TextDecoder = TextDecoder;
+
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+
+        context.KitProxy.protocolItemsPage.initPage?.();
+        context.document.dispatchEvent(new context.Event('DOMContentLoaded'));
+        await flushPromises(8);
+
+        const addButton = context.document.getElementById('add-protocol-item');
+        let targetUrl = '';
+        addButton.addEventListener('protocol-items:navigate-create', event => {
+            event.preventDefault();
+            targetUrl = event.detail.url;
+        });
+        addButton.click();
+
+        expect(addButton.dataset.protocolItemFormUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
+        expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
+    });
+
+    it('协议项卡片默认折叠，支持展开收起和修改跳转', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+
+        const root = context.document.createElement('div');
+        root.className = 'protocol-items-page';
+        root.id = 'service-card-1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocolItem = context.addProtocolItem(root, {
+            id: 1,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            req_cfg: { method: 'GET', path: '/api/test1' },
+            resp_cfg: {},
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        const details = protocolItem.querySelector('.protocol-details');
+        const toggleButton = protocolItem.querySelector('.protocol-toggle-btn');
+        expect(details.classList.contains('is-expanded')).toBe(false);
+        expect(toggleButton.querySelector('.protocol-toggle-icon')).toBeTruthy();
+        expect(toggleButton.getAttribute('aria-label')).toBe('展开协议项详情');
+        expect(toggleButton.getAttribute('aria-expanded')).toBe('false');
+        expect(protocolItem.querySelector('.delete-protocol-btn')).toBeTruthy();
+        expect(fs.readFileSync(path.join(repoRoot, 'css/main.css'), 'utf8')).toContain('chevron-down.svg');
+        expect(fs.existsSync(path.join(repoRoot, 'assets/icons/chevron-down.svg'))).toBe(true);
+
+        toggleButton.click();
+        expect(details.classList.contains('is-expanded')).toBe(true);
+        expect(toggleButton.getAttribute('aria-label')).toBe('收起协议项详情');
+        expect(toggleButton.getAttribute('aria-expanded')).toBe('true');
+
+        toggleButton.click();
+        expect(details.classList.contains('is-expanded')).toBe(false);
+        expect(toggleButton.getAttribute('aria-expanded')).toBe('false');
+
+        let targetUrl = '';
+        protocolItem.addEventListener('protocol-item:navigate-form', event => {
+            event.preventDefault();
+            targetUrl = event.detail.url;
+        });
+        protocolItem.querySelector('.edit-protocol-btn').click();
+        expect(protocolItem.dataset.protocolItemFormUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1&protocolId=1');
+        expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1&protocolId=1');
+    });
+
+    it('协议项详情网格本身不附加编辑 modal 副作用', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=2');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+
+        const httpGrid = context.ProtocolTypeRegistry.createProtocolItemGrid({
+            id: 1,
+            type: 'HTTP',
+            req_cfg: { method: 'GET', path: '/api/test' },
+            resp_cfg: {},
+            req_body_status: 1,
+            resp_body_status: 0,
+        });
+        context.document.body.appendChild(httpGrid);
+        httpGrid.querySelector('[data-field-name="method"]').click();
+        httpGrid.querySelector('[data-field-name="path"]').click();
+        httpGrid.querySelector('.request-body').click();
+        expect(context.document.querySelector('.modal-overlay')).toBeNull();
+
+        const tcpGrid = context.ProtocolTypeRegistry.createProtocolItemGrid({
+            id: 2,
+            type: 'TCP',
+            req_cfg: {
+                function_code_filed_value: 'H1000',
+                common_fields: [{ name: '字段1', idx: 1, byte_pos: 0, byte_len: 2, type: 'UINT16', value: '' }],
+            },
+            resp_cfg: {
+                function_code_filed_value: 'H1080',
+                common_fields: [],
+            },
+            req_body_status: 0,
+            resp_body_status: 0,
+        });
+        context.document.body.appendChild(tcpGrid);
+        tcpGrid.querySelector('[data-field-name="function_code_filed_value"]').click();
+        tcpGrid.querySelector('[data-field-name="common_fields"]').click();
+        expect(context.document.querySelector('.modal-overlay')).toBeNull();
+    });
+
+    it('协议项 Body 字段点击会重新弹出编辑 modal', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocolItem = context.addProtocolItem(root, {
+            id: 1,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            req_cfg: { method: 'GET', path: '/api/test1' },
+            resp_cfg: {},
+            req_body_status: 1,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        protocolItem.querySelector('.request-body').click();
+        await flushPromises(12);
+
+        expect(context.document.querySelector('.edit-body-modal')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-textarea')).toBeTruthy();
+    });
+
+    it('协议项 HTTP method/path 字段点击恢复编辑 modal', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+        context.alert = vi.fn();
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocolItem = context.addProtocolItem(root, {
+            id: 1,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            req_cfg: { method: 'GET', path: '/api/test1' },
+            resp_cfg: {},
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        protocolItem.querySelector('[data-field-name="method"]').click();
+        expect(context.document.querySelector('.edit-method-modal')).toBeTruthy();
+        context.document.querySelector('input[name="edit-method"][value="POST"]').checked = true;
+        context.document.querySelector('.edit-method-modal .confirm-btn').click();
+        await flushPromises(8);
+        expect(protocolItem.querySelector('[data-field-name="method"] .value').textContent).toBe('POST');
+
+        protocolItem.querySelector('[data-field-name="path"]').click();
+        expect(context.document.querySelector('.edit-path-modal')).toBeTruthy();
+        context.document.getElementById('new-path').value = '/api/changed';
+        context.document.querySelector('.edit-path-modal .confirm-btn').click();
+        await flushPromises(8);
+        expect(protocolItem.querySelector('[data-field-name="path"] .value').textContent).toBe('/api/changed');
+    });
+
+    it('协议项 TCP function_code/common_fields 字段点击恢复编辑 modal', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=2');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+        context.alert = vi.fn();
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-2';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocolItem = context.addProtocolItem(root, {
+            id: 3,
+            name: 'TCP接口',
+            project_id: 2,
+            type: 'TCP',
+            req_cfg: {
+                function_code_filed_value: 'H1000',
+                common_fields: [{ name: '字段1', idx: 1, byte_pos: 0, byte_len: 2, type: 'UINT16', value: '' }],
+            },
+            resp_cfg: {
+                function_code_filed_value: 'H1080',
+                common_fields: [],
+            },
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        protocolItem.querySelector('[data-field-name="function_code_filed_value"]').click();
+        expect(context.document.getElementById('new-function-code')).toBeTruthy();
+        context.document.getElementById('new-function-code').value = 'H2000';
+        context.document.querySelector('.edit-path-modal .confirm-btn').click();
+        await flushPromises(8);
+        expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .value').textContent).toBe('H2000');
+
+        protocolItem.querySelector('[data-field-name="common_fields"]').click();
+        await flushPromises(12);
+        expect(context.document.querySelector('.config-pattern-modal')).toBeTruthy();
+    });
+
+    it('表单页新增 HTTP payload 与 Body 切换状态保持一致', () => {
+        const dom = new JSDOM(`<!doctype html><html><body>
+            <a id="back-protocol-list"></a>
+            <h2 id="protocol-form-title"></h2>
+            <p id="protocol-form-subtitle"></p>
+            <div id="protocol-form-error"></div>
+            <div id="protocol-form-project-context"></div>
+            <form id="protocol-item-form">
+                <input id="protocol-item-name">
+                <div id="protocol-type-fields"></div>
+                <button type="button" class="body-switch-btn is-active" data-body-tab="request">校验请求Body</button>
+                <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
+                <div id="protocol-body-editor-host"></div>
+                <button id="save-protocol-form" type="submit"></button>
+                <button id="cancel-protocol-form" type="button"></button>
+            </form>
+        </body></html>`, {
+            url: 'http://localhost/html/protocol_item_form.html?apiMode=mock&projectId=1',
+        });
+        const context = vm.createContext(dom.window);
+        context.console = console;
+        context.fetch = vi.fn();
+        context.TextEncoder = TextEncoder;
+        context.TextDecoder = TextDecoder;
+
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        const state = context.KitProxy.protocolItemForm.pageState;
+        state.projectId = 1;
+        state.project = context.KitProxy.mocks.state.projects.find(project => project.id === 1);
+        state.protocolType = context.ProtocolType.HTTP;
+        context.KitProxy.protocolItemForm.initPage();
+
+        return flushPromises(8).then(() => {
+            context.document.getElementById('protocol-item-name').value = '新增HTTP';
+            context.document.querySelector('input[name="request-method"][value="POST"]').checked = true;
+            context.document.getElementById('request-path').value = '/api/new';
+
+            const editor = state.bodyEditor;
+            editor.setValue('{"req":true}');
+            context.KitProxy.protocolItemForm.setActiveBodyTab('response');
+            editor.setType('text');
+            editor.setValue('ok');
+
+            const data = context.KitProxy.protocolItemForm.collectFormData();
+            const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
+
+            expect(payload.cfg_header.type).toBe('HTTP');
+            expect(payload.req_cfg).toEqual({ method: 'POST', path: '/api/new' });
+            expect(payload.cfg_header.req_body_type).toBe('json');
+            expect(payload.cfg_header.resp_body_type).toBe('text');
+            expect(payload.request_body).toBe('{"req":true}');
+            expect(payload.response_body).toBe('ok');
+        });
+    });
+
+    it('表单页编辑模式只提交变更字段', async () => {
+        const dom = new JSDOM(`<!doctype html><html><body>
+            <a id="back-protocol-list"></a>
+            <h2 id="protocol-form-title"></h2>
+            <p id="protocol-form-subtitle"></p>
+            <div id="protocol-form-error"></div>
+            <div id="protocol-form-project-context"></div>
+            <form id="protocol-item-form">
+                <input id="protocol-item-name">
+                <div id="protocol-type-fields"></div>
+                <button type="button" class="body-switch-btn is-active" data-body-tab="request">校验请求Body</button>
+                <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
+                <div id="protocol-body-editor-host"></div>
+                <button id="save-protocol-form" type="submit"></button>
+                <button id="cancel-protocol-form" type="button"></button>
+            </form>
+        </body></html>`, {
+            url: 'http://localhost/html/protocol_item_form.html?apiMode=mock&projectId=1&protocolId=1',
+        });
+        const context = vm.createContext(dom.window);
+        context.console = console;
+        context.fetch = vi.fn();
+        context.TextEncoder = TextEncoder;
+        context.TextDecoder = TextDecoder;
+
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        const updateName = vi.spyOn(context.KitProxy.api, 'updateProtocolName');
+        const updateCfg = vi.spyOn(context.KitProxy.api, 'updateProtocolCfg');
+        const updateBody = vi.spyOn(context.KitProxy.api, 'updateProtocolBody');
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(8);
+
+        context.document.addEventListener('protocol-item-form:navigate-back', event => {
+            event.preventDefault();
+        });
+
+        context.document.getElementById('protocol-item-name').value = 'test1修改';
+        context.document.getElementById('request-path').value = '/api/changed';
+        context.document.getElementById('protocol-item-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(12);
+
+        expect(updateName).toHaveBeenCalledWith(1, 'test1修改');
+        expect(updateCfg).toHaveBeenCalledWith(1, 1, 1, { method: 'GET', path: '/api/changed' });
+        expect(updateCfg).toHaveBeenCalledTimes(1);
+        expect(updateBody).not.toHaveBeenCalled();
     });
 });

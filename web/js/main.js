@@ -141,6 +141,10 @@ function getCurProtocolItemCfgV1(idStr, req_or_resp_str) {
     return root;
 }
 
+function getCurProtocolItemCfg(idStr, req_or_resp_str) {
+    return getCurProtocolItemCfgV1(idStr, req_or_resp_str);
+}
+
 
 
 async function updateProtocolBody(idStr, req_or_resp, protocolType, newBodyType, newBody) {
@@ -221,7 +225,7 @@ async function updateProtocolHttpUrl(protocolItemId, newPath) {
         //  sqlite3支持 3.22以上版本 性能比较有限
         //  posgreSQL支持
         //  MySQL支持
-        const ok = await updateProtocolCfgReq(protocolItemId, serviceCardId, 'HTTP', req_cfg_json);
+        const ok = await updateProtocolCfgReq(protocolItemId, serviceCardId, 1, req_cfg_json);
         if(!ok) {
             throw new Error("http修改路径失败");
         }
@@ -259,7 +263,7 @@ async function updateProtocolHttpMethod(protocolItemId, newMethod) {
             throw new Error("无效的协议项ID");
         }
 
-        const ok = await updateProtocolCfgReq(protocolItemId, serviceCardId, 'HTTP', req_cfg_json);
+        const ok = await updateProtocolCfgReq(protocolItemId, serviceCardId, 1, req_cfg_json);
         if(!ok) {
             throw new Error("http修改请求方法失败");
         }
@@ -405,6 +409,346 @@ function bindProtocolDeleteAction(protocolItem) {
     });
 }
 
+/**
+ * 生成协议项表单页 URL，并保留 mock/后端调试参数。
+ * @param {number | string} projectId
+ * @param {number | string=} protocolId
+ * @returns {string}
+ */
+function buildProtocolItemFormUrl(projectId, protocolId) {
+    const params = new URLSearchParams(window.location.search);
+    params.set('projectId', String(projectId));
+    if (protocolId != null && protocolId !== '') {
+        params.set('protocolId', String(protocolId));
+    } else {
+        params.delete('protocolId');
+    }
+    return `protocol_item_form.html?${params.toString()}`;
+}
+
+/**
+ * 绑定协议项详情展开/收起。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolToggle(protocolItem) {
+    const toggleBtn = protocolItem.querySelector('.protocol-toggle-btn');
+    const details = protocolItem.querySelector('.protocol-details');
+    if (!toggleBtn || !details) return;
+
+    toggleBtn.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const isExpanded = details.classList.toggle('is-expanded');
+        protocolItem.classList.toggle('is-expanded', isExpanded);
+        toggleBtn.setAttribute('aria-label', isExpanded ? '收起协议项详情' : '展开协议项详情');
+        toggleBtn.setAttribute('aria-expanded', String(isExpanded));
+    });
+}
+
+/**
+ * 绑定协议项修改入口，统一跳转到表单页。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolEditAction(protocolItem) {
+    const editBtn = protocolItem.querySelector('.edit-protocol-btn');
+    if (!editBtn) return;
+
+    editBtn.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const projectId = ExtractId(protocolItem.dataset.projectId);
+        const protocolId = ExtractId(protocolItem.id);
+        const targetUrl = buildProtocolItemFormUrl(projectId, protocolId);
+        protocolItem.dataset.protocolItemFormUrl = targetUrl;
+        const navigateEvent = new CustomEvent('protocol-item:navigate-form', {
+            bubbles: true,
+            cancelable: true,
+            detail: {
+                projectId,
+                protocolId,
+                url: targetUrl,
+            },
+        });
+        protocolItem.dispatchEvent(navigateEvent);
+        if (navigateEvent.defaultPrevented) return;
+        window.location.href = targetUrl;
+    });
+}
+
+/**
+ * 通用关闭动态编辑弹窗。
+ * @param {HTMLElement} modal
+ * @returns {Function}
+ */
+function bindSimpleModalClose(modal) {
+    return KitProxy.utils.bindModalCloseActions(modal);
+}
+
+/**
+ * 绑定 HTTP 请求方法点击编辑弹窗。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolHttpMethodEditor(protocolItem) {
+    const methodField = protocolItem.querySelector('.protocol-field.req-cfg[data-field-name="method"]');
+    if (!methodField) return;
+
+    methodField.style.cursor = 'pointer';
+    methodField.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const valueElement = methodField.querySelector('.value');
+        if (!valueElement) return;
+
+        const currentMethod = valueElement.textContent.trim() || 'GET';
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="edit-method-modal">
+                <div class="modal-header">
+                    <h3>修改请求方法</h3>
+                    <button class="close-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="method-radios">
+                        <label><input type="radio" name="edit-method" value="GET" ${currentMethod === 'GET' ? 'checked' : ''}> GET</label>
+                        <label><input type="radio" name="edit-method" value="POST" ${currentMethod === 'POST' ? 'checked' : ''}> POST</label>
+                        <label><input type="radio" name="edit-method" value="PUT" ${currentMethod === 'PUT' ? 'checked' : ''}> PUT</label>
+                        <label><input type="radio" name="edit-method" value="DELETE" ${currentMethod === 'DELETE' ? 'checked' : ''}> DELETE</label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="cancel-btn">取消</button>
+                        <button type="button" class="confirm-btn">确定修改</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const closeModal = bindSimpleModalClose(modal);
+        modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
+            confirmEvent.preventDefault();
+            confirmEvent.stopPropagation();
+
+            const checked = modal.querySelector('input[name="edit-method"]:checked');
+            const newMethod = checked ? checked.value : '';
+            const ok = await updateProtocolHttpMethod(ExtractId(protocolItem.id), newMethod);
+
+            if (ok) {
+                valueElement.textContent = newMethod;
+                alert('http请求方法修改成功!');
+                closeModal();
+            } else {
+                alert('http请求方法修改失败!');
+            }
+        });
+    });
+}
+
+/**
+ * 绑定 HTTP 请求路径点击编辑弹窗。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolHttpPathEditor(protocolItem) {
+    const pathField = protocolItem.querySelector('.protocol-field.req-cfg[data-field-name="path"]');
+    if (!pathField) return;
+
+    pathField.style.cursor = 'pointer';
+    pathField.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const valueElement = pathField.querySelector('.value');
+        if (!valueElement) return;
+
+        const currentPath = valueElement.textContent.trim() || '/api/';
+        const escape = KitProxy.utils.escapeHTML;
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="edit-path-modal">
+                <div class="modal-header">
+                    <h3>修改请求路径</h3>
+                    <button class="close-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="new-path">请求路径</label>
+                        <input type="text" id="new-path" value="${escape(currentPath)}" placeholder="输入请求路径" required>
+                        <div class="path-hint">必须以/开头，例如：/api/v1/test</div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="cancel-btn">取消</button>
+                        <button type="button" class="confirm-btn">确定修改</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const closeModal = bindSimpleModalClose(modal);
+        modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
+            confirmEvent.preventDefault();
+            confirmEvent.stopPropagation();
+
+            const newPath = modal.querySelector('#new-path').value.trim();
+            if (!KitProxy.utils.validateHttpPath(newPath)) {
+                alert('路径必须以/开头');
+                return;
+            }
+
+            const ok = await updateProtocolHttpUrl(ExtractId(protocolItem.id), newPath);
+            if (ok) {
+                valueElement.textContent = newPath;
+                alert('http路径修改成功!');
+                closeModal();
+            } else {
+                alert('http路径修改失败!');
+            }
+        });
+    });
+}
+
+/**
+ * 绑定 TCP 功能码点击编辑弹窗。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolTcpFunctionCodeEditor(protocolItem) {
+    protocolItem.querySelectorAll('.protocol-field[data-field-name="function_code_filed_value"]').forEach(field => {
+        field.style.cursor = 'pointer';
+
+        field.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const valueElement = field.querySelector('.value');
+            if (!valueElement) return;
+
+            const reqOrResp = field.classList.contains('resp-cfg') ? 2 : 1;
+            const title = reqOrResp === 1 ? '修改请求功能码' : '修改响应功能码';
+            const currentCode = valueElement.textContent.trim();
+            const escape = KitProxy.utils.escapeHTML;
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.innerHTML = `
+                <div class="edit-path-modal">
+                    <div class="modal-header">
+                        <h3>${title}</h3>
+                        <button class="close-modal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label for="new-function-code">功能码</label>
+                            <input type="text" id="new-function-code" value="${escape(currentCode)}" placeholder="例如：H1000">
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="cancel-btn">取消</button>
+                            <button type="button" class="confirm-btn">确定修改</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            const closeModal = bindSimpleModalClose(modal);
+            modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
+                confirmEvent.preventDefault();
+                confirmEvent.stopPropagation();
+
+                const newCode = modal.querySelector('#new-function-code').value.trim();
+                const ok = await updateProtocolCfg(
+                    ExtractId(protocolItem.id),
+                    reqOrResp,
+                    'function_code_filed_value',
+                    newCode,
+                );
+
+                if (ok) {
+                    valueElement.textContent = newCode;
+                    alert('功能码修改成功!');
+                    closeModal();
+                } else {
+                    alert('功能码修改失败!');
+                }
+            });
+        });
+    });
+}
+
+/**
+ * 绑定 TCP 普通字段点击编辑弹窗。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolTcpCommonFieldsEditor(protocolItem) {
+    protocolItem.querySelectorAll('.protocol-field[data-field-name="common_fields"]').forEach(field => {
+        field.style.cursor = 'pointer';
+
+        field.addEventListener('click', async function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const reqOrResp = field.classList.contains('resp-cfg') ? 2 : 1;
+            const valueElement = field.querySelector('.value');
+            const headerIndicator = field.querySelector('.header-fields-indicator');
+            if (!valueElement || !headerIndicator) return;
+
+            const loading = showLoading('加载格式字段信息...');
+            let patternFields;
+
+            try {
+                patternFields = await getPatternFields(ExtractId(protocolItem.id), reqOrResp);
+            } catch(error) {
+                console.error('获取格式字段信息失败: ', error);
+                hideLoading(loading);
+                alert('获取格式字段信息失败!');
+                return;
+            }
+
+            await delay(200);
+            hideLoading(loading);
+
+            createCustomTcpPatternModal(
+                field,
+                reqOrResp === 1 ? '请求头部字段' : '响应头部字段',
+                patternFields,
+                null,
+                false,
+                async function(patternFieldInfos) {
+                    const commonFields = patternFieldInfos.common_fields || [];
+                    const ok = await updateProtocolCfg(
+                        ExtractId(protocolItem.id),
+                        reqOrResp,
+                        'common_fields',
+                        commonFields,
+                    );
+
+                    if (!ok) {
+                        alert('字段修改失败!');
+                        return;
+                    }
+
+                    valueElement.textContent = commonFields.length ? '已设置' : '未设置';
+                    headerIndicator.classList.toggle('has', commonFields.length > 0);
+                    headerIndicator.classList.toggle('no', commonFields.length === 0);
+                },
+            );
+        });
+    });
+}
+
+/**
+ * 绑定协议项详情字段点击编辑弹窗。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolFieldEditors(protocolItem) {
+    bindProtocolHttpMethodEditor(protocolItem);
+    bindProtocolHttpPathEditor(protocolItem);
+    bindProtocolTcpFunctionCodeEditor(protocolItem);
+    bindProtocolTcpCommonFieldsEditor(protocolItem);
+}
+
 function bindProtocolBodyEditor(protocolItem) {
     protocolItem.querySelectorAll('.protocol-field.request-body, .protocol-field.response-body').forEach(bodyField => {
         bodyField.style.cursor = 'pointer';
@@ -487,20 +831,24 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
     const escape = KitProxy.utils.escapeHTML;
     protocolItem.innerHTML =`
         <div class="protocol-header">
-            <div>
+            <div class="protocol-primary-row">
                 <span class="protocol-tag ${escape(protocol.type.toLowerCase())}">${escape(protocol.type)}</span>
                 <span class="protocol-name editable" data-default="Undef默认测试协议项">${escape(protocol.name)}</span>
                 <div class="protocol-time">
-                    <span class="last-update-time">最后一次修改时间: ${escape(protocol.utime || '未知')}</span>
-                    <span class="create-time">创建时间: ${escape(protocol.ctime || '未知')}</span>
+                    <span class="last-update-time">修改: ${escape(protocol.utime || '未知')}</span>
+                    <span class="create-time">创建: ${escape(protocol.ctime || '未知')}</span>
                 </div>
+            </div>
+            <div class="protocol-header-actions">
+                <button type="button" class="protocol-toggle-btn" aria-label="展开协议项详情" aria-expanded="false">
+                    <span class="protocol-toggle-icon" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="edit-protocol-btn">修改协议项</button>
+                <button type="button" class="delete-protocol-btn">删除协议</button>
             </div>
         </div>
         <div class="protocol-details">
             <div class="details-grid"> </div>
-            <div class="protocol-actions-container">
-                <button class="delete-protocol-btn">删除协议</button>
-            </div>
         </div>
 `;
 
@@ -510,6 +858,10 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
 
     bindProtocolTitleEdit(protocolItem);
     bindProtocolDeleteAction(protocolItem);
+    bindProtocolToggle(protocolItem);
+    bindProtocolEditAction(protocolItem);
+    bindProtocolFieldEditors(protocolItem);
+    bindProtocolBodyEditor(protocolItem);
 
     // 将协议项卡片插入到列表中
     if(-1 === pos) {
@@ -522,9 +874,6 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
     // const protocolCount = protocolList.querySelectorAll('.protocol-item').length;
     // serviceCard.querySelector('.project-protocol-cnt').textContent = protocolCount;
 
-
-
-    bindProtocolBodyEditor(protocolItem);
     return protocolItem;
 
 }
@@ -1249,6 +1598,10 @@ function buildProtocolItemsUrl(projectId) {
     const params = new URLSearchParams(window.location.search);
     params.set('projectId', String(projectId));
     return `protocol_items.html?${params.toString()}`;
+}
+
+if (typeof window !== 'undefined') {
+    window.buildProtocolItemFormUrl = buildProtocolItemFormUrl;
 }
 
 function bindOpenProtocolItemsAction(serviceCard, project) {

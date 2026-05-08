@@ -17,6 +17,18 @@
     }
 
     /**
+     * 保留调试参数生成协议项表单页 URL。
+     * @param {number | string} projectId
+     * @returns {string}
+     */
+    function buildProtocolItemCreateUrl(projectId) {
+        const params = new URLSearchParams(global.location.search);
+        params.set('projectId', String(projectId));
+        params.delete('protocolId');
+        return `protocol_item_form.html?${params.toString()}`;
+    }
+
+    /**
      * 从 URL 中读取 projectId。
      * @returns {number}
      */
@@ -223,16 +235,19 @@
                 return;
             }
 
-            const modalFactory = ProtocolTypeRegistry.getAddProtocolModal(pageContext.project.protocol_type);
-            if (!modalFactory) {
-                alert('当前协议类型暂不支持添加协议项');
-                return;
-            }
-
-            const modal = createAddProtocolModal(modalFactory, root);
-            if (modal) {
-                document.body.appendChild(modal);
-            }
+            const targetUrl = buildProtocolItemCreateUrl(pageContext.project.id);
+            addBtn.dataset.protocolItemFormUrl = targetUrl;
+            const navigateEvent = new CustomEvent('protocol-items:navigate-create', {
+                bubbles: true,
+                cancelable: true,
+                detail: {
+                    projectId: pageContext.project.id,
+                    url: targetUrl,
+                },
+            });
+            addBtn.dispatchEvent(navigateEvent);
+            if (navigateEvent.defaultPrevented) return;
+            global.location.href = targetUrl;
         });
     }
 
@@ -268,6 +283,8 @@
 
     KitProxy.protocolItemsPage = {
         pageState,
+        buildProtocolItemCreateUrl,
+        initPage,
         loadProtocolItems,
         handleProtocolAdded: async function() {
             await loadProtocolItems(1);
@@ -282,5 +299,7 @@
         },
     };
 
-    document.addEventListener('DOMContentLoaded', initPage);
+    if (!KitProxy.__disableAutoInitProtocolItems) {
+        document.addEventListener('DOMContentLoaded', initPage);
+    }
 })(typeof window !== 'undefined' ? window : globalThis);

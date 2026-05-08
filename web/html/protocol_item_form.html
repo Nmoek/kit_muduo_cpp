@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>协议项表单</title>
+    <link rel="stylesheet" href="../css/main.css">
+    <link rel="stylesheet" href="../css/modal_styles.css">
+</head>
+<body>
+    <div class="admin-container">
+        <aside class="sidebar">
+            <h2>通用安检机协议半自动测试平台</h2>
+            <nav>
+                <ul>
+                    <li><a href="main.html" class="active">协议测试</a></li>
+                    <li><a href="dashboard.html">控制面板</a></li>
+                </ul>
+            </nav>
+        </aside>
+        <main class="content protocol-item-form-page">
+            <div class="service-manager-header protocol-form-header">
+                <div class="page-title-block">
+                    <a id="back-protocol-list" class="back-link" href="protocol_items.html">返回协议项列表</a>
+                    <h2 id="protocol-form-title">协议项表单</h2>
+                    <p id="protocol-form-subtitle">配置当前测试服务下的请求校验和响应行为</p>
+                </div>
+            </div>
+
+            <div id="protocol-form-error" class="page-error" style="display: none"></div>
+
+            <div class="protocol-form-shell">
+                <section class="protocol-form-section">
+                    <div class="protocol-section-heading">
+                        <h3>测试服务信息</h3>
+                    </div>
+                    <div id="protocol-form-project-context" class="service-meta-strip protocol-form-project-context"></div>
+                </section>
+
+                <form id="protocol-item-form" class="protocol-item-form" novalidate>
+                    <section class="protocol-form-section protocol-config-section">
+                        <div class="protocol-section-heading">
+                            <h3>协议项配置</h3>
+                        </div>
+                        <div class="protocol-form-grid">
+                            <div class="form-group protocol-name-group">
+                                <label for="protocol-item-name">协议项名称</label>
+                                <input type="text" id="protocol-item-name" name="protocol-item-name" maxlength="64" placeholder="输入协议项名称" required>
+                            </div>
+                            <div id="protocol-type-fields" class="protocol-type-fields"></div>
+                        </div>
+                    </section>
+
+                    <section class="protocol-form-section protocol-body-section">
+                        <div class="protocol-body-section-header">
+                            <div class="protocol-section-heading">
+                                <h3>Body 编辑</h3>
+                            </div>
+                            <div class="body-switcher" role="tablist" aria-label="Body 类型切换">
+                                <button type="button" class="body-switch-btn is-active" data-body-tab="request">校验请求Body</button>
+                                <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
+                            </div>
+                        </div>
+                        <div id="protocol-body-editor-host"></div>
+                    </section>
+
+                    <div class="form-actions protocol-form-actions">
+                        <button type="button" id="cancel-protocol-form" class="cancel-btn">取消</button>
+                        <button type="submit" id="save-protocol-form" class="confirm-btn">保存</button>
+                    </div>
+                </form>
+            </div>
+        </main>
+    </div>
+    <script src="../js/namespace.js"></script>
+    <script src="../js/config.js"></script>
+    <script src="../js/constants.js"></script>
+    <script src="../js/utils.js"></script>
+    <script src="../js/body_editor.js"></script>
+    <script src="../js/mock_data.js"></script>
+    <script src="../js/api.js"></script>
+    <script src="../js/tcp_pattern_modal.js"></script>
+    <script src="../js/protocol_item.js"></script>
+    <script src="../js/protocol_registry.js"></script>
+    <script src="../js/protocol_item_form.js"></script>
+</body>
+</html>

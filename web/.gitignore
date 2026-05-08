@@ -1,6 +1,8 @@
 /.codex
-/AGENTS.md
 *.md
+!README.md
+!NOTICE.md
+
 node_modules/
 jsconfig.json
 

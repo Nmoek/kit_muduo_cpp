@@ -9,6 +9,9 @@
         { value: 'binary', label: 'Binary', enabled: false, reserved: true },
     ]);
     const HIGHLIGHT_SIZE_LIMIT = 100 * 1024;
+    const EDITOR_LINE_HEIGHT = 20;
+    const EDITOR_VERTICAL_PADDING = 24;
+    const EDITOR_TAB_SIZE = 2;
 
     function escapeHtml(value) {
         return String(value == null ? '' : value)
@@ -341,10 +344,39 @@
         const lines = [];
 
         for (let idx = 1; idx <= count; idx += 1) {
-            lines.push(String(idx));
+            lines.push(`<span class="body-editor-line-number">${idx}</span>`);
         }
 
-        return lines.join('<br>');
+        return lines.join('');
+    }
+
+    /**
+     * 计算编辑器可视行数和最长行宽，用同一份指标驱动行号层、代码层和输入层。
+     *
+     * @param {string} text Body 文本内容。
+     * @returns {{lineCount: number, maxColumns: number}}
+     */
+    function getEditorMetrics(text) {
+        const lines = String(text == null ? '' : text).split('\n');
+        let maxColumns = 1;
+
+        lines.forEach(line => {
+            let columns = 0;
+            Array.from(String(line)).forEach(char => {
+                if (char === '\t') {
+                    const remainder = columns % EDITOR_TAB_SIZE;
+                    columns += remainder === 0 ? EDITOR_TAB_SIZE : EDITOR_TAB_SIZE - remainder;
+                    return;
+                }
+                columns += /[^\u0000-\u00ff]/.test(char) ? 2 : 1;
+            });
+            maxColumns = Math.max(maxColumns, columns + 1);
+        });
+
+        return {
+            lineCount: Math.max(1, lines.length),
+            maxColumns,
+        };
     }
 
     function create(container, options = {}) {
@@ -367,12 +399,12 @@
                     <span class="body-editor-status" aria-live="polite"></span>
                 </div>
                 <div class="body-editor-input-wrap">
-                    <div class="body-editor-lines" aria-hidden="true">1</div>
-                    <div class="body-editor-code-wrap">
-                        <div class="body-editor-highlight" aria-hidden="true">
-                            <pre class="body-editor-highlight-code"></pre>
+                    <div class="body-editor-scroll-content">
+                        <div class="body-editor-lines" aria-hidden="true">1</div>
+                        <div class="body-editor-code-wrap">
+                            <pre class="body-editor-highlight" aria-hidden="true"><code class="body-editor-highlight-code"></code></pre>
+                            <textarea id="${escapeHtml(idPrefix)}-content" class="body-editor-textarea" spellcheck="false" wrap="off" autocomplete="off" autocapitalize="off" autocorrect="off"></textarea>
                         </div>
-                        <textarea id="${escapeHtml(idPrefix)}-content" class="body-editor-textarea" spellcheck="false"></textarea>
                     </div>
                 </div>
                 <div class="body-editor-error" aria-live="polite"></div>
@@ -382,7 +414,7 @@
         const root = container.querySelector('.body-editor');
         const typeSelect = container.querySelector('.body-editor-type');
         const textarea = container.querySelector('.body-editor-textarea');
-        const highlightLayer = container.querySelector('.body-editor-highlight');
+        const scrollViewport = container.querySelector('.body-editor-input-wrap');
         const highlightCode = container.querySelector('.body-editor-highlight-code');
         const lineNumberBox = container.querySelector('.body-editor-lines');
         const formatButton = container.querySelector('.body-editor-format');
@@ -410,18 +442,20 @@
         textarea.placeholder = options.placeholder || '输入 Body 内容...';
         textarea.readOnly = Boolean(options.readonly || typeSelect.value === 'binary');
 
-        function updateLineNumbers() {
-            const lineCount = textarea.value.split('\n').length;
-            lineNumberBox.innerHTML = lineNumbersHTML(lineCount);
+        function updateEditorMetrics() {
+            const metrics = getEditorMetrics(textarea.value);
+            lineNumberBox.innerHTML = lineNumbersHTML(metrics.lineCount);
+            root.style.setProperty('--body-editor-line-count', String(metrics.lineCount));
+            root.style.setProperty('--body-editor-max-columns', String(metrics.maxColumns));
+            root.style.setProperty('--body-editor-code-min-width', `${metrics.maxColumns + 2}ch`);
+            root.style.setProperty(
+                '--body-editor-content-height',
+                `${metrics.lineCount * EDITOR_LINE_HEIGHT + EDITOR_VERTICAL_PADDING}px`
+            );
         }
 
         function shouldDisableHighlight() {
             return textarea.value.length > HIGHLIGHT_SIZE_LIMIT || typeSelect.value === 'binary';
-        }
-
-        function syncHighlightScroll() {
-            highlightLayer.scrollTop = textarea.scrollTop;
-            highlightLayer.scrollLeft = textarea.scrollLeft;
         }
 
         function updateHighlight() {
@@ -433,7 +467,77 @@
             }
 
             highlightCode.innerHTML = highlight(textarea.value, typeSelect.value);
-            syncHighlightScroll();
+        }
+
+        function getEditorLayout() {
+            const styles = typeof global.getComputedStyle === 'function'
+                ? global.getComputedStyle(textarea)
+                : null;
+            const fontSize = parseFloat(styles && styles.fontSize) || 14;
+
+            return {
+                lineHeight: parseFloat(styles && styles.lineHeight) || EDITOR_LINE_HEIGHT,
+                paddingTop: parseFloat(styles && styles.paddingTop) || 12,
+                paddingLeft: parseFloat(styles && styles.paddingLeft) || 12,
+                gutterWidth: lineNumberBox.offsetWidth || 46,
+                charWidth: fontSize * 0.62,
+            };
+        }
+
+        function transferTextareaScroll() {
+            const scrollTop = textarea.scrollTop;
+            const scrollLeft = textarea.scrollLeft;
+
+            if (!scrollTop && !scrollLeft) return;
+
+            scrollViewport.scrollTop += scrollTop;
+            scrollViewport.scrollLeft += scrollLeft;
+            textarea.scrollTop = 0;
+            textarea.scrollLeft = 0;
+        }
+
+        function scrollCaretIntoView() {
+            if (global.document.activeElement !== textarea || typeof textarea.selectionStart !== 'number') {
+                return;
+            }
+
+            const location = positionToLineColumn(textarea.value, textarea.selectionStart);
+            const layout = getEditorLayout();
+            const caretTop = layout.paddingTop + (location.line - 1) * layout.lineHeight;
+            const caretBottom = caretTop + layout.lineHeight;
+            const caretLeft = layout.gutterWidth + layout.paddingLeft + (location.column - 1) * layout.charWidth;
+            const viewportTop = scrollViewport.scrollTop;
+            const viewportBottom = viewportTop + scrollViewport.clientHeight;
+            const viewportLeft = scrollViewport.scrollLeft;
+            const viewportRight = viewportLeft + scrollViewport.clientWidth;
+            const verticalPadding = 8;
+            const horizontalPadding = 32;
+
+            if (caretBottom > viewportBottom - verticalPadding) {
+                scrollViewport.scrollTop = caretBottom - scrollViewport.clientHeight + verticalPadding;
+            } else if (caretTop < viewportTop + verticalPadding) {
+                scrollViewport.scrollTop = Math.max(0, caretTop - verticalPadding);
+            }
+
+            if (caretLeft > viewportRight - horizontalPadding) {
+                scrollViewport.scrollLeft = caretLeft - scrollViewport.clientWidth + horizontalPadding;
+            } else if (caretLeft < viewportLeft + layout.gutterWidth + verticalPadding) {
+                scrollViewport.scrollLeft = Math.max(0, caretLeft - layout.gutterWidth - verticalPadding);
+            }
+        }
+
+        function scheduleCaretSync() {
+            const sync = function() {
+                transferTextareaScroll();
+                scrollCaretIntoView();
+            };
+
+            if (typeof global.requestAnimationFrame === 'function') {
+                global.requestAnimationFrame(sync);
+                return;
+            }
+
+            global.setTimeout(sync, 0);
         }
 
         function dispatchValidity(result) {
@@ -461,24 +565,36 @@
         }
 
         const debouncedValidate = debounce(runValidation, 180);
-        const debouncedHighlight = debounce(updateHighlight, 100);
 
         textarea.addEventListener('input', function() {
-            updateLineNumbers();
-            debouncedHighlight();
+            updateEditorMetrics();
+            updateHighlight();
             debouncedValidate();
+            scheduleCaretSync();
         });
 
         textarea.addEventListener('scroll', function() {
-            lineNumberBox.scrollTop = textarea.scrollTop;
-            syncHighlightScroll();
+            transferTextareaScroll();
         });
+
+        textarea.addEventListener('wheel', function(event) {
+            if (!event.deltaX && !event.deltaY) return;
+            scrollViewport.scrollLeft += event.deltaX;
+            scrollViewport.scrollTop += event.deltaY;
+            event.preventDefault();
+        }, { passive: false });
+
+        textarea.addEventListener('keydown', scheduleCaretSync);
+        textarea.addEventListener('keyup', scheduleCaretSync);
+        textarea.addEventListener('click', scheduleCaretSync);
+        textarea.addEventListener('focus', scheduleCaretSync);
 
         typeSelect.addEventListener('change', function() {
             textarea.readOnly = Boolean(options.readonly || typeSelect.value === 'binary');
             textarea.placeholder = typeSelect.value === 'binary'
                 ? 'Binary Body 暂不支持在线文本编辑'
                 : (options.placeholder || '输入 Body 内容...');
+            updateEditorMetrics();
             updateHighlight();
             runValidation();
         });
@@ -486,9 +602,10 @@
         formatButton.addEventListener('click', function() {
             try {
                 textarea.value = format(textarea.value, typeSelect.value);
-                updateLineNumbers();
+                updateEditorMetrics();
                 updateHighlight();
                 runValidation();
+                scheduleCaretSync();
             } catch (error) {
                 renderValidation({
                     valid: false,
@@ -501,12 +618,13 @@
 
         clearButton.addEventListener('click', function() {
             textarea.value = '';
-            updateLineNumbers();
+            updateEditorMetrics();
             updateHighlight();
             runValidation();
+            scheduleCaretSync();
         });
 
-        updateLineNumbers();
+        updateEditorMetrics();
         updateHighlight();
         runValidation();
 
@@ -516,7 +634,7 @@
             },
             setValue: function(value) {
                 textarea.value = decodeBodyData(value || '');
-                updateLineNumbers();
+                updateEditorMetrics();
                 updateHighlight();
                 return runValidation();
             },
