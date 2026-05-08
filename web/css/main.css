@@ -986,9 +986,18 @@ body {
 .pagination-bar {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 16px 0 24px;
+}
+
+.pagination-nav {
+    display: inline-flex;
+    align-items: center;
     justify-content: center;
     gap: 12px;
-    margin: 16px 0 24px;
+    flex: 1 1 auto;
 }
 
 .pagination-btn {
@@ -1100,20 +1109,41 @@ body {
 
 /* 不同类型字段的特殊样式 */
 .protocol-field.method .value {
-    color: #3b82f6;
-    font-weight: 600;
+    width: fit-content;
+    padding: 3px 9px;
+    border: 1px solid #c9ddf5;
+    border-radius: 6px;
+    background: #f3f8ff;
+    color: #2f5f9f;
+    font-weight: 900;
 }
 
-.protocol-field.path .value {
-    color: #10b981;
+.protocol-field.path .value,
+.protocol-field.tcp-function-code .value {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    padding: 5px 8px;
+    border: 1px solid #d8e5f3;
+    border-radius: 6px;
+    background: #f8fbff;
+    color: #314154;
     font-family: monospace;
+    font-size: 14px;
+    font-weight: 800;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .protocol-field.status .value {
-    padding: 0.2rem 0.4rem;
-    border-radius: 4px;
+    width: fit-content;
+    padding: 3px 9px;
+    border: 1px solid #c9ddf5;
+    border-radius: 6px;
     display: inline-block;
-    font-size: 0.8rem;
+    color: #2f5f9f;
+    background: #f3f8ff;
 }
 
 .protocol-field.status-active .value {
@@ -1405,6 +1435,10 @@ body {
     color: #344054;
     font-size: 13px;
     font-weight: 700;
+}
+
+.pagination-page-size-control {
+    flex: 0 0 auto;
 }
 
 .service-page-size-control select {
@@ -1874,8 +1908,8 @@ body {
 .details-grid.http,
 .details-grid.tcp {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
     margin: 0;
     padding: 14px;
     background: var(--v13-surface-soft);
@@ -1884,10 +1918,15 @@ body {
 }
 
 .protocol-field {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    gap: 8px;
     min-width: 0;
-    padding: 12px;
+    min-height: 92px;
+    padding: 14px;
     border: 1px solid #e3edf9;
     border-radius: var(--v13-radius);
+    background: #fff;
     box-shadow: none;
 }
 
@@ -1898,16 +1937,133 @@ body {
 }
 
 .protocol-field label {
-    color: var(--v13-muted);
-    font-size: 12px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 0;
+    color: var(--v13-text);
+    font-size: 14px;
+    line-height: 1.35;
+    font-weight: 900;
     letter-spacing: 0;
     text-transform: none;
 }
 
+.field-label-main {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.field-label-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .protocol-field .value {
     color: var(--v13-text);
-    font-size: 14px;
+    align-self: end;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.45;
     word-break: break-word;
+}
+
+/* V1.5 简单协议字段在卡片内直接编辑，避免为短文本配置打断操作流。 */
+.protocol-field.editable-field {
+    cursor: pointer;
+}
+
+.protocol-field.editable-field:hover,
+.protocol-field.editable-field:focus {
+    border-color: var(--v13-primary);
+    background: #fbfdff;
+    outline: none;
+}
+
+.protocol-field.is-inline-editing {
+    border-color: var(--v13-primary);
+    background: #ffffff;
+}
+
+.field-edit-hint {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    min-height: 20px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--v13-primary-soft);
+    color: var(--v13-primary-strong);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.inline-field-editor {
+    display: grid;
+    gap: 8px;
+    align-self: end;
+    margin-top: 0;
+}
+
+.inline-field-control {
+    width: 100%;
+    min-height: 34px;
+    padding: 7px 9px;
+    border: 1px solid var(--v13-border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--v13-text);
+    font-size: 14px;
+}
+
+.inline-field-control:focus {
+    border-color: var(--v13-primary);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.12);
+}
+
+.inline-field-hint,
+.inline-field-error {
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.inline-field-hint {
+    color: var(--v13-muted);
+}
+
+.inline-field-error {
+    min-height: 16px;
+    color: var(--v13-danger);
+}
+
+.inline-field-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.inline-field-actions button {
+    flex: 1 1 0;
+    min-height: 30px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.inline-field-save {
+    border: 1px solid var(--v13-primary);
+    background: var(--v13-primary);
+    color: #fff;
+}
+
+.inline-field-cancel {
+    border: 1px solid var(--v13-border);
+    background: var(--v13-surface-soft);
+    color: var(--v13-muted);
 }
 
 .empty-state {
@@ -1924,6 +2080,11 @@ body {
 
 .pagination-bar {
     margin: 18px 0 0;
+}
+
+.pagination-bar.has-page-size-control::after {
+    content: "";
+    flex: 0 0 150px;
 }
 
 .pagination-current {
@@ -2479,6 +2640,20 @@ body {
         justify-content: space-between;
     }
 
+    .pagination-bar {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .pagination-nav {
+        justify-content: space-between;
+        width: 100%;
+    }
+
+    .pagination-bar.has-page-size-control::after {
+        display: none;
+    }
+
     .filter-actions,
     .service-actions-container,
     .protocol-actions-container {
@@ -2613,6 +2788,117 @@ body {
     font-weight: 800;
 }
 
+.protocol-form-project-context {
+    display: grid;
+    grid-template-columns: minmax(260px, 1.1fr) minmax(0, 1.9fr);
+    gap: 16px;
+    align-items: stretch;
+    margin: 0;
+}
+
+.service-context-summary,
+.service-context-grid {
+    min-width: 0;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: var(--v13-surface-soft);
+}
+
+.service-context-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 16px;
+}
+
+.service-context-title-block {
+    min-width: 0;
+}
+
+.service-context-kicker,
+.service-context-id,
+.service-context-item .meta-label {
+    color: var(--v13-muted);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.4;
+}
+
+.service-context-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 5px;
+    min-width: 0;
+}
+
+.service-context-title {
+    min-width: 0;
+    color: var(--v13-text);
+    font-size: 20px;
+    line-height: 1.25;
+    word-break: break-word;
+}
+
+.service-context-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 900;
+}
+
+.service-context-status.is-active {
+    background: #ecfdf5;
+    color: var(--v13-success);
+}
+
+.service-context-status.is-inactive {
+    background: #fff7ed;
+    color: var(--v13-warning);
+}
+
+.service-context-id {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: #fff;
+}
+
+.service-context-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0;
+    overflow: hidden;
+}
+
+.service-context-item {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    padding: 14px;
+    border-left: 1px solid var(--v13-border);
+}
+
+.service-context-item:first-child {
+    border-left: 0;
+}
+
+.service-context-item .meta-value {
+    min-width: 0;
+    color: var(--v13-text);
+    font-size: 15px;
+    font-weight: 900;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .protocol-item-form {
     display: flex;
     flex-direction: column;
@@ -2625,15 +2911,15 @@ body {
 
 .protocol-form-grid {
     display: grid;
-    grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
-    gap: 18px;
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    gap: 16px;
     align-items: start;
 }
 
 .protocol-type-fields {
     display: grid;
-    grid-template-columns: repeat(2, minmax(240px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+    gap: 16px;
     min-width: 0;
 }
 
@@ -2646,13 +2932,14 @@ body {
     position: sticky;
     top: 104px;
     align-self: start;
-    padding: 14px;
+    padding: 16px;
     border: 1px solid var(--v13-border);
     border-radius: var(--v13-radius);
-    background: var(--v13-surface-soft);
+    background: #fff;
 }
 
 .protocol-item-form input[type="text"],
+.protocol-item-form input[type="number"],
 .protocol-item-form input:not([type]),
 .protocol-item-form select {
     width: 100%;
@@ -2693,40 +2980,26 @@ body {
     font-weight: 700;
 }
 
-.protocol-form-project-context {
-    margin: 0;
-}
-
-.protocol-form-project-context .service-detail-chip {
-    flex: 0 1 auto;
-    max-width: none;
-}
-
-.protocol-config-subsection {
+.protocol-config-card {
     display: grid;
-    grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr);
-    gap: 12px;
-    align-items: start;
-    padding: 14px;
+    gap: 14px;
+    min-width: 0;
+    padding: 16px;
     border: 1px solid var(--v13-border);
     border-radius: var(--v13-radius);
     background: var(--v13-surface-soft);
 }
 
-.protocol-config-subsection-title {
-    grid-column: 1 / -1;
+.protocol-config-card-title {
     color: var(--v13-primary-strong);
     font-size: 13px;
     font-weight: 900;
     line-height: 1.2;
 }
 
-.protocol-http-method-group,
-.protocol-http-path-group {
-    padding: 14px;
-    border: 1px solid var(--v13-border);
-    border-radius: var(--v13-radius);
-    background: var(--v13-surface-soft);
+.protocol-config-card-fields {
+    display: grid;
+    gap: 14px;
 }
 
 .protocol-type-fields .path-hint {
@@ -2953,6 +3226,11 @@ body {
     cursor: default;
 }
 
+.protocol-field.editable-field,
+.protocol-field.editable-field:hover {
+    cursor: pointer;
+}
+
 @media (max-width: 768px) {
     .protocol-item-form-page.content {
         padding: 0 16px 28px;
@@ -2963,12 +3241,31 @@ body {
     }
 
     .protocol-type-fields,
-    .protocol-config-subsection {
+    .protocol-form-project-context,
+    .protocol-config-card {
         grid-template-columns: 1fr;
     }
 
     .protocol-name-group {
         position: static;
+    }
+
+    .service-context-summary {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .service-context-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .service-context-item {
+        border-top: 1px solid var(--v13-border);
+        border-left: 0;
+    }
+
+    .service-context-item:first-child {
+        border-top: 0;
     }
 
     .protocol-body-section-header,

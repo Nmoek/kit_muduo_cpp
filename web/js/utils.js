@@ -443,6 +443,24 @@
         return typeof path === 'string' && path.trim().startsWith('/');
     }
 
+    /**
+     * @param {number | string} statusCode
+     * @returns {boolean}
+     */
+    function validateHttpStatusCode(statusCode) {
+        const code = Number(statusCode);
+        return Number.isInteger(code) && code >= 100 && code <= 599;
+    }
+
+    /**
+     * @param {number | string | null | undefined} statusCode
+     * @param {number=} fallback
+     * @returns {number}
+     */
+    function normalizeHttpStatusCode(statusCode, fallback = 200) {
+        return validateHttpStatusCode(statusCode) ? Number(statusCode) : fallback;
+    }
+
     function validatePort(port) {
         const portNumber = Number(port);
         return Number.isInteger(portNumber) && portNumber >= 1 && portNumber <= 65535;
@@ -603,6 +621,8 @@
         checkEmptyState,
         loadModal,
         validateHttpPath,
+        validateHttpStatusCode,
+        normalizeHttpStatusCode,
         validatePort,
         validateIpPort,
         validateJsonText,

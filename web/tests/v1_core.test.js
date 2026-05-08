@@ -313,15 +313,37 @@ describe('V1.2 pagination and protocol registry', () => {
         expect(context.KitProxy.pagination.nextPageAfterDelete(state, 2)).toBe(3);
     });
 
-    it('服务分页 pageSize 支持 10/20/50 且请求 limit 使用 pageSize + 1', () => {
+    it('服务分页 pageSize 支持 5/10/20/50 且请求 limit 使用 pageSize + 1', () => {
         const context = createBrowserContext('?apiMode=mock');
         loadCoreScripts(context);
 
-        [10, 20, 50].forEach(pageSize => {
+        [5, 10, 20, 50].forEach(pageSize => {
             const state = context.KitProxy.pagination.createState(pageSize);
             expect(state.pageSize).toBe(pageSize);
             expect(context.KitProxy.pagination.getRequestLimit(state)).toBe(pageSize + 1);
         });
+    });
+
+    it('分页条内置每页数量选择器并支持切换回调', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        const container = context.document.createElement('div');
+        const state = context.KitProxy.pagination.createState(10);
+        const onPageSizeChange = vi.fn();
+
+        context.KitProxy.pagination.render(container, state, {
+            pageSizeOptions: context.KitProxy.pagination.DEFAULT_PAGE_SIZE_OPTIONS,
+            onPageSizeChange,
+        });
+
+        const select = container.querySelector('.pagination-page-size');
+        expect(container.classList.contains('has-page-size-control')).toBe(true);
+        expect(Array.from(select.options).map(option => option.value)).toEqual(['5', '10', '20', '50']);
+        expect(select.value).toBe('10');
+
+        select.value = '5';
+        select.dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(onPageSizeChange).toHaveBeenCalledWith(5);
     });
 
     it('协议类型注册表能返回新增弹窗和协议项详情网格', () => {
@@ -350,6 +372,8 @@ describe('V1.2 pagination and protocol registry', () => {
         expect(modalFactory).toBeTruthy();
         expect(grid.className).toContain('http');
         expect(grid.querySelector('[data-field-name="path"] .value').textContent).toBe('/api/test');
+        expect(grid.querySelector('[data-field-name="path"] .value').getAttribute('title')).toBe('/api/test');
+        expect(grid.querySelector('[data-field-name="status_code"] .value').textContent).toBe('200');
     });
 });
 
@@ -672,6 +696,50 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
     });
 
+    it('协议项管理页分页条支持每页数量切换', async () => {
+        const dom = new JSDOM(`<!doctype html><html><body>
+            <button id="add-protocol-item" disabled>添加协议项</button>
+            <a id="back-service-list"></a>
+            <h2 id="protocol-items-title"></h2>
+            <div id="protocol-page-error"></div>
+            <div class="protocol-items-page">
+                <div id="protocol-service-meta"></div>
+                <div class="protocol-list"></div>
+                <div id="protocol-pagination" class="pagination-bar"></div>
+            </div>
+        </body></html>`, {
+            url: 'http://localhost/html/protocol_items.html?apiMode=mock&projectId=1',
+        });
+        const context = vm.createContext(dom.window);
+        context.console = console;
+        context.fetch = vi.fn();
+        context.TextEncoder = TextEncoder;
+        context.TextDecoder = TextDecoder;
+
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+        loadProtocolListScripts(context);
+
+        const getProtocolList = vi.spyOn(context.KitProxy.api, 'getProtocolList');
+        await context.KitProxy.protocolItemsPage.initPage?.();
+        await flushPromises(12);
+
+        const select = context.document.querySelector('#protocol-pagination .pagination-page-size');
+        expect(select).toBeTruthy();
+        expect(Array.from(select.options).map(option => option.value)).toEqual(['5', '10', '20', '50']);
+
+        select.value = '5';
+        select.dispatchEvent(new context.Event('change', { bubbles: true }));
+        await flushPromises(12);
+
+        expect(context.KitProxy.protocolItemsPage.pageState.pageSize).toBe(5);
+        expect(getProtocolList).toHaveBeenLastCalledWith(1, 0, 6);
+    });
+
     it('协议项卡片默认折叠，支持展开收起和修改跳转', () => {
         const context = createBrowserContext('?apiMode=mock&projectId=1');
         loadCoreScripts(context);
@@ -813,7 +881,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(context.document.querySelector('.body-editor-textarea')).toBeTruthy();
     });
 
-    it('协议项 HTTP method/path 字段点击恢复编辑 modal', async () => {
+    it('协议项 HTTP method/path/status 字段点击使用行内编辑', async () => {
         const context = createBrowserContext('?apiMode=mock&projectId=1');
         loadCoreScripts(context);
         [
@@ -836,7 +904,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
             project_id: 1,
             type: 'HTTP',
             req_cfg: { method: 'GET', path: '/api/test1' },
-            resp_cfg: {},
+            resp_cfg: { status_code: 200 },
             req_body_status: 0,
             resp_body_status: 0,
             ctime: '2025-12-02 06:01:03',
@@ -844,21 +912,29 @@ describe('V1.5 protocol item form page and compact cards', () => {
         });
 
         protocolItem.querySelector('[data-field-name="method"]').click();
-        expect(context.document.querySelector('.edit-method-modal')).toBeTruthy();
-        context.document.querySelector('input[name="edit-method"][value="POST"]').checked = true;
-        context.document.querySelector('.edit-method-modal .confirm-btn').click();
+        expect(context.document.querySelector('.edit-method-modal')).toBeNull();
+        expect(protocolItem.querySelector('[data-field-name="method"] .inline-field-editor')).toBeTruthy();
+        protocolItem.querySelector('[data-field-name="method"] .inline-field-control').value = 'POST';
+        protocolItem.querySelector('[data-field-name="method"] .inline-field-save').click();
         await flushPromises(8);
         expect(protocolItem.querySelector('[data-field-name="method"] .value').textContent).toBe('POST');
 
         protocolItem.querySelector('[data-field-name="path"]').click();
-        expect(context.document.querySelector('.edit-path-modal')).toBeTruthy();
-        context.document.getElementById('new-path').value = '/api/changed';
-        context.document.querySelector('.edit-path-modal .confirm-btn').click();
+        expect(context.document.querySelector('.edit-path-modal')).toBeNull();
+        protocolItem.querySelector('[data-field-name="path"] .inline-field-control').value = '/api/changed';
+        protocolItem.querySelector('[data-field-name="path"] .inline-field-save').click();
         await flushPromises(8);
         expect(protocolItem.querySelector('[data-field-name="path"] .value').textContent).toBe('/api/changed');
+        expect(protocolItem.querySelector('[data-field-name="path"] .value').getAttribute('title')).toBe('/api/changed');
+
+        protocolItem.querySelector('[data-field-name="status_code"]').click();
+        protocolItem.querySelector('[data-field-name="status_code"] .inline-field-control').value = '201';
+        protocolItem.querySelector('[data-field-name="status_code"] .inline-field-save').click();
+        await flushPromises(8);
+        expect(protocolItem.querySelector('[data-field-name="status_code"] .value').textContent).toBe('201');
     });
 
-    it('协议项 TCP function_code/common_fields 字段点击恢复编辑 modal', async () => {
+    it('协议项 TCP function_code 使用行内编辑，common_fields 保持 modal', async () => {
         const context = createBrowserContext('?apiMode=mock&projectId=2');
         loadCoreScripts(context);
         [
@@ -898,11 +974,13 @@ describe('V1.5 protocol item form page and compact cards', () => {
         });
 
         protocolItem.querySelector('[data-field-name="function_code_filed_value"]').click();
-        expect(context.document.getElementById('new-function-code')).toBeTruthy();
-        context.document.getElementById('new-function-code').value = 'H2000';
-        context.document.querySelector('.edit-path-modal .confirm-btn').click();
+        expect(context.document.getElementById('new-function-code')).toBeNull();
+        expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .inline-field-editor')).toBeTruthy();
+        protocolItem.querySelector('[data-field-name="function_code_filed_value"] .inline-field-control').value = 'H2000';
+        protocolItem.querySelector('[data-field-name="function_code_filed_value"] .inline-field-save').click();
         await flushPromises(8);
         expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .value').textContent).toBe('H2000');
+        expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .value').getAttribute('title')).toBe('H2000');
 
         protocolItem.querySelector('[data-field-name="common_fields"]').click();
         await flushPromises(12);
@@ -965,6 +1043,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
             expect(payload.cfg_header.type).toBe('HTTP');
             expect(payload.req_cfg).toEqual({ method: 'POST', path: '/api/new' });
+            expect(payload.resp_cfg).toEqual({ status_code: 200 });
             expect(payload.cfg_header.req_body_type).toBe('json');
             expect(payload.cfg_header.resp_body_type).toBe('text');
             expect(payload.request_body).toBe('{"req":true}');

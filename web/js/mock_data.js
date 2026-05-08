@@ -103,7 +103,7 @@
                     path: '/api/test1',
                 },
                 resp_cfg: {
-                    status_code: 0,
+                    status_code: 200,
                 },
                 resp_body_status: 0,
                 resp_body_type: 'json',

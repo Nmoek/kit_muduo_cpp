@@ -111,6 +111,10 @@ var httpProtocolModal = {
                                 <label for="request-path">请求路径</label>
                                 <input type="text" id="request-path" value="/api/" placeholder="输入请求路径" required>
                             </div>
+                            <div class="form-group">
+                                <label for="response-status-code">响应码</label>
+                                <input type="number" id="response-status-code" min="100" max="599" step="1" value="200" placeholder="200" required>
+                            </div>
                             
                             <div class="form-group">
                                 <div class="body-type-header">
@@ -163,6 +167,7 @@ var httpProtocolModal = {
 
                 const methodStr = modal.querySelector('input[name="request-method"]:checked')?.value;
                 const pathStr = document.getElementById('request-path').value;
+                const statusCodeStr = document.getElementById('response-status-code').value;
                 
                 // 获取导入的Body内容
                 const requestBodyType = document.getElementById('request-body-type').value;
@@ -181,6 +186,10 @@ var httpProtocolModal = {
 
                 if(!KitProxy.utils.validateHttpPath(pathStr)) {
                     throw new Error('请求路径必须以 / 开头');
+                }
+
+                if(!KitProxy.utils.validateHttpStatusCode(statusCodeStr)) {
+                    throw new Error('响应码必须是 100 到 599 的整数');
                 }
 
                 const requestValidation = KitProxy.bodySyntax
@@ -212,8 +221,9 @@ var httpProtocolModal = {
                     "path": pathStr,
                     "method": methodStr,
                 };
-                // 响应暂时为空
-                submit_protocol.resp_cfg = {};
+                submit_protocol.resp_cfg = {
+                    "status_code": Number(statusCodeStr),
+                };
 
                 submit_protocol.request_body = requestBody;
                 submit_protocol.response_body = responseBody;

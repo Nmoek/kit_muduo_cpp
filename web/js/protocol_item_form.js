@@ -146,24 +146,44 @@
 
         const endpointLabel = project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
         const endpointValue = project.mode === ProjectMode.SERVER ? project.listen_port : project.target_ip || '未设置';
+        const protocolText = ProtocolTypeStr[project.protocol_type] || '未知协议';
+        const modeText = ProjectModeStr[project.mode] || '未知模式';
+        const statusText = project.status ? '开启' : '未开启';
+        const patternHTML = Number(project.protocol_type) === ProtocolType.CUSTOM_TCP
+            ? `
+                <span class="service-context-item">
+                    <span class="meta-label">报文格式</span>
+                    <span class="meta-value">${escapeHTML(PatternTypeStr[project.pattern_type] || '未知格式')}</span>
+                </span>
+            `
+            : '';
 
         context.innerHTML = `
-            <span class="service-meta-item service-detail-chip">
-                <span class="meta-label">服务</span>
-                <span class="meta-value">${escapeHTML(project.name || '')}</span>
-            </span>
-            <span class="service-meta-item service-detail-chip">
-                <span class="meta-label">协议</span>
-                <span class="meta-value">${escapeHTML(ProtocolTypeStr[project.protocol_type] || '未知协议')}</span>
-            </span>
-            <span class="service-meta-item service-detail-chip">
-                <span class="meta-label">模式</span>
-                <span class="meta-value">${escapeHTML(ProjectModeStr[project.mode] || '未知模式')}</span>
-            </span>
-            <span class="service-meta-item service-detail-chip">
-                <span class="meta-label">${escapeHTML(endpointLabel)}</span>
-                <span class="meta-value">${escapeHTML(endpointValue)}</span>
-            </span>
+            <div class="service-context-summary">
+                <div class="service-context-title-block">
+                    <span class="service-context-kicker">当前测试服务</span>
+                    <div class="service-context-title-row">
+                        <strong class="service-context-title">${escapeHTML(project.name || '未命名服务')}</strong>
+                        <span class="service-context-status ${project.status ? 'is-active' : 'is-inactive'}">${escapeHTML(statusText)}</span>
+                    </div>
+                </div>
+                <span class="service-context-id">ID ${escapeHTML(project.id || '')}</span>
+            </div>
+            <div class="service-context-grid">
+                <span class="service-context-item">
+                    <span class="meta-label">协议种类</span>
+                    <span class="meta-value">${escapeHTML(protocolText)}</span>
+                </span>
+                <span class="service-context-item">
+                    <span class="meta-label">测试模式</span>
+                    <span class="meta-value">${escapeHTML(modeText)}</span>
+                </span>
+                <span class="service-context-item">
+                    <span class="meta-label">${escapeHTML(endpointLabel)}</span>
+                    <span class="meta-value">${escapeHTML(endpointValue)}</span>
+                </span>
+                ${patternHTML}
+            </div>
         `;
     }
 
@@ -214,19 +234,39 @@
     function renderHTTPFields(container, protocol) {
         const method = protocol && protocol.req_cfg ? protocol.req_cfg.method : 'GET';
         const path = protocol && protocol.req_cfg ? protocol.req_cfg.path : '/api/';
+        const respCfg = protocol && protocol.resp_cfg ? protocol.resp_cfg : {};
+        // 老数据可能没有响应码，表单统一按后端当前默认行为显示为 200。
+        const statusCode = utils.normalizeHttpStatusCode
+            ? utils.normalizeHttpStatusCode(respCfg.status_code, 200)
+            : (Number(respCfg.status_code) || 200);
         container.innerHTML = `
-            <div class="form-group protocol-http-method-group">
-                <label>请求方法</label>
-                <div class="method-radios protocol-method-radios">
-                    ${['GET', 'POST', 'PUT', 'DELETE'].map(item => `
-                        <label><input type="radio" name="request-method" value="${item}" ${method === item ? 'checked' : ''} required> ${item}</label>
-                    `).join('')}
+            <div class="protocol-config-card protocol-config-card-request">
+                <div class="protocol-config-card-title">请求匹配</div>
+                <div class="protocol-config-card-fields">
+                    <div class="form-group protocol-http-method-group">
+                        <label>请求方法</label>
+                        <div class="method-radios protocol-method-radios">
+                            ${['GET', 'POST', 'PUT', 'DELETE'].map(item => `
+                                <label><input type="radio" name="request-method" value="${item}" ${method === item ? 'checked' : ''} required> ${item}</label>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="form-group protocol-http-path-group">
+                        <label for="request-path">请求路径</label>
+                        <input type="text" id="request-path" value="${escapeHTML(path || '/api/')}" placeholder="输入请求路径" required>
+                        <div class="path-hint">必须以 / 开头，例如：/api/v1/test</div>
+                    </div>
                 </div>
             </div>
-            <div class="form-group protocol-http-path-group">
-                <label for="request-path">请求路径</label>
-                <input type="text" id="request-path" value="${escapeHTML(path || '/api/')}" placeholder="输入请求路径" required>
-                <div class="path-hint">必须以 / 开头，例如：/api/v1/test</div>
+            <div class="protocol-config-card protocol-config-card-response">
+                <div class="protocol-config-card-title">响应行为</div>
+                <div class="protocol-config-card-fields">
+                    <div class="form-group protocol-http-status-group">
+                        <label for="response-status-code">响应码</label>
+                        <input type="number" id="response-status-code" min="100" max="599" step="1" value="${escapeHTML(statusCode)}" placeholder="200" required>
+                        <div class="path-hint">填写 100 - 599 的 HTTP 状态码</div>
+                    </div>
+                </div>
             </div>
         `;
     }
@@ -266,34 +306,38 @@
         pageState.respPatternFields = clone(respCfg.common_fields || []);
 
         container.innerHTML = `
-            <div class="protocol-config-subsection protocol-config-subsection-request">
-                <div class="protocol-config-subsection-title">请求侧配置</div>
-                <div class="form-group">
-                <label for="req-function-code-value">请求功能码</label>
-                <input id="req-function-code-value" class="req-function-code-value" value="${escapeHTML(reqCfg.function_code_filed_value || '')}" placeholder="示例：H010203">
-                <div class="path-hint">需要填写时必须以 H 开头</div>
-                </div>
-                <div class="form-group">
-                <div class="pattern-header">
-                    <label>校验请求头部</label>
-                    <span class="import-status">${escapeHTML(summarizePatternFields(pageState.reqPatternFields))}</span>
-                </div>
-                <button type="button" class="pattern-config-btn" id="req-pattern-infos">配置请求头部字段</button>
+            <div class="protocol-config-card protocol-config-card-request">
+                <div class="protocol-config-card-title">请求侧配置</div>
+                <div class="protocol-config-card-fields">
+                    <div class="form-group">
+                        <label for="req-function-code-value">请求功能码</label>
+                        <input id="req-function-code-value" class="req-function-code-value" value="${escapeHTML(reqCfg.function_code_filed_value || '')}" placeholder="示例：H010203">
+                        <div class="path-hint">需要填写时必须以 H 开头</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="pattern-header">
+                            <label>校验请求头部</label>
+                            <span class="import-status">${escapeHTML(summarizePatternFields(pageState.reqPatternFields))}</span>
+                        </div>
+                        <button type="button" class="pattern-config-btn" id="req-pattern-infos">配置请求头部字段</button>
+                    </div>
                 </div>
             </div>
-            <div class="protocol-config-subsection protocol-config-subsection-response">
-                <div class="protocol-config-subsection-title">响应侧配置</div>
-                <div class="form-group">
-                <label for="resp-function-code-value">响应功能码</label>
-                <input id="resp-function-code-value" class="resp-function-code-value" value="${escapeHTML(respCfg.function_code_filed_value || '')}" placeholder="示例：H010203">
-                <div class="path-hint">需要填写时必须以 H 开头</div>
-                </div>
-                <div class="form-group">
-                <div class="pattern-header">
-                    <label>目标响应头部</label>
-                    <span class="import-status">${escapeHTML(summarizePatternFields(pageState.respPatternFields))}</span>
-                </div>
-                <button type="button" class="pattern-config-btn" id="resp-pattern-infos">配置响应头部字段</button>
+            <div class="protocol-config-card protocol-config-card-response">
+                <div class="protocol-config-card-title">响应侧配置</div>
+                <div class="protocol-config-card-fields">
+                    <div class="form-group">
+                        <label for="resp-function-code-value">响应功能码</label>
+                        <input id="resp-function-code-value" class="resp-function-code-value" value="${escapeHTML(respCfg.function_code_filed_value || '')}" placeholder="示例：H010203">
+                        <div class="path-hint">需要填写时必须以 H 开头</div>
+                    </div>
+                    <div class="form-group">
+                        <div class="pattern-header">
+                            <label>目标响应头部</label>
+                            <span class="import-status">${escapeHTML(summarizePatternFields(pageState.respPatternFields))}</span>
+                        </div>
+                        <button type="button" class="pattern-config-btn" id="resp-pattern-infos">配置响应头部字段</button>
+                    </div>
                 </div>
             </div>
         `;
@@ -455,6 +499,7 @@
     function collectHTTPCfg() {
         const method = document.querySelector('input[name="request-method"]:checked')?.value;
         const path = document.getElementById('request-path')?.value.trim() || '';
+        const statusCodeValue = document.getElementById('response-status-code')?.value.trim() || '';
 
         if (!method) {
             throw new Error('请选择请求方法');
@@ -462,10 +507,13 @@
         if (!utils.validateHttpPath(path)) {
             throw new Error('请求路径必须以 / 开头');
         }
+        if (!utils.validateHttpStatusCode(statusCodeValue)) {
+            throw new Error('响应码必须是 100 到 599 的整数');
+        }
 
         return {
             req_cfg: { method, path },
-            resp_cfg: pageState.mode === 'edit' ? clone(pageState.initialRespCfg) : {},
+            resp_cfg: { status_code: Number(statusCodeValue) },
         };
     }
 

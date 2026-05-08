@@ -13,15 +13,21 @@ function updateProtocolItem(id_str, protocol) {
     // 方法名称
     protocolItem.querySelector('.protocol-field[data-field-name="method"]').querySelector('.value').textContent = protocol.req_cfg.method;
     // 请求路径
-    protocolItem.querySelector('.protocol-field[data-field-name="path"]').querySelector(".value").textContent = protocol.req_cfg.path;
+    const pathValue = protocolItem.querySelector('.protocol-field[data-field-name="path"]').querySelector(".value");
+    pathValue.textContent = protocol.req_cfg.path;
+    pathValue.title = protocol.req_cfg.path;
+    const statusField = protocolItem.querySelector('.protocol-field[data-field-name="status_code"]');
+    if (statusField) {
+        statusField.querySelector('.value').textContent = KitProxy.utils.normalizeHttpStatusCode(protocol.resp_cfg && protocol.resp_cfg.status_code, 200);
+    }
 
     // 请求Body
     const request_body_div =  protocolItem.querySelector('.protocol-field[data-field-name="request-body"]');
-    request_body_div.querySelector('.body-indicator').className = `body-indicator ${protocol.req_body_status === 1 ? "has-body" : "no-body"}`;
+    request_body_div.querySelector('.body-indicator').className = `body-indicator ${protocol.req_body_status === 1 ? "has" : "no"}`;
     request_body_div.querySelector('.value').textContent = `${protocol.req_body_status === 1 ? '已设置' : '未设置'}`;
     // 响应Body
     const response_body_div =  protocolItem.querySelector('.protocol-field[data-field-name="response-body"]');
-    response_body_div.querySelector('.body-indicator').className = `body-indicator ${protocol.resp_body_status === 1 ? "has-body" : "no-body"}`;
+    response_body_div.querySelector('.body-indicator').className = `body-indicator ${protocol.resp_body_status === 1 ? "has" : "no"}`;
     response_body_div.querySelector('.value').textContent = `${protocol.resp_body_status === 1 ? '已设置' : '未设置'}`;
 
 
@@ -276,6 +282,10 @@ async function updateProtocolHttpMethod(protocolItemId, newMethod) {
     return true;
 };
 
+async function updateProtocolHttpStatus(protocolItemId, newStatusCode) {
+    return updateProtocolCfg(protocolItemId, 2, 'status_code', Number(newStatusCode));
+}
+
 
 // 按json字段更新
 async function updateProtocolCfg(protocolItemId, req_or_resp, key, newValue) {
@@ -486,193 +496,328 @@ function bindSimpleModalClose(modal) {
     return KitProxy.utils.bindModalCloseActions(modal);
 }
 
+let activeProtocolInlineFieldEditor = null;
+
 /**
- * 绑定 HTTP 请求方法点击编辑弹窗。
+ * 创建协议项详情字段的行内编辑能力。
+ * @param {{
+ *   field: HTMLElement;
+ *   inputType: 'select' | 'text' | 'number';
+ *   options?: Array<string>;
+ *   placeholder?: string;
+ *   hint?: string;
+ *   min?: number;
+ *   max?: number;
+ *   validate: Function;
+ *   onSave: Function;
+ *   normalize?: Function;
+ * }} options
+ */
+function bindProtocolInlineFieldEditor(options) {
+    const field = options.field;
+    if (!field) return;
+    const valueElement = field.querySelector('.value');
+    if (!valueElement) return;
+
+    let isEditing = false;
+    let isSaving = false;
+    let originalValue = '';
+    let editorElement = null;
+    let controlElement = null;
+    let errorElement = null;
+
+    function setBusy(busy) {
+        isSaving = Boolean(busy);
+        if (controlElement) controlElement.disabled = isSaving;
+        if (editorElement) {
+            editorElement.querySelectorAll('button').forEach(button => {
+                button.disabled = isSaving;
+            });
+        }
+    }
+
+    function showError(message) {
+        if (!errorElement) return;
+        errorElement.textContent = message || '';
+        field.classList.toggle('has-inline-error', Boolean(message));
+    }
+
+    function clearEditor(displayValue) {
+        if (editorElement) {
+            KitProxy.utils.removeDomNode(editorElement);
+        }
+        const normalizedDisplayValue = String(displayValue == null ? '' : displayValue);
+        valueElement.textContent = normalizedDisplayValue;
+        if (field.classList.contains('path') || field.classList.contains('tcp-function-code')) {
+            valueElement.title = normalizedDisplayValue;
+        }
+        valueElement.style.display = '';
+        field.classList.remove('is-inline-editing', 'has-inline-error');
+        field.removeAttribute('aria-busy');
+        editorElement = null;
+        controlElement = null;
+        errorElement = null;
+        isEditing = false;
+        isSaving = false;
+        if (activeProtocolInlineFieldEditor === editorApi) {
+            activeProtocolInlineFieldEditor = null;
+        }
+    }
+
+    function cancelEdit() {
+        if (!isEditing || isSaving) return;
+        clearEditor(originalValue);
+    }
+
+    async function saveEdit() {
+        if (!isEditing || isSaving || !controlElement) return;
+
+        const rawValue = String(controlElement.value || '').trim();
+        const validation = options.validate(rawValue);
+        if (validation) {
+            showError(validation);
+            controlElement.focus();
+            return;
+        }
+
+        const nextValue = typeof options.normalize === 'function'
+            ? options.normalize(rawValue)
+            : rawValue;
+
+        if (String(nextValue) === String(originalValue)) {
+            clearEditor(originalValue);
+            return;
+        }
+
+        try {
+            setBusy(true);
+            field.setAttribute('aria-busy', 'true');
+            const ok = await options.onSave(nextValue);
+            if (!ok) {
+                showError('保存失败，请稍后重试');
+                return;
+            }
+            clearEditor(String(nextValue));
+        } catch (error) {
+            showError(error && error.message ? error.message : '保存失败，请稍后重试');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    function createControl() {
+        if (options.inputType === 'select') {
+            const select = document.createElement('select');
+            select.className = 'inline-field-control';
+            (options.options || []).forEach(item => {
+                const option = document.createElement('option');
+                option.value = item;
+                option.textContent = item;
+                select.appendChild(option);
+            });
+            select.value = originalValue;
+            return select;
+        }
+
+        const input = document.createElement('input');
+        input.className = 'inline-field-control';
+        input.type = options.inputType === 'number' ? 'number' : 'text';
+        input.value = originalValue;
+        input.placeholder = options.placeholder || '';
+        if (Number.isFinite(options.min)) input.min = String(options.min);
+        if (Number.isFinite(options.max)) input.max = String(options.max);
+        if (options.inputType === 'number') input.step = '1';
+        return input;
+    }
+
+    function enterEditMode(event) {
+        if (event) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+        if (isSaving) return;
+
+        if (activeProtocolInlineFieldEditor && activeProtocolInlineFieldEditor !== editorApi) {
+            activeProtocolInlineFieldEditor.cancel();
+        }
+
+        if (isEditing) {
+            if (controlElement) controlElement.focus();
+            return;
+        }
+
+        originalValue = valueElement.textContent.trim();
+        isEditing = true;
+        activeProtocolInlineFieldEditor = editorApi;
+        field.classList.add('is-inline-editing');
+        field.setAttribute('aria-busy', 'false');
+        valueElement.style.display = 'none';
+
+        editorElement = document.createElement('div');
+        editorElement.className = 'inline-field-editor';
+        controlElement = createControl();
+        errorElement = document.createElement('div');
+        errorElement.className = 'inline-field-error';
+        errorElement.setAttribute('aria-live', 'polite');
+
+        const actionsElement = document.createElement('div');
+        actionsElement.className = 'inline-field-actions';
+        actionsElement.innerHTML = `
+            <button type="button" class="inline-field-save">保存</button>
+            <button type="button" class="inline-field-cancel">取消</button>
+        `;
+
+        editorElement.appendChild(controlElement);
+        if (options.hint) {
+            const hintElement = document.createElement('div');
+            hintElement.className = 'inline-field-hint';
+            hintElement.textContent = options.hint;
+            editorElement.appendChild(hintElement);
+        }
+        editorElement.appendChild(actionsElement);
+        editorElement.appendChild(errorElement);
+        valueElement.insertAdjacentElement('afterend', editorElement);
+
+        editorElement.addEventListener('click', function(editorEvent) {
+            editorEvent.stopPropagation();
+        });
+        controlElement.addEventListener('keydown', function(keyEvent) {
+            if (keyEvent.key === 'Enter') {
+                keyEvent.preventDefault();
+                saveEdit();
+            } else if (keyEvent.key === 'Escape') {
+                keyEvent.preventDefault();
+                cancelEdit();
+            }
+        });
+        controlElement.addEventListener('input', function() {
+            showError('');
+        });
+        editorElement.querySelector('.inline-field-save').addEventListener('click', function(saveEvent) {
+            saveEvent.preventDefault();
+            saveEvent.stopPropagation();
+            saveEdit();
+        });
+        editorElement.querySelector('.inline-field-cancel').addEventListener('click', function(cancelEvent) {
+            cancelEvent.preventDefault();
+            cancelEvent.stopPropagation();
+            cancelEdit();
+        });
+
+        controlElement.focus();
+        if (typeof controlElement.select === 'function') {
+            controlElement.select();
+        }
+    }
+
+    const editorApi = {
+        cancel: cancelEdit,
+    };
+
+    field.classList.add('editable-field');
+    field.tabIndex = 0;
+    field.addEventListener('click', enterEditMode);
+    field.addEventListener('keydown', function(event) {
+        if (isEditing) return;
+        if (event.key === 'Enter' || event.key === ' ') {
+            enterEditMode(event);
+        }
+    });
+}
+
+/**
+ * 绑定 HTTP 请求方法行内编辑。
  * @param {HTMLElement} protocolItem
  */
 function bindProtocolHttpMethodEditor(protocolItem) {
     const methodField = protocolItem.querySelector('.protocol-field.req-cfg[data-field-name="method"]');
     if (!methodField) return;
 
-    methodField.style.cursor = 'pointer';
-    methodField.addEventListener('click', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const valueElement = methodField.querySelector('.value');
-        if (!valueElement) return;
-
-        const currentMethod = valueElement.textContent.trim() || 'GET';
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="edit-method-modal">
-                <div class="modal-header">
-                    <h3>修改请求方法</h3>
-                    <button class="close-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="method-radios">
-                        <label><input type="radio" name="edit-method" value="GET" ${currentMethod === 'GET' ? 'checked' : ''}> GET</label>
-                        <label><input type="radio" name="edit-method" value="POST" ${currentMethod === 'POST' ? 'checked' : ''}> POST</label>
-                        <label><input type="radio" name="edit-method" value="PUT" ${currentMethod === 'PUT' ? 'checked' : ''}> PUT</label>
-                        <label><input type="radio" name="edit-method" value="DELETE" ${currentMethod === 'DELETE' ? 'checked' : ''}> DELETE</label>
-                    </div>
-                    <div class="form-actions">
-                        <button type="button" class="cancel-btn">取消</button>
-                        <button type="button" class="confirm-btn">确定修改</button>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-
-        const closeModal = bindSimpleModalClose(modal);
-        modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
-            confirmEvent.preventDefault();
-            confirmEvent.stopPropagation();
-
-            const checked = modal.querySelector('input[name="edit-method"]:checked');
-            const newMethod = checked ? checked.value : '';
-            const ok = await updateProtocolHttpMethod(ExtractId(protocolItem.id), newMethod);
-
-            if (ok) {
-                valueElement.textContent = newMethod;
-                alert('http请求方法修改成功!');
-                closeModal();
-            } else {
-                alert('http请求方法修改失败!');
-            }
-        });
+    bindProtocolInlineFieldEditor({
+        field: methodField,
+        inputType: 'select',
+        options: ['GET', 'POST', 'PUT', 'DELETE'],
+        validate: function(value) {
+            return value ? '' : '请选择请求方法';
+        },
+        onSave: function(value) {
+            return updateProtocolHttpMethod(ExtractId(protocolItem.id), value);
+        },
     });
 }
 
 /**
- * 绑定 HTTP 请求路径点击编辑弹窗。
+ * 绑定 HTTP 请求路径行内编辑。
  * @param {HTMLElement} protocolItem
  */
 function bindProtocolHttpPathEditor(protocolItem) {
     const pathField = protocolItem.querySelector('.protocol-field.req-cfg[data-field-name="path"]');
     if (!pathField) return;
 
-    pathField.style.cursor = 'pointer';
-    pathField.addEventListener('click', function(event) {
-        event.preventDefault();
-        event.stopPropagation();
-
-        const valueElement = pathField.querySelector('.value');
-        if (!valueElement) return;
-
-        const currentPath = valueElement.textContent.trim() || '/api/';
-        const escape = KitProxy.utils.escapeHTML;
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="edit-path-modal">
-                <div class="modal-header">
-                    <h3>修改请求路径</h3>
-                    <button class="close-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <div class="form-group">
-                        <label for="new-path">请求路径</label>
-                        <input type="text" id="new-path" value="${escape(currentPath)}" placeholder="输入请求路径" required>
-                        <div class="path-hint">必须以/开头，例如：/api/v1/test</div>
-                    </div>
-                    <div class="form-actions">
-                        <button type="button" class="cancel-btn">取消</button>
-                        <button type="button" class="confirm-btn">确定修改</button>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-
-        const closeModal = bindSimpleModalClose(modal);
-        modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
-            confirmEvent.preventDefault();
-            confirmEvent.stopPropagation();
-
-            const newPath = modal.querySelector('#new-path').value.trim();
-            if (!KitProxy.utils.validateHttpPath(newPath)) {
-                alert('路径必须以/开头');
-                return;
-            }
-
-            const ok = await updateProtocolHttpUrl(ExtractId(protocolItem.id), newPath);
-            if (ok) {
-                valueElement.textContent = newPath;
-                alert('http路径修改成功!');
-                closeModal();
-            } else {
-                alert('http路径修改失败!');
-            }
-        });
+    bindProtocolInlineFieldEditor({
+        field: pathField,
+        inputType: 'text',
+        placeholder: '/api/v1/test',
+        hint: '必须以 / 开头',
+        validate: function(value) {
+            return KitProxy.utils.validateHttpPath(value) ? '' : '路径必须以 / 开头';
+        },
+        onSave: function(value) {
+            return updateProtocolHttpUrl(ExtractId(protocolItem.id), value);
+        },
     });
 }
 
 /**
- * 绑定 TCP 功能码点击编辑弹窗。
+ * 绑定 HTTP 响应码行内编辑。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolHttpStatusEditor(protocolItem) {
+    const statusField = protocolItem.querySelector('.protocol-field.resp-cfg[data-field-name="status_code"]');
+    if (!statusField) return;
+
+    bindProtocolInlineFieldEditor({
+        field: statusField,
+        inputType: 'number',
+        min: 100,
+        max: 599,
+        placeholder: '200',
+        hint: '范围 100 - 599',
+        validate: function(value) {
+            return KitProxy.utils.validateHttpStatusCode(value) ? '' : '响应码必须是 100 到 599 的整数';
+        },
+        normalize: function(value) {
+            return Number(value);
+        },
+        onSave: function(value) {
+            return updateProtocolHttpStatus(ExtractId(protocolItem.id), value);
+        },
+    });
+}
+
+/**
+ * 绑定 TCP 功能码行内编辑。
  * @param {HTMLElement} protocolItem
  */
 function bindProtocolTcpFunctionCodeEditor(protocolItem) {
     protocolItem.querySelectorAll('.protocol-field[data-field-name="function_code_filed_value"]').forEach(field => {
-        field.style.cursor = 'pointer';
-
-        field.addEventListener('click', function(event) {
-            event.preventDefault();
-            event.stopPropagation();
-
-            const valueElement = field.querySelector('.value');
-            if (!valueElement) return;
-
-            const reqOrResp = field.classList.contains('resp-cfg') ? 2 : 1;
-            const title = reqOrResp === 1 ? '修改请求功能码' : '修改响应功能码';
-            const currentCode = valueElement.textContent.trim();
-            const escape = KitProxy.utils.escapeHTML;
-            const modal = document.createElement('div');
-            modal.className = 'modal-overlay';
-            modal.innerHTML = `
-                <div class="edit-path-modal">
-                    <div class="modal-header">
-                        <h3>${title}</h3>
-                        <button class="close-modal">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label for="new-function-code">功能码</label>
-                            <input type="text" id="new-function-code" value="${escape(currentCode)}" placeholder="例如：H1000">
-                        </div>
-                        <div class="form-actions">
-                            <button type="button" class="cancel-btn">取消</button>
-                            <button type="button" class="confirm-btn">确定修改</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            document.body.appendChild(modal);
-
-            const closeModal = bindSimpleModalClose(modal);
-            modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
-                confirmEvent.preventDefault();
-                confirmEvent.stopPropagation();
-
-                const newCode = modal.querySelector('#new-function-code').value.trim();
-                const ok = await updateProtocolCfg(
+        const reqOrResp = field.classList.contains('resp-cfg') ? 2 : 1;
+        bindProtocolInlineFieldEditor({
+            field,
+            inputType: 'text',
+            placeholder: 'H1000',
+            hint: '需要填写时必须以 H 开头',
+            validate: function(value) {
+                return !value || value.startsWith('H') ? '' : '功能码必须以 H 开头';
+            },
+            onSave: function(value) {
+                return updateProtocolCfg(
                     ExtractId(protocolItem.id),
                     reqOrResp,
                     'function_code_filed_value',
-                    newCode,
+                    value,
                 );
-
-                if (ok) {
-                    valueElement.textContent = newCode;
-                    alert('功能码修改成功!');
-                    closeModal();
-                } else {
-                    alert('功能码修改失败!');
-                }
-            });
+            },
         });
     });
 }
@@ -745,6 +890,7 @@ function bindProtocolTcpCommonFieldsEditor(protocolItem) {
 function bindProtocolFieldEditors(protocolItem) {
     bindProtocolHttpMethodEditor(protocolItem);
     bindProtocolHttpPathEditor(protocolItem);
+    bindProtocolHttpStatusEditor(protocolItem);
     bindProtocolTcpFunctionCodeEditor(protocolItem);
     bindProtocolTcpCommonFieldsEditor(protocolItem);
 }
@@ -1732,10 +1878,7 @@ function updateServiceFilterSummary(visibleCount, totalCount) {
     if (!summary || !KitProxy.serviceFilters) return;
 
     const description = KitProxy.serviceFilters.describe(serviceFilterState.filters);
-    const suffix = serviceFilterState.active
-        ? `，当前页匹配 ${visibleCount}/${totalCount} 条，每页 ${servicePageState.pageSize} 条`
-        : `，当前页 ${totalCount} 条，每页 ${servicePageState.pageSize} 条`;
-    summary.textContent = `当前页筛选：${description}${suffix}`;
+    summary.textContent = `当前页筛选：${description}`;
 }
 
 function setServiceFilterError(message) {
@@ -1807,7 +1950,6 @@ function resetServiceFilters() {
 function bindServiceFilterActions() {
     const applyBtn = document.getElementById('apply-service-filter');
     const resetBtn = document.getElementById('reset-service-filter');
-    const pageSizeSelect = document.getElementById('service-page-size');
 
     if (applyBtn) {
         applyBtn.addEventListener('click', applyServiceFiltersFromDOM);
@@ -1816,21 +1958,6 @@ function bindServiceFilterActions() {
     if (resetBtn) {
         resetBtn.addEventListener('click', resetServiceFilters);
     }
-
-    if (pageSizeSelect) {
-        pageSizeSelect.value = String(servicePageState.pageSize);
-        pageSizeSelect.addEventListener('change', function() {
-            const nextPageSize = Number(this.value);
-            if (![10, 20, 50].includes(nextPageSize)) {
-                this.value = String(servicePageState.pageSize);
-                return;
-            }
-
-            servicePageState.pageSize = nextPageSize;
-            servicePageState.currentPage = 1;
-            loadAllProjects(1);
-        });
-    }
 }
 
 /**
@@ -1838,6 +1965,12 @@ function bindServiceFilterActions() {
  */
 function renderServicePagination() {
     KitProxy.pagination.render(document.getElementById('service-pagination'), servicePageState, {
+        pageSizeOptions: KitProxy.pagination.DEFAULT_PAGE_SIZE_OPTIONS,
+        onPageSizeChange: function(pageSize) {
+            servicePageState.pageSize = pageSize;
+            servicePageState.currentPage = 1;
+            loadAllProjects(1);
+        },
         onPrev: function() {
             loadAllProjects(servicePageState.currentPage - 1);
         },

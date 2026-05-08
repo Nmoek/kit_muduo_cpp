@@ -1,6 +1,7 @@
 (function initKitProxyPagination(global) {
     const KitProxy = global.KitProxy || (global.KitProxy = {});
     const DEFAULT_PAGE_SIZE = 5;
+    const DEFAULT_PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 
     /**
      * 创建页面级分页状态。
@@ -60,22 +61,49 @@
     }
 
     /**
-     * 渲染简单上一页/下一页分页条。
+     * 渲染分页条；需要时可把“每页数量”选择器放在同一控件中。
      * @param {HTMLElement | null} container
-     * @param {{ currentPage: number; hasMore: boolean; }} state
-     * @param {{ onPrev?: Function; onNext?: Function; }} handlers
+     * @param {{ currentPage: number; pageSize?: number; hasMore: boolean; }} state
+     * @param {{ onPrev?: Function; onNext?: Function; onPageSizeChange?: Function; pageSizeOptions?: number[]; pageSizeLabel?: string; }} handlers
      */
     function render(container, state, handlers = {}) {
         if (!container) return;
 
+        const pageSizeOptions = Array.isArray(handlers.pageSizeOptions)
+            ? handlers.pageSizeOptions
+                .map(option => Number(option))
+                .filter(option => Number.isInteger(option) && option > 0)
+            : [];
+        const shouldShowPageSize = pageSizeOptions.length > 0 && typeof handlers.onPageSizeChange === 'function';
+        const optionValues = shouldShowPageSize && !pageSizeOptions.includes(Number(state.pageSize))
+            ? [Number(state.pageSize)].concat(pageSizeOptions).filter(option => Number.isInteger(option) && option > 0)
+            : pageSizeOptions;
+        container.classList.toggle('has-page-size-control', shouldShowPageSize);
+        const pageSizeControl = shouldShowPageSize
+            ? `
+                <label class="service-page-size-control pagination-page-size-control">
+                    <span>${handlers.pageSizeLabel || '每页数量'}</span>
+                    <select class="pagination-page-size" aria-label="${handlers.pageSizeLabel || '每页数量'}">
+                        ${optionValues.map(option => `
+                            <option value="${option}" ${Number(state.pageSize) === option ? 'selected' : ''}>${option}</option>
+                        `).join('')}
+                    </select>
+                </label>
+            `
+            : '';
+
         container.innerHTML = `
-            <button type="button" class="pagination-btn pagination-prev" ${state.currentPage <= 1 ? 'disabled' : ''}>上一页</button>
-            <span class="pagination-current">第 ${state.currentPage} 页</span>
-            <button type="button" class="pagination-btn pagination-next" ${state.hasMore ? '' : 'disabled'}>下一页</button>
+            ${pageSizeControl}
+            <div class="pagination-nav">
+                <button type="button" class="pagination-btn pagination-prev" ${state.currentPage <= 1 ? 'disabled' : ''}>上一页</button>
+                <span class="pagination-current">第 ${state.currentPage} 页</span>
+                <button type="button" class="pagination-btn pagination-next" ${state.hasMore ? '' : 'disabled'}>下一页</button>
+            </div>
         `;
 
         const prevBtn = container.querySelector('.pagination-prev');
         const nextBtn = container.querySelector('.pagination-next');
+        const pageSizeSelect = container.querySelector('.pagination-page-size');
 
         if (prevBtn && typeof handlers.onPrev === 'function') {
             prevBtn.addEventListener('click', function() {
@@ -88,10 +116,23 @@
                 if (state.hasMore) handlers.onNext();
             });
         }
+
+        if (pageSizeSelect && shouldShowPageSize) {
+            pageSizeSelect.addEventListener('change', function() {
+                const nextPageSize = Number(this.value);
+                if (!optionValues.includes(nextPageSize)) {
+                    this.value = String(state.pageSize);
+                    return;
+                }
+
+                handlers.onPageSizeChange(nextPageSize);
+            });
+        }
     }
 
     KitProxy.pagination = {
         DEFAULT_PAGE_SIZE,
+        DEFAULT_PAGE_SIZE_OPTIONS,
         createState,
         getOffset,
         getRequestLimit,

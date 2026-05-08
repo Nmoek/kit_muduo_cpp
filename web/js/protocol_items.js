@@ -170,6 +170,12 @@
      */
     function renderProtocolPagination() {
         KitProxy.pagination.render(document.getElementById('protocol-pagination'), pageState, {
+            pageSizeOptions: KitProxy.pagination.DEFAULT_PAGE_SIZE_OPTIONS,
+            onPageSizeChange: function(pageSize) {
+                pageState.pageSize = pageSize;
+                pageState.currentPage = 1;
+                loadProtocolItems(1);
+            },
             onPrev: function() {
                 loadProtocolItems(pageState.currentPage - 1);
             },

@@ -16,21 +16,32 @@ var httpProtocolItemGrids = {
         const escape = KitProxy.utils && KitProxy.utils.escapeHTML
             ? KitProxy.utils.escapeHTML
             : function(value) { return String(value == null ? '' : value); };
+        const reqCfg = protocol.req_cfg || {};
+        const respCfg = protocol.resp_cfg || {};
+        // 老数据可能没有响应码，卡片统一按后端当前默认行为显示为 200。
+        const statusCode = KitProxy.utils && typeof KitProxy.utils.normalizeHttpStatusCode === 'function'
+            ? KitProxy.utils.normalizeHttpStatusCode(respCfg.status_code, 200)
+            : (Number(respCfg.status_code) || 200);
+        const requestPath = reqCfg.path || '';
         grids.innerHTML = `
-            <div class="protocol-field req-cfg" data-field-name="method">
-                <label>期望请求方法</label>
-                <div class="value">${escape(protocol.req_cfg.method || '')}</div>
+            <div class="protocol-field req-cfg editable-field method" data-field-name="method" title="点击编辑请求方法">
+                <label><span class="field-label-text">期望请求方法</span><span class="field-edit-hint">编辑</span></label>
+                <div class="value">${escape(reqCfg.method || '')}</div>
             </div>
-            <div class="protocol-field req-cfg" data-field-name="path">
-                <label>请求路径</label>
-                <div class="value">${escape(protocol.req_cfg.path || '')}</div>
+            <div class="protocol-field req-cfg editable-field path" data-field-name="path" title="点击编辑请求路径">
+                <label><span class="field-label-text">请求路径</span><span class="field-edit-hint">编辑</span></label>
+                <div class="value" title="${escape(requestPath)}">${escape(requestPath)}</div>
             </div>
-            <div class="protocol-field request-body">
-                <label><span class="body-indicator ${protocol.req_body_status === 1 ? 'has' : 'no'}"></span>校验请求Body</label>
+            <div class="protocol-field resp-cfg editable-field status" data-field-name="status_code" title="点击编辑响应码">
+                <label><span class="field-label-text">目标响应码</span><span class="field-edit-hint">编辑</span></label>
+                <div class="value">${escape(statusCode)}</div>
+            </div>
+            <div class="protocol-field request-body" data-field-name="request-body">
+                <label><span class="field-label-main"><span class="body-indicator ${protocol.req_body_status === 1 ? 'has' : 'no'}"></span><span class="field-label-text">校验请求Body</span></span></label>
                 <div class="value">${protocol.req_body_status === 1 ? '已设置' : '未设置'}</div>
             </div>
-            <div class="protocol-field response-body">
-                <label><span class="body-indicator ${protocol.resp_body_status === 1 ? 'has' : 'no'}"></span>目标响应Body</label>
+            <div class="protocol-field response-body" data-field-name="response-body">
+                <label><span class="field-label-main"><span class="body-indicator ${protocol.resp_body_status === 1 ? 'has' : 'no'}"></span><span class="field-label-text">目标响应Body</span></span></label>
                 <div class="value">${protocol.resp_body_status === 1 ? '已设置' : '未设置'}</div>
             </div>
         `;
@@ -113,31 +124,33 @@ var customTcpProtocolItemGrids = {
         const respCfg = protocol.resp_cfg || {};
         const reqCommonFields = Array.isArray(reqCfg.common_fields) ? reqCfg.common_fields : [];
         const respCommonFields = Array.isArray(respCfg.common_fields) ? respCfg.common_fields : [];
+        const reqFunctionCode = reqCfg.function_code_filed_value || '';
+        const respFunctionCode = respCfg.function_code_filed_value || '';
         grids.innerHTML = `
-            <div class="protocol-field req-cfg" data-field-name="function_code_filed_value">
-                <label>请求功能码</label>
-                <div class="value">${escape(reqCfg.function_code_filed_value || '')}</div>
+            <div class="protocol-field req-cfg editable-field tcp-function-code" data-field-name="function_code_filed_value" title="点击编辑请求功能码">
+                <label><span class="field-label-text">请求功能码</span><span class="field-edit-hint">编辑</span></label>
+                <div class="value" title="${escape(reqFunctionCode)}">${escape(reqFunctionCode)}</div>
             </div>
             <div class="protocol-field req-cfg" data-field-name="common_fields">
-                <label><span class="header-fields-indicator ${reqCommonFields.length ? 'has' : 'no'}"></span>请求头部字段</label>
+                <label><span class="field-label-main"><span class="header-fields-indicator ${reqCommonFields.length ? 'has' : 'no'}"></span><span class="field-label-text">请求头部字段</span></span></label>
                 <div class="value" id="${escape(protocol.id)}-header-fields">${reqCommonFields.length ? '已设置' : '未设置'}</div>
             </div>
 
-            <div class="protocol-field request-body">
-                <label><span class="body-indicator ${protocol.req_body_status === 1 ? 'has' : 'no'}"></span>校验请求Body</label>
+            <div class="protocol-field request-body" data-field-name="request-body">
+                <label><span class="field-label-main"><span class="body-indicator ${protocol.req_body_status === 1 ? 'has' : 'no'}"></span><span class="field-label-text">校验请求Body</span></span></label>
                 <div class="value">${protocol.req_body_status === 1 ? '已设置' : '未设置'}</div>
             </div>
 
-            <div class="protocol-field resp-cfg" data-field-name="function_code_filed_value">
-                <label>响应功能码</label>
-                <div class="value">${escape(respCfg.function_code_filed_value || '')}</div>
+            <div class="protocol-field resp-cfg editable-field tcp-function-code" data-field-name="function_code_filed_value" title="点击编辑响应功能码">
+                <label><span class="field-label-text">响应功能码</span><span class="field-edit-hint">编辑</span></label>
+                <div class="value" title="${escape(respFunctionCode)}">${escape(respFunctionCode)}</div>
             </div>
             <div class="protocol-field resp-cfg" data-field-name="common_fields">
-                <label><span class="header-fields-indicator ${respCommonFields.length ? 'has' : 'no'}"></span>响应头部字段</label>
+                <label><span class="field-label-main"><span class="header-fields-indicator ${respCommonFields.length ? 'has' : 'no'}"></span><span class="field-label-text">响应头部字段</span></span></label>
                 <div class="value">${respCommonFields.length ? '已设置' : '未设置'}</div>
             </div>
-            <div class="protocol-field response-body">
-                <label><span class="body-indicator ${protocol.resp_body_status === 1 ? 'has' : 'no'}"></span>目标响应Body</label>
+            <div class="protocol-field response-body" data-field-name="response-body">
+                <label><span class="field-label-main"><span class="body-indicator ${protocol.resp_body_status === 1 ? 'has' : 'no'}"></span><span class="field-label-text">目标响应Body</span></span></label>
                 <div class="value">${protocol.resp_body_status === 1 ? '已设置' : '未设置'}</div>
             </div>
         `;
