@@ -23,6 +23,7 @@ ProjectVo CovertProjectVo(const Project &p)
         p.m_targetIp,
         p.m_userId,
         p.m_status,
+        p.m_active,
         static_cast<int32_t>(p.m_patternType),
         p.m_ctime.toString()
     };

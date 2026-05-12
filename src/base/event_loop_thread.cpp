@@ -16,7 +16,7 @@ namespace kit_muduo {
 
 EventLoopThread::EventLoopThread(EventLoopThread::ThreadInitCb callback, const std::string &name)
     :_loop(nullptr)
-    ,_exiting(false)
+    ,_exiting(0)
     ,_thread(std::bind(&EventLoopThread::threadFunc, this), name)
     ,_callback(callback)
 {
@@ -31,12 +31,13 @@ EventLoopThread::~EventLoopThread()
 
 void EventLoopThread::quit()
 {
-    if(_exiting)
+    if(_exiting < 0)
     {
+        THREAD_F_WARN("event loop is exiting... \n");
         return;
     }
 
-    _exiting = true;
+    _exiting.store(-100);
     if(_loop)
     {
         _loop->quit();
@@ -46,11 +47,33 @@ void EventLoopThread::quit()
 
 EventLoop* EventLoopThread::startLoop()
 {
+    if(_exiting < 0)
+    {
+        THREAD_F_WARN("event loop is exiting... \n");
+        return nullptr;
+    }
+    if(_exiting > 0)
+    {
+        THREAD_F_WARN("event loop has started!\n");
+        return _loop.get();
+    }
+    ++_exiting;
     _thread.start(); // 每次创建EventLoop都创建一个新线程，并且把线程中的EventLoop对象"偷"出来
     std::unique_lock<std::mutex> lock(_mutex);
     _cond.wait(lock, [this](){
         return _loop != nullptr;
     });
+
+    return _loop.get();
+}
+
+EventLoop *EventLoopThread::getLoop() const 
+{
+    if(!isRunning())
+    {
+        THREAD_F_WARN("event loop is exiting... \n");
+        return nullptr;
+    }
 
     return _loop.get();
 }

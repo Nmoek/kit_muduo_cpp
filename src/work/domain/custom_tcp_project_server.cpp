@@ -9,6 +9,7 @@
 #include "domain/project_server.h"
 #include "domain/protocol_item.h"
 #include "domain/protocol.h"
+#include "domain/runtime_result.h"
 #include "net/tcp_server.h"
 #include "web/web_log.h"
 #include "domain/custom_tcp_context.h"
@@ -58,31 +59,31 @@ CustomTcpProjectServer::CustomTcpProjectServer(
     tcp_server_->setMessageCallback(std::bind(&CustomTcpProjectServer::onMessage, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
 
-    tcp_server_->setThreadNum(0); // 使用单线程模式
-    tcp_server_->start();
-
 }
 
+
+void CustomTcpProjectServer::start() 
+{
+    tcp_server_->setThreadNum(0); // 使用单线程模式
+    tcp_server_->start();
+}
 
 const kit_muduo::InetAddress& CustomTcpProjectServer::getBindAddr() const
 {
     return tcp_server_->getBindAddr();
 }
 
-kit_muduo::EventLoop* CustomTcpProjectServer::getLoop() const
-{
-    if(tcp_server_)
-        assert("TcpServer pointer is null! \n");
-    return tcp_server_->getLoop();
-}
 
-void CustomTcpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
+RuntimeResult<void> CustomTcpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
 {
+    RuntimeResult<void> result;
     auto tcp_item = std::dynamic_pointer_cast<CustomTcpProtocolItem>(item);
     if(!tcp_item)
     {
         PJ_F_ERROR("custom protocol item is nullptr! \n");
-        return;
+
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
     }
 
     // 1. 配置的协议校验内容缓存
@@ -96,17 +97,23 @@ void CustomTcpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
     }
 
     PJSERVER_DEBUG() << "CustomTcpProjectServer::AddProtocolItem ok, " << tcp_item->getReq()->functionCodeFieldValue() << std::endl;
+
+    return result;
 }
 
-void CustomTcpProjectServer::DelProtocolItem(int64_t protocol_id)
+RuntimeResult<void> CustomTcpProjectServer::DelProtocolItem(int64_t protocol_id)
 {
+    RuntimeResult<void> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
 
     if(it == protocol_items_.end()) 
     {
         PJ_F_ERROR("CustomTcpProjectServer: Protocol item not found, project_id[%d],protocol_id[%d] \n",  project_id_, protocol_id);
-        return;
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     } 
     auto tcp_item = std::dynamic_pointer_cast<CustomTcpProtocolItem>(it->second);
 
@@ -118,150 +125,158 @@ void CustomTcpProjectServer::DelProtocolItem(int64_t protocol_id)
     if(it2 == func_codes_.end()) 
     {
         PJ_F_ERROR("CustomTcpProjectServer: func code not found, project_id[%d], protocol_id[%d], func_code[%s]\n",  project_id_, protocol_id, func_code_str.c_str());
-        return;
+
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
     } 
-    PJ_F_DEBUG("CustomTcpProjectServer: Deleted protocol item, pproject_id[%d], protocol_id[%d] \n",  project_id_, protocol_id);
+    CUSTOM_F_DEBUG("CustomTcpProjectServer: Deleted protocol item, pproject_id[%d], protocol_id[%d] \n",  project_id_, protocol_id);
 
     // 一并删除
     protocol_items_.erase(it);
     func_codes_.erase(it2);
+
+    return result;
 }
 
-std::shared_ptr<ProtocolItem> CustomTcpProjectServer::GetProtocolItem(int64_t protocol_id)
+RuntimeResult<std::shared_ptr<ProtocolItem>> CustomTcpProjectServer::GetProtocolItem(int64_t protocol_id)
 {
+    RuntimeResult<std::shared_ptr<ProtocolItem>> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
-    return it == protocol_items_.end() ? nullptr : it->second;
+    if(it == protocol_items_.end())
+    {
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+    }
+    else
+    {
+        result.val = it->second;
+    }
+    return result;
 }
 
-void CustomTcpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json)
+RuntimeResult<void> CustomTcpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json)
 {
+    RuntimeResult<void> result;
     std::lock_guard<std::mutex> lock(mtx_);
     
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
-        return;
-
-    auto item = it->second;
-    auto p = item->getOriProtocol();
-
-    for(auto &item : req_cfg_json.items())
     {
-        auto json_it = p->m_reqCfg.find(item.key());
-        if(json_it != p->m_reqCfg.end())
-        {
-            p->m_reqCfg[item.key()] = item.value();
-        }
-        else
-        {
-            PJSERVER_F_ERROR("req cfg json not find! id[%ld], key[%s] \n", protocol_id, item.key().c_str());
-        }
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
 
-    auto tcp_item  = std::dynamic_pointer_cast<CustomTcpProtocolItem>(item);
 
-    assert(tcp_item);
+    auto tcp_item  = std::dynamic_pointer_cast<CustomTcpProtocolItem>(it->second);
+    if(!tcp_item)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
 
     auto it2 = func_codes_.find(tcp_item->getReq()->functionCodeFieldValue());
     if(it2 == func_codes_.end())
-        return;
+    {
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
+    }
     func_codes_.erase(it2);
 
-    // 更新一下即可不需要删除
-    try {
-        // 由于是服务器服务 需要对功能码也进行更新
-        p->m_reqCfg.get_to<CustomTcpMessage>(*tcp_item->getReq());
-        func_codes_[tcp_item->getReq()->functionCodeFieldValue()] = tcp_item;
-
-    } catch (const std::exception &e) {
-        PJSERVER_F_ERROR("UpdateReqCfgProtocolItem fail, %s.  protocol_id[%d]  \n", e.what(), protocol_id);
-        return;
+    if(!tcp_item->setReqCfg(req_cfg_json))
+    {
+        CUSTOM_F_ERROR("req json parse error!\n");
+        result.error.set(RuntimeError::kInvalidProtocolConfig);
+        return result;
     }
 
+    func_codes_[tcp_item->getReq()->functionCodeFieldValue()] = tcp_item;
 
+    return result;
 }
 
-void CustomTcpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json)
+RuntimeResult<void> CustomTcpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json)
 {
+    RuntimeResult<void> result;
     std::lock_guard<std::mutex> lock(mtx_);
     
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
-        return;
-    // 获取原始协议对象后删除对象
-    auto item = it->second;
-    auto p = item->getOriProtocol();
-
-    for(auto &item : resp_cfg_json.items())
     {
-        auto json_it = p->m_respCfg.find(item.key());
-        if(json_it != p->m_respCfg.end())
-        {
-            p->m_respCfg[item.key()] = item.value();
-        }
-        else
-        {
-            PJSERVER_F_ERROR("resp cfg json not find! id[%ld], key[%s] \n", protocol_id, item.key().c_str());
-        }
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
 
-    auto tcp_item  = std::dynamic_pointer_cast<CustomTcpProtocolItem>(item);
-
-    assert(tcp_item);
-
-    // 更新一下即可不需要删除
-    try {
-
-        // 注意这里不需要进行功能码更新
-        p->m_respCfg.get_to<CustomTcpMessage>(*tcp_item->getResp());
-
-    } catch (const std::exception &e) {
-        PJSERVER_F_ERROR("UpdateReqCfgProtocolItem fail, %s.  protocol_id[%d]  \n", e.what(), protocol_id);
+    auto tcp_item  = std::dynamic_pointer_cast<CustomTcpProtocolItem>(it->second);
+    if(!tcp_item)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
     }
+
+    if(!tcp_item->setRespCfg(resp_cfg_json))
+    {
+        CUSTOM_F_ERROR("resp json parse error!\n");
+        result.error.set(RuntimeError::kInvalidProtocolConfig);
+        return result;
+    }
+
+    return result;
 }
 
-void CustomTcpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& req_body_data)
+RuntimeResult<void> CustomTcpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data)
 {
+    RuntimeResult<void> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
-        return;
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
+    }
+    if(!it->second)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
     }
 
-    auto tcp_item  = std::dynamic_pointer_cast<CustomTcpProtocolItem>(it->second);
+    it->second->setReqBody(body_type, body_data);
 
-    assert(tcp_item);
-    kit_muduo::http::Body body(kit_muduo::http::ContentType(static_cast<int32_t>(body_type)), req_body_data);
-
-    tcp_item->getReq()->setBody(body);
-
-
+    return result;
 }
 
-void CustomTcpProjectServer::UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& resp_body_data)
+RuntimeResult<void> CustomTcpProjectServer::UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type,const std::vector<char> &body_data)
 {
+    RuntimeResult<void> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
-        return;
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
+    if(!it->second)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
+    
+    it->second->setRespBody(body_type, body_data);
 
-    auto tcp_item  = std::dynamic_pointer_cast<CustomTcpProtocolItem>(it->second);
-
-    assert(tcp_item);
-    kit_muduo::http::Body body(kit_muduo::http::ContentType(static_cast<int32_t>(body_type)), resp_body_data);
-
-    tcp_item->getResp()->setBody(body);
+    return result;
 }
 
-void CustomTcpProjectServer::setPatternInfo(const std::shared_ptr<CustomTcpPattern> pattern)
+RuntimeResult<void> CustomTcpProjectServer::setPatternInfo(const std::shared_ptr<CustomTcpPattern> pattern)
 {
     std::lock_guard<std::mutex> lock(pattern_info_mtx_);
     pattern_info_ = pattern;
+    return RuntimeResult<void>();
 }
 
 std::shared_ptr<CustomTcpPattern> CustomTcpProjectServer::getPatternInfo()
@@ -276,7 +291,8 @@ std::shared_ptr<CustomTcpProtocolItem> CustomTcpProjectServer::findByFuncCode(co
 {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = func_codes_.find(func_code);
-    return  it == func_codes_.end() ? nullptr : it->second;
+
+    return it == func_codes_.end() ? nullptr : it->second;
 }
 
 
@@ -304,23 +320,29 @@ void CustomTcpProjectServer::onMessage(kit_muduo::TcpConnectionPtr conn, kit_mud
         return;
     }
 
-    if(!context->parseRequest(*buf, receiveTime))
+    while(buf->readableBytes() > 0)
     {
-        PJSERVER_ERROR() << "custom tcp request parse error! " << std::endl;
+        if(!context->parseRequest(*buf, receiveTime))
+        {
+            PJSERVER_ERROR() << "custom tcp request parse error! " << std::endl;
 
-        // 出错一般直接关闭 不需要进行回发
-        conn->shutdown();
-    }
+            // 出错一般直接关闭 不需要进行回发
+            conn->shutdown();
+        }
 
-    if(context->gotAll())
-    {
+        if(!context->gotAll())
+        {
+            CUSTOM_F_INFO("custom tcp data is not complete! %ld\n", buf->readableBytes());
+            break;
+        }
         auto req = context->request();
-        // 重置conn中的上下文 清理实际的message对象
-        context->reset(); 
 
         handleRequest(conn, req);
+        // 重置conn中的上下文 清理实际的message对象
+        context = std::make_shared<CustomTcpContext>(this);
+        conn->setContext(context);
+        
     }
-
 }
 
 void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std::shared_ptr<CustomTcpMessage> req)
@@ -330,11 +352,11 @@ void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std
     
     auto cfg_func_code_field = pattern->functionCodeField();
     
-    auto func_code_field = req->getField(cfg_func_code_field->idx());
+    auto func_code_field = req->getField(cfg_func_code_field->byte_pos());
   
     if(!func_code_field)
     {
-        CUSTOM_F_ERROR("getField not found! %d \n", cfg_func_code_field->idx());
+        CUSTOM_F_ERROR("getField not found! %d \n", cfg_func_code_field->byte_pos());
 
         conn->shutdown();
         return;

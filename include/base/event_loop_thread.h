@@ -31,6 +31,9 @@ public:
 
     EventLoop* startLoop();
 
+    EventLoop *getLoop() const;
+    bool isRunning() const { return _exiting > 0; }
+
     void quit();
 
 private:
@@ -38,7 +41,7 @@ private:
 
 private:
     std::shared_ptr<EventLoop> _loop;
-    bool _exiting;
+    std::atomic_int32_t _exiting;
     Thread _thread;
     std::mutex _mutex;
     std::condition_variable _cond;

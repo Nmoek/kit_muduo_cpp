@@ -9,6 +9,7 @@
 
 #include "../../test_log.h"
 #include "./test_custom_project_server.h"
+#include "net/inet_address.h"
 #include "net/tcp_connection.h"
 #include "net/tcp_server.h"
 #include "base/thread.h"
@@ -43,8 +44,8 @@ using namespace testing;
 }while(0)
 
 
-#define SERVER_PORT (8888)
-#define SERVER_IP   "10.6.170.65"
+#define SERVER_PORT (5555)
+#define SERVER_IP   "127.0.0.0"
 
 using CustomTcpMessagePtr = std::shared_ptr<CustomTcpMessage>;
 using CustomTcpContextPtr = std::shared_ptr<CustomTcpContext>;
@@ -85,39 +86,17 @@ protected:
 
     std::shared_ptr<CustomTcpProjectServer> server_start(const kit_domain::Project &p)
     {
-
-        // 默认绑定到eth0 IP上
-        const std::string& local_ip = InetAddress::GetInterfaceIpv4("eth0").toIp();
-    
-        const InetAddress& address = InetAddress(p.m_listenPort, local_ip);
-    
-        std::string server_name = "pj";
-        server_name += std::to_string(p.m_id);
-        server_name += "_tcp_server";
-
-        auto tcp_server = std::make_shared<TcpServer>(
-            &loop_, address, server_name, TcpServer::KReusePort
-        );
-        tcp_server->setThreadNum(0); // 使用单线程模式
-        tcp_server->start();
-
-        Thread t([this](){
-            loop_.loop();
-        }, std::to_string(p.m_id) + "test_loop");
-        t.start();
-
-        // 创建自定义TCP服务器 必须带解析格式  否则无法解析
-        return std::make_shared<CustomTcpProjectServer>(p.m_id, tcp_server, p.m_patternType, p.m_patternInfo);
-
+        // 创建自定义TCP服务器必须带解析格式，否则无法解析。
+        // R1 之后 runtime loop 和 TcpServer 生命周期由 CustomTcpProjectServer 自己持有。
+        return std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternType, p.m_patternInfo);
     }
-    EventLoop loop_; // 生命周期是最长的
 };
 
 
-static int tcp_send(const std::vector<char>& input, CustomTcpContextPtr ctx) 
+static int tcp_send(const std::vector<char>& input, CustomTcpContextPtr ctx, const InetAddress &server_addr) 
 {
     int client_fd;
-    struct sockaddr_in server_addr;
+    // struct sockaddr_in server_addr;
 
     // 1. 创建socket
     if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) 
@@ -129,20 +108,20 @@ static int tcp_send(const std::vector<char>& input, CustomTcpContextPtr ctx)
     }
     
     // 2. 配置服务器地址
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(SERVER_PORT);
+    // server_addr.sin_family = AF_INET;
+    // server_addr.sin_port = htons(SERVER_PORT);
     
-    // 将IP地址从字符串转换为网络地址
-    if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) 
-    {
-        TEST_ERROR() << "invalid address/address not supported " 
-                    << errno << ":" 
-                    << strerror(errno) << std::endl;
-        return -1;
-    }
+    // // 将IP地址从字符串转换为网络地址
+    // if (inet_pton(AF_INET, SERVER_IP, &server_addr.sin_addr) <= 0) 
+    // {
+    //     TEST_ERROR() << "invalid address/address not supported " 
+    //                 << errno << ":" 
+    //                 << strerror(errno) << std::endl;
+    //     return -1;
+    // }
     
     // 3. 连接到服务器
-    if (connect(client_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (connect(client_fd, (struct sockaddr *)server_addr.getSockAddr(), sizeof(struct sockaddr)) < 0) {
         TEST_ERROR() << "connection failed " 
                     << errno << ":" 
                     << strerror(errno) << std::endl;
@@ -281,7 +260,7 @@ static void ReqBuilderHelper1(std::vector<char>& req, const nljson& body_root)
 
     TEST_DEBUG() << "send: " << kit_muduo::BytesToHexString(std::vector<uint8_t>(req.begin(), req.end()), " ") << std::endl;
 
-    std::fstream f("/mnt/nfs/proxy_bin/req.bin", std::ios::out |std::ios::trunc | std::ios::binary);
+    std::fstream f("req.bin", std::ios::out |std::ios::trunc | std::ios::binary);
     if(f.is_open())
     {
         printf("write req.bin ok!\n");
@@ -433,8 +412,8 @@ static void ReqBuilderHelper3(std::vector<char>& req)
 
 
 
-
-TEST_F(CustomTcpServerSuite, DISABLED_PatternDifferent) 
+// CustomTcpServerSuite.PatternDifferent
+TEST_F(CustomTcpServerSuite, PatternDifferent) 
 {
     TestCases1 cases[] =  {
         {
@@ -598,9 +577,14 @@ TEST_F(CustomTcpServerSuite, DISABLED_PatternDifferent)
         CUSTOM_TEST_INFO_BEGIN(c.sub_name);
 
         auto server = server_start(c.pj);
+        server->start();
+        const InetAddress &server_addr = server->getBindAddr();
+
         auto pc = std::make_shared<kit_domain::Protocol>(c.pc);
+
         // 添加协议配置
-        server->AddProtocolItem(ProtocolItemFactory::Create(pc, server));
+        auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(pc, server));
+        ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
 
         auto ctx = std::make_shared<CustomTcpContext>(server.get());
         std::vector<char> req_data;
@@ -609,13 +593,13 @@ TEST_F(CustomTcpServerSuite, DISABLED_PatternDifferent)
         c.reqBuild(req_data);
 
         // 执行测试 socket直接发送
-        int res = tcp_send(req_data, ctx);
+        int res = tcp_send(req_data, ctx, server_addr);
         ASSERT_FALSE(res < 0);
 
         CUSTOM_TEST_INFO_END(c.sub_name);
 
-        server->getLoop()->quit();
-        usleep(500000);
+        server->stop();
+        usleep(100);
     }
 }
 
@@ -634,6 +618,7 @@ TEST_F(CustomTcpServerSuite, ClientSend)
 
     };
 
+    InetAddress addr;
 
     for(auto &c : cases)
     {
@@ -643,7 +628,7 @@ TEST_F(CustomTcpServerSuite, ClientSend)
         c.reqBuild(req_data);
 
         // 执行测试 socket直接发送
-        int res = tcp_send(req_data, nullptr);
+        int res = tcp_send(req_data, nullptr, addr);
 
         ASSERT_EQ(res, c.wantRes);
 
@@ -652,4 +637,3 @@ TEST_F(CustomTcpServerSuite, ClientSend)
     }
 
 }
-

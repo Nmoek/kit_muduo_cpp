@@ -32,7 +32,8 @@ struct Project
     uint16_t                 m_listenPort;      // 监听端口号
     std::string              m_targetIp;        // 目标ip + 端口 x.x.x.x:8888
     int64_t                  m_userId;          // 所属用户id
-    ProjectStatus            m_status;          // 当前服务状态
+    ProjectStatus            m_status;          // 当前服务有效性
+    ProjectStatus m_active;  //当前服务运行状态
     CustomTcpPatternType     m_patternType;     // 协议格式类型
     std::vector<char>        m_patternInfo;     //解析格式信息
 

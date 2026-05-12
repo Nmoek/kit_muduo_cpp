@@ -38,6 +38,8 @@ public:
 
     std::shared_ptr<kit_domain::ProjectServer> FindServer(int64_t projectId);
 
+    void DelServer(int64_t projectId);
+
     bool Recover(std::shared_ptr<kit_domain::ProjectSvcInterface> project_svc, std::shared_ptr<kit_domain::ProtocolSvcInterface> protocol_svc);
 
 private:

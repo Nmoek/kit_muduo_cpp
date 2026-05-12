@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "web/web_project.h"
+#include "domain/type.h"
 #include "work/service/svc_project.h"
 #include "domain/project.h"
 #include "net/http/http_server.h"
@@ -78,9 +79,7 @@ struct CustomPatternInfoReq {
 };
 #endif
 
-/**
- * @brief AddProject 用于Body解析
- */ 
+
 struct AddProjectReq {
     std::string              name;             // 测试名称
     int32_t                  mode;             // 测试模式
@@ -95,6 +94,21 @@ struct AddProjectReq {
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, AddProjectReq &req)
     {
         PJ_WARN() << "AddProjectReq dont support from_multi_form" << std::endl;
+        return false;
+    }
+};
+
+
+struct StartAndStopProjectReq 
+{
+    int64_t id;
+    int32_t operation; // 1 start 0 stop
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(StartAndStopProjectReq, operation)
+
+    static bool from_multi_form(const MultiFormConvert::PartMap &parts, StartAndStopProjectReq &req)
+    {
+        PJ_WARN() << "StartAndStopProjectReq dont support from_multi_form" << std::endl;
         return false;
     }
 };
@@ -166,8 +180,11 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
     // 新增测试服务
     server->Post("/projects/add", XX(AddProject));
 
-    // 开启测试服务监听端口
-    // server->Post("/projects/start", XX(AddProject));
+    // 开启/停止测试服务监听端口
+    server->Post("/projects/:project_id/status", XX(StartAndStopProject));
+
+    // 获取所有未软删除的测试服务
+    server->Get("/projects/valid", XX(GetAllValid));
 
     // TODO 使用正则表达式
     // TODO 查询单个服务 动态路由
@@ -269,6 +286,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     p.m_targetIp =  std::move(request.target_ip);
     p.m_userId = 1/*request.user_id 暂时写死*/;
     p.m_status = ProjectStatus::ON_STATUS; // 新增一定是有效的 TODO后期根据实际保活探测决定
+    p.m_active = ProjectStatus::OFF_STATUS;
     p.m_patternType = static_cast<CustomTcpPatternType>(request.pattern_type);
 
     std::string tmp_str(request.pattern_info.dump());
@@ -308,6 +326,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         resp->body().appendData(R"({"code": -300, "message":"failed to create server"})");
         return;
     }
+    
 
     _app->AddServer(project_id, project_server);
 
@@ -320,6 +339,96 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     root["code"] = 0;
     root["message"] = "success";
     root["data"]["project_id"] = project_id;
+    resp->body().appendData(root.dump());
+}
+
+void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
+{
+    auto req = ctx->request();
+    auto resp = ctx->response();
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k200Ok);
+    resp->body().setContentType(ContentType::kJsonType);
+
+
+    const std::string& project_id_str = ctx->routeParam("project_id");
+    const std::string &operation_str = ctx->queryParam("operation");
+    if(project_id_str.empty()
+        || operation_str.empty())
+    {
+        PJ_F_ERROR("body bind error! \n");
+        resp->body().appendData(R"({"code": -200, "message":"invalid param"})");
+        return;
+    }
+    int64_t project_id = atoi(project_id_str.c_str());
+    ProjectStatus status = static_cast<ProjectStatus>(atoi(operation_str.c_str()));
+
+    // if(!CheckProjectInfo(request))
+    // {
+    //     resp->body().appendData(R"({"code": -200, "message":"test service info invalid"})");
+    //     return;
+    // }
+
+
+    bool ok = false;
+    try 
+    {
+
+        if(ProjectStatus::ON_STATUS == status)
+        {
+            auto p = _svc->GetById(ctx,project_id);
+            auto project_server = ProjectServerFactory::Create(p);
+            if (!project_server) 
+            {
+                PJ_F_ERROR("create ProjectServer faild! protocol_type[%d] project_id[%d] \n", static_cast<int32_t>(p.m_protocolType), project_id);
+
+                resp->body().appendData(R"({"code": -300, "message":"failed to create server"})");
+                return;
+            }
+            _app->AddServer(project_id, project_server);
+            project_server->start();
+
+        }
+        else if(ProjectStatus::OFF_STATUS == status)
+        {
+            auto project_server = _app->FindServer(project_id);
+            if (!project_server) 
+            {
+                PJ_F_ERROR("ProjectServer not found!  project_id[%d] \n", project_id);
+
+                resp->body().appendData(R"({"code": -300, "message":"not found project server"})");
+                return;
+            }
+            project_server->stop();
+            _app->DelServer(project_id);
+        }
+
+        ok = _svc->UpdateActiveStatus(ctx, project_id, status);
+    }
+    catch(const std::exception& e)
+    {
+        PJ_F_ERROR("service update status exception: %s \n", e.what());
+    }
+
+    if(!ok)
+    {
+        PJ_F_ERROR("service update status failed \n");
+
+        // TODO: 自定义业务错误码统一处理
+        resp->body().appendData(R"({"code": -300, "message":"update status failed"})");
+
+        return;
+    }
+
+    // 2. 需要和开启的服务进行通信（通信方式如何选择?)，需要进行增删改协议项
+    // 2.1 线程通信  复用loop队列
+    // 2.2 RPC通信
+    // 2.3 注册Web API
+
+    nljson root;
+    root["code"] = 0;
+    root["message"] = "success";
+
     resp->body().appendData(root.dump());
 }
 
@@ -376,14 +485,13 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
     if(!ok)
     {
-        resp->body().appendData(R"({"code": 0, "message":"delete project fail!", "data":[]})");
+        resp->body().appendData(R"({"code": 0, "message":"delete project fail!"})");
         return;
     }
 
     nljson root;
     root["code"] = 0; // TODO domain错误码统一化
     root["message"] = "success";
-    root["data"] = nljson::array();
 
     resp->body().appendData(root.dump());
 }
@@ -494,6 +602,42 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
         nljson node = CovertProjectVo(p);
         root["data"].push_back(node);
     }
+    resp->body().appendData(root.dump());
+
+    PJ_DEBUG() << std::endl << root.dump(4) << std::endl;
+}
+
+void ProjectHandler::GetAllValid(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
+{
+    auto req = ctx->request();
+    auto resp = ctx->response();
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k200Ok);
+    resp->body().setContentType(ContentType::kJsonType);
+
+    PJ_DEBUG() << std::endl << req->body().toString() << std::endl;
+
+    std::vector<Project> projects;
+    try 
+    {
+        projects = _svc->GetAllValid(ctx);
+    }
+    catch(const std::exception& e)
+    {
+        PJ_F_ERROR("service GetAllValid exception: %s \n", e.what());
+        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        return;
+    }
+
+    nljson root;
+    root["code"] = 0; 
+    root["message"] = "success";
+    root["data"] = nljson::array();
+    for(const auto& p : projects)
+    {
+        root["data"].push_back(CovertProjectVo(p));
+    }
+
     resp->body().appendData(root.dump());
 
     PJ_DEBUG() << std::endl << root.dump(4) << std::endl;

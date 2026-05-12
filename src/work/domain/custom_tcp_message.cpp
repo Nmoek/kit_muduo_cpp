@@ -24,32 +24,21 @@ CustomTcpMessage::CustomTcpMessage()
     PJ_F_DEBUG("CustomTcpRequest::construct() %p\n", this);
 }
 
-CustomTcpMessage::CustomTcpMessage(int32_t header_field_num)
-    :header_fileds_(header_field_num, nullptr)
-    ,recordTime_(0)
-{
-
-    PJ_F_DEBUG("CustomTcpRequest::construct() %p\n", this);
-}
-
 CustomTcpMessage::~CustomTcpMessage()
 {
     PJ_F_DEBUG("CustomTcpMessage::~CustomTcpMessage() %p\n", this);
 }
 
-void CustomTcpMessage::addField(int32_t idx, std::shared_ptr<CustomTcpPatternFieldBase> field)
+void CustomTcpMessage::addField(std::shared_ptr<CustomTcpPatternFieldBase> field)
 {
-    // if(idx < 0 || idx >= header_fileds_.size() || header_fileds_[idx] != nullptr)
-    //     return;
-
-    header_fileds_.at(idx) = field;
+    header_fileds_.emplace(field);
 }
 
-std::shared_ptr<CustomTcpPatternFieldBase> CustomTcpMessage::getField(int32_t idx) const
+std::shared_ptr<CustomTcpPatternFieldBase> CustomTcpMessage::getField(int32_t byte_pos) const
 {
-    // if(idx < 0 || idx >= header_fileds_.size())
-    //     return nullptr;
-    return header_fileds_.at(idx);
+
+    auto it = header_fileds_.find(byte_pos);
+    return it == header_fileds_.end() ? nullptr : *it;
 }
 
 
@@ -59,12 +48,28 @@ int64_t CustomTcpMessage::getHeaderBytes() const
     for(auto &f : header_fileds_)
     {
         if(f)
+        {
             res += f->byte_len();
+        }
     }
     return res;
 }
 
 
+std::vector<uint8_t> CustomTcpMessage::assembleHeaders(bool is_endian) const
+{
+    std::vector<uint8_t> data;
+    for(auto &it : header_fileds_)
+    {
+        std::vector<uint8_t> bytes = it->toBytes(is_endian);
+
+        CUSTOM_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
+            it->name().c_str(),it->idx(), it->byte_pos(), it->byte_len(), kit_muduo::BytesToHexString(bytes).c_str());
+        
+        data.insert(data.end(), bytes.begin(), bytes.end());
+    }
+    return data;
+}
 
 void from_json(const nlohmann::json& root, CustomTcpMessage& message)
 {
@@ -81,7 +86,7 @@ void from_json(const nlohmann::json& root, CustomTcpMessage& message)
             throw std::invalid_argument("pattern_fields invalid!");
         }
         cfg_field->setSepcial(false);
-        message.addField(cfg_field->idx(), cfg_field);
+        message.addField(cfg_field);
     }
     
 }

@@ -7,7 +7,8 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/project_server.h"
-#include <string>
+
+
 
 
 namespace kit_domain {
@@ -18,6 +19,12 @@ ProjectServer::ProjectServer(int64_t project_id)
 { 
 
 }
+
+ProjectServer::~ProjectServer()
+{
+    stop();
+}
+
 
 
 }

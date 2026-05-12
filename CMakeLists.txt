@@ -68,6 +68,7 @@ option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
 option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
+option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -199,6 +200,8 @@ set(WORK_SVC_SRC
 
 set(WORK_DOMAIN_SRC
     src/work/domain/type.cpp
+    src/work/domain/runtime_result.cpp
+    
     src/work/domain/project_server.cpp
     src/work/domain/protocol_item.cpp
     src/work/domain/http_project_server.cpp
@@ -364,6 +367,9 @@ add_kit_test(WORK_TEST WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tes
 
 # 测试服务实例工厂测试 test_project_server_factory
 add_kit_test(WORK_TEST WORK_TEST.PJ_SERVER_FAC test_project_server_factory tests/work/domain/test_project_server_factory.cpp ${WORK_SRC})
+
+# runtime 操作结果类型测试 test_runtime_result
+add_kit_test(WORK_TEST WORK_TEST.RUNTIME_RESULT test_runtime_result tests/work/domain/test_runtime_result.cpp src/work/domain/runtime_result.cpp)
 
 
 # app服务器实例

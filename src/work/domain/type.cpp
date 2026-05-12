@@ -54,7 +54,8 @@ ContentType ProtocolBodyTypeToContentType(ProtocolBodyType type)
     if(ProtocolBodyType::JSON_BODY_TYPE == type) return ContentType(ContentType::kJsonType);
     if(ProtocolBodyType::XML_BODY_TYPE == type) return ContentType(ContentType::kXmlType);
 
-    return ContentType(ContentType::kUnknowType);
+    // 默认给个文本类型
+    return ContentType(ContentType::kPlainType);
 }
 
 } // namespace kit_domain

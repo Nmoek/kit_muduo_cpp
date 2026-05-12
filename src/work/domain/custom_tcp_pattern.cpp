@@ -75,9 +75,7 @@ int64_t BodyLengthDepPattern::calRemainBytesLen(std::shared_ptr<CustomTcpPattern
     // 必须已经提取过 实际数据
     assert(field);
 
-    const std::vector<uint8_t> bytes = field->toBytes();
-
-    return kit_muduo::BytesToValue<int64_t>(bytes);
+    return kit_muduo::BytesToValue<int64_t>(field->toBytes(), !KIT_IS_LOCAL_BIG_ENDIAN());
 }
 
 
@@ -102,35 +100,29 @@ std::vector<char> BodyLengthDepPattern::serialize(std::shared_ptr<CustomTcpMessa
     const std::vector<char>& body_data = message->body().data();
 
     // 组装Body长度进去
-    auto real_body_length_field = message->getField(body_length_field_->idx());
+    auto real_body_length_field = message->getField(body_length_field_->byte_pos());
 
     if(!real_body_length_field)
+    {
         return data;
+    }
 
     // BUG: 给字段赋值时  不能是bytes数组的形式  否则无法知道真值是什么
-    real_body_length_field->setVal(body_data.size());
+
+    // 本机变量转为大端
+    real_body_length_field->setBytes(kit_muduo::ValueToBytes(body_data.size(), !KIT_IS_LOCAL_BIG_ENDIAN()));
 
     // BUG: 给字段赋值时  不能是bytes数组的形式  否则无法知道真值是什么
     /*
         Field<int32_t> field
         Field<int64_t> field 是不一样的
     */
-  
-    data.reserve(message->getHeaderBytes() + body_data.size());
+
 
     // 组装普通头部
-    for(int i = 0;i < message->getFieldNums();++i)
-    {
-        auto f = message->getField(i);
-        if(!f) continue;
+    const auto& headers_data = message->assembleHeaders(is_endian);
+    data.insert(data.end(), headers_data.begin(), headers_data.end());
 
-        std::vector<uint8_t> bytes = f->toBytes(!KIT_IS_LOCAL_BIG_ENDIAN());
-
-        CUSTOM_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
-            f->name().c_str(),f->idx(), f->byte_pos(), f->byte_len(), kit_muduo::BytesToHexString(bytes).c_str());
-        
-        data.insert(data.end(), bytes.begin(), bytes.end());
-    }
     // 组装Body
     data.insert(data.end(), body_data.begin(), body_data.end());
 
@@ -188,9 +180,8 @@ int64_t TotalLengthDepPattern::calRemainBytesLen(std::shared_ptr<CustomTcpPatter
     // 必须已经提取过 实际数据
     assert(field);
 
-    const std::vector<uint8_t> bytes = field->toBytes();
     // 报文总长度 - 头部长度
-    return kit_muduo::BytesToValue<int64_t>(bytes) - least_byte_len_;
+    return kit_muduo::BytesToValue<int64_t>(field->toBytes(), !KIT_IS_LOCAL_BIG_ENDIAN()) - least_byte_len_;
 }
 
 
@@ -215,30 +206,26 @@ std::vector<char> TotalLengthDepPattern::serialize(std::shared_ptr<CustomTcpMess
     int64_t total_length = message->getHeaderBytes() + body_data.size();
 
     // 组装报文总长度进去
-    auto real_total_length_field = message->getField(total_length_field_->idx());
+    auto real_total_length_field = message->getField(total_length_field_->byte_pos());
 
     if(!real_total_length_field)
+    {
         return data;
+    }
 
-    real_total_length_field->fromBytes(kit_muduo::ValueToBytes(body_data.size()));
-      
-    data.reserve(total_length);
+    // 本机变量转为大端
+    real_total_length_field->setBytes(kit_muduo::ValueToBytes(body_data.size(), !KIT_IS_LOCAL_BIG_ENDIAN()));
+    
 
     // 组装普通头部
-    for(int i = 0;i < message->getFieldNums();++i)
-    {
-        auto f = message->getField(i);
-        if(!f) continue;
+    const auto& headers_data = message->assembleHeaders(is_endian);
+    data.insert(data.end(), headers_data.begin(), headers_data.end());
 
-        std::vector<uint8_t> bytes = f->toBytes(true);
-
-        CUSTOM_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
-            f->name().c_str(),f->idx(), f->byte_pos(), f->byte_len(), kit_muduo::BytesToHexString(bytes).c_str());
-        
-        data.insert(data.end(), bytes.begin(), bytes.end());
-    }
     // 组装Body
     data.insert(data.end(), body_data.begin(), body_data.end());
+
+    assert(total_length == data.size());
+
     return data;
 }
 
@@ -305,22 +292,11 @@ std::vector<char> NoLengthDepPattern::serialize(std::shared_ptr<CustomTcpMessage
         return data;
     }
 
-    // 只有头部没有Body
-    data.reserve(message->getHeaderBytes());
 
-    // 组装所有头部
-    for(int i = 0;i < message->getFieldNums();++i)
-    {
-        auto f = message->getField(i);
-        if(!f) continue;
+   // 组装所有头部 只有头部没有Body
+    const auto& headers_data = message->assembleHeaders(is_endian);
+    data.insert(data.end(), headers_data.begin(), headers_data.end());
 
-        std::vector<uint8_t> bytes = f->toBytes(true);
-
-        CUSTOM_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
-            f->name().c_str(),f->idx(), f->byte_pos(), f->byte_len(), kit_muduo::BytesToHexString(bytes).c_str());
-        
-        data.insert(data.end(), bytes.begin(), bytes.end());
-    }
     return data;
 }
 

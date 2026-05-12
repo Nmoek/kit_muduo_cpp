@@ -32,6 +32,7 @@ namespace kit_dao {
             sqlite_orm::make_column("target_ip", &Project::m_targetIp), \
             sqlite_orm::make_column("user_id", &Project::m_userId), \
             sqlite_orm::make_column("status", &Project::m_status), \
+            sqlite_orm::make_column("active", &Project::m_active), \
             sqlite_orm::make_column("pattern_type", &Project::m_patternType), \
             sqlite_orm::make_column("pattern_info", &Project::m_patternInfo, sqlite_orm::not_null()) \
         ), \

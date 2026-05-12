@@ -20,6 +20,11 @@
 #include "domain/project_server.h"
 #include "domain/protocol_item.h"
 #include "net/event_loop.h"
+#include "work/domain/runtime_result.h"
+
+
+#include <functional>
+#include <memory>
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
@@ -394,18 +399,18 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
 
 
     // 需要向对应的测试服务器上注册协议
-    auto loop = project_service->getLoop();
-    loop->queueInLoop([project_service, protocol_item](){
-
+    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, [project_service, protocol_item]() {
         PC_F_DEBUG("AddProtocolItem: [%d][%s][%d] \n", protocol_item->getId(), protocol_item->getName().c_str(), protocol_item->getProjectId());
 
-        // 1. 针对业务服务的增删改查操作 需要先操作数据库后进行业务同步
-        // 2. 业务操作失败需要重试，并重新查数据库进行兜底
-        project_service->AddProtocolItem(protocol_item);
-    
+        return project_service->AddProtocolItem(protocol_item);
     });
+    if(!result.ok())
+    {
+        PC_F_ERROR("InvokeOnLoopSync::AddProtocolItem error: %d : %s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_item->getId());
 
-
+        resp->body().appendData(R"({"code": -300, "message":"protocolitem add failed"})");
+        return;
+    }
 
     nljson root;
     root["code"] = 0;
@@ -463,24 +468,26 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
 
     // 向测试服务器通信 传递协议配置信息
     auto project_service = GetApp()->FindServer(request.project_id);
-    if(project_service)
-    {
-        // 需要向对应的测试服务器上添加信息
-        auto loop = project_service->getLoop();
-        loop->queueInLoop([=](){
-            PC_F_DEBUG("DelProtocolItem: [%d][%d] \n", protocol_id, project_id);
-
-            project_service->DelProtocolItem(protocol_id);
-        });
-       
-    }
-    else
+    if(!project_service)
     {
         PC_F_WARN("project not found! %d \n", project_id);
         // 数据库可以操作 但是服务器可能操作不了 应该可以降级处理
         // 服务器重新拉起的过程需要去读一次数据库 保证数据一致性
-        // resp->body().appendData(R"({"code": -300, "message":"project not found"})");
-        // return;
+        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        return;
+    }
+
+    // 需要向对应的测试服务器上添加信息
+    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, [project_service, project_id, protocol_id]()  {
+        PC_F_DEBUG("DelProtocolItem: pjId[%d], pcId[%d] \n", project_id, protocol_id);
+        return project_service->DelProtocolItem(protocol_id);
+    });
+    if(!result.ok())
+    {
+        PC_F_ERROR("InvokeOnLoopSync::DelProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
+
+        resp->body().appendData(R"({"code": -300, "message":"protocolitem del failed"})");
+        return;
     }
 
     resp->body().appendData(R"({"code": 0, "message":"success"})");
@@ -689,10 +696,22 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
     
-
     PC_DEBUG() << "request.cfg_json: " << request.cfg_data.dump() << std::endl;
 
+    int64_t protocol_id = request.id;
+    int64_t project_id = request.project_id;
+    int32_t req_or_resp = request.req_or_resp;
+
+    auto project_service = GetApp()->FindServer(request.project_id);
+    if(!project_service || !project_service->isActive())
+    {
+        PC_F_WARN("project not found! %d \n", project_id);
+        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        return;
+    } 
+
     ok = false;
+    std::shared_ptr<ProtocolItem> protocol_item = nullptr;
     try {
        
         // ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, request.cfg_data.dump());
@@ -706,42 +725,39 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         resp->body().appendData(R"({"code": -300, "message":"service failed"})");
         return;
     }
-    int64_t protocol_id = request.id;
-    int64_t project_id = request.project_id;
-    int32_t req_or_resp = request.req_or_resp;
 
-    // TODO 更新服务器上的协议配置信息
-    auto project_service = GetApp()->FindServer(request.project_id);
-    if(project_service)
+
+    // 更新服务器上的协议配置信息
+    // 简单起见 不要做局部更新 直接整体替换
+    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, 
+    [project_service,
+        protocol_id, 
+        project_id,
+        req_or_resp,
+        cfg_json = std::move(request.cfg_data)](){
+
+        PC_F_DEBUG("UpdateCfgProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d]\n", protocol_id, project_id, req_or_resp);
+
+        if(DetailReq::kRequest == req_or_resp)
+        {
+            return project_service->UpdateReqCfgProtocolItem(protocol_id, cfg_json);
+        }
+        else if(DetailReq::kResponse == req_or_resp)
+        {
+            return project_service->UpdateRespCfgProtocolItem(protocol_id, cfg_json);
+        }
+
+        return RuntimeResult<void>{
+            RuntimeError(RuntimeError::kProtocolTypeMismatch)
+        };
+    });
+    if(!result.ok())
     {
-        // 需要向对应的测试服务器上添加信息
-        auto loop = project_service->getLoop();
-        loop->queueInLoop([project_service,
-            protocol_id, 
-            project_id,
-            req_or_resp,
-            cfg_json = std::move(request.cfg_data)](){
+        PC_F_ERROR("InvokeOnLoopSync::UpdateCfgProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
 
-            PC_F_DEBUG("UpdateCfgProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d]\n", protocol_id, project_id, req_or_resp);
-
-            if(DetailReq::kRequest == req_or_resp)
-            {
-                project_service->UpdateReqCfgProtocolItem(protocol_id, cfg_json);
-            }
-            else if(DetailReq::kResponse == req_or_resp)
-            {
-                project_service->UpdateRespCfgProtocolItem(protocol_id, cfg_json);
-            }
-
-        });
-       
-    }
-    else
-    {
-        PC_F_WARN("project not found! %d \n", project_id);
-        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        resp->body().appendData(R"({"code": -300, "message":"protocolitem update cfg failed"})");
         return;
-    } 
+    }
 
     resp->body().appendData(R"({"code": 0, "message":"success"})");
 
@@ -793,40 +809,49 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         resp->body().appendData(R"({"code": -300, "message":"service failed"})");
         return;
     }
+
     int64_t protocol_id = request.header.id;
     int64_t project_id = request.header.project_id;
     int32_t req_or_resp = request.header.req_or_resp;
 
-    // TODO 更新服务器上的协议配置信息
+    // 更新服务器上的Body信息
     auto project_service = GetApp()->FindServer(request.header.project_id);
-    if(project_service)
-    {
-        // 需要向对应的测试服务器上添加信息
-        auto loop = project_service->getLoop();
-
-        loop->queueInLoop([protocol_id,
-            project_id,
-            req_or_resp,
-            project_service,
-            body_type,
-            data = std::move(request.cfg_data)](){
-
-            PC_F_DEBUG("UpdateBodyProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d] body_type[%d]\n", protocol_id, project_id, req_or_resp, body_type);
-
-            if(DetailReq::kRequest == req_or_resp)
-                project_service->UpdateReqBodyProtocolItem(protocol_id, body_type, data);
-            else if(DetailReq::kResponse == req_or_resp)
-                project_service->UpdateRespBodyProtocolItem(protocol_id, body_type, data);
-
-        });
-       
-    }
-    else
+    if(!project_service)
     {
         PC_F_WARN("project not found! %d \n", project_id);
         
         //TODO 需要去重启服务
         resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        return;
+    }
+
+    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, 
+    [protocol_id,
+        project_id,
+        req_or_resp,
+        project_service,
+        body_type,
+        data = std::move(request.cfg_data)](){
+
+        PC_F_DEBUG("UpdateBodyProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d] body_type[%d]\n", protocol_id, project_id, req_or_resp, body_type);
+
+        if(DetailReq::kRequest == req_or_resp)
+        {
+            return project_service->UpdateReqBodyProtocolItem(protocol_id, body_type, data);
+        }
+        else if(DetailReq::kResponse == req_or_resp)
+        {
+            return project_service->UpdateRespBodyProtocolItem(protocol_id, body_type, data);
+        }
+        return RuntimeResult<void>{
+            RuntimeError(RuntimeError::kProtocolTypeMismatch)
+        };
+    });
+    if(!result.ok())
+    {
+        PC_F_ERROR("InvokeOnLoopSync::UpdateBodyProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
+
+        resp->body().appendData(R"({"code": -300, "message":"protocolitem update body failed"})");
         return;
     }
 

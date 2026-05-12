@@ -11,6 +11,7 @@
 
 #include <string> 
 #include <iostream>
+#include <vector>
 
 #include "nlohmann/json.hpp"
 #include "net/net_data_converter.h"
@@ -57,6 +58,9 @@ public:
         return os;
     }
 
+    void setBytes(const std::vector<uint8_t> &bytes) { bytes_ = bytes; }
+
+    void setBytes(const void* data, int32_t len) { bytes_.assign((char*)data, (char*)data + len); }
 
     void setTypeEnum(const kit_muduo::NetDataType &type) { type_ = type; }
 
@@ -247,20 +251,19 @@ public:
             return nullptr;
         }
 
-        // 根据起始位置 + 长度先读出 bytes数组
+        // copy一份数据
+        auto real_field = this->clone();
         std::vector<uint8_t> bytes(data.begin() + begin_pos, data.begin() + end_pos);
 
+        // 字节顺序转换 不分大小端
+        if(is_endian)
+        {
+            std::reverse(bytes.begin(), bytes.end());
+        }
 
-        // copy一份数据
-        // 将这个bytes数组转换为实际的值
-        auto real_field = std::make_shared<CustomTcpPatternField<T>>(*this);
-        if(!real_field->fromBytes(bytes, is_endian))
-            return nullptr;
+        // 根据起始位置 + 长度先读出 bytes数组
+        real_field->setBytes(bytes);
 
-        // 注意：这里使用的抽象接口 值是取不出来的！
-        // auto real_val = real_field->getValue();
-
-        // 将解析出的值放到 字段列表中
         return real_field;
     }
 

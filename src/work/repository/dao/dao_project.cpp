@@ -9,6 +9,7 @@
 #include "dao/dao_project.h"
 #include "dao/dao_log.h"
 #include "base/time_stamp.h"
+#include "sqlite_orm/sqlite_orm.h"
 
 #include <thread>
 
@@ -85,6 +86,38 @@ bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t pr
     }
 
     DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateStatus "<< "id= " << projectId << std::endl;
+
+    return true;
+}
+
+bool SqliteOrmProjectDao::UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active)
+{
+    auto now = kit_muduo::TimeStamp::Now().millSeconds();
+    try {
+        auto pj = _db->get_pointer<kit_dao::Project>(projectId);
+        if(!pj)
+        {
+            DAOPC_F_WARN("project dont exist! id=%ld \n", projectId);
+            return false;
+        }
+
+        pj->m_active = active;
+        pj->m_utime = now;
+
+        std::lock_guard<std::mutex> lock(_writeMtx);
+        _db->begin_immediate_transaction();
+        _db->update(*pj);
+        _db->commit();
+
+    } catch(const std::exception& e) {
+   
+        DAOPC_ERROR() << "UpdateActiveStatus faild! " << "id= " << projectId << ", " << e.what() << std::endl;
+
+        _db->rollback();
+        return false;
+    }
+
+    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateActiveStatus "<< "id= " << projectId << std::endl;
 
     return true;
 }
@@ -190,7 +223,7 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::Htt
         DAOPJ_ERROR() << "GetAllByStatus faild! " << e.what() << std::endl;
     }
 
-    DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetAllByStatus "<< ",size= " << pjs.size() << std::endl;
+    DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetAllByStatus "<< ",size= " << pjs.size() << ", status: " << status << std::endl;
 
     return pjs;
 }

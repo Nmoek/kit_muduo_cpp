@@ -41,7 +41,7 @@ const std::string pattern_json_str1 = R"({
     }
 })";
 
-const std::string req_cfg1 = R"({"function_code_filed_value":"H1000","common_fields":[{"name":"消息总长度","idx":1,"byte_pos":4,"byte_len":4,"type":"UINT32","value":"H0209"},{"name":"消息序列号","idx":2,"byte_pos":8,"byte_len":4,"type":"UINT32","value":"H0003"},{"name":"消息时间戳","idx":5,"byte_pos":18,"byte_len":8,"type":"UINT64","value":""}]})";
+const std::string req_cfg1 = R"({"function_code_filed_value":"H0100","common_fields":[{"name":"消息总长度","idx":1,"byte_pos":4,"byte_len":4,"type":"UINT32","value":"H0209"},{"name":"消息序列号","idx":2,"byte_pos":8,"byte_len":4,"type":"UINT32","value":"H0003"},{"name":"消息时间戳","idx":5,"byte_pos":18,"byte_len":8,"type":"UINT64","value":""}]})";
 
 const std::string resp_cfg1 = R"({"function_code_filed_value":"H1080","common_fields":[{"name":"消息总长度","idx":1,"byte_pos":4,"byte_len":4,"type":"UINT32","value":"H02090000"},{"name":"消息序列号","idx":2,"byte_pos":8,"byte_len":4,"type":"UINT32","value":"H00000003"},{"name":"消息时间戳","idx":5,"byte_pos":18,"byte_len":8,"type":"UINT64","value":"HA86D9F9F9A010000"}]})";
 

@@ -57,6 +57,13 @@ std::shared_ptr<kit_domain::ProjectServer> Application::FindServer(int64_t proje
 
 }
 
+void Application::DelServer(int64_t projectId)
+{
+    std::unique_lock<std::mutex> lock(_mtx);
+    auto n =_projectServers.erase(projectId);
+    assert(n == 1);
+}
+
 
 bool Application::Recover(std::shared_ptr<ProjectSvcInterface> project_svc, std::shared_ptr<ProtocolSvcInterface> protocol_svc)
 {
@@ -81,7 +88,7 @@ bool Application::Recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
         }
 
         this->AddServer(pj.m_id, project_server);
-
+        
         // 为服务器添加协议  暂时同步添加 体量大之后再考虑异步同时启动
         /* 操作Service层接口 */
         std::vector<Protocol> pcs = protocol_svc->GetActiveByProject(nullptr, pj.m_id);
@@ -98,7 +105,9 @@ bool Application::Recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
             
             RECOVER_F_DEBUG("[%d][%s][%d] add success!\n", pc.m_id, pc.m_name.c_str(), pc.m_projectId);
         }
-      
+        // 协议项全部添加后再启动
+        project_server->start();
+
     }
     return true;
 }

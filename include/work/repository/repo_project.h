@@ -39,6 +39,8 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) = 0;
 
+    virtual bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active) = 0;
+
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) = 0;
 
     virtual Project GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId) = 0;
@@ -48,6 +50,8 @@ public:
     virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
     virtual bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t pattern_type, const std::vector<char> pattern_info) = 0;
+
+    virtual std::vector<Project> GetAllValid(kit_muduo::HttpContextPtr ctx) = 0;
 
     virtual std::vector<Project> GetAllActive(kit_muduo::HttpContextPtr ctx) = 0;
 
@@ -67,6 +71,8 @@ public:
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) override;
 
+    bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active) override;
+
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) override;
 
     Project GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId) override;
@@ -76,6 +82,8 @@ public:
     std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 
     bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t pattern_type, const std::vector<char> pattern_info) override;
+
+    std::vector<Project> GetAllValid(kit_muduo::HttpContextPtr ctx) override;
 
     std::vector<Project> GetAllActive(kit_muduo::HttpContextPtr ctx) override;
 

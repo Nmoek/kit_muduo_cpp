@@ -10,7 +10,9 @@
 #define __KIT_DOMAIN_PROJECT_SERVER_H__
 
 #include "base/event_loop_thread.h"
+#include "domain/runtime_result.h"
 #include "net/call_backs.h"
+#include "svc_project.h"
 #include "work/domain/type.h"
 #include "net/inet_address.h"
 #include "net/buffer.h"
@@ -18,15 +20,14 @@
 #include "nlohmann/json.hpp"
 
 #include <memory>
-#include <unordered_map>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
-
 
 using nljson = nlohmann::json;
 
 namespace kit_muduo{
-
 class EventLoop;
 class HttpServer;
 class TcpServer;
@@ -42,6 +43,7 @@ enum class ProtocolBodyType;
 class CustomTcpPattern;
 class CustomTcpContext;
 class CustomTcpMessage;
+class ProtocolSvcInterface;
 
 class ProjectServer
 {
@@ -49,28 +51,34 @@ public:
 
     ProjectServer(int64_t project_id);
 
-    virtual ~ProjectServer() = default;
+    virtual ~ProjectServer();
 
     int64_t getProjectId() const { return project_id_; }
 
     void stop() { loop_thread_.quit(); }
 
-    virtual kit_muduo::EventLoop *getLoop() const = 0;
+    bool isActive() const { return loop_thread_.isRunning(); }
+
+    kit_muduo::EventLoop *getLoop() { return loop_thread_.getLoop(); }
+
+
+    virtual void start() = 0;
 
     virtual const kit_muduo::InetAddress& getBindAddr() const = 0;
 
-    virtual void AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) = 0;
-    virtual void DelProtocolItem(int64_t protocol_id) = 0;
+    virtual RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) = 0;
+    virtual RuntimeResult<void> DelProtocolItem(int64_t protocol_id) = 0;
 
-    virtual std::shared_ptr<ProtocolItem> GetProtocolItem(int64_t protocol_id) = 0;
+    virtual RuntimeResult<std::shared_ptr<ProtocolItem>> GetProtocolItem(int64_t protocol_id) = 0;
 
-    virtual void UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson &req_cfg_json) = 0;
+    virtual RuntimeResult<void> UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson &req_cfg_json) = 0;
 
-    virtual void UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) = 0;
+    virtual RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) = 0;
 
-    virtual void UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data) = 0;
 
-    virtual void UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &resp_body_data) = 0;
+    virtual RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
+
+    virtual RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
 
 protected:
     /// @brief 测试服务id
@@ -81,6 +89,7 @@ protected:
     /// @brief 测试服务上依附的配置好的测试项
     std::unordered_map<int64_t, std::shared_ptr<ProtocolItem>> protocol_items_;
     std::mutex mtx_;
+    
 };
 
 
@@ -91,27 +100,27 @@ public:
 
     HttpProjectServer(int64_t project_id);
 
+    void start() override;
+
     const kit_muduo::InetAddress& getBindAddr() const override;
 
-    kit_muduo::EventLoop *getLoop() const override;
+    RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
 
-    void AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
+    RuntimeResult<void> DelProtocolItem(int64_t protocol_id) override;
 
-    void DelProtocolItem(int64_t protocol_id) override;
+    RuntimeResult<std::shared_ptr<ProtocolItem>> GetProtocolItem(int64_t protocol_id) override;
 
-    std::shared_ptr<ProtocolItem> GetProtocolItem(int64_t protocol_id) override;
+    RuntimeResult<void> UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json) override;
 
-    void UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json);
+    RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json) override;
 
-    void UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json);
+    RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data) override;
 
-    void UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data);
-
-    void UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &resp_body_data);
+    RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &resp_body_data) override;
 
 
 private:
-    void HttpProjectProcess(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx);
+    void HttpProjectProcess(int32_t protocol_id,kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx);
 
 private:
     kit_muduo::HttpServerPtr http_server_;
@@ -128,28 +137,28 @@ public:
      */
     CustomTcpProjectServer(int64_t project_id, const CustomTcpPatternType pattern_type, const std::vector<char> &info);
 
+    void start() override;
+
     const kit_muduo::InetAddress& getBindAddr() const override;
 
-    kit_muduo::EventLoop *getLoop() const override;
+    RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
 
-    void AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
+    RuntimeResult<void> DelProtocolItem(int64_t protocol_id) override;
 
-    void DelProtocolItem(int64_t protocol_id) override;
+    RuntimeResult<std::shared_ptr<ProtocolItem>> GetProtocolItem(int64_t protocol_id) override;
 
-    std::shared_ptr<ProtocolItem> GetProtocolItem(int64_t protocol_id) override;
+    RuntimeResult<void> UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson &req_cfg_json) override;
 
-    void UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson &req_cfg_json) override;
+    RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) override;
 
-    void UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) override;
+    RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& req_body_data) override;
 
-    void UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& req_body_data) override;
+    RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& resp_body_data) override;
 
-    void UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& resp_body_data) override;
+    RuntimeResult<void> setPatternInfo(const std::shared_ptr<CustomTcpPattern> pattern);
 
-    void setPatternInfo(const std::shared_ptr<CustomTcpPattern> pattern);
 
     std::shared_ptr<CustomTcpPattern> getPatternInfo();
-
 
     // 通过请求的功能码来反向索引 配置的数据
     std::shared_ptr<CustomTcpProtocolItem> findByFuncCode(const std::string&func_code);

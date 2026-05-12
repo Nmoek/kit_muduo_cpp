@@ -7,7 +7,11 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 
+#include "base/thread.h"
+#include "domain/runtime_result.h"
+#include "net/call_backs.h"
 #include "net/event_loop.h"
+#include "net/http/http_util.h"
 #include "net/inet_address.h"
 #include "net/socket.h"
 #include "web/web_log.h"
@@ -20,10 +24,13 @@
 #include "domain/protocol_item.h"
 #include "nlohmann/json.hpp"
 #include "domain/type.h"
+#include "service/svc_protocol.h"
 
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
+#include <utility>
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
@@ -54,186 +61,305 @@ HttpProjectServer::HttpProjectServer(int64_t project_id)
         kit_muduo::TcpServer::KReusePort
     ))
 {
+
+}
+
+void HttpProjectServer::start()
+{
     http_server_->setThreadNum(0); // 使用单线程模式
     http_server_->start();
 }
-
 
 const kit_muduo::InetAddress& HttpProjectServer::getBindAddr() const 
 {
     return http_server_->getBindAddr(); 
 }
 
-kit_muduo::EventLoop *HttpProjectServer::getLoop() const 
-{
-    return http_server_->getLoop();
-}
 
-void HttpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
+RuntimeResult<void> HttpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolItem> item)
 {
+    RuntimeResult<void> result;
+
     auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(item);
     if(!http_item)
     {
-        PJ_F_ERROR("http protocol item is nullptr!");
-        return;
+        PJSERVER_F_ERROR("http protocol item is nullptr!");
+
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
     }
 
-    // 1. 校验内容缓存
+    // 1. 路由注册 
+    auto req = http_item->getReq();
+
+    auto route_result = http_server_->addRoute(req->method(), req->path(),  std::bind(&HttpProjectServer::HttpProjectProcess, this, item->getId(), std::placeholders::_1, std::placeholders::_2));
+
+    if(!route_result.ok())
+    {
+        PJSERVER_F_ERROR("http protocol item add route error! %d:%s \n", route_result.status, route_result.message.c_str());
+
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
+    }
+
+
+    item->setRegRouteId(route_result.route_id);
+    // 2. 校验内容缓存
     {
         std::lock_guard<std::mutex> lock(mtx_);
         protocol_items_.emplace(item->getId(), item);
     }
 
-    // 2. 路由注册  TODO 这里似乎没有去重,重新考虑一下怎么设计
-    auto req = http_item->getReq();
-
-    http_server_->addRoute(req->method(), req->path(),  std::bind(&HttpProjectServer::HttpProjectProcess, this, std::placeholders::_1, std::placeholders::_2));
 
     PJSERVER_DEBUG() << "HttpProjectServer::AddProtocolItem ok" << std::endl;
 
-    return;
+    return result;
 }
 
 
-void HttpProjectServer::DelProtocolItem(int64_t protocol_id) 
+RuntimeResult<void> HttpProjectServer::DelProtocolItem(int64_t protocol_id) 
 {
-    std::shared_ptr<kit_domain::ProtocolItem> item = nullptr;
-    // 先删缓存
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
+    RuntimeResult<void> result;
+  
+    std::lock_guard<std::mutex> lock(mtx_);
 
-        auto it = protocol_items_.find(protocol_id);
-        if(it == protocol_items_.end())
-        {
-            PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
-            return;
-        }
-        item = it->second;
-        protocol_items_.erase(it);
+    auto it = protocol_items_.find(protocol_id);
+    if(it == protocol_items_.end())
+    {
+        PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
-    // 再删路由
-    auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(item);
+    auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
     if(!http_item)
     {
         PJSERVER_F_ERROR("http protocol item is nullptr! protocol_id[%d] \n", protocol_id);
-        return;
+        
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
     }
-    
-    auto req = http_item->getReq();
-    http_server_->removeRoute(req->path(), req->method().toInt());
 
-    return;
+    // 1. 删路由
+    if(!http_server_->removeRoute(http_item->getRegRouteId()))
+    {
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
+    }
+
+    // 2. 删缓存
+    protocol_items_.erase(it);
+
+    return result;
 }
 
-std::shared_ptr<ProtocolItem> HttpProjectServer::GetProtocolItem(int64_t protocol_id)
+RuntimeResult<std::shared_ptr<ProtocolItem>> HttpProjectServer::GetProtocolItem(int64_t protocol_id)
 {
+    RuntimeResult<std::shared_ptr<ProtocolItem>> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
-    return it == protocol_items_.end() ? nullptr : it->second;
+    if(it == protocol_items_.end())
+    {
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+    }
+    else
+    {
+        result.val = it->second;
+    }
+
+    return result;
 }
 
-void HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json)
+RuntimeResult<void> HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json)
 {
+    RuntimeResult<void> result;
 
-    /*注意: 只有涉及协议头修改才需要重新配置路由 */
+    /* 注意: 只有涉及协议头修改才需要重新配置路由
+     *
+     * 更新原则：
+     *   1. 先用临时对象验证新配置，不污染现有运行态；
+     *   2. 只有验证通过后，才删除旧 route；
+     *   3. 新 route 注册成功后，再提交到当前 HttpProtocolItem；
+     *   4. 任一步失败，旧 route / 旧配置都保留。
+     */
     std::unique_lock<std::mutex> lock(mtx_);
     
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
-        return;
-
+    {
+        PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
+    }
     auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
-    assert(http_item);
-
-    // 获取原来的路径和方法
-    const std::string& old_path = http_item->getReq()->path();
-    const auto& old_method = http_item->getReq()->method();
-
-    auto p = it->second->getOriProtocol();
-
-    for(auto &item : req_cfg_json.items())
+    if(!http_item)
     {
-        auto json_it = p->m_reqCfg.find(item.key());
-        if(json_it != p->m_reqCfg.end())
-        {
-            p->m_reqCfg[item.key()] = item.value();
-        }
-        else
-        {
-            PJSERVER_F_ERROR("req cfg json not find! id[%ld], key[%s] \n", protocol_id, item.key().c_str());
-        }
+        PJSERVER_F_ERROR("http protocol item is nullptr! protocol_id[%d] \n", protocol_id);
+        
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
     }
 
-    protocol_items_.erase(it);
-    
-    lock.unlock();
+    auto old_req_cfg = std::make_shared<HttpRequest>(*http_item->getReq());
+    auto old_resp_cfg = std::make_shared<HttpResponse>(*http_item->getResp());
+    auto old_route_id = http_item->getRegRouteId();
 
-    // 删除路由
-    http_server_->removeRoute(old_path,old_method.toInt());
-    // 重新添加路由
-    AddProtocolItem(std::make_shared<HttpProtocolItem>(p));
+    if(!old_req_cfg || !old_resp_cfg)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
 
-    return;
+    // 先用临时协议项验证新配置，避免把当前运行态改半截
+    auto new_req_cfg = std::make_shared<HttpRequest>(*old_req_cfg);
+    auto new_resp_cfg = std::make_shared<HttpResponse>(*old_resp_cfg);
+    HttpProtocolItem shadow_item(new_req_cfg, new_resp_cfg);
+    if(!shadow_item.setReqCfg(req_cfg_json))
+    {
+        result.error.set(RuntimeError::kInvalidProtocolConfig);
+        return result;
+    }
+
+    const bool route_changed =
+        old_req_cfg->method().toInt() != new_req_cfg->method().toInt()
+        || old_req_cfg->path() != new_req_cfg->path();
+
+    // 只改 headers / body 之类不影响路由的字段，直接提交新配置即可
+    if(!route_changed)
+    {
+        http_item->setReqCfg(new_req_cfg);
+        http_item->setRegRouteId(old_route_id);
+        return result;
+    }
+
+    // 先删旧路由
+    if(!http_server_->removeRoute(old_route_id))
+    {
+        PJSERVER_F_ERROR("removeRoute error! route_id[%d] \n", static_cast<int32_t>(old_route_id));
+
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
+    }
+
+    // 再注册新路由。这里不能直接调用 AddProtocolItem，
+    // 因为它会重复插入 protocol_items_，只需要补回路由即可。
+    auto route_result = http_server_->addRoute(
+        new_req_cfg->method(),
+        new_req_cfg->path(),
+        std::bind(&HttpProjectServer::HttpProjectProcess, this, protocol_id, std::placeholders::_1, std::placeholders::_2));
+
+    if(!route_result.ok())
+    {
+        PJSERVER_F_ERROR("re-add route error! protocol_id[%d], path[%s], method[%s], reason[%d:%s]\n",
+            protocol_id,
+            new_req_cfg->path().c_str(),
+            new_req_cfg->method().toString(),
+            static_cast<int32_t>(route_result.status),
+            route_result.message.c_str());
+
+        // 回滚旧路由，保证失败后仍可继续按旧配置工作
+        auto rollback_result = http_server_->addRoute(
+            old_req_cfg->method(),
+            old_req_cfg->path(),
+            std::bind(&HttpProjectServer::HttpProjectProcess, this, protocol_id, std::placeholders::_1, std::placeholders::_2));
+        if(!rollback_result.ok())
+        {
+            PJSERVER_F_ERROR("rollback add route failed! protocol_id[%d], old_path[%s], method[%s], reason[%d:%s]\n",
+                protocol_id,
+                old_req_cfg->path().c_str(),
+                old_req_cfg->method().toString(),
+                static_cast<int32_t>(rollback_result.status),
+                rollback_result.message.c_str());
+        }
+
+        result.error.set(RuntimeError::kRouteOperationError);
+        return result;
+    }
+
+    // 路由已切换成功，最后提交运行态对象
+    http_item->setReqCfg(new_req_cfg);
+    http_item->setRegRouteId(route_result.route_id);
+
+    return result;
 }
 
 
-void HttpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json)
+RuntimeResult<void> HttpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json)
 {
+    RuntimeResult<void> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
-        return;
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
-    auto p = it->second->getOriProtocol();
-
-    for(auto &item : resp_cfg_json.items())
+    if(!it->second)
     {
-        auto json_it = p->m_respCfg.find(item.key());
-        if(json_it != p->m_respCfg.end())
-        {
-            p->m_respCfg[item.key()] = item.value();
-        }
-        else
-        {
-            PJSERVER_F_ERROR("resp cfg json not find! id[%ld], key[%s] \n", protocol_id, item.key().c_str());
-        }
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
     }
 
+    // 更新校验缓存
+    if(!it->second->setRespCfg(resp_cfg_json))
+    {
+        result.error.set(RuntimeError::kInvalidProtocolConfig);
+        return result;
+    }
+
+    return result;
 }
 
-void HttpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data)
+RuntimeResult<void> HttpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data)
 {
+    RuntimeResult<void> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
-        return;
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
-    auto p = it->second->getOriProtocol();
-    p->m_reqBodyType = body_type;
-    p->m_reqBodyData = std::move(req_body_data);
-    
-    protocol_items_[protocol_id] = std::make_shared<HttpProtocolItem>(p);
+    if(!it->second)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
+
+    it->second->setReqBody(body_type, body_data);
+
+    return result;
 }
 
-void HttpProjectServer::UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type,const std::vector<char> &resp_body_data)
+RuntimeResult<void> HttpProjectServer::UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type,const std::vector<char> &body_data)
 {
+    RuntimeResult<void> result;
+
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
-        return;
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
     }
-    auto p = it->second->getOriProtocol();
-    p->m_respBodyType = body_type;
-    p->m_respBodyData = std::move(resp_body_data);
-    
-    protocol_items_[protocol_id] = std::make_shared<HttpProtocolItem>(p);
+    if(!it->second)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
+
+    it->second->setRespBody(body_type, body_data);
+
+    return result;
 }
 
 /**
@@ -338,56 +464,33 @@ static bool JsonDataVerifyHelper(const nljson& root, const nljson& cfg_root)
     return true;
 }
 
-void HttpProjectServer::HttpProjectProcess(TcpConnectionPtr conn, HttpContextPtr ctx)
+void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
 
-    // TODO 哈希算法? 采用mumurHash3
-    // 输入键值格式: 
-        // HTTP: GET-/api/test1
-        // TCP: 定长(001)/变长(002)-头部长度
-    // 这里匹配存疑？如何快速索引到要校验对象？
-
-    // 实际请求的信息:
-    //
-
-    auto it = std::find_if(protocol_items_.begin(), protocol_items_.end(), [req](auto &it){
-        auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it.second);
-        if(http_item)
-        {
-            PJSERVER_F_DEBUG("[%d][%s][%d] path: %s -- %s\n", 
-                http_item->getId(),
-                http_item->getName().c_str(),
-                http_item->getProjectId(),
-                http_item->getReqPath().c_str(),
-                req->path().c_str());
-            return http_item->getReqPath() == req->path();
-        }
-
-        return false;
-    });
-
+    // 可以无锁 因为所有协议项增删改查都是成队列形式
+    auto it = protocol_items_.find(protocol_id);
     if(it == protocol_items_.end())
     {
         PJSERVER_F_ERROR("url[%s] protocol item is nullptr! \n", req->path().c_str());
         
-        resp->body().appendData(R"({"code": -300, "message":"inner error"})");
-        
+        resp->setStateCode(StateCode::k404NotFound);
         return;
     }
-
+  
     auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
 
     auto req_cfg = http_item->getReq();
     auto resp_cfg = http_item->getResp();
 
+
     // 1.TODO 建立websocket 进行协议收发实时推送
     // 注意这里 http 返回的实际响应报文 和 websocket 可能是不同的内容
     // 2.TODO 校验接口统一  怎么进行统一??
-    // bool ok = 校验接口(接收到的实际请求数据, 配置的期望请求数据);
+    // RuntimeResult<void> ok = 校验接口(接收到的实际请求数据, 配置的期望请求数据);
     /*
         2.1 分出请求类型
         2.2 实际数据转换  期望数据转换
@@ -463,12 +566,7 @@ void HttpProjectServer::HttpProjectProcess(TcpConnectionPtr conn, HttpContextPtr
         http_item->getProjectId());
 
     // 响应直接拷贝
-    // TODO 这里是否可以不拷贝?? 
     *resp = *resp_cfg;
-    if(resp->body().data().empty())
-    {
-        resp->body().appendData(R"({"code": 0, "message": "success"})");
-    }
 
     PJSERVER_DEBUG() << std::endl << resp->toString() << std::endl;
     return;

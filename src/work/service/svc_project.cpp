@@ -44,6 +44,11 @@ bool ProjectService::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project
     return _repo->UpdateStatus(ctx, projectId, status);
 }
 
+bool ProjectService::UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active)
+{
+    return _repo->UpdateActiveStatus(ctx, projectId, active);
+}
+
 
 bool ProjectService::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name)
 {
@@ -69,6 +74,11 @@ bool ProjectService::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t pr
 {
     return _repo->UpdatePatternInfo(ctx, project_id, pattern_type, pattern_info); 
 
+}
+
+std::vector<Project> ProjectService::GetAllValid(kit_muduo::HttpContextPtr ctx)
+{
+    return _repo->GetAllValid(ctx);
 }
 
 std::vector<Project> ProjectService::GetAllActive(kit_muduo::HttpContextPtr ctx)

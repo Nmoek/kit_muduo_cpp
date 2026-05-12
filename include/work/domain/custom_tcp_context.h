@@ -11,6 +11,7 @@
 
 #include <string>
 #include <memory>
+#include <vector>
 
 
 namespace kit_muduo {
@@ -73,8 +74,6 @@ private:
     CustomTcpProjectServer* server_;
     /// @brief tcp请求解析状态
     TcpParseState  state_{kExpectHeader};
-    /// @brief 临时缓冲区 处理可能存在的截断的报文
-    kit_muduo::Buffer buffer_;
     /// @brief 剩余应收长度
     int64_t remain_bytes_len_;
     /*注意: 这里请求/响应报文生成的时间点 应该是实际解析到功能的时候 */

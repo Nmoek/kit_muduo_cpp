@@ -29,6 +29,8 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) = 0;
 
+    virtual bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active) = 0;
+
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) = 0;
 
     virtual kit_dao::Project GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId) = 0;
@@ -57,6 +59,8 @@ public:
 
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) override;
+
+    bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active) override;
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) override;
 
