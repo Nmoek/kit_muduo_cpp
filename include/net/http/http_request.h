@@ -35,7 +35,10 @@ public:
         void set(int32_t val) { method = val; }
 
         int32_t toInt() const { return method; }
-        const char* toString() const
+
+        std::string toString() const { return toStr(); }
+        
+        const char* toStr() const
         {
             switch (method)
             {

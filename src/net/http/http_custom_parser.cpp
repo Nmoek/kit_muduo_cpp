@@ -182,7 +182,7 @@ bool CustomHttpParser::processRequestLine(const char *start, const char *end)
             return false;
         }
         request->setMethod(method);
-        HTTP_DEBUG() << "Method: " << method() << ",|" << method.toString() << "|" << "\n";
+        HTTP_DEBUG() << "Method: " << method() << ",|" << method.toStr() << "|" << "\n";
     }
     else if(RespType == _type)
     {
@@ -195,7 +195,7 @@ bool CustomHttpParser::processRequestLine(const char *start, const char *end)
             return false;
         }
         response->setVersion(version);
-        HTTP_DEBUG() << "Version: " << version() << ",|" << version.toString() << "|" << "\n";
+        HTTP_DEBUG() << "Version: " << version() << ",|" << version.toStr() << "|" << "\n";
     }
 
     // 第二个字段: path（请求） / status code（响应）
@@ -221,7 +221,7 @@ bool CustomHttpParser::processRequestLine(const char *start, const char *end)
         DelSpaceHelper(tmp_str);
         const auto& version = Version::FromString(tmp_str);
         request->setVersion(version);
-        HTTP_DEBUG() << "Version: " << version() << ",|" << version.toString() << "|" << "\n";
+        HTTP_DEBUG() << "Version: " << version() << ",|" << version.toStr() << "|" << "\n";
     }
     else if(RespType == _type)
     {

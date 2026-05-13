@@ -204,6 +204,9 @@ set(WORK_DOMAIN_SRC
     
     src/work/domain/project_server.cpp
     src/work/domain/protocol_item.cpp
+    src/work/domain/http_protocol_item.cpp
+    src/work/domain/custom_tcp_protocol_item.cpp
+
     src/work/domain/http_project_server.cpp
     src/work/domain/custom_tcp_project_server.cpp
     src/work/domain/project_server_factory.cpp

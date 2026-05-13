@@ -69,11 +69,11 @@ std::string HttpRequest::toString()
 {
     std::stringstream ss{""};
     // Line
-    ss << method_.toString();
+    ss << method_.toStr();
     ss << kSpace;
     ss << path_;
     ss << kSpace;
-    ss << version_.toString();
+    ss << version_.toStr();
     ss << kCRLF;
 
     if(body_.data().size())
@@ -83,7 +83,7 @@ std::string HttpRequest::toString()
 
     if(ContentType::kUnknowType != body_.contentType().toInt())
     {
-        headers_["Content-Type"] = body_.contentType().toString();
+        headers_["Content-Type"] = body_.contentType().toStr();
     }
 
     // Headers

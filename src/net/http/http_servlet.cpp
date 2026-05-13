@@ -409,7 +409,7 @@ void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
         resp->addHeader("Allow", BuildAllowHeader(result.allowed_methods));
         resp->addHeader("Content-Length", "0");
 
-        HTTP_F_WARN("http method not allowed! path[%s], method[%s], allow[%s]\n", req->path().c_str(), req->method().toString(), BuildAllowHeader(result.allowed_methods).c_str());
+        HTTP_F_WARN("http method not allowed! path[%s], method[%s], allow[%s]\n", req->path().c_str(), req->method().toStr(), BuildAllowHeader(result.allowed_methods).c_str());
         
         return;
     }

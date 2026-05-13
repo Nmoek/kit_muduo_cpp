@@ -73,7 +73,7 @@ std::string HttpResponse::getHeader(const std::string &key) const
 std::string HttpResponse::toString()
 {
     std::stringstream ss{""};
-    ss << version_.toString();
+    ss << version_.toStr();
     ss << kSpace;
     ss << state_code_.toString();
     ss << kSpace;
@@ -96,7 +96,7 @@ std::string HttpResponse::toString()
     if(ContentType::kUnknowType != content_type.toInt())
     {
         // 默认字符集 utf-8
-        std::string content_type_str = content_type.toString();
+        std::string content_type_str = content_type.toStr();
         content_type_str += "; ";
         content_type_str += "charset=utf-8";
         if(ContentType::kMultiForm == content_type.toInt())

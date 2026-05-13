@@ -19,7 +19,7 @@
 
 namespace kit_domain {
 
-class CustomTcpMessage;
+struct CustomTcpItemCfg;
 
 class CustomTcpPattern
 {
@@ -53,7 +53,7 @@ public:
      * @param is_endian 
      * @return std::vector<char> 
      */
-    virtual std::vector<char> serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian) = 0;
+    virtual std::vector<char> serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian) = 0;
 
     /**
      * @brief 获取配置的协议头bytes长度
@@ -113,7 +113,7 @@ public:
 
     std::vector<std::shared_ptr<CustomTcpPatternFieldBase>> getSpecialFields() const override;
 
-    std::vector<char> serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian) override;
+    std::vector<char> serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian) override;
 
 public:
     friend void to_json(nlohmann::json& root, const BodyLengthDepPattern& b);
@@ -145,7 +145,7 @@ public:
     int64_t calRemainBytesLen(std::shared_ptr<CustomTcpPatternFieldBase> field) override;
 
     std::vector<std::shared_ptr<CustomTcpPatternFieldBase>> getSpecialFields() const override;
-    std::vector<char> serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian) override;
+    std::vector<char> serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian) override;
     
 
 public:
@@ -176,7 +176,7 @@ public:
 
     std::vector<std::shared_ptr<CustomTcpPatternFieldBase>> getSpecialFields() const override;
 
-    std::vector<char> serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian) override;
+    std::vector<char> serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian) override;
     
 
 public:

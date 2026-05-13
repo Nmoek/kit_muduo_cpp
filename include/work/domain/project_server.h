@@ -12,7 +12,6 @@
 #include "base/event_loop_thread.h"
 #include "domain/runtime_result.h"
 #include "net/call_backs.h"
-#include "svc_project.h"
 #include "work/domain/type.h"
 #include "net/inet_address.h"
 #include "net/buffer.h"
@@ -39,11 +38,12 @@ namespace kit_domain {
 class Protocol;
 class ProtocolItem;
 class CustomTcpProtocolItem;
+class HttpProtocolItem;
 enum class ProtocolBodyType;
 class CustomTcpPattern;
-class CustomTcpContext;
+struct HttpItemReqHeaderCfg;
 class CustomTcpMessage;
-class ProtocolSvcInterface;
+struct CustomTcpItemCfg;
 
 class ProjectServer
 {
@@ -80,15 +80,12 @@ public:
 
     virtual RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
 
+
 protected:
     /// @brief 测试服务id
     int64_t project_id_;
     /// @brief 事件循环线程
     kit_muduo::EventLoopThread loop_thread_;
-
-    /// @brief 测试服务上依附的配置好的测试项
-    std::unordered_map<int64_t, std::shared_ptr<ProtocolItem>> protocol_items_;
-    std::mutex mtx_;
     
 };
 
@@ -97,6 +94,11 @@ class HttpProjectServer:
     public ProjectServer, public std::enable_shared_from_this<ProjectServer>
 {
 public:
+    struct HttpRuntimeItem
+    {
+        std::shared_ptr<HttpProtocolItem> item{nullptr};
+        uint64_t route_id;
+    };
 
     HttpProjectServer(int64_t project_id);
 
@@ -120,16 +122,34 @@ public:
 
 
 private:
+
+    RuntimeResult<void> ReplaceReqCfgProtocolItem(const HttpRuntimeItem& http_run_item,  const HttpItemReqHeaderCfg &new_req_cfg);
+
+    inline bool isSameRoute(const HttpItemReqHeaderCfg &old_cfg, const HttpItemReqHeaderCfg &new_cfg);
+
+
     void HttpProjectProcess(int32_t protocol_id,kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx);
+
 
 private:
     kit_muduo::HttpServerPtr http_server_;
+
+    /// @brief 测试服务上依附的配置好的测试项
+    std::unordered_map<int64_t, HttpRuntimeItem> http_items_;
+    std::mutex mtx_;
+
 };
 
 
 class CustomTcpProjectServer : public ProjectServer 
 {
 public:
+    struct CustomTcpRuntimeItem
+    {
+        std::shared_ptr<CustomTcpProtocolItem> item{nullptr};
+        std::string function_code_value;
+    };
+
     /**
      * @brief 构造函数
      * @param project_id 项目ID
@@ -163,13 +183,13 @@ public:
     // 通过请求的功能码来反向索引 配置的数据
     std::shared_ptr<CustomTcpProtocolItem> findByFuncCode(const std::string&func_code);
 
-
 private:
     void onConnect(kit_muduo::TcpConnectionPtr conn);
     void onMessage(kit_muduo::TcpConnectionPtr conn, kit_muduo::Buffer *buf, kit_muduo::TimeStamp receiveTime);
 
+    RuntimeResult<void> ReplaceReqCfgProtocolItem(const CustomTcpRuntimeItem& tcp_run_item,  const CustomTcpItemCfg &new_req_cfg);
+
     // 自定义TCP服务器完整消息处理函数 
-    // TODO 还需要添加TCP上下文
     void handleRequest(kit_muduo::TcpConnectionPtr conn, std::shared_ptr<CustomTcpMessage> req);
 
 private:
@@ -180,13 +200,13 @@ private:
     /// @brief 格式信息锁
     std::mutex pattern_info_mtx_;
 
+
+    /// @brief tcp 协议项列表
+    std::unordered_map<int64_t, CustomTcpRuntimeItem> tcp_items_;
     /// @brief 基于请求功能码的协议项映射表
     // 和协议列表共用一把锁
-    std::unordered_map<std::string, std::shared_ptr<CustomTcpProtocolItem>> func_codes_;
-
-
-    /*和HTPP一样也抽象一个解析器类型出来  以免后续有新的解析方法 */
-
+    std::unordered_map<std::string, int64_t> func_codes2ids_;
+    std::mutex mtx_;
 
 };
 

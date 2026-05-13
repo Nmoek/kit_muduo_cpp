@@ -11,13 +11,11 @@
 #define __KIT_DOMAIN_PROTOCOL_ITEM_H__
 
 #include "domain/project_server.h"
-#include "net/call_backs.h"
 #include "domain/type.h"
+#include "net/http/http_util.h"
 
 #include <memory>
 #include <string>
-#include <vector>
-#include <stdexcept>
 
 namespace kit_muduo::http {
 struct RouteResult;
@@ -26,33 +24,41 @@ struct RouteResult;
 namespace kit_domain {
 
 class Protocol;
-class CustomTcpMessage;
-class ProjectServer;
-class CustomTcpPattern;
+
+struct ProtocolItemBodyView
+{
+    kit_muduo::http::ContentType body_type;
+    std::shared_ptr<const std::vector<char>> body_data{std::make_shared<const std::vector<char>>()};
+
+    ProtocolItemBodyView() = default;
+    ProtocolItemBodyView(kit_muduo::http::ContentType body_type, const std::vector<char>& body_data)
+        :body_type(body_type)
+        ,body_data(std::make_shared<const std::vector<char>>(body_data))
+    {}
+};
 
 class ProtocolItem
 {
 public:
     using Ptr = std::shared_ptr<ProtocolItem>;
 
-    virtual ~ProtocolItem() =default;
+    virtual ~ProtocolItem() = default;
 
     virtual bool init(std::shared_ptr<Protocol> ori_protocol) = 0;
-
     virtual bool setReqCfg(const nlohmann::json& req_json) = 0;
     virtual bool setRespCfg(const nlohmann::json& resp_json) = 0;
-    virtual void setReqBody(const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
-    virtual void setRespBody(const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
+
+    void setReqBody(const ProtocolBodyType body_type, const std::vector<char> &body_data);
+    void setRespBody(const ProtocolBodyType body_type, const std::vector<char> &body_data);
+
+    ProtocolItemBodyView getReqBodyView() const;
+    ProtocolItemBodyView getRespBodyView() const;
 
     int64_t getId() const;
 
     std::string getName() const;
 
     int64_t getProjectId() const;
-
-    void setRegRouteId(int64_t route_id);
-
-    int64_t getRegRouteId() const;
 
     bool isEndian() const;
 
@@ -62,77 +68,15 @@ protected:
     ProtocolType type_;         // 测试协议类型
     int64_t project_id_;    // 所属测试服务Id
     bool  is_endian_;     // 是否大小端转换
-    /// @brief 原始协议数据
-    // std::shared_ptr<Protocol> ori_protocol_;
-    /// @brief 已注册到路由层的ID
-    int64_t reg_route_id_;
+
+    /// @brief 请求Body快照
+    ProtocolItemBodyView req_body_view_;
+    /// @brief 响应Body快照
+    ProtocolItemBodyView resp_body_view_;
+
     /// @brief 校验过程  粗略校验？ 精细校验?
-
 };
 
-
-class HttpProtocolItem: public ProtocolItem
-{
-public:
-    HttpProtocolItem();
-
-    HttpProtocolItem(kit_muduo::HttpRequestPtr req_cfg, kit_muduo::HttpResponsePtr resp_cfg_);
-
-    ~HttpProtocolItem() override = default;
-
-    bool init(std::shared_ptr<Protocol> ori_protocol) override;
-
-
-    bool setReqCfg(const nlohmann::json& req_json) override;
-    bool setRespCfg(const nlohmann::json& resp_json) override;
-    void setReqBody(const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
-    void setRespBody(const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
-
-
-    void setReqCfg(kit_muduo::HttpRequestPtr req_cfg);
-    void setRespCfg(kit_muduo::HttpResponsePtr resp_cfg);
-
-    kit_muduo::HttpRequestPtr getReq() const { return req_cfg_; }
-    kit_muduo::HttpResponsePtr  getResp() const { return resp_cfg_;}
-
-    std::string getReqPath() const;
-private:
-    // TODO: 实际的业务数据 需要和 配置数据进行拆分
-    kit_muduo::HttpRequestPtr req_cfg_;
-    
-    kit_muduo::HttpResponsePtr resp_cfg_;
-};
-
-class CustomTcpProtocolItem: public ProtocolItem
-{
-public:
-    explicit CustomTcpProtocolItem(std::shared_ptr<CustomTcpPattern> tcp_pattern);
-
-    CustomTcpProtocolItem(std::shared_ptr<CustomTcpPattern> pattern, std::shared_ptr<CustomTcpMessage>req_cfg, std::shared_ptr<CustomTcpMessage> resp_cfg);
-
-    bool init(std::shared_ptr<Protocol> ori_protocol) override;
-
-    bool setReqCfg(const nlohmann::json& req_json) override;
-    bool setRespCfg(const nlohmann::json& resp_json) override;
-    void setReqBody(const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
-    void setRespBody(const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
-
-    void setReqCfg(std::shared_ptr<CustomTcpMessage> req_cfg) { req_cfg_msg_ = req_cfg; }
-    void setRespCfg(std::shared_ptr<CustomTcpMessage> resp_cfg) { resp_cfg_msg_ = resp_cfg; }
-
-    ~CustomTcpProtocolItem() override = default;
-
-    std::shared_ptr<CustomTcpMessage> getReq() const { return req_cfg_msg_; }
-    std::shared_ptr<CustomTcpMessage>  getResp() const { return resp_cfg_msg_; }
-
-private:
-    /// @brief 自定义tcp格式
-    std::shared_ptr<CustomTcpPattern> tcp_pattern_;
-    /// @brief 配置的接收解析tcp报文
-    std::shared_ptr<CustomTcpMessage> req_cfg_msg_;
-    /// @brief 配置的组装发送tcp响应报文
-    std::shared_ptr<CustomTcpMessage> resp_cfg_msg_;
-};
 
 
 /**

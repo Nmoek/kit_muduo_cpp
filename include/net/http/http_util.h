@@ -33,7 +33,9 @@ struct Version
 
     void set(int32_t val) { m_version = val; }
 
-    const char* toString() const
+    std::string toString() const { return toStr(); }
+
+    const char* toStr() const
     {
         switch (m_version)
         {
@@ -73,7 +75,9 @@ struct ContentType
 
     void set(int32_t val) { m_content_type = val; }
 
-    const char * toString() const
+    std::string toString() const { return toStr(); }
+
+    const char * toStr() const
     {
         switch (m_content_type)
         {

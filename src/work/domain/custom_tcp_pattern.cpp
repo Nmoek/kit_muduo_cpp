@@ -14,6 +14,8 @@
 #include "net/net_data_converter.h"
 #include "net/endian.h"
 #include "domain/custom_tcp_message.h"
+#include "domain/custom_tcp_protocol_item.h"
+
 
 #include <assert.h>
 
@@ -88,39 +90,24 @@ std::vector<std::shared_ptr<CustomTcpPatternFieldBase>> BodyLengthDepPattern::ge
     return res;
 }
 
-std::vector<char> BodyLengthDepPattern::serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian)
+std::vector<char> BodyLengthDepPattern::serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian)
 {
     std::vector<char> data;
-    if(!message)
-    {
-        CUSTOM_ERROR() << "message is null!" << std::endl;
-        return data;
-    }
-    
-    const std::vector<char>& body_data = message->body().data();
 
     // 组装Body长度进去
-    auto real_body_length_field = message->getField(body_length_field_->byte_pos());
+    auto it = tcp_cfg.headers.find(body_length_field_->byte_pos());
 
-    if(!real_body_length_field)
+    if(it == tcp_cfg.headers.end())
     {
         return data;
     }
-
-    // BUG: 给字段赋值时  不能是bytes数组的形式  否则无法知道真值是什么
+    auto real_body_length_field = (*it);
 
     // 本机变量转为大端
     real_body_length_field->setBytes(kit_muduo::ValueToBytes(body_data.size(), !KIT_IS_LOCAL_BIG_ENDIAN()));
 
-    // BUG: 给字段赋值时  不能是bytes数组的形式  否则无法知道真值是什么
-    /*
-        Field<int32_t> field
-        Field<int64_t> field 是不一样的
-    */
-
-
     // 组装普通头部
-    const auto& headers_data = message->assembleHeaders(is_endian);
+    const auto& headers_data = tcp_cfg.assembleHeaders(is_endian);
     data.insert(data.end(), headers_data.begin(), headers_data.end());
 
     // 组装Body
@@ -194,31 +181,27 @@ std::vector<std::shared_ptr<CustomTcpPatternFieldBase>> TotalLengthDepPattern::g
     return res;
 }
 
-std::vector<char> TotalLengthDepPattern::serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian)
+std::vector<char> TotalLengthDepPattern::serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian)
 {
     std::vector<char> data;
-    if(!message)
-    {
-        CUSTOM_ERROR() << "message is null!" << std::endl;
-        return data;
-    }
-    const std::vector<char>& body_data = message->body().data();
-    int64_t total_length = message->getHeaderBytes() + body_data.size();
+
+    int64_t total_length = tcp_cfg.getHeaderBytes() + body_data.size();
 
     // 组装报文总长度进去
-    auto real_total_length_field = message->getField(total_length_field_->byte_pos());
+   auto it = tcp_cfg.headers.find(total_length_field_->byte_pos());
 
-    if(!real_total_length_field)
+    if(it == tcp_cfg.headers.end())
     {
         return data;
     }
-
+    auto real_total_length_field = (*it);
+    
     // 本机变量转为大端
-    real_total_length_field->setBytes(kit_muduo::ValueToBytes(body_data.size(), !KIT_IS_LOCAL_BIG_ENDIAN()));
+    real_total_length_field->setBytes(kit_muduo::ValueToBytes(total_length, !KIT_IS_LOCAL_BIG_ENDIAN()));
     
 
     // 组装普通头部
-    const auto& headers_data = message->assembleHeaders(is_endian);
+    const auto& headers_data = tcp_cfg.assembleHeaders(is_endian);
     data.insert(data.end(), headers_data.begin(), headers_data.end());
 
     // 组装Body
@@ -283,19 +266,15 @@ std::vector<std::shared_ptr<CustomTcpPatternFieldBase>> NoLengthDepPattern::getS
     return res;
 }
 
-std::vector<char> NoLengthDepPattern::serialize(std::shared_ptr<CustomTcpMessage> message, bool is_endian)
+std::vector<char> NoLengthDepPattern::serialize(const CustomTcpItemCfg& tcp_cfg, const std::vector<char> &body_data, bool is_endian)
 {
     std::vector<char> data;
-    if(!message)
-    {
-        CUSTOM_ERROR() << "message is null!" << std::endl;
-        return data;
-    }
 
-
-   // 组装所有头部 只有头部没有Body
-    const auto& headers_data = message->assembleHeaders(is_endian);
+    // 组装所有头部 只有头部没有Body
+    const auto& headers_data = tcp_cfg.assembleHeaders(is_endian);
     data.insert(data.end(), headers_data.begin(), headers_data.end());
+
+    assert(headers_data.size() == data.size());
 
     return data;
 }

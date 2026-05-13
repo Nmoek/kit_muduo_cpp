@@ -22,10 +22,12 @@
 #include "net/http/http_response.h"
 #include "domain/protocol.h"
 #include "domain/protocol_item.h"
+#include "domain/http_protocol_item.h"
 #include "nlohmann/json.hpp"
 #include "domain/type.h"
 #include "service/svc_protocol.h"
 
+#include <cstdint>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -90,24 +92,23 @@ RuntimeResult<void> HttpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolI
     }
 
     // 1. 路由注册 
-    auto req = http_item->getReq();
+    const auto& req_cfg = http_item->getReqCfg();
 
-    auto route_result = http_server_->addRoute(req->method(), req->path(),  std::bind(&HttpProjectServer::HttpProjectProcess, this, item->getId(), std::placeholders::_1, std::placeholders::_2));
+    auto route_result = http_server_->addRoute(req_cfg.method, req_cfg.path,  std::bind(&HttpProjectServer::HttpProjectProcess, this, item->getId(), std::placeholders::_1, std::placeholders::_2));
 
     if(!route_result.ok())
     {
         PJSERVER_F_ERROR("http protocol item add route error! %d:%s \n", route_result.status, route_result.message.c_str());
 
-        result.error.set(RuntimeError::kRouteOperationError);
+        result.error.set(RuntimeError::kRouteConflict);
         return result;
     }
 
 
-    item->setRegRouteId(route_result.route_id);
     // 2. 校验内容缓存
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        protocol_items_.emplace(item->getId(), item);
+        http_items_.emplace(item->getId(), HttpRuntimeItem{http_item, route_result.route_id});
     }
 
 
@@ -123,32 +124,33 @@ RuntimeResult<void> HttpProjectServer::DelProtocolItem(int64_t protocol_id)
   
     std::lock_guard<std::mutex> lock(mtx_);
 
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
     {
-        PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
+        PJSERVER_F_ERROR("HttpProjectServer: Protocol item not found, pjId[%d], pcId[%d] \n",  project_id_, protocol_id);
 
         result.error.set(RuntimeError::kProtocolItemNotFound);
         return result;
     }
-    auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
-    if(!http_item)
+    uint64_t route_id = it->second.route_id;
+
+    if(!it->second.item)
     {
         PJSERVER_F_ERROR("http protocol item is nullptr! protocol_id[%d] \n", protocol_id);
         
-        result.error.set(RuntimeError::kRouteOperationError);
+        result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
 
     // 1. 删路由
-    if(!http_server_->removeRoute(http_item->getRegRouteId()))
+    if(!http_server_->removeRoute(route_id))
     {
-        result.error.set(RuntimeError::kRouteOperationError);
+        result.error.set(RuntimeError::kRouteNotFound);
         return result;
     }
 
     // 2. 删缓存
-    protocol_items_.erase(it);
+    http_items_.erase(it);
 
     return result;
 }
@@ -158,14 +160,14 @@ RuntimeResult<std::shared_ptr<ProtocolItem>> HttpProjectServer::GetProtocolItem(
     RuntimeResult<std::shared_ptr<ProtocolItem>> result;
 
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
     {
         result.error.set(RuntimeError::kProtocolItemNotFound);
     }
     else
     {
-        result.val = it->second;
+        result.val = it->second.item;
     }
 
     return result;
@@ -174,7 +176,15 @@ RuntimeResult<std::shared_ptr<ProtocolItem>> HttpProjectServer::GetProtocolItem(
 RuntimeResult<void> HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json)
 {
     RuntimeResult<void> result;
+    HttpItemReqHeaderCfg new_req_cfg;
 
+    if(!new_req_cfg.fromJson(req_cfg_json))
+    {
+        PJSERVER_F_ERROR("http req cfg json parse error! %s \n", req_cfg_json.dump().c_str());
+
+        result.error.set(RuntimeError::kInvalidProtocolConfig);
+        return result;
+    }
     /* 注意: 只有涉及协议头修改才需要重新配置路由
      *
      * 更新原则：
@@ -185,131 +195,55 @@ RuntimeResult<void> HttpProjectServer::UpdateReqCfgProtocolItem(int64_t protocol
      */
     std::unique_lock<std::mutex> lock(mtx_);
     
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
         result.error.set(RuntimeError::kProtocolItemNotFound);
         return result;
     }
-    auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
-    if(!http_item)
+
+    if(!it->second.item)
     {
         PJSERVER_F_ERROR("http protocol item is nullptr! protocol_id[%d] \n", protocol_id);
         
-        result.error.set(RuntimeError::kRouteOperationError);
-        return result;
-    }
-
-    auto old_req_cfg = std::make_shared<HttpRequest>(*http_item->getReq());
-    auto old_resp_cfg = std::make_shared<HttpResponse>(*http_item->getResp());
-    auto old_route_id = http_item->getRegRouteId();
-
-    if(!old_req_cfg || !old_resp_cfg)
-    {
         result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
 
-    // 先用临时协议项验证新配置，避免把当前运行态改半截
-    auto new_req_cfg = std::make_shared<HttpRequest>(*old_req_cfg);
-    auto new_resp_cfg = std::make_shared<HttpResponse>(*old_resp_cfg);
-    HttpProtocolItem shadow_item(new_req_cfg, new_resp_cfg);
-    if(!shadow_item.setReqCfg(req_cfg_json))
-    {
-        result.error.set(RuntimeError::kInvalidProtocolConfig);
-        return result;
-    }
-
-    const bool route_changed =
-        old_req_cfg->method().toInt() != new_req_cfg->method().toInt()
-        || old_req_cfg->path() != new_req_cfg->path();
-
-    // 只改 headers / body 之类不影响路由的字段，直接提交新配置即可
-    if(!route_changed)
-    {
-        http_item->setReqCfg(new_req_cfg);
-        http_item->setRegRouteId(old_route_id);
-        return result;
-    }
-
-    // 先删旧路由
-    if(!http_server_->removeRoute(old_route_id))
-    {
-        PJSERVER_F_ERROR("removeRoute error! route_id[%d] \n", static_cast<int32_t>(old_route_id));
-
-        result.error.set(RuntimeError::kRouteOperationError);
-        return result;
-    }
-
-    // 再注册新路由。这里不能直接调用 AddProtocolItem，
-    // 因为它会重复插入 protocol_items_，只需要补回路由即可。
-    auto route_result = http_server_->addRoute(
-        new_req_cfg->method(),
-        new_req_cfg->path(),
-        std::bind(&HttpProjectServer::HttpProjectProcess, this, protocol_id, std::placeholders::_1, std::placeholders::_2));
-
-    if(!route_result.ok())
-    {
-        PJSERVER_F_ERROR("re-add route error! protocol_id[%d], path[%s], method[%s], reason[%d:%s]\n",
-            protocol_id,
-            new_req_cfg->path().c_str(),
-            new_req_cfg->method().toString(),
-            static_cast<int32_t>(route_result.status),
-            route_result.message.c_str());
-
-        // 回滚旧路由，保证失败后仍可继续按旧配置工作
-        auto rollback_result = http_server_->addRoute(
-            old_req_cfg->method(),
-            old_req_cfg->path(),
-            std::bind(&HttpProjectServer::HttpProjectProcess, this, protocol_id, std::placeholders::_1, std::placeholders::_2));
-        if(!rollback_result.ok())
-        {
-            PJSERVER_F_ERROR("rollback add route failed! protocol_id[%d], old_path[%s], method[%s], reason[%d:%s]\n",
-                protocol_id,
-                old_req_cfg->path().c_str(),
-                old_req_cfg->method().toString(),
-                static_cast<int32_t>(rollback_result.status),
-                rollback_result.message.c_str());
-        }
-
-        result.error.set(RuntimeError::kRouteOperationError);
-        return result;
-    }
-
-    // 路由已切换成功，最后提交运行态对象
-    http_item->setReqCfg(new_req_cfg);
-    http_item->setRegRouteId(route_result.route_id);
-
-    return result;
+    return ReplaceReqCfgProtocolItem(it->second, new_req_cfg);
 }
 
 
 RuntimeResult<void> HttpProjectServer::UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json)
 {
     RuntimeResult<void> result;
+    HttpItemRespHeaderCfg new_resp_cfg;
+
+    if(!new_resp_cfg.fromJson(resp_cfg_json))
+    {
+        CUSTOM_F_ERROR("resp json parse error!\n");
+        result.error.set(RuntimeError::kInvalidProtocolConfig);
+        return result;
+    }
 
     std::lock_guard<std::mutex> lock(mtx_);
     
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
         result.error.set(RuntimeError::kProtocolItemNotFound);
         return result;
     }
-    if(!it->second)
+    if(!it->second.item)
     {
         result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
 
     // 更新校验缓存
-    if(!it->second->setRespCfg(resp_cfg_json))
-    {
-        result.error.set(RuntimeError::kInvalidProtocolConfig);
-        return result;
-    }
+    it->second.item->setRespCfg(new_resp_cfg);
 
     return result;
 }
@@ -319,21 +253,21 @@ RuntimeResult<void> HttpProjectServer::UpdateReqBodyProtocolItem(int64_t protoco
     RuntimeResult<void> result;
 
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
 
         result.error.set(RuntimeError::kProtocolItemNotFound);
         return result;
     }
-    if(!it->second)
+    if(!it->second.item)
     {
         result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
 
-    it->second->setReqBody(body_type, body_data);
+    it->second.item->setReqBody(body_type, body_data);
 
     return result;
 }
@@ -343,24 +277,81 @@ RuntimeResult<void> HttpProjectServer::UpdateRespBodyProtocolItem(int64_t protoc
     RuntimeResult<void> result;
 
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
     {
         PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
 
         result.error.set(RuntimeError::kProtocolItemNotFound);
         return result;
     }
-    if(!it->second)
+    if(!it->second.item)
     {
         result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
 
-    it->second->setRespBody(body_type, body_data);
+    it->second.item->setRespBody(body_type, body_data);
 
     return result;
 }
+
+RuntimeResult<void> HttpProjectServer::ReplaceReqCfgProtocolItem(const HttpRuntimeItem& http_run_item, const HttpItemReqHeaderCfg &new_req_cfg)
+{
+    RuntimeResult<void> result;
+    auto http_item = http_run_item.item;
+    const auto& old_req_cfg = http_item->getReqCfg();
+    uint64_t old_route_id = http_run_item.route_id;
+    
+    // 只改 headers / body 之类不影响路由的字段，直接提交新配置即可
+    if(isSameRoute(old_req_cfg, new_req_cfg))
+    {
+        http_item->setReqCfg(new_req_cfg);
+        return result;
+    }
+
+    // 路由Key{method, path}发生变化则需要更新路由
+
+    // 先添加新路由
+    auto route_result = http_server_->addRoute(new_req_cfg.method, new_req_cfg.path, std::bind(&HttpProjectServer::HttpProjectProcess, this, http_item->getId(), std::placeholders::_1, std::placeholders::_2));
+    if(!route_result.ok())
+    {
+        PJSERVER_F_ERROR("add route failed! pjId[%d], pcId[%d], path[%s], method[%s] \n", project_id_,http_item->getId(), new_req_cfg.path.c_str(), new_req_cfg.method.toStr());
+
+        result.error.set(RuntimeError::kRouteConflict);
+        return result;
+    }
+
+    // 先删旧路由
+    if(!http_server_->removeRoute(old_route_id))
+    {
+
+        // 回滚新增加的路由
+        if(!http_server_->removeRoute(route_result.route_id))
+        {
+            PJSERVER_F_ERROR("remove new route error! route_id[%lu], path[%s] \n", route_result.route_id, new_req_cfg.path.c_str());
+        }
+
+        PJSERVER_F_ERROR("remove old route error! route_id[%lu], path[%s] \n", old_route_id, old_req_cfg.path.c_str());
+
+        result.error.set(RuntimeError::kRouteNotFound);
+        return result;
+    }
+
+    // 路由已切换成功，最后提交运行态对象
+    http_item->setReqCfg(new_req_cfg);
+    http_items_[http_item->getId()] = {http_item, route_result.route_id};
+
+    return result;
+}
+
+
+bool HttpProjectServer::isSameRoute(const HttpItemReqHeaderCfg &old_cfg, const HttpItemReqHeaderCfg &new_cfg)
+{
+    return old_cfg.method.toInt() == new_cfg.method.toInt() 
+    && old_cfg.path == new_cfg.path;
+}
+
 
 /**
  * @brief json数据比对辅助(只比对key值是否正确)
@@ -464,28 +455,31 @@ static bool JsonDataVerifyHelper(const nljson& root, const nljson& cfg_root)
     return true;
 }
 
+
 void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
-    resp->setStateCode(StateCode::k200Ok);
 
     // 可以无锁 因为所有协议项增删改查都是成队列形式
-    auto it = protocol_items_.find(protocol_id);
-    if(it == protocol_items_.end())
+    auto it = http_items_.find(protocol_id);
+    
+    if(it == http_items_.end() || !it->second.item)
     {
         PJSERVER_F_ERROR("url[%s] protocol item is nullptr! \n", req->path().c_str());
         
         resp->setStateCode(StateCode::k404NotFound);
         return;
     }
+    auto http_item = it->second.item;
+
   
-    auto http_item = std::dynamic_pointer_cast<HttpProtocolItem>(it->second);
-
-    auto req_cfg = http_item->getReq();
-    auto resp_cfg = http_item->getResp();
-
+    auto req_cfg = http_item->getReqCfg();
+    auto resp_cfg = http_item->getRespCfg();
+    const auto& req_body_view = http_item->getReqBodyView();
+    const auto& resp_body_view = http_item->getRespBodyView();
+    
 
     // 1.TODO 建立websocket 进行协议收发实时推送
     // 注意这里 http 返回的实际响应报文 和 websocket 可能是不同的内容
@@ -498,10 +492,10 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
         2.2 实际数据转换  期望数据转换
     */
     try {
-        if(!req_cfg->body().data().empty())
+        if(!req_body_view.body_data->empty())
         {
             if(!req->body().data().empty()
-                && req->body().contentType() == req_cfg->body().contentType())
+                && req->body().contentType() == req_body_view.body_type)
             {
                 // TODO 这里需要大量的模版方法模式
                 if(ContentType::kJsonType == req->body().contentType()())
@@ -509,7 +503,7 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
                     PJSERVER_F_DEBUG("protocol body type is json! \n");
                     auto req_root = std::make_unique<nljson>(nljson::parse(req->body().data()));
                     PJSERVER_DEBUG() << "req body: \n" << req_root->dump(4) << std::endl;
-                    auto req_cfg_root = std::make_unique<nljson>(nljson::parse(req_cfg->body().data()));
+                    auto req_cfg_root = std::make_unique<nljson>(nljson::parse(*req_body_view.body_data));
                     PJSERVER_DEBUG() << "req_cfg body: \n" << req_cfg_root->dump(4) << std::endl;
 
                     /************核心校验过程 DFS递归校验***********/
@@ -531,7 +525,7 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
             }
             else
             {
-                PJSERVER_F_ERROR("protocol body type is not match! real[%s] - expect[%s] \n", req->body().contentType().toString(), req_cfg->body().contentType().toString());
+                PJSERVER_F_ERROR("protocol body type is not match! real[%s] - expect[%s] \n", req->body().contentType().toStr(), req_body_view.body_type.toStr());
 
                 resp->body().appendData(R"({"code": -200, "message":"body type is not match!"})");
                 
@@ -542,13 +536,12 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
         else
         {
             // 请求Body没配情况下 默认怎么处理?
-            PJSERVER_F_WARN("protocol body is empty! [%d][%s][%d], url[%s], cfg_body_type[%s], cfg_body:%s \n",
+            PJSERVER_F_WARN("protocol body is empty! [%d][%s][%d], url[%s], cfg_body_type[%s] \n",
                 http_item->getId(),
                 http_item->getName().c_str(),
                 http_item->getProjectId(),
                 req->path().c_str(), 
-                req_cfg->body().contentType().toString(),
-                req_cfg->body().toString().c_str());
+                req_body_view.body_type.toStr());
         }
     } catch (const std::exception& e) {
 
@@ -560,13 +553,16 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
         return;
     }
 
-    PJSERVER_F_INFO("[%d][%s][%d] match success!\n", 
+    PJSERVER_F_INFO("pjId[%d] pcId[%d] name[%s] match success!\n", 
+        http_item->getProjectId(),
         http_item->getId(),
-        http_item->getName().c_str(),
-        http_item->getProjectId());
+        http_item->getName().c_str()
+    );
 
-    // 响应直接拷贝
-    *resp = *resp_cfg;
+    // 响应数据拷贝
+    resp->setStateCode(resp_cfg.state_code);
+    resp->setHeaders(resp_cfg.headers);
+    resp->setBody(Body{resp_body_view.body_type, *resp_body_view.body_data});
 
     PJSERVER_DEBUG() << std::endl << resp->toString() << std::endl;
     return;

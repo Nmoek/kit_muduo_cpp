@@ -27,7 +27,10 @@ const std::unordered_map<int32_t, std::string> RuntimeError::s_error_msg{
     {kProtocolItemNotFound, "protocol item not found"},
     {kProtocolTypeMismatch, "protocol type mismatch"},
     {kInvalidProtocolConfig, "invalid protocol config"},
-    {kRouteOperationError, "route operation error"},
+    {kRouteNotFound, "route not found"},
+    {kRouteConflict, "route conflict"},
+    {kFuncCodeNotFound, "func code not found"},
+    {kFuncCodeConflict, "func code conflict"},
 
     {kInternalError, "internal error"}
 };

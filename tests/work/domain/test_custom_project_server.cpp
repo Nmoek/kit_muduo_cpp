@@ -180,6 +180,13 @@ struct Pattern1 {
     uint64_t        field6;  // 报文体消息时间戳
 };
 
+// 用于回归“body 分片到达”场景的最小头部，避免 common fields 消费长度缺陷干扰状态机测试。
+struct PatternPartialBody {
+    int32_t         field1;  //起始标识
+    uint16_t        field2;  //消息类型
+    uint64_t        field3;  //报文体长度
+};
+
 /// @brief 郑州邮政 总包发送包裹小车号
 struct Pattern2_2 {
     int8_t          field1;    //起始字符长度
@@ -268,6 +275,30 @@ static void ReqBuilderHelper1(std::vector<char>& req, const nljson& body_root)
     }
     f.flush();
     f.close();
+}
+
+static void ReqBuilderHelperPartialBody(std::vector<char>& req, const nljson& body_root)
+{
+    PatternPartialBody pattern;
+    const std::string body = body_root.dump();
+
+    TEST_ERROR() << "ReqBuilderHelperPartialBody::sizeof(PatternPartialBody)::" << sizeof(PatternPartialBody) << std::endl;
+
+    pattern.field1 = 0x23232323;
+    SwapToBigEndian(pattern.field1);
+
+    pattern.field2 = 0x0100;
+    SwapToBigEndian(pattern.field2);
+
+    pattern.field3 = body.size();
+    req.resize(sizeof(PatternPartialBody) + body.size());
+
+    TEST_ERROR() << "body_len: " << pattern.field3  << ", " << kit_muduo::DataToHexConverter<uint64_t>()(pattern.field3, !KIT_IS_LOCAL_BIG_ENDIAN()) << std::endl;
+
+    SwapToBigEndian(pattern.field3);
+
+    memcpy(req.data(), &pattern, sizeof(PatternPartialBody));
+    memcpy(req.data() + sizeof(PatternPartialBody), body.data(), body.size());
 }
 
 
@@ -601,6 +632,128 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
         server->stop();
         usleep(100);
     }
+}
+
+
+/*
+测试思路：
+1. 构造一条 BODY_LENGTH_DEP 的完整自定义 TCP 报文。
+2. 把报文拆成 3 段: header / body前半段 / body后半段。
+3. 先喂 header，再喂不完整 body，最后补齐剩余 body。
+4. 每一步都检查 parseRequest() 不会卡住，且状态机能从 kExpectBody 正确走到 kGotAll。
+
+示意：
+  完整报文 = [header 14B] + [body N B]
+  第1次:     [header]
+  第2次:     [body 1/2]
+  第3次:     [body 2/2]
+*/
+TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
+{
+    const std::string pattern_json_partial_body = R"({
+        "least_byte_len": 14,
+        "special_fields": {
+            "start_magic_num_field": {
+                "name": "起始标识",
+                "idx": 0,
+                "byte_pos": 0,
+                "byte_len": 4,
+                "type": "INT32",
+                "value": "H23232323"
+            },
+            "function_code_field": {
+                "name": "功能码",
+                "idx": 3,
+                "byte_pos": 4,
+                "byte_len": 2,
+                "type": "UINT16",
+                "value": ""
+            },
+            "body_length_field": {
+                "name": "报文体长度",
+                "idx": 4,
+                "byte_pos": 6,
+                "byte_len": 8,
+                "type": "UINT64",
+                "value": ""
+            }
+        }
+    })";
+    const std::string req_cfg_partial_body = R"({"function_code_filed_value":"H0100","common_fields":[]})";
+    const std::string resp_cfg_partial_body = R"({"function_code_filed_value":"H1080","common_fields":[]})";
+
+    auto server = std::make_shared<CustomTcpProjectServer>(
+        1001,
+        CustomTcpPatternType::BODY_LENGTH_DEP,
+        std::vector<char>(pattern_json_partial_body.begin(), pattern_json_partial_body.end()));
+
+    auto pc = std::make_shared<kit_domain::Protocol>(kit_domain::Protocol{
+        .m_id = 1001,
+        .m_name = "partial_body_test_pc",
+        .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+        .m_projectId = 1001,
+        .m_status = ProtocolStatus::ACTIVE,
+        .m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+        .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+        .m_reqBodyDataStatus = 0,
+        .m_respBodyDataStatus = 0,
+        .m_reqCfg = nljson::parse(req_cfg_partial_body),
+        .m_respCfg = nljson::parse(resp_cfg_partial_body),
+        .m_reqBodyData = {},
+        .m_respBodyData = std::vector<char>(resp_body1.begin(), resp_body1.end()),
+        .m_isEndian = true,
+        .m_ctime = TimeStamp::Now(),
+        .m_utime = TimeStamp::Now(),
+    });
+
+    auto item = ProtocolItemFactory::Create(pc, server);
+    ASSERT_NE(item, nullptr);
+
+    auto add_result = server->AddProtocolItem(item);
+    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+
+    auto context = std::make_shared<CustomTcpContext>(server.get());
+    const std::string expect_body = nljson::parse(R"({"key1": "val1"})").dump();
+    std::vector<char> full_req;
+    ReqBuilderHelperPartialBody(full_req, nljson::parse(R"({"key1": "val1"})"));
+
+    constexpr size_t kHeaderLen = sizeof(PatternPartialBody);
+    ASSERT_GT(full_req.size(), kHeaderLen);
+
+    std::vector<char> header_chunk(full_req.begin(), full_req.begin() + kHeaderLen);
+    std::vector<char> body_chunk(full_req.begin() + kHeaderLen, full_req.end());
+    ASSERT_GT(body_chunk.size(), 1u);
+
+    const size_t first_body_len = body_chunk.size() / 2;
+    ASSERT_GT(first_body_len, 0u);
+    ASSERT_LT(first_body_len, body_chunk.size());
+
+    std::vector<char> body_part1(body_chunk.begin(), body_chunk.begin() + first_body_len);
+    std::vector<char> body_part2(body_chunk.begin() + first_body_len, body_chunk.end());
+
+    Buffer buf;
+    const TimeStamp now = TimeStamp::Now();
+
+    // 第1段: 只有 header, 应停在 kExpectBody, 不能误判为完成。
+    buf.append(header_chunk.data(), header_chunk.size());
+    EXPECT_TRUE(context->parseRequest(buf, now));
+    EXPECT_EQ(context->state(), CustomTcpContext::kExpectBody);
+    EXPECT_FALSE(context->gotAll());
+    EXPECT_TRUE(context->request()->body().toString().empty());
+
+    // 第2段: body 还不完整, 状态仍应停留在 kExpectBody, 等待更多数据。
+    buf.append(body_part1.data(), body_part1.size());
+    EXPECT_TRUE(context->parseRequest(buf, now));
+    EXPECT_EQ(context->state(), CustomTcpContext::kExpectBody);
+    EXPECT_FALSE(context->gotAll());
+    EXPECT_TRUE(context->request()->body().toString().empty());
+
+    // 第3段: 补齐剩余 body, 这时应该完整解析成功。
+    buf.append(body_part2.data(), body_part2.size());
+    EXPECT_TRUE(context->parseRequest(buf, now));
+    EXPECT_EQ(context->state(), CustomTcpContext::kGotAll);
+    EXPECT_TRUE(context->gotAll());
+    EXPECT_EQ(context->request()->body().toString(), expect_body);
 }
 
 

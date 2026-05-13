@@ -60,18 +60,18 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
     int32_t head_bytes_len = pattern->headByteLen();
 
 
-    if(complete_data.size() < head_bytes_len)
-    {
-        CUSTOM_F_INFO("data is not complete %d/%d \n", complete_data.size(), head_bytes_len);
-        return true;
-    }
-
-    CUSTOM_DEBUG() << "complete_data:" << complete_data.size() << ", " << kit_muduo::BytesToHexString(std::vector<uint8_t>(complete_data.begin(), complete_data.end()), " ") << std::endl;
-
     while(state_ != kGotAll)
     {
         if(kExpectHeader == state_)
         {
+
+            if(complete_data.size() < head_bytes_len)
+            {
+                CUSTOM_F_INFO("data is not complete %d/%d \n", complete_data.size(), head_bytes_len);
+                return true;
+            }
+
+            CUSTOM_DEBUG() << "complete_data:" << complete_data.size() << ", " << kit_muduo::BytesToHexString(std::vector<uint8_t>(complete_data.begin(), complete_data.end()), " ") << std::endl;
 
             // 1. 解析出起始魔数字段  对照配置的起始魔数进行校验
             auto cfg_field = pattern->startMagicNumField();
@@ -125,8 +125,6 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
                 CUSTOM_F_ERROR("FuncCode not found! %s \n", func_code_str.c_str());
                 return false;
             }
-            // 初始化字段数组
-            // request_->setFieldNums(tcp_item->getReq()->getFieldNums());
 
             // 起始标识符 加入到字段列表中
             request_->addField( real_start_magic_num_field);
@@ -199,16 +197,25 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
         }
         else if(TcpParseState::kExpectBody == state_)
         {
-            if(complete_data.size() >= remain_bytes_len_)
+            if(remain_bytes_len_ < 0)
             {
-                // 注意: buffer里可能还有残余数据 不能全部清除 需要保留下来给下一个请求使用
-                request_->body().appendData((char*)complete_data.data() + head_bytes_len, remain_bytes_len_);
-                // 减去剩余body长度
-                buf.reset(remain_bytes_len_);
-
-                remain_bytes_len_ = 0;
-                state_ = TcpParseState::kGotAll;
+                CUSTOM_F_ERROR("remain_bytes_len invalid\n");
+                return false;
             }
+
+            if(buf.readableBytes() < remain_bytes_len_)
+            {
+                CUSTOM_F_DEBUG("buffer data not enough! readableBytes[%ld]  < remain_bytes_len[%ld]\n", buf.readableBytes(), remain_bytes_len_);
+                return true;
+            }
+            // 注意: buffer里可能还有残余数据 不能全部清除 需要保留下来给下一个请求使用
+            request_->body().appendData((char*)buf.peek(), remain_bytes_len_);
+            // 减去剩余body长度
+            buf.reset(remain_bytes_len_);
+
+            remain_bytes_len_ = 0;
+            state_ = TcpParseState::kGotAll;
+            
         }
     }
 

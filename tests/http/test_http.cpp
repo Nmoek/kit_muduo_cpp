@@ -257,9 +257,9 @@ TEST(TestHttpReq, raw_data)
 
     EXPECT_EQ(ok, true);
     auto req = context.request();
-    EXPECT_STREQ(req->method().toString(), "GET");
+    EXPECT_STREQ(req->method().toStr(), "GET");
     EXPECT_STREQ(req->path().c_str(), "/index.html");
-    EXPECT_STREQ(req->version().toString(), "HTTP/1.1");
+    EXPECT_STREQ(req->version().toStr(), "HTTP/1.1");
     auto it = req->headers().find("Host");
     EXPECT_TRUE(it != req->headers().end());
     EXPECT_STREQ(it->first.c_str(), "Host");
@@ -355,7 +355,7 @@ TEST(TestHttpReq, buffer_partial_body_keeps_parser_state)
     EXPECT_EQ(buf.readableBytes(), 0);
 
     auto req = context.request();
-    EXPECT_STREQ(req->method().toString(), "POST");
+    EXPECT_STREQ(req->method().toStr(), "POST");
     EXPECT_STREQ(req->path().c_str(), "/partial");
     EXPECT_STREQ(req->body().toString().c_str(), "hello");
 }
@@ -420,9 +420,9 @@ TEST(TestHttpReq, create_data)
 
     EXPECT_EQ(ok, true);
     auto req = context.request();
-    EXPECT_STREQ(req->method().toString(), "GET");
+    EXPECT_STREQ(req->method().toStr(), "GET");
     EXPECT_STREQ(req->path().c_str(), "/main.html");
-    EXPECT_STREQ(req->version().toString(), "HTTP/1.1");
+    EXPECT_STREQ(req->version().toStr(), "HTTP/1.1");
     auto it = req->headers().find("Host");
     EXPECT_TRUE(it != req->headers().end());
     EXPECT_STREQ(it->first.c_str(), "Host");
@@ -474,7 +474,7 @@ TEST(TestHttpResp, create_data)
     EXPECT_EQ(ok, true);
     auto resp = context.response();
     EXPECT_STREQ(resp->stateCode().toString().c_str(), "200");
-    EXPECT_STREQ(resp->version().toString(), "HTTP/1.1");
+    EXPECT_STREQ(resp->version().toStr(), "HTTP/1.1");
     auto it = resp->headers().find("XData");
     EXPECT_TRUE(it != resp->headers().end());
     EXPECT_STREQ(it->first.c_str(), "XData");

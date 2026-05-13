@@ -44,7 +44,10 @@ public:
         kProtocolItemNotFound,
         kProtocolTypeMismatch,
         kInvalidProtocolConfig,
-        kRouteOperationError,
+        kRouteNotFound,
+        kRouteConflict,
+        kFuncCodeNotFound,
+        kFuncCodeConflict,
 
         kInternalError = 9000,
     };
