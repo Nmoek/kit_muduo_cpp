@@ -53,6 +53,7 @@ public:
 
     virtual ~ProjectServer();
 
+    void setProjectId(int64_t project_id) { project_id_ = project_id;}
     int64_t getProjectId() const { return project_id_; }
 
     void stop() { loop_thread_.quit(); }

@@ -19,6 +19,7 @@
 #include "domain/project.h"
 #include "domain/protocol.h"
 #include "domain/protocol_item.h"
+#include "domain/custom_tcp_protocol_item.h"
 #include "domain/custom_tcp_context.h"
 #include "domain/custom_tcp_message.h"
 #include "net/net_data_converter.h"
@@ -396,6 +397,90 @@ static std::vector<char> MakeResp2_2() noexcept
     return resp;
 }
 
+static kit_domain::Project MakeBodyLengthProject(int64_t project_id)
+{
+    kit_domain::Project project;
+    project.m_id = project_id;
+    project.m_name = "d9_tcp_project";
+    project.m_mode = ProjectMode::ServerMode;
+    project.m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL;
+    project.m_listenPort = 8888;
+    project.m_targetIp = "";
+    project.m_userId = 0;
+    project.m_status = ProjectStatus::ON_STATUS;
+    project.m_active = ProjectStatus::ON_STATUS;
+    project.m_patternType = CustomTcpPatternType::BODY_LENGTH_DEP;
+    project.m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end());
+    project.m_ctime = TimeStamp::Now();
+    return project;
+}
+
+static kit_domain::Protocol MakeBodyLengthProtocol(
+        int64_t protocol_id,
+        int64_t project_id,
+        const std::string &func_code,
+        const std::vector<char> &req_body = {},
+        const std::vector<char> &resp_body = std::vector<char>(resp_body1.begin(), resp_body1.end()))
+{
+    nljson req_cfg = nljson::parse(req_cfg1);
+    req_cfg["function_code_filed_value"] = func_code;
+
+    nljson resp_cfg = nljson::parse(resp_cfg1);
+    resp_cfg["function_code_filed_value"] = func_code == "H0100" ? "H1080" : "H2080";
+
+    kit_domain::Protocol protocol;
+    protocol.m_id = protocol_id;
+    protocol.m_name = "d9_tcp_pc_" + std::to_string(protocol_id);
+    protocol.m_type = ProtocolType::CUSTOM_TCP_PROTOCOL;
+    protocol.m_projectId = project_id;
+    protocol.m_status = ProtocolStatus::ACTIVE;
+    protocol.m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE;
+    protocol.m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE;
+    protocol.m_reqBodyDataStatus = req_body.empty() ? 0 : 1;
+    protocol.m_respBodyDataStatus = resp_body.empty() ? 0 : 1;
+    protocol.m_reqCfg = req_cfg;
+    protocol.m_respCfg = resp_cfg;
+    protocol.m_reqBodyData = req_body;
+    protocol.m_respBodyData = resp_body;
+    protocol.m_isEndian = true;
+    protocol.m_ctime = TimeStamp::Now();
+    protocol.m_utime = TimeStamp::Now();
+    return protocol;
+}
+
+static std::shared_ptr<CustomTcpProtocolItem> AddTcpRuntimeProtocol(
+        const std::shared_ptr<CustomTcpProjectServer> &server,
+        const kit_domain::Protocol &protocol)
+{
+    auto protocol_ptr = std::make_shared<kit_domain::Protocol>(protocol);
+    auto item = ProtocolItemFactory::Create(protocol_ptr, server);
+    if(!item)
+    {
+        return nullptr;
+    }
+    auto tcp_item = std::dynamic_pointer_cast<CustomTcpProtocolItem>(item);
+    if(!tcp_item)
+    {
+        ADD_FAILURE() << "protocol item is not CustomTcpProtocolItem";
+        return nullptr;
+    }
+    if(tcp_item->getId() != protocol.m_id)
+    {
+        ADD_FAILURE()
+            << "CustomTcpProtocolItem lost protocol identity: expect id "
+            << protocol.m_id << ", actual id " << tcp_item->getId();
+        return nullptr;
+    }
+
+    auto add_result = server->AddProtocolItem(item);
+    if(!add_result.ok())
+    {
+        ADD_FAILURE() << add_result.error.toMsg();
+        return nullptr;
+    }
+    return tcp_item;
+}
+
 
 constexpr char kStartChar1 = 0x02;
 constexpr char kStartChar2 = 0x3A;
@@ -510,8 +595,10 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
-                .m_reqCfg = std::move(std::vector<char>(req_cfg2_1.begin(), req_cfg2_1.end())),
-                .m_respCfg = std::move(std::vector<char>(resp_cfg2_1.begin(), resp_cfg2_1.end())),
+                // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
+                // 后续正式清理旧测试数据时，可统一移除这些历史 vector<char> 初始化路径。
+                .m_reqCfg = nljson::parse(req_cfg2_1),
+                .m_respCfg = nljson::parse(resp_cfg2_1),
                 .m_reqBodyData = {},
                 .m_respBodyData = std::move(std::vector<char>(resp_body2_1.begin(), resp_body2_1.end())),
                 .m_isEndian = true,
@@ -548,8 +635,9 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_respBodyType = ProtocolBodyType::BINARY_BODY_TYPE,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
-                .m_reqCfg = std::move(std::vector<char>(req_cfg2_2.begin(), req_cfg2_2.end())),
-                .m_respCfg = std::move(std::vector<char>(resp_cfg2_2.begin(), resp_cfg2_2.end())),
+                // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
+                .m_reqCfg = nljson::parse(req_cfg2_2),
+                .m_respCfg = nljson::parse(resp_cfg2_2),
                 .m_reqBodyData = {},
                 .m_respBodyData = MakeResp2_2(),
                 .m_isEndian = true,
@@ -586,8 +674,9 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_respBodyType = ProtocolBodyType::BINARY_BODY_TYPE,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
-                .m_reqCfg = std::move(std::vector<char>(req_cfg3.begin(), req_cfg3.end())),
-                .m_respCfg = std::move(std::vector<char>(resp_cfg3.begin(), resp_cfg3.end())),
+                // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
+                .m_reqCfg = nljson::parse(req_cfg3),
+                .m_respCfg = nljson::parse(resp_cfg3),
                 .m_reqBodyData = {},
                 .m_respBodyData = {},
                 .m_isEndian = true,
@@ -756,6 +845,138 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
     EXPECT_EQ(context->request()->body().toString(), expect_body);
 }
 
+/*
+测试思路：
+1. 构造 BODY_LENGTH_DEP 的自定义 TCP 运行态服务。
+2. 注册协议 3001，初始功能码为 H0100。
+3. 调用 UpdateReqCfgProtocolItem 把功能码改成 H0200。
+4. 断言新功能码能查到协议项，旧功能码查不到，说明 function code 索引完成替换。
+
+示意：
+  func_codes2ids_: H0100 -> pc3001
+          |
+          | UpdateReqCfg(function_code_filed_value = H0200)
+          v
+  func_codes2ids_: H0200 -> pc3001
+
+举例：
+  客户端后续带 H0200 的报文应命中新协议项，带 H0100 的旧报文不应再命中。
+*/
+TEST_F(CustomTcpServerSuite, FunctionCodeUpdateMovesRuntimeIndex)
+{
+    auto project = MakeBodyLengthProject(9301);
+    auto server = server_start(project);
+
+    auto item = AddTcpRuntimeProtocol(server, MakeBodyLengthProtocol(3001, 9301, "H0100"));
+    ASSERT_NE(item, nullptr);
+    ASSERT_NE(server->findByFuncCode("H0100"), nullptr);
+    EXPECT_EQ(server->findByFuncCode("H0100")->getId(), 3001);
+    EXPECT_EQ(server->findByFuncCode("H0200"), nullptr);
+
+    nljson new_req_cfg = nljson::parse(req_cfg1);
+    new_req_cfg["function_code_filed_value"] = "H0200";
+
+    auto update_result = server->UpdateReqCfgProtocolItem(3001, new_req_cfg);
+    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
+
+    EXPECT_EQ(server->findByFuncCode("H0100"), nullptr);
+    auto new_item = server->findByFuncCode("H0200");
+    ASSERT_NE(new_item, nullptr);
+    EXPECT_EQ(new_item->getId(), 3001);
+    EXPECT_EQ(new_item->getReqCfg().function_code_filed_value, "H0200");
+}
+
+/*
+测试思路：
+1. 构造两个自定义 TCP 协议项：
+   - 协议 3101: H0100
+   - 协议 3102: H0200
+2. 尝试把协议 3101 的功能码更新成 H0200。
+3. 断言更新失败，并且 H0100 仍指向 3101，H0200 仍指向 3102。
+
+示意：
+  H0100 -> pc3101       H0200 -> pc3102
+      \       Update pc3101 to H0200
+       \______________X function code conflict
+
+举例：
+  两个协议不能共享同一个请求功能码，否则运行态无法根据报文头唯一定位协议项。
+*/
+TEST_F(CustomTcpServerSuite, FunctionCodeConflictPreservesOldIndex)
+{
+    auto project = MakeBodyLengthProject(9302);
+    auto server = server_start(project);
+
+    auto item1 = AddTcpRuntimeProtocol(server, MakeBodyLengthProtocol(3101, 9302, "H0100"));
+    ASSERT_NE(item1, nullptr);
+    auto item2 = AddTcpRuntimeProtocol(server, MakeBodyLengthProtocol(3102, 9302, "H0200"));
+    ASSERT_NE(item2, nullptr);
+
+    nljson new_req_cfg = nljson::parse(req_cfg1);
+    new_req_cfg["function_code_filed_value"] = "H0200";
+
+    auto update_result = server->UpdateReqCfgProtocolItem(3101, new_req_cfg);
+    ASSERT_FALSE(update_result.ok());
+    EXPECT_EQ(update_result.error.toInt(), RuntimeError::kFuncCodeConflict);
+
+    auto old_func_item = server->findByFuncCode("H0100");
+    ASSERT_NE(old_func_item, nullptr);
+    EXPECT_EQ(old_func_item->getId(), 3101);
+    EXPECT_EQ(old_func_item->getReqCfg().function_code_filed_value, "H0100");
+
+    auto conflict_func_item = server->findByFuncCode("H0200");
+    ASSERT_NE(conflict_func_item, nullptr);
+    EXPECT_EQ(conflict_func_item->getId(), 3102);
+    EXPECT_EQ(conflict_func_item->getReqCfg().function_code_filed_value, "H0200");
+}
+
+/*
+测试思路：
+1. 构造 TCP 协议项，记录 req cfg 的功能码和 req/resp body view。
+2. 只调用 UpdateReqBodyProtocolItem 替换请求 body。
+3. 断言 function code 索引仍能命中原协议，req cfg 不变，只有 req body view 被替换。
+
+示意：
+  H0100 -> pc3201 + [req body old] + [resp body B]
+                    |
+                    | UpdateReqBody(new)
+                    v
+  H0100 -> pc3201 + [req body new] + [resp body B]
+
+举例：
+  上传新的大请求体样例时，不应该改动 function code 索引或 TCP 头部字段配置。
+*/
+TEST_F(CustomTcpServerSuite, ReqBodyUpdateKeepsFunctionCodeIndexAndCfg)
+{
+    auto project = MakeBodyLengthProject(9303);
+    auto server = server_start(project);
+
+    auto item = AddTcpRuntimeProtocol(
+        server,
+        MakeBodyLengthProtocol(3201, 9303, "H0100", {'o', 'l', 'd'}, {'r', 'e', 's', 'p'}));
+    ASSERT_NE(item, nullptr);
+
+    const auto before_req_cfg = item->getReqCfg();
+    const auto before_req_body = item->getReqBodyView();
+    const auto before_resp_body = item->getRespBodyView();
+
+    const std::vector<char> new_body{'n', 'e', 'w', '-', 't', 'c', 'p', '-', 'b', 'o', 'd', 'y'};
+    auto update_result = server->UpdateReqBodyProtocolItem(
+        3201,
+        ProtocolBodyType::JSON_BODY_TYPE,
+        new_body);
+    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
+
+    auto after = server->findByFuncCode("H0100");
+    ASSERT_NE(after, nullptr);
+    EXPECT_EQ(after->getId(), 3201);
+    EXPECT_EQ(after->getReqCfg().function_code_filed_value, before_req_cfg.function_code_filed_value);
+    EXPECT_EQ(after->getReqCfg().headers.size(), before_req_cfg.headers.size());
+    EXPECT_NE(after->getReqBodyView().body_data, before_req_body.body_data);
+    EXPECT_EQ(*after->getReqBodyView().body_data, new_body);
+    EXPECT_EQ(after->getRespBodyView().body_data, before_resp_body.body_data);
+}
+
 
 
 TEST_F(CustomTcpServerSuite, ClientSend)
@@ -771,12 +992,55 @@ TEST_F(CustomTcpServerSuite, ClientSend)
 
     };
 
-    InetAddress addr;
-
     for(auto &c : cases)
     {
+        CUSTOM_TEST_INFO_BEGIN(c.sub_name);
+
+        // 临时兼容: 该用例原先使用默认 InetAddress 裸连，自动化运行时没有目标服务会阻塞。
+        // 在 net_data_converter 字段宽度/字节序接口正式重构前，先启动最小本地服务，
+        // 让用例稳定覆盖客户端发送到自定义 TCP 服务的链路。
+        kit_domain::Project pj{
+            .m_id = 1,
+            .m_name = "test",
+            .m_mode = ProjectMode::ServerMode,
+            .m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL,
+            .m_listenPort = 8888,
+            .m_targetIp = "",
+            .m_userId = 0,
+            .m_status = ProjectStatus::ON_STATUS,
+            .m_patternType = CustomTcpPatternType::BODY_LENGTH_DEP,
+            .m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end()),
+            TimeStamp::Now(),
+        };
+        kit_domain::Protocol pc{
+            .m_id = 1,
+            .m_name = "test_pc",
+            .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+            .m_projectId = 1,
+            .m_status = ProtocolStatus::ACTIVE,
+            .m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+            .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+            .m_reqBodyDataStatus = 0,
+            .m_respBodyDataStatus = 0,
+            .m_reqCfg = nljson::parse(req_cfg1),
+            .m_respCfg = nljson::parse(resp_cfg1),
+            .m_reqBodyData = {},
+            .m_respBodyData = std::vector<char>(resp_body1.begin(), resp_body1.end()),
+            .m_isEndian = true,
+            .m_ctime = TimeStamp::Now(),
+            .m_utime = TimeStamp::Now(),
+        };
+
+        auto server = server_start(pj);
+        server->start();
+        const InetAddress &addr = server->getBindAddr();
+
+        auto protocol = std::make_shared<kit_domain::Protocol>(pc);
+        auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
+        ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+
         std::vector<char> req_data;
- 
+
         // 构造请求
         c.reqBuild(req_data);
 
@@ -787,6 +1051,8 @@ TEST_F(CustomTcpServerSuite, ClientSend)
 
         CUSTOM_TEST_INFO_END(c.sub_name);
 
+        server->stop();
+        usleep(100);
     }
 
 }

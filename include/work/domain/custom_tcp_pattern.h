@@ -195,7 +195,7 @@ class CustomTcpPatternFactory
 {
 public:
 
-    static std::shared_ptr<CustomTcpPattern> Create(CustomTcpPatternType type, const std::vector<char>& info);
+    static std::shared_ptr<CustomTcpPattern> Create(CustomTcpPatternType type, const nlohmann::json& info);
 
 };
 

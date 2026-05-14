@@ -99,7 +99,7 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
             return false;
         }
     }
-    
+
 
     // copy特殊字段并且填充
     for(auto &f : tcp_pattern->getSpecialFields())
@@ -203,11 +203,16 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
         PC_F_ERROR("ori protocol/ pattern data is null\n");
         return false;
     }
+    // 基本信息赋值
+    id_ = ori_protocol->m_id;
+    name_ = ori_protocol->m_name;
+    project_id_ = ori_protocol->m_projectId;
+    is_endian_ = ori_protocol->m_isEndian;
 
     const nljson &req_cfg_json = ori_protocol->m_reqCfg;
 
     const nljson &resp_cfg_json = ori_protocol->m_respCfg;
-    
+
     /*注意：实践可以发现 只有从对端收到数据需要校验的那一边(收到请求边/收到响应边)才需要提前知道格式!
     
     只要是服务器回发处理的流程根本不需要格式, 只需要能够外部输入即可, 由用户自己保障 格式正确性 + 数据正确性即可!

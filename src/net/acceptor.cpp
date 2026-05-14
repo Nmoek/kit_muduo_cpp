@@ -28,7 +28,11 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     _acceptSocket.setReusePort(reuseport);
     _acceptSocket.setTcpNoDelay(true);
 
-    assert(_acceptSocket.bindAddress(addr));
+    if(!_acceptSocket.bindAddress(addr))
+    {
+        CHANNEL_F_WARN("acceptor bind address failed! %s \n", addr.toIpPort().c_str());
+        throw std::runtime_error("bind address failed");
+    }
   
     _bind_addr = InetAddress::GetLocalAddr(_acceptSocket.fd());
 

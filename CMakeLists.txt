@@ -66,6 +66,7 @@ option(WORK_TEST "build all work tests" OFF)
 option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
 option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
 option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
+option(WORK_TEST.WEB_PROTOCOL "build test_web_protocol" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
@@ -364,6 +365,9 @@ add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM test_sqlite_orm tests/db/test_sqlite
 
 # web端测试服务 测试 test_web_project
 add_kit_test(WORK_TEST WORK_TEST.WEB_PROJECT test_web_project tests/work/web/test_web_project.cpp ${WORK_SRC})
+
+# web端协议项接口测试 test_web_protocol
+add_kit_test(WORK_TEST WORK_TEST.WEB_PROTOCOL test_web_protocol tests/work/web/test_web_protocol.cpp ${WORK_SRC})
 
 # custom_tcp服务器实例 test_custom_project_server
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})

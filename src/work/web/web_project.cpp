@@ -84,12 +84,12 @@ struct AddProjectReq {
     std::string              name;             // 测试名称
     int32_t                  mode;             // 测试模式
     int32_t                  protocol_type;    // 协议种类 1 2 3
-    uint16_t                 listen_port;      // 监听端口号
+    // uint16_t                 listen_port;      // 监听端口号(弃用 不再由用户指定)
     std::string              target_ip;        // 目标ip + 端口 x.x.x.x:8888
     int32_t                  pattern_type;
     nljson                   pattern_info;  // 解析格式信息
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProjectReq, name, mode, protocol_type, listen_port, target_ip, pattern_type, pattern_info)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProjectReq, name, mode, protocol_type, target_ip, pattern_type, pattern_info)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, AddProjectReq &req)
     {
@@ -167,7 +167,11 @@ ProjectHandler::~ProjectHandler() { }
 
 ProjectHandler* ProjectHandler::Instance(std::shared_ptr<ProjectSvcInterface> svc)
 {
-    static ProjectHandler h(svc);
+    static ProjectHandler h(nullptr);
+    if(svc)
+    {
+        h._svc = std::move(svc);
+    }
     return &h;
 }
 
@@ -191,7 +195,7 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
     // TODO 接口需要重新考虑 有点丑陋
     server->Get("/projects/:project_id", XX(SingleProject));
     server->Delete("/projects/:project_id", XX(DelProject));
- 
+
     // 获取/修改某个服务的title名称
     // TODO 动态路由 
     server->Post("/projects/:project_id/name", XX(DetailName));
@@ -214,13 +218,7 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
 static bool CheckProjectInfo(const AddProjectReq &request)
 {
 
-    if(ProjectMode::ServerMode == request.mode
-        && request.listen_port <= 0)
-    {
-        PJ_F_ERROR("server mode listen port invalid\n");
-        return false;
-    }
-    else if(ProjectMode::ClientMode == request.mode)
+    if(ProjectMode::ClientMode == request.mode)
     {
         const std::string & target_ip = request.target_ip;
         size_t pos = target_ip.find(":");
@@ -282,53 +280,32 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     p.m_name = std::move(request.name);
     p.m_mode = static_cast<ProjectMode>(request.mode);
     p.m_protocolType = static_cast<ProtocolType>(request.protocol_type);
-    p.m_listenPort = request.listen_port;
+    p.m_listenPort = 0;
     p.m_targetIp =  std::move(request.target_ip);
     p.m_userId = 1/*request.user_id 暂时写死*/;
     p.m_status = ProjectStatus::ON_STATUS; // 新增一定是有效的 TODO后期根据实际保活探测决定
     p.m_active = ProjectStatus::OFF_STATUS;
     p.m_patternType = static_cast<CustomTcpPatternType>(request.pattern_type);
-
-    std::string tmp_str(request.pattern_info.dump());
-    const std::vector<char> pattern_info(tmp_str.begin(), tmp_str.end());
-    p.m_patternInfo = std::move(pattern_info);
-
+    p.m_patternInfo = std::move(request.pattern_info);
 
     int project_id = -1;
     try 
     {
-        //TODO: 增加服务时需要判断端口是否重复
         project_id = _svc->Add(ctx, p);
+        if(project_id <= 0)
+        {
+            PJ_F_ERROR("service add failed \n");
+
+            // TODO: 自定义业务错误码统一处理
+            resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+
+            return;
+        }
     }
     catch(const std::exception& e)
     {
         PJ_F_ERROR("service add exception: %s \n", e.what());
     }
-
-    if(project_id <= 0)
-    {
-        PJ_F_ERROR("service add failed \n");
-
-        // TODO: 自定义业务错误码统一处理
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
-
-        return;
-    }
-    // 主键id更新一下
-    p.m_id = project_id;
-    
-    // 工厂模式创建ProjectServer
-    auto project_server = ProjectServerFactory::Create(p);
-    if (!project_server) 
-    {
-        PJ_F_ERROR("create ProjectServer faild! protocol_type[%d] project_id[%d] \n", static_cast<int32_t>(p.m_protocolType), project_id);
-
-        resp->body().appendData(R"({"code": -300, "message":"failed to create server"})");
-        return;
-    }
-    
-
-    _app->AddServer(project_id, project_server);
 
     // 2. 需要和开启的服务进行通信（通信方式如何选择?)，需要进行增删改协议项
     // 2.1 线程通信  复用loop队列
@@ -339,6 +316,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     root["code"] = 0;
     root["message"] = "success";
     root["data"]["project_id"] = project_id;
+
     resp->body().appendData(root.dump());
 }
 
@@ -361,7 +339,7 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
         return;
     }
     int64_t project_id = atoi(project_id_str.c_str());
-    ProjectStatus status = static_cast<ProjectStatus>(atoi(operation_str.c_str()));
+    ProjectStatus will_status = static_cast<ProjectStatus>(atoi(operation_str.c_str()));
 
     // if(!CheckProjectInfo(request))
     // {
@@ -371,12 +349,14 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
 
 
     bool ok = false;
+    uint16_t cur_listen_port = 0;
     try 
     {
-
-        if(ProjectStatus::ON_STATUS == status)
+        if(ProjectStatus::ON_STATUS == will_status)
         {
-            auto p = _svc->GetById(ctx,project_id);
+            auto p = _svc->GetById(ctx, project_id);
+
+            // 工厂模式创建测试服务
             auto project_server = ProjectServerFactory::Create(p);
             if (!project_server) 
             {
@@ -385,11 +365,15 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
                 resp->body().appendData(R"({"code": -300, "message":"failed to create server"})");
                 return;
             }
+            cur_listen_port = project_server->getBindAddr().toPort();
+            // 主键id更新
+            project_server->setProjectId(project_id);
             _app->AddServer(project_id, project_server);
+
             project_server->start();
 
         }
-        else if(ProjectStatus::OFF_STATUS == status)
+        else if(ProjectStatus::OFF_STATUS == will_status)
         {
             auto project_server = _app->FindServer(project_id);
             if (!project_server) 
@@ -403,21 +387,21 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
             _app->DelServer(project_id);
         }
 
-        ok = _svc->UpdateActiveStatus(ctx, project_id, status);
+        ok = _svc->UpdateActiveStatus(ctx, project_id, will_status);
+        if(!ok)
+        {
+            PJ_F_ERROR("service update status failed \n");
+
+            // TODO: 自定义业务错误码统一处理
+            resp->body().appendData(R"({"code": -300, "message":"update status failed"})");
+
+            return;
+        }
+
     }
     catch(const std::exception& e)
     {
         PJ_F_ERROR("service update status exception: %s \n", e.what());
-    }
-
-    if(!ok)
-    {
-        PJ_F_ERROR("service update status failed \n");
-
-        // TODO: 自定义业务错误码统一处理
-        resp->body().appendData(R"({"code": -300, "message":"update status failed"})");
-
-        return;
     }
 
     // 2. 需要和开启的服务进行通信（通信方式如何选择?)，需要进行增删改协议项
@@ -428,6 +412,7 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
     nljson root;
     root["code"] = 0;
     root["message"] = "success";
+    root["data"]["listen_port"] = cur_listen_port;
 
     resp->body().appendData(root.dump());
 }

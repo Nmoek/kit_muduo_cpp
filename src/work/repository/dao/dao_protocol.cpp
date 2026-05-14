@@ -214,34 +214,42 @@ bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t prot
 
 bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json)
 {
-    // 默认以第一个对象更新
-    const std::string& json_path = "$." + cfg_json.begin().key();
-    const auto& json_value = cfg_json.begin().value();
+
     auto field_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqCfg : &kit_dao::Protocol::m_respCfg;
 
-    DAOPC_F_DEBUG("UpdateCfg id[%d], json_path[%s], json_type[%s], json_value[%s] \n", protocol_id, json_path.c_str(), cfg_json.begin().value().type_name(), json_value.dump().c_str());
-
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
-
+    std::string json_path;
     try {
         std::lock_guard<std::mutex> lock(_writeMtx);
         /* 事务 */
         _db->begin_immediate_transaction();
 
-        // UPDATE protocols SET `req_cfg`= JSON_REPALCE(`req_cfg`, ?, ?) WHERE id = ? 
-        _db->update_all(
-            sqlite_orm::set(
-                sqlite_orm::c(field_ptr) = sqlite_orm::json_replace(field_ptr, json_path, sqlite_orm::json(json_value.dump())),
-                // 更新修改时间
-                sqlite_orm::c(&kit_dao::Protocol::m_utime) = now
-            ),
-            sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-        );
+        // 把传入的可能部分路径都进行更新
+        for(auto &obj : cfg_json.items())
+        {
+            // 把每个顶层key 都进行更新
+            json_path = "$." + obj.key();
+            const std::string &json_value = obj.value().dump();
+
+            DAOPC_F_DEBUG("UpdateCfg Path id[%d], json_path[%s], value[%s][%s] \n", protocol_id, json_path.c_str(),obj.value().type_name(), json_value.c_str());
+            // UPDATE protocols SET `req_cfg`= JSON_REPALCE(`req_cfg`, ?, ?) WHERE id = ?
+            _db->update_all(
+                sqlite_orm::set(
+                    sqlite_orm::c(field_ptr) = sqlite_orm::json_replace(field_ptr, json_path, sqlite_orm::json(json_value)),
+                    // 更新修改时间
+                    sqlite_orm::c(&kit_dao::Protocol::m_utime) = now
+                ),
+                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
+            );
+        }
+
+
         _db->commit();
 
     } catch (const std::exception& e) {
 
-        DAOPC_F_ERROR("SqliteOrmProtocolDao::UpdateCfg json字段更新失败! %s. %d, %s, %s, \n",e.what(), protocol_id, typeid(field_ptr).name(), json_path.c_str());
+        DAOPC_F_ERROR("SqliteOrmProtocolDao::UpdateCfg json字段更新失败: %s! pjId[%d], req_or_resp[%d], json_path[%s] \n", e.what(), protocol_id, req_or_resp, json_path.c_str());
+
         _db->rollback();
 
         return false;

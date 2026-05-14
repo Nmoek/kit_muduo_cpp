@@ -32,7 +32,6 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
     
     try {
         auto pj_server = std::make_shared<HttpProjectServer>(p.m_id);
-        pj_server->start();
 
         PJ_F_INFO("Creating HttpProjectServer, project_id[%d] address[%s]\n", p.m_id, pj_server->getBindAddr().toIpPort().c_str());
 
@@ -62,10 +61,12 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
 
     try {
         // 创建自定义TCP服务器 必须带解析格式  否则无法解析
-        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternType, p.m_patternInfo);
-        pj_server->start();
+        const std::string& tmp = p.m_patternInfo.dump();
+        std::vector<char> pattern_info(tmp.begin(), tmp.end());
 
-        PJ_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternType[%d], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), p.m_patternType, nlohmann::json::parse(p.m_patternInfo).dump().c_str());
+        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternType, pattern_info);
+
+        PJ_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternType[%d], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), p.m_patternType, tmp.c_str());
 
         return pj_server;
         

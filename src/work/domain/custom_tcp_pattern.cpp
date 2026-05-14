@@ -301,7 +301,7 @@ void from_json(const nlohmann::json& root, NoLengthDepPattern& b)
 }
 
 /************NoLengthDepPattern************* */
-std::shared_ptr<CustomTcpPattern> CustomTcpPatternFactory::Create(CustomTcpPatternType type, const std::vector<char>& info)
+std::shared_ptr<CustomTcpPattern> CustomTcpPatternFactory::Create(CustomTcpPatternType type, const nlohmann::json& info)
 {
     if(CustomTcpPatternType::BODY_LENGTH_DEP == type)
     {

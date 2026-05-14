@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cstring>
+#include <algorithm>
 
 #include "net/endian.h"
 
@@ -128,11 +129,15 @@ T BytesToValue(const std::vector<uint8_t>& bytes, bool is_endian = false)
         uint8_t bytes[sizeof(T)];
     }val_helper = {0};
 
-    for(int i = 0;i < bytes.size();++i)
+    // 临时兼容: 当前自定义 TCP 解析会把 1/2/4 字节字段统一读到 int64_t。
+    // 旧实现按 sizeof(T) 反向取源字节，源字段短于 T 时会越界并把值放到高位。
+    // 后续 net_data_converter 接口重构后，应改为显式传入字段宽度和字节序语义。
+    const size_t copy_len = std::min(bytes.size(), sizeof(T));
+    for(size_t i = 0; i < copy_len; ++i)
     {
         if(is_endian)
         {
-            val_helper.bytes[i] = bytes[sizeof(T) - i - 1];
+            val_helper.bytes[i] = bytes[copy_len - i - 1];
         }
         else
         {

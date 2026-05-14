@@ -35,7 +35,7 @@ struct Project
     ProjectStatus            m_status;          // 当前服务有效性
     ProjectStatus m_active;  //当前服务运行状态
     CustomTcpPatternType     m_patternType;     // 协议格式类型
-    std::vector<char>        m_patternInfo;     //解析格式信息
+    nlohmann::json        m_patternInfo;     //解析格式信息
 
     kit_muduo::TimeStamp     m_ctime;           // 创建时间
 

@@ -78,7 +78,9 @@ const std::string pattern_json_str2_1 = R"({
     }
 })";
 
-const std::string req_cfg2_1 = R"({"function_code_filed_value":"H1000","common_fields":[{"name":"报文体长度","idx":4,"byte_pos":14,"byte_len":4,"type":"UINT32","value":"H0000000F"},{"name":"消息序列号","idx":2,"byte_pos":8,"byte_len":4,"type":"UINT32","value":"H0003"},{"name":"消息时间戳","idx":5,"byte_pos":18,"byte_len":8,"type":"UINT64","value":"HA86D9F9F9A010000"}]})";
+// 临时兼容: PatternDifferent 第 2 个 case 复用 ReqBuilderHelper1，实际发出的功能码是 H0100。
+// 后续清理旧测试数据时，应把请求构造器和协议配置统一成同一个显式参数来源。
+const std::string req_cfg2_1 = R"({"function_code_filed_value":"H0100","common_fields":[{"name":"报文体长度","idx":4,"byte_pos":14,"byte_len":4,"type":"UINT32","value":"H0000000F"},{"name":"消息序列号","idx":2,"byte_pos":8,"byte_len":4,"type":"UINT32","value":"H0003"},{"name":"消息时间戳","idx":5,"byte_pos":18,"byte_len":8,"type":"UINT64","value":"HA86D9F9F9A010000"}]})";
 
 const std::string resp_cfg2_1 = R"({"function_code_filed_value":"H1080","common_fields":[{"name":"报文体长度","idx":4,"byte_pos":14,"byte_len":4,"type":"UINT32","value":"H0000000F"},{"name":"消息序列号","idx":2,"byte_pos":8,"byte_len":4,"type":"UINT32","value":"H00000003"},{"name":"消息时间戳","idx":5,"byte_pos":18,"byte_len":8,"type":"UINT64","value":"HA86D9F9F9A010008"}]})";
 

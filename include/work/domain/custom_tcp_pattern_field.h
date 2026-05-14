@@ -58,7 +58,17 @@ public:
         return os;
     }
 
-    void setBytes(const std::vector<uint8_t> &bytes) { bytes_ = bytes; }
+    void setBytes(const std::vector<uint8_t> &bytes)
+    {
+        bytes_ = bytes;
+        // 临时兼容: ValueToBytes(size_t/int64_t) 目前可能生成大于字段 byte_len_ 的字节数。
+        // 在 net_data_converter 正式按字段宽度重构前，字段层只保留低位 byte_len_ 字节，
+        // 避免 4 字节长度字段在响应序列化时膨胀成 8 字节。
+        if(byte_len_ > 0 && bytes_.size() > static_cast<size_t>(byte_len_))
+        {
+            bytes_.erase(bytes_.begin(), bytes_.end() - byte_len_);
+        }
+    }
 
     void setBytes(const void* data, int32_t len) { bytes_.assign((char*)data, (char*)data + len); }
 

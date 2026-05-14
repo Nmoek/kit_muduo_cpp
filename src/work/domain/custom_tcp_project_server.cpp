@@ -436,8 +436,10 @@ void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std
         return;
     }
 
-    // 加载响应的格式
-    const std::string& func_code_str = func_code_field->toHexString(!KIT_IS_LOCAL_BIG_ENDIAN());
+    // 临时兼容: function_code_filed_value 当前按线缆字节序存储并建立索引。
+    // 在 net_data_converter 字节序接口正式收口前，这里保持和 parseRequest()
+    // 中 findByFuncCode 一致，避免把 H0100 反转成 H0001 后查不到协议项。
+    const std::string& func_code_str = func_code_field->toHexString(false);
     
     std::unique_lock<std::mutex> lock(mtx_);
     

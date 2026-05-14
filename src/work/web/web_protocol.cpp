@@ -696,7 +696,13 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
     
-    PC_DEBUG() << "request.cfg_json: " << request.cfg_data.dump() << std::endl;
+    // 特别注意: 传入的json配置项得是object
+    if(!request.cfg_data.is_object())
+    {
+        PC_F_ERROR("cfg json is not object! %s \n", request.cfg_data.type_name());
+        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+        return;
+    }
 
     int64_t protocol_id = request.id;
     int64_t project_id = request.project_id;
@@ -713,49 +719,87 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     ok = false;
     std::shared_ptr<ProtocolItem> protocol_item = nullptr;
     try {
-       
-        // ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, request.cfg_data.dump());
-        ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, request.cfg_data);
-        if(!ok) { throw std::logic_error("UpdateCfg failed"); }
+
+        // 1. 查出旧配置
+        nljson old_all_cfg_json = _svc->GetCfgById(ctx, request.id);
+        nljson old_cfg_json;
+        nljson new_cfg_json;
+
+        if(DetailReq::kRequest == req_or_resp)
+        {
+            old_cfg_json = new_cfg_json = old_all_cfg_json.at("req_cfg");
+
+        }
+        else if(DetailReq::kResponse == req_or_resp)
+        {
+            old_cfg_json = new_cfg_json = old_all_cfg_json.at("resp_cfg");
+        }
+
+        // 2. 把局部新配置/全新配置和旧配置"并集"合并
+        new_cfg_json.merge_patch(request.cfg_data);
+        PJ_F_DEBUG("cfg json merge: pjId[%d], req_or_resp[%d]: %s\n",request.id, req_or_resp, new_cfg_json.dump(4).c_str());
+
+        if(new_cfg_json.empty())
+        {
+            resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+            return;
+        }
+
+        // 3. 写数据库
+        ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, new_cfg_json.dump());
+        if(!ok)
+        {
+            PC_F_ERROR("protocolitem UpdateCfg error\n");
+
+            resp->body().appendData(R"({"code": -300, "message":"protocolitem update cfg failed"})");
+            return;
+        }
+
+        // 4. runtime 设置
+        // 更新服务器上的协议配置信息
+        // 简单起见 不要做局部更新 直接整体替换
+        auto result = InvokeOnLoopSync(project_service->getLoop(), 1000,
+        [project_service,
+            protocol_id,
+            project_id,
+            req_or_resp,
+            new_cfg_json](){
+
+            PC_F_DEBUG("UpdateCfgProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d]\n", protocol_id, project_id, req_or_resp);
+
+            if(DetailReq::kRequest == req_or_resp)
+            {
+                return project_service->UpdateReqCfgProtocolItem(protocol_id, new_cfg_json);
+            }
+            else if(DetailReq::kResponse == req_or_resp)
+            {
+                return project_service->UpdateRespCfgProtocolItem(protocol_id, new_cfg_json);
+            }
+
+            return RuntimeResult<void>{
+                RuntimeError(RuntimeError::kProtocolTypeMismatch)
+            };
+        });
+        if(!result.ok())
+        {
+            // 数据库回滚
+            ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, old_cfg_json.dump());
+            if(!ok)
+            {
+                PC_F_ERROR("protocolitem rollback UpdateCfg error\n");
+            }
+
+            PC_F_ERROR("InvokeOnLoopSync::UpdateCfgProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
+
+            resp->body().appendData(R"({"code": -300, "message":"protocolitem update cfg failed"})");
+            return;
+        }
 
     } catch(const std::exception& e) {
 
         PC_F_ERROR("service UpdateCfg exception: %s \n", e.what());
         // TODO: 自定义业务错误码统一处理
         resp->body().appendData(R"({"code": -300, "message":"service failed"})");
-        return;
-    }
-
-
-    // 更新服务器上的协议配置信息
-    // 简单起见 不要做局部更新 直接整体替换
-    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, 
-    [project_service,
-        protocol_id, 
-        project_id,
-        req_or_resp,
-        cfg_json = std::move(request.cfg_data)](){
-
-        PC_F_DEBUG("UpdateCfgProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d]\n", protocol_id, project_id, req_or_resp);
-
-        if(DetailReq::kRequest == req_or_resp)
-        {
-            return project_service->UpdateReqCfgProtocolItem(protocol_id, cfg_json);
-        }
-        else if(DetailReq::kResponse == req_or_resp)
-        {
-            return project_service->UpdateRespCfgProtocolItem(protocol_id, cfg_json);
-        }
-
-        return RuntimeResult<void>{
-            RuntimeError(RuntimeError::kProtocolTypeMismatch)
-        };
-    });
-    if(!result.ok())
-    {
-        PC_F_ERROR("InvokeOnLoopSync::UpdateCfgProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
-
-        resp->body().appendData(R"({"code": -300, "message":"protocolitem update cfg failed"})");
         return;
     }
 
