@@ -120,7 +120,6 @@ std::vector<uint8_t> HexStringToBytes(const std::string& hex_str)
         bytes.emplace_back(byte);
     }
 
-    
     return bytes;
 }
 

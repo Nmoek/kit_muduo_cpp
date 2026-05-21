@@ -6,7 +6,7 @@
  * @date 2025-11-03 16:20:15
  * @copyright Copyright (c) 2025 HIKRayin
  */
-#include "web/web_log.h"
+#include "domain/domain_log.h"
 #include "base/time_stamp.h"
 #include "net/buffer.h"
 #include "domain/custom_tcp_context.h"
@@ -29,12 +29,12 @@ CustomTcpContext::CustomTcpContext(CustomTcpProjectServer *server)
     assert(server_);
 
 
-    PJ_F_DEBUG("CustomTcpContext::construct() %p\n", this);
+    CUSTOM_F_DEBUG("CustomTcpContext::construct() %p\n", this);
 }
 
 CustomTcpContext::~CustomTcpContext()
 {
-    PJ_F_DEBUG("CustomTcpContext::~CustomTcpContext() %p\n", this);
+    CUSTOM_F_DEBUG("CustomTcpContext::~CustomTcpContext() %p\n", this);
 }
 
 bool CustomTcpContext::parseRequest(const std::vector<char> &data, kit_muduo::TimeStamp receiveTime)

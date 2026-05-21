@@ -9,13 +9,19 @@
 #ifndef __KIT_CUSTOM_TCP_PATTERN_H__
 #define __KIT_CUSTOM_TCP_PATTERN_H__
 
+#include "domain/custom_tcp_field_codec.h"
+#include "domain/custom_tcp_field_model.h"
 #include "nlohmann/json.hpp"
 #include "domain/type.h"
 #include "domain/custom_tcp_pattern_field.h"
+#include "domain/custom_tcp_pattern_field_v2.h"
+#include "domain/domain_log.h"
+#include "domain/custom_tcp_pattern_spec.h"
 
 #include <string>
 #include <memory>
 #include <vector>
+#include <set>
 
 namespace kit_domain {
 
@@ -28,7 +34,6 @@ public:
     virtual ~CustomTcpPattern() = default;
 
     virtual CustomTcpPatternType getPatternType() const = 0;
-
     /**
      * @brief 长度信息字段
      * @return std::shared_ptr<CustomTcpPatternFieldBase> 
@@ -91,8 +96,8 @@ protected:
     /// @brief 功能码字段
     std::shared_ptr<CustomTcpPatternFieldBase> function_code_field_;
 
-};
 
+};
 
 /// @brief BodyLengthDepPattern 头中有Body长度的格式
 class BodyLengthDepPattern : public CustomTcpPattern 

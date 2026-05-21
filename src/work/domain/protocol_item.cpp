@@ -8,7 +8,7 @@
  */
 #include "domain/type.h"
 #include "net/http/http_util.h"
-#include "web/web_log.h"
+#include "domain/domain_log.h"
 #include "domain/protocol_item.h"
 #include "domain/protocol.h"
 #include "domain/project_server.h"

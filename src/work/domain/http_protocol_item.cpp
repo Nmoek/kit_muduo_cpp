@@ -43,7 +43,7 @@ bool HttpItemReqHeaderCfg::fromNetHttpReq(HttpRequestPtr req_cfg)
 {
     if(!req_cfg)
     {
-        PC_F_ERROR("net http req null! \n");
+        PCITEM_F_ERROR("net http req null! \n");
         return false;
     }
     method = req_cfg->method();
@@ -56,13 +56,13 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
 {
     if(req_json.empty())
     {
-        PC_F_ERROR("json is null! \n");
+        PCITEM_F_ERROR("json is null! \n");
         return false;
     }
     auto it = req_json.find("method");
     if(it == req_json.end())
     {
-        PC_F_WARN("json not found 'method' field! \n");
+        PCITEM_F_WARN("json not found 'method' field! \n");
         return false;
     }
     method = HttpRequest::Method::FromString(it.value());
@@ -72,7 +72,7 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
     it = req_json.find("path");
     if(it == req_json.end())
     {
-        PC_F_WARN("json not found 'path' field! \n");
+        PCITEM_F_WARN("json not found 'path' field! \n");
         return false;
     }
     path = std::move(it.value());
@@ -81,7 +81,7 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
     it = req_json.find("headers");
     if(it == req_json.end())
     {
-        PC_F_WARN("json not found 'headers' field! \n");
+        PCITEM_F_WARN("json not found 'headers' field! \n");
         return false;
     }
     headers = std::move(it.value());
@@ -109,7 +109,7 @@ bool HttpItemRespHeaderCfg::fromNetHttpResp(kit_muduo::HttpResponsePtr resp_cfg)
 {
     if(!resp_cfg)
     {
-        PC_F_ERROR("net http resp null!");
+        PCITEM_F_ERROR("net http resp null!");
         return false;
     }
     version = resp_cfg->version();
@@ -122,7 +122,7 @@ bool HttpItemRespHeaderCfg::fromJson(const nlohmann::json &resp_json)
 {
     if(resp_json.empty())
     {
-        PC_F_ERROR("json is null!");
+        PCITEM_F_ERROR("json is null!");
         return false;
     }
     // version 暂时不进行配置
@@ -131,7 +131,7 @@ bool HttpItemRespHeaderCfg::fromJson(const nlohmann::json &resp_json)
     auto it = resp_json.find("status_code");
     if(it == resp_json.end())
     {
-        PC_F_WARN("json not found 'status_code' field! \n");
+        PCITEM_F_WARN("json not found 'status_code' field! \n");
         return false;
     }
     state_code = StateCode::FromString(it.value());
@@ -140,7 +140,7 @@ bool HttpItemRespHeaderCfg::fromJson(const nlohmann::json &resp_json)
     it = resp_json.find("headers");
     if(it == resp_json.end())
     {
-        PC_F_WARN("json not found 'headers' field! \n");
+        PCITEM_F_WARN("json not found 'headers' field! \n");
         return false;
     }
     headers = std::move(it.value());
@@ -154,7 +154,7 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
 {
     if(!ori_protocol)
     {
-        PC_F_ERROR("ori protocol data is null\n");
+        PCITEM_F_ERROR("ori protocol data is null\n");
         return false;
     }
     // 基本信息赋值
@@ -170,7 +170,7 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
     /**TODO 配置这部分按TCP的做法 整个进行json自定义转换**/
     if(!req_cfg_.fromJson(req_cfg_root))
     {
-        PC_F_ERROR("req cfg json parse error! %s\n", req_cfg_root.dump().c_str());
+        PCITEM_F_ERROR("req cfg json parse error! %s\n", req_cfg_root.dump().c_str());
         return false;
     }
 
@@ -182,7 +182,7 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
     // 状态码 协议版本 暂时不配
     if(!resp_cfg_.fromJson(resp_cfg_root))
     {
-        PC_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_root.dump().c_str());
+        PCITEM_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_root.dump().c_str());
         return false;
     }
     

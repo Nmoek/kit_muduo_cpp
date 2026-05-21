@@ -6,7 +6,7 @@
  * @date 2025-10-31 18:01:36
  * @copyright Copyright (c) 2025 HIKRayin
  */
-#include "web/web_log.h"
+#include "domain/domain_log.h"
 #include "domain/type.h"
 
 #include "domain/custom_tcp_pattern.h"

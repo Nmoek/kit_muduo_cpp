@@ -21,8 +21,11 @@ class CustomTcpPattern;
 struct CustomTcpItemCfg
 {
     /// @brief 请求功能码十六进制值 H1234
-    std::string function_code_filed_value;
+    std::string function_code_hex;
     CustomTcpMessage::HeadersSet headers;
+    /// @brief 按照byte_pos索引的用户配置的字段值
+    std::unordered_map<size_t, std::vector<uint8_t>> field_values_by_byte_pos;
+
 
     CustomTcpItemCfg() = default;
     CustomTcpItemCfg(const nlohmann::json &req_json, std::shared_ptr<CustomTcpPattern> tcp_pattern);

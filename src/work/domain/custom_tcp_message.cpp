@@ -6,7 +6,7 @@
  * @date 2025-11-03 18:51:40
  * @copyright Copyright (c) 2025 HIKRayin
  */
-#include "web/web_log.h"
+#include "domain/domain_log.h"
 #include "domain/custom_tcp_message.h"
 #include "domain/custom_tcp_pattern.h"
 #include "domain/custom_tcp_context.h"
@@ -21,12 +21,12 @@ CustomTcpMessage::CustomTcpMessage()
 {
 
 
-    PJ_F_DEBUG("CustomTcpRequest::construct() %p\n", this);
+    CUSTOM_F_DEBUG("CustomTcpRequest::construct() %p\n", this);
 }
 
 CustomTcpMessage::~CustomTcpMessage()
 {
-    PJ_F_DEBUG("CustomTcpMessage::~CustomTcpMessage() %p\n", this);
+    CUSTOM_F_DEBUG("CustomTcpMessage::~CustomTcpMessage() %p\n", this);
 }
 
 void CustomTcpMessage::addField(std::shared_ptr<CustomTcpPatternFieldBase> field)

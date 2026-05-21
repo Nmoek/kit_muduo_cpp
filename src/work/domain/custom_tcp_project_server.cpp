@@ -11,7 +11,7 @@
 #include "domain/protocol.h"
 #include "domain/runtime_result.h"
 #include "net/tcp_server.h"
-#include "web/web_log.h"
+#include "domain/domain_log.h"
 #include "domain/custom_tcp_context.h"
 #include "domain/custom_tcp_message.h"
 #include "net/http/http_util.h"
@@ -87,7 +87,7 @@ RuntimeResult<void> CustomTcpProjectServer::AddProtocolItem(std::shared_ptr<Prot
         result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
-    const std::string &func_code_val = tcp_item->getReqCfg().function_code_filed_value;
+    const std::string &func_code_val = tcp_item->getReqCfg().function_code_hex;
 
     // 1. 配置的协议校验内容缓存
     // 注意这里的结构主要是配合数据库对账和快速索引的
@@ -331,13 +331,13 @@ void CustomTcpProjectServer::onConnect(kit_muduo::TcpConnectionPtr conn)
 
     if(conn->connected())
     {
-        PJ_F_INFO("==> new connection fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
+        PJSERVER_F_INFO("==> new connection fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
 
         conn->setContext(std::make_shared<CustomTcpContext>(this));
     }
     else
     {
-        PJ_F_INFO("==> disconnected connection  fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
+        PJSERVER_F_INFO("==> disconnected connection  fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
     }
 }
 
@@ -381,14 +381,14 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
     auto tcp_item = tcp_run_item.item;
     const std::string& old_func_code_str = tcp_run_item.function_code_value;
 
-    if(old_func_code_str == new_req_cfg.function_code_filed_value)
+    if(old_func_code_str == new_req_cfg.function_code_hex)
     {
         tcp_item->setReqCfg(new_req_cfg);
         return result;
     }
 
     // 先增加新的功能码
-    auto p = func_codes2ids_.emplace(new_req_cfg.function_code_filed_value, tcp_item->getId());
+    auto p = func_codes2ids_.emplace(new_req_cfg.function_code_hex, tcp_item->getId());
     if(!p.second)
     {
         PJSERVER_F_ERROR("tcp protocol item func code already exist! exist: func code[%s], pcId[%d] <-----> cur: unc code[%s], pcId[%d]\n", p.first->first.c_str(), p.second, old_func_code_str.c_str(), tcp_item->getId());
@@ -401,10 +401,10 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
     auto n = func_codes2ids_.erase(old_func_code_str);
     if(n != 1)
     {
-        n = func_codes2ids_.erase(new_req_cfg.function_code_filed_value);
+        n = func_codes2ids_.erase(new_req_cfg.function_code_hex);
         if(n != 1)
         {
-            PJSERVER_F_ERROR("tcp protocol item del new funcode error! func code[%s], pcId[%d]  \n", new_req_cfg.function_code_filed_value.c_str(), tcp_item->getId());
+            PJSERVER_F_ERROR("tcp protocol item del new funcode error! func code[%s], pcId[%d]  \n", new_req_cfg.function_code_hex.c_str(), tcp_item->getId());
         }
         PJSERVER_F_ERROR("tcp protocol item del old funcode error! func code[%s], pcId[%d]  \n", old_func_code_str.c_str(), tcp_item->getId());
 
@@ -413,7 +413,7 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
     }
 
     tcp_item->setReqCfg(new_req_cfg);
-    tcp_items_[tcp_item->getId()] = {tcp_item, new_req_cfg.function_code_filed_value};
+    tcp_items_[tcp_item->getId()] = {tcp_item, new_req_cfg.function_code_hex};
     
     return result;
 }

@@ -855,7 +855,7 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
 示意：
   func_codes2ids_: H0100 -> pc3001
           |
-          | UpdateReqCfg(function_code_filed_value = H0200)
+          | UpdateReqCfg(function_code_hex = H0200)
           v
   func_codes2ids_: H0200 -> pc3001
 
@@ -883,7 +883,7 @@ TEST_F(CustomTcpServerSuite, FunctionCodeUpdateMovesRuntimeIndex)
     auto new_item = server->findByFuncCode("H0200");
     ASSERT_NE(new_item, nullptr);
     EXPECT_EQ(new_item->getId(), 3001);
-    EXPECT_EQ(new_item->getReqCfg().function_code_filed_value, "H0200");
+    EXPECT_EQ(new_item->getReqCfg().function_code_hex, "H0200");
 }
 
 /*
@@ -922,12 +922,12 @@ TEST_F(CustomTcpServerSuite, FunctionCodeConflictPreservesOldIndex)
     auto old_func_item = server->findByFuncCode("H0100");
     ASSERT_NE(old_func_item, nullptr);
     EXPECT_EQ(old_func_item->getId(), 3101);
-    EXPECT_EQ(old_func_item->getReqCfg().function_code_filed_value, "H0100");
+    EXPECT_EQ(old_func_item->getReqCfg().function_code_hex, "H0100");
 
     auto conflict_func_item = server->findByFuncCode("H0200");
     ASSERT_NE(conflict_func_item, nullptr);
     EXPECT_EQ(conflict_func_item->getId(), 3102);
-    EXPECT_EQ(conflict_func_item->getReqCfg().function_code_filed_value, "H0200");
+    EXPECT_EQ(conflict_func_item->getReqCfg().function_code_hex, "H0200");
 }
 
 /*
@@ -970,7 +970,7 @@ TEST_F(CustomTcpServerSuite, ReqBodyUpdateKeepsFunctionCodeIndexAndCfg)
     auto after = server->findByFuncCode("H0100");
     ASSERT_NE(after, nullptr);
     EXPECT_EQ(after->getId(), 3201);
-    EXPECT_EQ(after->getReqCfg().function_code_filed_value, before_req_cfg.function_code_filed_value);
+    EXPECT_EQ(after->getReqCfg().function_code_hex, before_req_cfg.function_code_hex);
     EXPECT_EQ(after->getReqCfg().headers.size(), before_req_cfg.headers.size());
     EXPECT_NE(after->getReqBodyView().body_data, before_req_body.body_data);
     EXPECT_EQ(*after->getReqBodyView().body_data, new_body);

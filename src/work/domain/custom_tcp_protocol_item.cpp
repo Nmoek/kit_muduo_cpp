@@ -11,6 +11,7 @@
 #include "domain/custom_tcp_pattern.h"
 #include "domain/type.h"
 #include "domain/protocol.h"
+#include "domain/domain_log.h"
 
 #include <stdexcept>
 
@@ -35,7 +36,7 @@ CustomTcpItemCfg::CustomTcpItemCfg(std::shared_ptr<CustomTcpMessage> tcp_cfg)
 CustomTcpItemCfg CustomTcpItemCfg::clone()
 {
     CustomTcpItemCfg cfg;
-    cfg.function_code_filed_value = function_code_filed_value;
+    cfg.function_code_hex = function_code_hex;
     for(auto &field : headers)
     {
         if(field)
@@ -50,11 +51,11 @@ bool CustomTcpItemCfg::fromNetCustomTcpReq(std::shared_ptr<CustomTcpMessage> tcp
 {
     if(!tcp_cfg)
     {
-        PC_F_ERROR("net tcp req is null\n");
+        PCITEM_F_ERROR("net tcp req is null\n");
         return false;
     }
 
-    function_code_filed_value = tcp_cfg->functionCodeFieldValue();
+    function_code_hex = tcp_cfg->functionCodeFieldValue();
 
     headers = tcp_cfg->headerFields();
 
@@ -66,13 +67,13 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
 {
     if(tcp_json.empty() || !tcp_pattern)
     {
-        PC_F_ERROR("json/pattern is null\n");
+        PCITEM_F_ERROR("json/pattern is null\n");
         return false;
     }
     auto it = tcp_json.find("common_fields");
     if(it == tcp_json.end())
     {
-        PC_F_ERROR("json not found 'common_fields' field! \n");
+        PCITEM_F_ERROR("json not found 'common_fields' field! \n");
         return false;
     }
 
@@ -82,11 +83,11 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
         auto cfg_field = CustomTcpPatternFieldFactory::Create(obj);
         if(!cfg_field)
         {
-            PC_F_WARN("config field is null! %s\n", obj.dump().c_str());
+            PCITEM_F_WARN("config field is null! %s\n", obj.dump().c_str());
             continue;
         }
 
-        PC_F_ERROR("Req Field: name[%s], idx[%d], byte_pos[%d], byte_len[%d], value[%s]\n", 
+        PCITEM_F_ERROR("Req Field: name[%s], idx[%d], byte_pos[%d], byte_len[%d], value[%s]\n", 
             cfg_field->name().c_str(),cfg_field->idx(), cfg_field->byte_pos(), cfg_field->byte_len(), cfg_field->toHexString().c_str());
         
 
@@ -95,7 +96,7 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
         if(!p.second) // 重叠区间直接返回错误
         {
             auto exist_field = *p.first;
-            PC_F_ERROR("Req Field duplicated! exist: name[%d], pos[%d] <---> cur: name[%d], pos[%d]\n", exist_field->name().c_str(), exist_field->byte_pos(),cfg_field->name().c_str(), cfg_field->byte_pos());
+            PCITEM_F_ERROR("Req Field duplicated! exist: name[%d], pos[%d] <---> cur: name[%d], pos[%d]\n", exist_field->name().c_str(), exist_field->byte_pos(),cfg_field->name().c_str(), cfg_field->byte_pos());
             return false;
         }
     }
@@ -107,7 +108,7 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
         auto special_field = f ? f->clone() : nullptr;
         if(!special_field)
         {
-            PC_F_WARN("special field is null!\n");
+            PCITEM_F_WARN("special field is null!\n");
             continue;
         }
 
@@ -116,7 +117,7 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
         if(!p.second) // 重叠区间直接返回错误
         {
             auto exist_field = *p.first;
-            PC_F_ERROR("Req Field duplicated! exist: name[%d], pos[%d] <---> cur: name[%d], pos[%d]\n", exist_field->name().c_str(), exist_field->byte_pos(),special_field->name().c_str(), special_field->byte_pos());
+            PCITEM_F_ERROR("Req Field duplicated! exist: name[%d], pos[%d] <---> cur: name[%d], pos[%d]\n", exist_field->name().c_str(), exist_field->byte_pos(),special_field->name().c_str(), special_field->byte_pos());
             return false;
         }
     }
@@ -125,32 +126,32 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  std::shared_ptr
     it = tcp_json.find("function_code_filed_value");
     if(it == tcp_json.end())
     {
-        PC_F_ERROR("json not dound 'function_code_filed_value' field! \n");
+        PCITEM_F_ERROR("json not dound 'function_code_filed_value' field! \n");
         return false;
     }
-    function_code_filed_value = it.value();
+    function_code_hex = it.value();
     auto funcit = headers.find(tcp_pattern->functionCodeField()->byte_pos());
     if(funcit == headers.end())
     {
-        PC_F_ERROR("function code field not found! \n");
+        PCITEM_F_ERROR("function code field not found! \n");
         return false;
     }
 
     (*funcit)->fromHexString(it.value());
 
-    PC_DEBUG() << "req function_code_filed_value: " << (*funcit)->toHexString() << std::endl;
+    PCITEM_DEBUG() << "req function_code_filed_value: " << (*funcit)->toHexString() << std::endl;
     
     /** 调试打印 **/
     for(auto &field : headers)
     {
         if(field)
         {
-            PC_F_ERROR("Req Field: name[%s], idx[%d], byte_pos[%d], byte_len[%d], value[%s]\n", 
+            PCITEM_F_ERROR("Req Field: name[%s], idx[%d], byte_pos[%d], byte_len[%d], value[%s]\n", 
                 field->name().c_str(),field->idx(), field->byte_pos(), field->byte_len(), field->toHexString().c_str());
         }
         else
         {
-            PC_F_ERROR("Field is null! \n");
+            PCITEM_F_ERROR("Field is null! \n");
         }
     }
     /** 调试打印 **/
@@ -179,7 +180,7 @@ std::vector<uint8_t> CustomTcpItemCfg::assembleHeaders(bool is_endian) const
     {
         std::vector<uint8_t> bytes = it->toBytes(is_endian);
 
-        PC_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
+        PCITEM_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
             it->name().c_str(),it->idx(), it->byte_pos(), it->byte_len(), kit_muduo::BytesToHexString(bytes).c_str());
         
         data.insert(data.end(), bytes.begin(), bytes.end());
@@ -200,7 +201,7 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
 {
     if(!ori_protocol || !tcp_pattern_)
     {
-        PC_F_ERROR("ori protocol/ pattern data is null\n");
+        PCITEM_F_ERROR("ori protocol/ pattern data is null\n");
         return false;
     }
     // 基本信息赋值
@@ -220,7 +221,7 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
 
     if(!req_cfg_.fromJson(req_cfg_json, tcp_pattern_))
     {
-        PC_F_ERROR("req cfg json parse error! %s\n", req_cfg_json.dump().c_str());
+        PCITEM_F_ERROR("req cfg json parse error! %s\n", req_cfg_json.dump().c_str());
         return false;
     }
 
@@ -229,7 +230,7 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
 
     if(!resp_cfg_.fromJson(resp_cfg_json, tcp_pattern_))
     {
-        PC_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_json.dump().c_str());
+        PCITEM_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_json.dump().c_str());
         return false;
     }
 

@@ -59,33 +59,3 @@
 #define PC_F_ERROR(fmt, ...)     WEB_F_ERROR("protocol", fmt, ##__VA_ARGS__)
 #define PC_F_FATAL(fmt, ...)     WEB_F_FATAL("protocol", fmt, ##__VA_ARGS__)
 /*******protocol模块*********/
-
-
-/*******project server模块*********/
-#define PJSERVER_DEBUG()     WEB_DEBUG("pj_server")
-#define PJSERVER_INFO()      WEB_INFO("pj_server")
-#define PJSERVER_WARN()      WEB_WARN("pj_server")
-#define PJSERVER_ERROR()     WEB_ERROR("pj_server")
-#define PJSERVER_FATAL()     WEB_FATAL("pj_server")
-
-#define PJSERVER_F_DEBUG(fmt, ...)     WEB_F_DEBUG("pj_server", fmt, ##__VA_ARGS__)
-#define PJSERVER_F_INFO(fmt, ...)      WEB_F_INFO("pj_server", fmt, ##__VA_ARGS__)
-#define PJSERVER_F_WARN(fmt, ...)      WEB_F_WARN("pj_server", fmt, ##__VA_ARGS__)
-#define PJSERVER_F_ERROR(fmt, ...)     WEB_F_ERROR("pj_server", fmt, ##__VA_ARGS__)
-#define PJSERVER_F_FATAL(fmt, ...)     WEB_F_FATAL("pj_server", fmt, ##__VA_ARGS__)
-/*******http project模块*********/
-
-
-/*******custom tcp模块*********/
-#define CUSTOM_DEBUG()     WEB_DEBUG("custom")
-#define CUSTOM_INFO()      WEB_INFO("custom")
-#define CUSTOM_WARN()      WEB_WARN("custom")
-#define CUSTOM_ERROR()     WEB_ERROR("custom")
-#define CUSTOM_FATAL()     WEB_FATAL("custom")
-
-#define CUSTOM_F_DEBUG(fmt, ...)     WEB_F_DEBUG("custom", fmt, ##__VA_ARGS__)
-#define CUSTOM_F_INFO(fmt, ...)      WEB_F_INFO("custom", fmt, ##__VA_ARGS__)
-#define CUSTOM_F_WARN(fmt, ...)      WEB_F_WARN("custom", fmt, ##__VA_ARGS__)
-#define CUSTOM_F_ERROR(fmt, ...)     WEB_F_ERROR("custom", fmt, ##__VA_ARGS__)
-#define CUSTOM_F_FATAL(fmt, ...)     WEB_F_FATAL("custom", fmt, ##__VA_ARGS__)
-/*******http project模块*********/
