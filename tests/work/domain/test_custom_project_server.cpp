@@ -50,7 +50,6 @@ using namespace testing;
 
 using CustomTcpMessagePtr = std::shared_ptr<CustomTcpMessage>;
 using CustomTcpContextPtr = std::shared_ptr<CustomTcpContext>;
-using PatternFieldPtr = std::shared_ptr<CustomTcpPatternFieldBase>;
 
 using ReqBuildFunc = std::function<void(std::vector<char>&)>;
 
@@ -89,7 +88,7 @@ protected:
     {
         // 创建自定义TCP服务器必须带解析格式，否则无法解析。
         // R1 之后 runtime loop 和 TcpServer 生命周期由 CustomTcpProjectServer 自己持有。
-        return std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternType, p.m_patternInfo);
+        return std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternInfo);
     }
 };
 
@@ -278,6 +277,23 @@ static void ReqBuilderHelper1(std::vector<char>& req, const nljson& body_root)
     f.close();
 }
 
+static void ReqBuilderHelper2_1(std::vector<char>& req, const nljson& body_root)
+{
+    Pattern1 pattern{};
+    const std::string body = body_root.dump();
+
+    pattern.field1 = 0x23232323;
+    pattern.field2 = sizeof(Pattern1) + body.size();
+    pattern.field3 = 3;
+    pattern.field4 = 0x0001;
+    pattern.field5 = body.size();
+    pattern.field6 = time(nullptr) * 1000;
+
+    req.resize(sizeof(Pattern1) + body.size());
+    memcpy(req.data(), &pattern, sizeof(Pattern1));
+    memcpy(req.data() + sizeof(Pattern1), body.data(), body.size());
+}
+
 static void ReqBuilderHelperPartialBody(std::vector<char>& req, const nljson& body_root)
 {
     PatternPartialBody pattern;
@@ -409,7 +425,6 @@ static kit_domain::Project MakeBodyLengthProject(int64_t project_id)
     project.m_userId = 0;
     project.m_status = ProjectStatus::ON_STATUS;
     project.m_active = ProjectStatus::ON_STATUS;
-    project.m_patternType = CustomTcpPatternType::BODY_LENGTH_DEP;
     project.m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end());
     project.m_ctime = TimeStamp::Now();
     return project;
@@ -423,10 +438,10 @@ static kit_domain::Protocol MakeBodyLengthProtocol(
         const std::vector<char> &resp_body = std::vector<char>(resp_body1.begin(), resp_body1.end()))
 {
     nljson req_cfg = nljson::parse(req_cfg1);
-    req_cfg["function_code_filed_value"] = func_code;
+    req_cfg["function_code"] = func_code;
 
     nljson resp_cfg = nljson::parse(resp_cfg1);
-    resp_cfg["function_code_filed_value"] = func_code == "H0100" ? "H1080" : "H2080";
+    resp_cfg["function_code"] = func_code == "H0100" ? "H1080" : "H2080";
 
     kit_domain::Protocol protocol;
     protocol.m_id = protocol_id;
@@ -543,9 +558,8 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_targetIp = "",
                 .m_userId = 0,
                 .m_status = ProjectStatus::ON_STATUS,
-                .m_patternType = CustomTcpPatternType::BODY_LENGTH_DEP,
                 .m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end()),
-                TimeStamp::Now(),
+                .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
@@ -581,9 +595,8 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_targetIp = "",
                 .m_userId = 0,
                 .m_status = ProjectStatus::ON_STATUS,
-                .m_patternType = CustomTcpPatternType::TOTAL_LENGTH_DEP,
                 .m_patternInfo = std::vector<char>(pattern_json_str2_1.begin(), pattern_json_str2_1.end()),
-                TimeStamp::Now(),
+                .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
@@ -607,7 +620,7 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_utime = TimeStamp::Now(),
             },
             [](std::vector<char> &req) {
-                ReqBuilderHelper1(req, nljson::parse(R"({"key2": "val2"})"));
+                ReqBuilderHelper2_1(req, nljson::parse(R"({"key2": "val2"})"));
             }
         },
         {
@@ -621,9 +634,8 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_targetIp = "",
                 .m_userId = 0,
                 .m_status = ProjectStatus::ON_STATUS,
-                .m_patternType = CustomTcpPatternType::TOTAL_LENGTH_DEP,
                 .m_patternInfo = std::vector<char>(pattern_json_str2_2.begin(), pattern_json_str2_2.end()),
-                TimeStamp::Now(),
+                .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
@@ -660,9 +672,8 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_targetIp = "",
                 .m_userId = 0,
                 .m_status = ProjectStatus::ON_STATUS,
-                .m_patternType = CustomTcpPatternType::NO_LENGTH_DEP,
                 .m_patternInfo = std::vector<char>(pattern_json_str3.begin(), pattern_json_str3.end()),
-                TimeStamp::Now(),
+                .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
@@ -740,40 +751,21 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
 TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
 {
     const std::string pattern_json_partial_body = R"({
-        "least_byte_len": 14,
-        "special_fields": {
-            "start_magic_num_field": {
-                "name": "起始标识",
-                "idx": 0,
-                "byte_pos": 0,
-                "byte_len": 4,
-                "type": "INT32",
-                "value": "H23232323"
-            },
-            "function_code_field": {
-                "name": "功能码",
-                "idx": 3,
-                "byte_pos": 4,
-                "byte_len": 2,
-                "type": "UINT16",
-                "value": ""
-            },
-            "body_length_field": {
-                "name": "报文体长度",
-                "idx": 4,
-                "byte_pos": 6,
-                "byte_len": 8,
-                "type": "UINT64",
-                "value": ""
-            }
-        }
+        "version": 2,
+        "header_bytes": 14,
+        "default_order": "big",
+        "length_policy": "body_length",
+        "fields": [
+            {"name":"起始标识","byte_pos":0,"byte_len":4,"type":"UINT32","role":"start_magic","match":"H23232323"},
+            {"name":"功能码","byte_pos":4,"byte_len":2,"type":"UINT16","role":"function_code"},
+            {"name":"报文体长度","byte_pos":6,"byte_len":8,"type":"UINT64","role":"body_length"}
+        ]
     })";
-    const std::string req_cfg_partial_body = R"({"function_code_filed_value":"H0100","common_fields":[]})";
-    const std::string resp_cfg_partial_body = R"({"function_code_filed_value":"H1080","common_fields":[]})";
+    const std::string req_cfg_partial_body = R"({"function_code":"H0100","fields":{}})";
+    const std::string resp_cfg_partial_body = R"({"function_code":"H1080","fields":{}})";
 
     auto server = std::make_shared<CustomTcpProjectServer>(
         1001,
-        CustomTcpPatternType::BODY_LENGTH_DEP,
         std::vector<char>(pattern_json_partial_body.begin(), pattern_json_partial_body.end()));
 
     auto pc = std::make_shared<kit_domain::Protocol>(kit_domain::Protocol{
@@ -855,7 +847,7 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
 示意：
   func_codes2ids_: H0100 -> pc3001
           |
-          | UpdateReqCfg(function_code_hex = H0200)
+          | UpdateReqCfg(function_code = H0200)
           v
   func_codes2ids_: H0200 -> pc3001
 
@@ -874,7 +866,7 @@ TEST_F(CustomTcpServerSuite, FunctionCodeUpdateMovesRuntimeIndex)
     EXPECT_EQ(server->findByFuncCode("H0200"), nullptr);
 
     nljson new_req_cfg = nljson::parse(req_cfg1);
-    new_req_cfg["function_code_filed_value"] = "H0200";
+    new_req_cfg["function_code"] = "H0200";
 
     auto update_result = server->UpdateReqCfgProtocolItem(3001, new_req_cfg);
     ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
@@ -883,7 +875,7 @@ TEST_F(CustomTcpServerSuite, FunctionCodeUpdateMovesRuntimeIndex)
     auto new_item = server->findByFuncCode("H0200");
     ASSERT_NE(new_item, nullptr);
     EXPECT_EQ(new_item->getId(), 3001);
-    EXPECT_EQ(new_item->getReqCfg().function_code_hex, "H0200");
+    EXPECT_EQ(new_item->getReqCfg().function_code, "H0200");
 }
 
 /*
@@ -913,7 +905,7 @@ TEST_F(CustomTcpServerSuite, FunctionCodeConflictPreservesOldIndex)
     ASSERT_NE(item2, nullptr);
 
     nljson new_req_cfg = nljson::parse(req_cfg1);
-    new_req_cfg["function_code_filed_value"] = "H0200";
+    new_req_cfg["function_code"] = "H0200";
 
     auto update_result = server->UpdateReqCfgProtocolItem(3101, new_req_cfg);
     ASSERT_FALSE(update_result.ok());
@@ -922,12 +914,12 @@ TEST_F(CustomTcpServerSuite, FunctionCodeConflictPreservesOldIndex)
     auto old_func_item = server->findByFuncCode("H0100");
     ASSERT_NE(old_func_item, nullptr);
     EXPECT_EQ(old_func_item->getId(), 3101);
-    EXPECT_EQ(old_func_item->getReqCfg().function_code_hex, "H0100");
+    EXPECT_EQ(old_func_item->getReqCfg().function_code, "H0100");
 
     auto conflict_func_item = server->findByFuncCode("H0200");
     ASSERT_NE(conflict_func_item, nullptr);
     EXPECT_EQ(conflict_func_item->getId(), 3102);
-    EXPECT_EQ(conflict_func_item->getReqCfg().function_code_hex, "H0200");
+    EXPECT_EQ(conflict_func_item->getReqCfg().function_code, "H0200");
 }
 
 /*
@@ -970,8 +962,8 @@ TEST_F(CustomTcpServerSuite, ReqBodyUpdateKeepsFunctionCodeIndexAndCfg)
     auto after = server->findByFuncCode("H0100");
     ASSERT_NE(after, nullptr);
     EXPECT_EQ(after->getId(), 3201);
-    EXPECT_EQ(after->getReqCfg().function_code_hex, before_req_cfg.function_code_hex);
-    EXPECT_EQ(after->getReqCfg().headers.size(), before_req_cfg.headers.size());
+    EXPECT_EQ(after->getReqCfg().function_code, before_req_cfg.function_code);
+    EXPECT_EQ(after->getReqCfg().field_values_by_byte_pos.size(), before_req_cfg.field_values_by_byte_pos.size());
     EXPECT_NE(after->getReqBodyView().body_data, before_req_body.body_data);
     EXPECT_EQ(*after->getReqBodyView().body_data, new_body);
     EXPECT_EQ(after->getRespBodyView().body_data, before_resp_body.body_data);
@@ -1008,9 +1000,8 @@ TEST_F(CustomTcpServerSuite, ClientSend)
             .m_targetIp = "",
             .m_userId = 0,
             .m_status = ProjectStatus::ON_STATUS,
-            .m_patternType = CustomTcpPatternType::BODY_LENGTH_DEP,
             .m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end()),
-            TimeStamp::Now(),
+            .m_ctime = TimeStamp::Now(),
         };
         kit_domain::Protocol pc{
             .m_id = 1,

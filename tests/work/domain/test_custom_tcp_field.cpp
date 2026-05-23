@@ -1,6 +1,6 @@
 /**
- * @file test_custom_tcp_field_v2.cpp
- * @brief 自定义TCP字段V2测试
+ * @file test_custom_tcp_field.cpp
+ * @brief 自定义TCP字段测试
  * @author Kewin Li
  * @version 1.0
  * @date 2026-05-15 14:41:34
@@ -10,7 +10,6 @@
 #include "domain/custom_tcp_field_codec.h"
 #include "domain/custom_tcp_field_model.h"
 #include "domain/custom_tcp_field_type_traits.h"
-#include "domain/custom_tcp_pattern_field_v2.h"
 
 #include <gtest/gtest.h>
 

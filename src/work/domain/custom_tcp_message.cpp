@@ -29,67 +29,30 @@ CustomTcpMessage::~CustomTcpMessage()
     CUSTOM_F_DEBUG("CustomTcpMessage::~CustomTcpMessage() %p\n", this);
 }
 
-void CustomTcpMessage::addField(std::shared_ptr<CustomTcpPatternFieldBase> field)
+void CustomTcpMessage::addField(const FieldValue &field_value)
 {
-    header_fileds_.emplace(field);
+    header_fields_by_byte_pos_[field_value.spec.byte_pos] = field_value;
 }
 
-std::shared_ptr<CustomTcpPatternFieldBase> CustomTcpMessage::getField(int32_t byte_pos) const
+const FieldValue* CustomTcpMessage::getField(size_t byte_pos) const
 {
-
-    auto it = header_fileds_.find(byte_pos);
-    return it == header_fileds_.end() ? nullptr : *it;
+    auto it = header_fields_by_byte_pos_.find(byte_pos);
+    return it == header_fields_by_byte_pos_.end() ? nullptr : &it->second;
 }
 
 
-int64_t CustomTcpMessage::getHeaderBytes() const
+
+uint64_t CustomTcpMessage::getHeaderBytes() const
 {
-    int64_t res = 0;
-    for(auto &f : header_fileds_)
+    uint64_t res = 0;
+    for(auto &it : header_fields_by_byte_pos_)
     {
-        if(f)
-        {
-            res += f->byte_len();
-        }
+        res += it.second.spec.byte_len;
     }
     return res;
 }
 
 
-std::vector<uint8_t> CustomTcpMessage::assembleHeaders(bool is_endian) const
-{
-    std::vector<uint8_t> data;
-    for(auto &it : header_fileds_)
-    {
-        std::vector<uint8_t> bytes = it->toBytes(is_endian);
-
-        CUSTOM_F_DEBUG("serialize:: name[%s], idx[%d] byte_pos[%d], byte_len[%d], value[%s] ,Field extract success!\n", 
-            it->name().c_str(),it->idx(), it->byte_pos(), it->byte_len(), kit_muduo::BytesToHexString(bytes).c_str());
-        
-        data.insert(data.end(), bytes.begin(), bytes.end());
-    }
-    return data;
-}
-
-void from_json(const nlohmann::json& root, CustomTcpMessage& message)
-{
-    message.function_code_filed_value_ = root["function_code_filed_value"];
-
-    for(auto &obj : root["common_fields"])
-    {
-
-        auto cfg_field = CustomTcpPatternFieldFactory::Create(obj);
-        if(!cfg_field)
-        {
-            CUSTOM_ERROR() << "create field failed! \n" << obj.dump(4) << std::endl;
-
-            throw std::invalid_argument("pattern_fields invalid!");
-        }
-        cfg_field->setSepcial(false);
-        message.addField(cfg_field);
-    }
-    
-}
 
 
 }

@@ -58,10 +58,9 @@ struct AddProjectReq {
     int32_t                  mode;              // 测试模式
     int32_t                  protocol_type;     // 协议种类
     std::string              target_ip;         // 目标ip + 端口 x.x.x.x:8888
-    int32_t                  pattern_type;      // 自定义 TCP 格式类型
     nljson                   pattern_info;      // 自定义 TCP 格式信息
     
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AddProjectReq, name, mode, protocol_type, target_ip, pattern_type, pattern_info)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AddProjectReq, name, mode, protocol_type, target_ip, pattern_info)
 };
 
 struct DelProjectReq {
@@ -327,7 +326,6 @@ static Project MakeHttpProjectForStatus(int64_t project_id)
     p.m_userId = 1;
     p.m_status = ProjectStatus::ON_STATUS;
     p.m_active = ProjectStatus::OFF_STATUS;
-    p.m_patternType = CustomTcpPatternType::STANDARD;
     p.m_patternInfo = nljson::object();
     p.m_ctime = TimeStamp::Now();
     return p;
@@ -378,7 +376,6 @@ TEST_F(ProjectHandlerSuite, AddProject)
                         ProjectMode::ServerMode,
                         static_cast<int32_t>(ProtocolType::HTTP_PROTOCOL),
                         "",
-                        static_cast<int32_t>(CustomTcpPatternType::STANDARD),
                         nljson::object()
                     }
                 );
@@ -439,7 +436,6 @@ TEST_F(ProjectHandlerSuite, AddProject)
                         ProjectMode::ServerMode,
                         static_cast<int32_t>(ProtocolType::HTTP_PROTOCOL),
                         "",
-                        static_cast<int32_t>(CustomTcpPatternType::STANDARD),
                         nljson::object()
                     }
                 ); 

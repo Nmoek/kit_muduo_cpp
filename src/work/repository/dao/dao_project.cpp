@@ -253,7 +253,7 @@ std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContext
     return pattern_info;
 }
 
-bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t pattern_type, const std::vector<char> pattern_info)
+bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
     try {
@@ -263,7 +263,6 @@ bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64
         _db->begin_immediate_transaction();
         _db->update_all(
             sqlite_orm::set(
-                sqlite_orm::c(&kit_dao::Project::m_patternType) = pattern_type,
                 sqlite_orm::c(&kit_dao::Project::m_patternInfo) = pattern_info,
                 sqlite_orm::c(&kit_dao::Project::m_utime) = now
             ),

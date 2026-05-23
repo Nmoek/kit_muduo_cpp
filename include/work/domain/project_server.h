@@ -15,7 +15,6 @@
 #include "work/domain/type.h"
 #include "net/inet_address.h"
 #include "net/buffer.h"
-#include "domain/custom_tcp_pattern.h"
 #include "nlohmann/json.hpp"
 
 #include <memory>
@@ -156,7 +155,7 @@ public:
      * @param project_id 项目ID
      * @param tcp_server TCP服务器指针
      */
-    CustomTcpProjectServer(int64_t project_id, const CustomTcpPatternType pattern_type, const std::vector<char> &info);
+    CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info);
 
     void start() override;
 

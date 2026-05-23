@@ -70,9 +70,9 @@ std::vector<char> ProjectService::GetPatternInfoById(kit_muduo::HttpContextPtr c
     return _repo->GetPatternInfoById(ctx, project_id); 
 }
 
-bool ProjectService::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t pattern_type, const std::vector<char> pattern_info)
+bool ProjectService::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
 {
-    return _repo->UpdatePatternInfo(ctx, project_id, pattern_type, pattern_info); 
+    return _repo->UpdatePatternInfo(ctx, project_id, pattern_info); 
 
 }
 

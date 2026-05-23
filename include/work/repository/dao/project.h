@@ -26,7 +26,6 @@ struct Project
     int64_t                  m_userId;          // 所属用户id
     int32_t m_status;  // 当前测试服务有效性(软删除使用)
     int32_t                  m_active;          // 测试服务当前运行状态
-    int32_t                  m_patternType;     // 协议格式类型
     std::vector<char>        m_patternInfo;     // 格式解析信息
 
     int64_t                  m_ctime;            // 创建时间

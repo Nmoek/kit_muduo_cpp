@@ -11,8 +11,12 @@
 
 #include "domain/protocol_item.h"
 #include "domain/custom_tcp_message.h"
+#include "domain/custom_tcp_pattern_spec.h"
 
+#include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace kit_domain {
 
@@ -21,19 +25,12 @@ class CustomTcpPattern;
 struct CustomTcpItemCfg
 {
     /// @brief 请求功能码十六进制值 H1234
-    std::string function_code_hex;
-    CustomTcpMessage::HeadersSet headers;
+    std::string function_code;
     /// @brief 按照byte_pos索引的用户配置的字段值
     std::unordered_map<size_t, std::vector<uint8_t>> field_values_by_byte_pos;
 
-
     CustomTcpItemCfg() = default;
-    CustomTcpItemCfg(const nlohmann::json &req_json, std::shared_ptr<CustomTcpPattern> tcp_pattern);
-    CustomTcpItemCfg(std::shared_ptr<CustomTcpMessage> req_cfg);
-
-    CustomTcpItemCfg clone();
-
-    bool fromNetCustomTcpReq(std::shared_ptr<CustomTcpMessage> tcp_cfg);
+    CustomTcpItemCfg(const nlohmann::json &tcp_json, const CustomTcpPatternSpec &spec);
 
     /**
      * @brief 通过json解析，允许部分更新
@@ -41,16 +38,7 @@ struct CustomTcpItemCfg
      * @return true 
      * @return false 
      */
-    bool fromJson(const nlohmann::json &tcp_json,  std::shared_ptr<const CustomTcpPattern> tcp_pattern_);
-
-
-    /**
-     * @brief 获取头部的总长度
-     * @return int64_t 
-     */
-    int64_t getHeaderBytes() const;
-
-    std::vector<uint8_t> assembleHeaders(bool is_endian = false) const;
+    bool fromJson(const nlohmann::json &tcp_json, const CustomTcpPatternSpec &spec);
 };
 
 
@@ -60,8 +48,6 @@ class CustomTcpProtocolItem: public ProtocolItem
     
 public:
     explicit CustomTcpProtocolItem(std::shared_ptr<CustomTcpPattern> tcp_pattern);
-
-
 
     bool init(std::shared_ptr<Protocol> ori_protocol) override;
 
@@ -78,7 +64,7 @@ public:
 
 private:
     /// @brief 自定义tcp格式(副本只存在于ProjectServe 所有ProtocolItem共享一个副本)
-    std::shared_ptr<const CustomTcpPattern> tcp_pattern_;
+    std::weak_ptr<CustomTcpPattern> weak_tcp_pattern_;
     CustomTcpItemCfg req_cfg_;
     CustomTcpItemCfg resp_cfg_;
 };

@@ -6,6 +6,7 @@
  * @date 2025-11-03 16:20:15
  * @copyright Copyright (c) 2025 HIKRayin
  */
+#include "domain/custom_tcp_field_type_traits.h"
 #include "domain/domain_log.h"
 #include "base/time_stamp.h"
 #include "net/buffer.h"
@@ -44,147 +45,67 @@ bool CustomTcpContext::parseRequest(const std::vector<char> &data, kit_muduo::Ti
     return parseRequest(buf, receiveTime);
 }
 
-static void ShowField(std::shared_ptr<CustomTcpPatternFieldBase> field)
+inline static void ShowField(const FieldValue& field_value)
 {
-    CUSTOM_F_DEBUG("name[%s], idx[%d], type[%s] byte_pos[%d], byte_len[%d], value[%s] Field extract success!\n", 
-        field->name().c_str(),field->idx(), field->getTypeEnum().toStrs(), field->byte_pos(), field->byte_len(), field->toHexString().c_str());
+    const auto& spec = field_value.spec;
+    CUSTOM_F_DEBUG("name[%s], type[%s] byte_pos[%d], byte_len[%d], value[%s] Field extract success!\n",
+        spec.name.c_str(), FieldTypeToString(spec.type).c_str(), spec.byte_pos, spec.byte_len, field_value.hex().c_str());
 }
-
 
 bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp receiveTime)
 {
     // 这里只是查看 TcpConnect上的缓冲区数据 并没有进行读取操作
-    const std::vector<char>& complete_data = buf.lookAllAsData();
+    const auto& tmp =  buf.lookAllAsData();
+    const std::vector<uint8_t> complete_data(tmp.begin(), tmp.end());
 
     auto pattern = server_->getPatternInfo();
-    int32_t head_bytes_len = pattern->headByteLen();
-
 
     while(state_ != kGotAll)
     {
         if(kExpectHeader == state_)
         {
 
-            if(complete_data.size() < head_bytes_len)
+            // 1. 头部字段全解析
+            auto parse_result = pattern->parseHeader(complete_data);
+            if(!parse_result.ok())
             {
-                CUSTOM_F_INFO("data is not complete %d/%d \n", complete_data.size(), head_bytes_len);
-                return true;
+                if(CustomTcpPattern::ParseHeaderResult::kNonMinLength == parse_result.status)
+                {
+                    CUSTOM_F_INFO("tcp data is not complete: %ld \n", complete_data.size());
+                    return true;
+                }
+                else
+                {
+                    CUSTOM_F_INFO("tcp data parse error: %d \n", parse_result.status);
+                    return false;
+                }
+
             }
 
-            CUSTOM_DEBUG() << "complete_data:" << complete_data.size() << ", " << kit_muduo::BytesToHexString(std::vector<uint8_t>(complete_data.begin(), complete_data.end()), " ") << std::endl;
 
-            // 1. 解析出起始魔数字段  对照配置的起始魔数进行校验
-            auto cfg_field = pattern->startMagicNumField();
-            if(!cfg_field)
+            if(!server_->findByFuncCode(parse_result.function_code))
             {
-                CUSTOM_ERROR() << "StartMagicNumField  is null!" << std::endl;
+                CUSTOM_F_ERROR("FuncCode not found! %s \n", parse_result.function_code.c_str());
                 return false;
             }
-
-            auto real_start_magic_num_field = cfg_field->extract(complete_data, false);
-            if(!real_start_magic_num_field)
+            request_->setFunctionCodeHex(parse_result.function_code);
+            
+            // 2. 字段赋值
+            for(auto &field_value : parse_result.fields_value)
             {
-                CUSTOM_ERROR() << "StartMagicNumField extract error!" << std::endl;
-                return false;
+                // DEBUG 调试信息打印
+                ShowField(field_value);
+                request_->addField(field_value);
             }
-            ShowField(real_start_magic_num_field);
-
-
-            // 2. 解析出功能码 对照配置功能码 并进行协议项索引+
-            cfg_field = pattern->functionCodeField();
-            if(!cfg_field)
-            {
-                CUSTOM_ERROR() << "FunctionCodeField is null!" << std::endl;
-                return false;
-            }
-
-            // !!!!!!!!!!!!!!!!!!
-            // BUG: 这里接口提取有问题!
-            // bytes ---> int32 --> HexString  这个流程是有问题的
-            // !!!!!!!!!!!!!!!!!!
-
-            auto real_func_code_field = cfg_field->extract(complete_data, false);
-            if(!real_func_code_field)
-            {
-                CUSTOM_ERROR() << "FunctionCodeField extract error!" << std::endl;
-                return false;
-            } 
-
-            // DEBUG
-            ShowField(real_func_code_field);
-
-            // 注意当前项目均按大端排序展示 不管实际的内存序到底是什么
-            // 找出功能码对应的协议项
-            const std::string func_code_str = real_func_code_field->toHexString(false);
-
-            CUSTOM_DEBUG() << "findByFuncCode: " << func_code_str << std::endl;
-
-            auto tcp_item = server_->findByFuncCode(func_code_str);
-            if(!tcp_item)
-            {
-                CUSTOM_F_ERROR("FuncCode not found! %s \n", func_code_str.c_str());
-                return false;
-            }
-
-            // 起始标识符 加入到字段列表中
-            request_->addField( real_start_magic_num_field);
-
-            // 功能码 加入到字段列表中
-            request_->addField(real_func_code_field);
 
             // 3.根据每种格式不同进行长度信息收取
             // 长度信息可能是没有的
-            cfg_field = pattern->lengthInfoField();
-            if(cfg_field)
-            {
-                auto real_length_info_field = cfg_field->extract(complete_data, false);
-                if(!real_length_info_field)
-                {
-                    CUSTOM_ERROR() << "LengthInfoField extract error!" << std::endl;
-                    return false;
-                } 
-                request_->addField(real_length_info_field);
+            remain_bytes_len_ = parse_result.remain_body_bytes;
 
-                // DEBUG
-                ShowField(request_->getField(real_length_info_field->byte_pos()));
-                
-                // 通过长度信息 获取到剩下的body应该解析的长度
-                remain_bytes_len_ = pattern->calRemainBytesLen(real_length_info_field);
-
-                CUSTOM_DEBUG() << "remain_bytes_len_: " << remain_bytes_len_ << std::endl;
-
-            }
-
-            // 4. 收取其他剩余的普通头部字段信息
-            for(auto &cfg_field : request_->headerFields())
-            {
-                // 从配置好的字段列表里获取
-
-                if(!cfg_field)
-                {
-                    CUSTOM_F_ERROR("Field is null!");
-                    continue;
-                }
-
-                if(!cfg_field->is_special())
-                {
-                    // 提取值完毕后 又放入到request_
-                    auto real_field = cfg_field->extract(complete_data, false);
-                    if(!real_field)
-                    {
-                        CUSTOM_F_ERROR("Field extract error! name[%s], idx[%d], byte_pos[%d] byte_len[%d]\n", 
-                            cfg_field->name().c_str(),cfg_field->idx(), cfg_field->byte_pos(), cfg_field->byte_len());
-                        return false;
-                    }
-                    real_field->setSepcial(false); // 置为普通字段
-                    request_->addField(real_field);
-                    // DEBUG
-                    ShowField(request_->getField(real_field->byte_pos()));
-                }
-            }
+            CUSTOM_DEBUG() << "remain_bytes_len_: " << remain_bytes_len_ << std::endl;
 
             // 头解析没有出错 将当前所有字段的长度减去
-            buf.reset(request_->getHeaderBytes());
+            buf.reset(pattern->spec().header_bytes);
             if(remain_bytes_len_ > 0)
             {
                 state_ = TcpParseState::kExpectBody;
@@ -192,7 +113,7 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
             else  // 说明是不带body的类型
             {
                 remain_bytes_len_ = 0;
-                state_ = TcpParseState::kGotAll; 
+                state_ = TcpParseState::kGotAll;
             }
         }
         else if(TcpParseState::kExpectBody == state_)
@@ -215,13 +136,12 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
 
             remain_bytes_len_ = 0;
             state_ = TcpParseState::kGotAll;
-            
+
         }
     }
 
     return true;
 }
-
 
 bool CustomTcpContext::parseResponse(const std::string &data, const CustomPatternInfo& parse_pattern_info, kit_muduo::TimeStamp receiveTime)
 {

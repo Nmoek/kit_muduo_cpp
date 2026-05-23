@@ -61,13 +61,25 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
 
     try {
-        // 创建自定义TCP服务器 必须带解析格式  否则无法解析
-        const std::string& tmp = p.m_patternInfo.dump();
-        std::vector<char> pattern_info(tmp.begin(), tmp.end());
+        // 创建自定义TCP服务器必须带解析格式，否则无法解析。
+        std::string tmp;
+        std::vector<char> pattern_info;
+        if(p.m_patternInfo.is_array())
+        {
+            pattern_info = p.m_patternInfo.get<std::vector<char>>();
+            tmp.assign(pattern_info.begin(), pattern_info.end());
+        }
+        else
+        {
+            tmp = p.m_patternInfo.is_string()
+                ? p.m_patternInfo.get<std::string>()
+                : p.m_patternInfo.dump();
+            pattern_info.assign(tmp.begin(), tmp.end());
+        }
 
-        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternType, pattern_info);
+        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, pattern_info);
 
-        PJSERVER_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternType[%d], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), p.m_patternType, tmp.c_str());
+        PJSERVER_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), tmp.c_str());
 
         return pj_server;
         

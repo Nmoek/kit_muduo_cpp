@@ -24,16 +24,16 @@ struct ProjectVo {
     std::string              name;             // 测试名称
     int32_t                  mode;             // 测试模式
     int32_t                  protocol_type;    // 协议种类
+    std::string              length_policy;    // 自定义 TCP 长度策略，普通协议为空
     uint16_t                 listen_port;      // 监听端口号
     std::string              target_ip;        // 目标ip + 端口 x.x.x.x:8888
     int64_t                  user_id;          // 所属用户id
     int32_t                  status;           // 当前服务是否被删除  1存在 0已删除
-    int32_t avtive; // 当前服务状态 1开启 0关闭
-    int32_t                  pattern_type;     // 格式类型
+    int32_t active; // 当前服务状态 1开启 0关闭
 
     std::string              ctime;           // 创建时间
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectVo, id, name, mode, protocol_type, listen_port, target_ip, user_id, status, avtive, pattern_type, ctime)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectVo, id, name, mode, protocol_type, length_policy, listen_port, target_ip, user_id, status, active, ctime)
 };
 
 ProjectVo CovertProjectVo(const Project &p);

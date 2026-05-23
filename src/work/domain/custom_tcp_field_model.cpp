@@ -1,6 +1,6 @@
 /**
  * @file custom_tcp_field_model.cpp
- * @brief 自定义TCP协议字段数据模型-V2
+ * @brief 自定义TCP协议字段数据模型
  * @author Kewin Li
  * @version 1.0
  * @date 2026-05-15 16:11:26

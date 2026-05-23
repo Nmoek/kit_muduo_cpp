@@ -28,25 +28,14 @@ namespace {
 constexpr auto kLoopCallbackTimeout = std::chrono::seconds(2);
 
 const std::string kNoLengthPatternInfo = R"({
-    "least_byte_len": 4,
-    "special_fields": {
-        "start_magic_num_field": {
-            "name": "起始字符",
-            "idx": 0,
-            "byte_pos": 0,
-            "byte_len": 2,
-            "type": "STR",
-            "value": "H023A"
-        },
-        "function_code_field": {
-            "name": "功能码",
-            "idx": 1,
-            "byte_pos": 2,
-            "byte_len": 2,
-            "type": "STR",
-            "value": ""
-        }
-    }
+    "version": 2,
+    "header_bytes": 4,
+    "default_order": "raw",
+    "length_policy": "no_length",
+    "fields": [
+        {"name":"起始字符","byte_pos":0,"byte_len":2,"type":"STR","role":"start_magic","match":"H023A"},
+        {"name":"功能码","byte_pos":2,"byte_len":2,"type":"STR","role":"function_code"}
+    ]
 })";
 
 Project MakeBaseProject(int64_t project_id, ProtocolType protocol_type)
@@ -60,7 +49,6 @@ Project MakeBaseProject(int64_t project_id, ProtocolType protocol_type)
         .m_targetIp = "",
         .m_userId = 1,
         .m_status = ProjectStatus::ON_STATUS,
-        .m_patternType = CustomTcpPatternType::NO_LENGTH_DEP,
         .m_patternInfo = std::vector<char>(kNoLengthPatternInfo.begin(), kNoLengthPatternInfo.end()),
         .m_ctime = TimeStamp::Now()
     };

@@ -9,6 +9,7 @@
 #include "domain/http_protocol_item.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
+#include "domain/domain_log.h"
 #include "domain/type.h"
 #include "domain/protocol.h"
 

@@ -16,6 +16,7 @@
 #include "domain/custom_tcp_message.h"
 #include "net/http/http_util.h"
 #include "domain/custom_tcp_protocol_item.h"
+#include "domain/custom_tcp_pattern.h"
 
 #include "nlohmann/json.hpp"
 #include <assert.h>
@@ -41,7 +42,6 @@ namespace kit_domain {
 
 CustomTcpProjectServer::CustomTcpProjectServer(
     int64_t project_id, 
-    const CustomTcpPatternType pattern_type,
     const std::vector<char> &info)
     :ProjectServer(project_id)
     ,tcp_server_(std::make_shared<TcpServer>(
@@ -51,7 +51,14 @@ CustomTcpProjectServer::CustomTcpProjectServer(
         kit_muduo::TcpServer::KReusePort
     ))
 {
-    pattern_info_ = CustomTcpPatternFactory::Create(pattern_type, info);
+    try
+    {
+        pattern_info_ = CustomTcpPatternFactory::Create(nljson::parse(info));
+    }
+    catch(const std::exception& e)
+    {
+        PJSERVER_F_ERROR("custom tcp pattern parse exception: %s\n", e.what());
+    }
 
     assert(pattern_info_);
 
@@ -87,7 +94,7 @@ RuntimeResult<void> CustomTcpProjectServer::AddProtocolItem(std::shared_ptr<Prot
         result.error.set(RuntimeError::kNullProtocolItem);
         return result;
     }
-    const std::string &func_code_val = tcp_item->getReqCfg().function_code_hex;
+    const std::string &func_code_val = tcp_item->getReqCfg().function_code;
 
     // 1. 配置的协议校验内容缓存
     // 注意这里的结构主要是配合数据库对账和快速索引的
@@ -187,7 +194,7 @@ RuntimeResult<void> CustomTcpProjectServer::UpdateReqCfgProtocolItem(int64_t pro
     CustomTcpItemCfg new_req_cfg;
 
     std::unique_lock<std::mutex> lock(pattern_info_mtx_);
-    if(!new_req_cfg.fromJson(req_cfg_json, pattern_info_))
+    if(!new_req_cfg.fromJson(req_cfg_json, pattern_info_->spec()))
     {
         PJSERVER_F_ERROR("tcp req cfg jons parse error!\n");
         result.error.set(RuntimeError::kInvalidProtocolConfig);
@@ -222,7 +229,7 @@ RuntimeResult<void> CustomTcpProjectServer::UpdateRespCfgProtocolItem(int64_t pr
     RuntimeResult<void> result;
     CustomTcpItemCfg new_resp_cfg;
 
-    if(!new_resp_cfg.fromJson(resp_cfg_json, pattern_info_))
+    if(!new_resp_cfg.fromJson(resp_cfg_json, pattern_info_->spec()))
     {
         CUSTOM_F_ERROR("resp json parse error!\n");
         result.error.set(RuntimeError::kInvalidProtocolConfig);
@@ -381,14 +388,14 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
     auto tcp_item = tcp_run_item.item;
     const std::string& old_func_code_str = tcp_run_item.function_code_value;
 
-    if(old_func_code_str == new_req_cfg.function_code_hex)
+    if(old_func_code_str == new_req_cfg.function_code)
     {
         tcp_item->setReqCfg(new_req_cfg);
         return result;
     }
 
     // 先增加新的功能码
-    auto p = func_codes2ids_.emplace(new_req_cfg.function_code_hex, tcp_item->getId());
+    auto p = func_codes2ids_.emplace(new_req_cfg.function_code, tcp_item->getId());
     if(!p.second)
     {
         PJSERVER_F_ERROR("tcp protocol item func code already exist! exist: func code[%s], pcId[%d] <-----> cur: unc code[%s], pcId[%d]\n", p.first->first.c_str(), p.second, old_func_code_str.c_str(), tcp_item->getId());
@@ -401,10 +408,10 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
     auto n = func_codes2ids_.erase(old_func_code_str);
     if(n != 1)
     {
-        n = func_codes2ids_.erase(new_req_cfg.function_code_hex);
+        n = func_codes2ids_.erase(new_req_cfg.function_code);
         if(n != 1)
         {
-            PJSERVER_F_ERROR("tcp protocol item del new funcode error! func code[%s], pcId[%d]  \n", new_req_cfg.function_code_hex.c_str(), tcp_item->getId());
+            PJSERVER_F_ERROR("tcp protocol item del new funcode error! func code[%s], pcId[%d]  \n", new_req_cfg.function_code.c_str(), tcp_item->getId());
         }
         PJSERVER_F_ERROR("tcp protocol item del old funcode error! func code[%s], pcId[%d]  \n", old_func_code_str.c_str(), tcp_item->getId());
 
@@ -413,7 +420,7 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
     }
 
     tcp_item->setReqCfg(new_req_cfg);
-    tcp_items_[tcp_item->getId()] = {tcp_item, new_req_cfg.function_code_hex};
+    tcp_items_[tcp_item->getId()] = {tcp_item, new_req_cfg.function_code};
     
     return result;
 }
@@ -423,23 +430,8 @@ void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std
 {
     // 把收到的二进制头部进行打印
     auto pattern = getPatternInfo();
-    
-    auto cfg_func_code_field = pattern->functionCodeField();
-    
-    auto func_code_field = req->getField(cfg_func_code_field->byte_pos());
-  
-    if(!func_code_field)
-    {
-        CUSTOM_F_ERROR("getField not found! %d \n", cfg_func_code_field->byte_pos());
 
-        conn->shutdown();
-        return;
-    }
-
-    // 临时兼容: function_code_filed_value 当前按线缆字节序存储并建立索引。
-    // 在 net_data_converter 字节序接口正式收口前，这里保持和 parseRequest()
-    // 中 findByFuncCode 一致，避免把 H0100 反转成 H0001 后查不到协议项。
-    const std::string& func_code_str = func_code_field->toHexString(false);
+    const std::string& func_code_str = req->functionCodeHex();
     
     std::unique_lock<std::mutex> lock(mtx_);
     
@@ -453,8 +445,8 @@ void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std
     }
     auto tcp_item = tcp_items_.at(it->second).item;
 
-    auto req_cfg = tcp_item->getReqCfg().clone();
-    auto resp_cfg = tcp_item->getRespCfg().clone();
+    auto req_cfg = tcp_item->getReqCfg();
+    auto resp_cfg = tcp_item->getRespCfg();
     const auto& req_body_view = tcp_item->getReqBodyView();
     const auto& resp_body_view = tcp_item->getRespBodyView();
     
@@ -474,16 +466,21 @@ void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std
         // 请求数据 => 脚本 => 响应数据
     
     try {
-        const std::vector<char>& resp_data = pattern->serialize(resp_cfg, *resp_body_view.body_data,!KIT_IS_LOCAL_BIG_ENDIAN());
+        std::vector<uint8_t> tmp(resp_body_view.body_data->begin(),resp_body_view.body_data->end());
 
-        if(!resp_data.empty())
+        auto resp_data_opt = pattern->serialize(resp_cfg, tmp);
+
+        if(!resp_data_opt.has_value())
         {
-            conn->send(resp_data);
+            CUSTOM_F_ERROR("tcp resp serialize fail! \n");
+            conn->shutdown();
+            return;
         }
+
+        conn->send(*resp_data_opt);
     }catch(const std::exception& e) {
 
         CUSTOM_F_ERROR("serialize fail! %s\n", e.what());
-
     }
 
     return;

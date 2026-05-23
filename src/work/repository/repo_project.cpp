@@ -22,6 +22,23 @@ ProjectRepository::ProjectRepository(std::shared_ptr<ProjectDaoInterface> dao)
 
 ProjectRepository::~ProjectRepository() { }
 
+static nlohmann::json CovertPatternInfoJson(const std::vector<char> &pattern_info)
+{
+    if(pattern_info.empty())
+    {
+        return nlohmann::json::object();
+    }
+
+    const std::string pattern_info_text(pattern_info.begin(), pattern_info.end());
+    nlohmann::json pattern_info_json = nlohmann::json::parse(pattern_info_text, nullptr, false);
+    return pattern_info_json.is_discarded() ? nlohmann::json::object() : pattern_info_json;
+}
+
+static std::vector<char> CovertPatternInfoBytes(const nlohmann::json &pattern_info)
+{
+    const std::string pattern_info_text = pattern_info.dump();
+    return std::vector<char>(pattern_info_text.begin(), pattern_info_text.end());
+}
 
 static kit_domain::Project CovertDomainProject(const kit_dao::Project &daoPj)
 {
@@ -35,8 +52,7 @@ static kit_domain::Project CovertDomainProject(const kit_dao::Project &daoPj)
         daoPj.m_userId,
         static_cast<ProjectStatus>(daoPj.m_status),
         static_cast<ProjectStatus>(daoPj.m_active),
-        static_cast<CustomTcpPatternType>(daoPj.m_patternType),
-        std::move(daoPj.m_patternInfo),
+        CovertPatternInfoJson(daoPj.m_patternInfo),
         kit_muduo::TimeStamp(daoPj.m_ctime),
     };
 }
@@ -62,8 +78,7 @@ static kit_dao::Project  CovertDaoProject(const kit_domain::Project &domainPj)
         domainPj.m_userId,
         static_cast<int32_t>(domainPj.m_status),
         static_cast<int32_t>(domainPj.m_active),
-        static_cast<int32_t>(domainPj.m_patternType),
-        domainPj.m_patternInfo,
+        CovertPatternInfoBytes(domainPj.m_patternInfo),
 
     };
 }
@@ -104,9 +119,9 @@ std::vector<char> ProjectRepository::GetPatternInfoById(kit_muduo::HttpContextPt
     return _dao->GetPatternInfoById(ctx, project_id);
 }
 
-bool ProjectRepository::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t pattern_type, const std::vector<char> pattern_info)
+bool ProjectRepository::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
 {
-    return _dao->UpdatePatternInfo(ctx, project_id, pattern_type, pattern_info);
+    return _dao->UpdatePatternInfo(ctx, project_id, pattern_info);
 }
 
 std::vector<Project> ProjectRepository::GetAllValid(kit_muduo::HttpContextPtr ctx)

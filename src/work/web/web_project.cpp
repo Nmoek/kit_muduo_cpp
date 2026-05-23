@@ -25,6 +25,7 @@
 
 #include <memory>
 #include <cstring>
+#include <stdexcept>
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
@@ -63,22 +64,6 @@ struct CustomPatternMagicNumReq {
     }
 };
 
-#if 0
-struct CustomPatternInfoReq {
-    int32_t                     pattern_type;
-    nljson                      pattern_info;
-    nljson                      pattern_fields;
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CustomPatternReq, pattern_type, pattern_info, pattern_fields)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, CustomPatternReq &req)
-    {
-        PJ_WARN() << "CustomPatternReq dont support from_multi_form" << std::endl;
-        return false;
-    }
-};
-#endif
-
 
 struct AddProjectReq {
     std::string              name;             // 测试名称
@@ -86,10 +71,9 @@ struct AddProjectReq {
     int32_t                  protocol_type;    // 协议种类 1 2 3
     // uint16_t                 listen_port;      // 监听端口号(弃用 不再由用户指定)
     std::string              target_ip;        // 目标ip + 端口 x.x.x.x:8888
-    int32_t                  pattern_type;
     nljson                   pattern_info;  // 解析格式信息
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProjectReq, name, mode, protocol_type, target_ip, pattern_type, pattern_info)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProjectReq, name, mode, protocol_type, target_ip, pattern_info)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, AddProjectReq &req)
     {
@@ -144,9 +128,8 @@ struct ProjectDetailNameReq {
 
 struct ProjectEditPatternInfoReq {
     int64_t     id;            // project id
-    int32_t     pattern_type;  // 自定义TCP格式
     nljson      pattern_info;  // 格式内容
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectEditPatternInfoReq, id, pattern_type, pattern_info)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectEditPatternInfoReq, id, pattern_info)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProjectEditPatternInfoReq &req)
     {
@@ -238,10 +221,17 @@ static bool CheckProjectInfo(const AddProjectReq &request)
         }
     }
 
-    if(request.protocol_type <= static_cast<int32_t>(ProtocolType::UNKNOWN_PROTOCOL) &&
+    if(request.protocol_type <= static_cast<int32_t>(ProtocolType::UNKNOWN_PROTOCOL) ||
        request.protocol_type >= static_cast<int32_t>(ProtocolType::MAX))
     {
         PJ_F_ERROR("protocol type invalid\n");
+        return false;
+    }
+
+    if(static_cast<ProtocolType>(request.protocol_type) == ProtocolType::CUSTOM_TCP_PROTOCOL
+        && !CustomTcpPatternSpec::FromJson(request.pattern_info).has_value())
+    {
+        PJ_F_ERROR("custom tcp pattern_info invalid\n");
         return false;
     }
 
@@ -285,7 +275,6 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     p.m_userId = 1/*request.user_id 暂时写死*/;
     p.m_status = ProjectStatus::ON_STATUS; // 新增一定是有效的 TODO后期根据实际保活探测决定
     p.m_active = ProjectStatus::OFF_STATUS;
-    p.m_patternType = static_cast<CustomTcpPatternType>(request.pattern_type);
     p.m_patternInfo = std::move(request.pattern_info);
 
     int project_id = -1;
@@ -763,9 +752,19 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
     ok = false;
     try {
 
-        ok = _svc->UpdatePatternInfo(ctx, request.id, request.pattern_type, pattern_info);
+        if(!CustomTcpPatternSpec::FromJson(request.pattern_info).has_value())
+        {
+            PC_F_ERROR("custom tcp pattern_info invalid\n");
+            resp->body().appendData(R"({"code": -200, "message":"pattern info invalid"})");
+            return;
+        }
+
+        ok = _svc->UpdatePatternInfo(ctx, request.id, pattern_info);
         
-        if(!ok) throw;
+        if(!ok)
+        {
+            throw std::runtime_error("UpdatePatternInfo failed");
+        }
 
     } catch(const std::exception& e) {
         PJ_F_ERROR("service UpdatePatternInfo exception: %s \n", e.what());

@@ -10,7 +10,6 @@
 #define __KIT__CUSTOM_TCP_PATTERN_SPEC_H__
 
 #include "domain/custom_tcp_field_model.h"
-#include "domain/custom_tcp_pattern_field_v2.h"
 #include "nlohmann/json.hpp"
 
 #include <optional>
@@ -42,7 +41,7 @@ std::string LengthPolicyToString(LengthPolicy policy);
 
 struct CustomTcpPatternSpec
 {
-    /// @brief 格式定义版本 默认从V2开始校验
+    /// @brief 格式定义版本
     int32_t version{2}; 
     /// @brief 完整头部长度
     size_t header_bytes{0};

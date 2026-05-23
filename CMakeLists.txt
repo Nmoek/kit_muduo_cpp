@@ -72,7 +72,7 @@ option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OFF)
-option(WORK_TEST.CUSTOM_TCP_PATTERN_V2 "build test_custom_tcp_pattern_v2" OFF)
+option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
 
 
 option(MEM_CHECK "make memory check flag" OFF)
@@ -217,7 +217,6 @@ set(WORK_DOMAIN_SRC
     src/work/domain/custom_tcp_project_server.cpp
     src/work/domain/project_server_factory.cpp
 
-    src/work/domain/custom_tcp_pattern.cpp
     src/work/domain/custom_tcp_context.cpp
     src/work/domain/custom_tcp_message.cpp
 
@@ -225,7 +224,7 @@ set(WORK_DOMAIN_SRC
     src/work/domain/custom_tcp_field_type_traits.cpp
     src/work/domain/custom_tcp_field_codec.cpp
     src/work/domain/custom_tcp_pattern_spec.cpp
-    src/work/domain/custom_tcp_pattern_v2.cpp
+    src/work/domain/custom_tcp_pattern.cpp
 
 )
 
@@ -396,8 +395,8 @@ add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_FIELD test_custom_tcp_field tests/wo
 # 自定义tcp格式定义测试 test_custom_pattern_spec
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN_SPEC test_custom_pattern_spec tests/work/domain/test_custom_pattern_spec.cpp ${WORK_SRC})
 
-# 自定义tcp格式测试 test_custom_pattern_v2
-add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN_V2 test_custom_pattern_v2 tests/work/domain/test_custom_pattern_v2.cpp ${WORK_SRC})
+# 自定义tcp格式测试 test_custom_pattern
+add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/work/domain/test_custom_pattern.cpp ${WORK_SRC})
 
 
 # app服务器实例

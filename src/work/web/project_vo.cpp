@@ -11,6 +11,21 @@
 
 namespace kit_domain {
 
+static std::string CovertLengthPolicy(const Project &p)
+{
+    if(p.m_protocolType != ProtocolType::CUSTOM_TCP_PROTOCOL || !p.m_patternInfo.is_object())
+    {
+        return "";
+    }
+
+    const auto iter = p.m_patternInfo.find("length_policy");
+    if(iter == p.m_patternInfo.end() || !iter->is_string())
+    {
+        return "";
+    }
+
+    return iter->get<std::string>();
+}
 
 ProjectVo CovertProjectVo(const Project &p)
 {
@@ -19,12 +34,12 @@ ProjectVo CovertProjectVo(const Project &p)
         p.m_name,
         p.m_mode,
         static_cast<int32_t>(p.m_protocolType),
+        CovertLengthPolicy(p),
         p.m_listenPort,
         p.m_targetIp,
         p.m_userId,
         p.m_status,
         p.m_active,
-        static_cast<int32_t>(p.m_patternType),
         p.m_ctime.toString()
     };
 }
