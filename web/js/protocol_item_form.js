@@ -153,7 +153,7 @@
             ? `
                 <span class="service-context-item">
                     <span class="meta-label">报文格式</span>
-                    <span class="meta-value">${escapeHTML(PatternTypeStr[project.pattern_type] || '未知格式')}</span>
+                    <span class="meta-value">${escapeHTML(project.length_policy && globalThis.tcpLengthPolicyText ? globalThis.tcpLengthPolicyText(project.length_policy) : 'TCP格式')}</span>
                 </span>
             `
             : '';

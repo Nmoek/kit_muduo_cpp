@@ -50,6 +50,8 @@
     function normalizePatternInfo(input, options = {}) {
         const source = input || {};
         const normalized = {
+            length_policy: source.length_policy || '',
+            default_order: source.default_order || '',
             least_byte_len: toFiniteNumber(source.least_byte_len, 0) || 0,
             special_fields: {},
             common_fields: [],
@@ -109,6 +111,8 @@
             : normalized.common_fields;
 
         return {
+            length_policy: normalized.length_policy,
+            default_order: normalized.default_order,
             least_byte_len: Number(normalized.least_byte_len || 0),
             special_fields: normalized.special_fields,
             common_fields: computeCommonFieldBytePositions(commonFields),
@@ -329,6 +333,8 @@
 
     function readPatternInfoFromDOM(modal) {
         const root = {
+            length_policy: modal.dataset.lengthPolicy || '',
+            default_order: modal.dataset.defaultOrder || '',
             least_byte_len: toFiniteNumber(modal.querySelector('.pattern-least-length')?.value, 0) || 0,
             special_fields: {},
             common_fields: [],
@@ -531,6 +537,8 @@
         const normalized = normalizePatternInfo(patternInfosMap, { sortSpecial: true });
         const configModal = document.createElement('div');
         configModal.className = 'modal-overlay';
+        configModal.dataset.lengthPolicy = normalized.length_policy || '';
+        configModal.dataset.defaultOrder = normalized.default_order || '';
         configModal.innerHTML = `
             <div class="config-pattern-modal">
                 <div class="modal-header">

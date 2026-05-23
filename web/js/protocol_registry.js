@@ -104,7 +104,7 @@
     /**
      * @param {HTMLElement} modal
      * @param {number} projectProtocolType
-     * @returns {{ pattern_type?: number; pattern_info?: any; }}
+     * @returns {{ pattern_info?: any; }}
      */
     function collectAddServiceExtraPayload(modal, projectProtocolType) {
         const entry = getByProjectProtocolType(projectProtocolType);
@@ -113,7 +113,6 @@
         }
 
         return {
-            pattern_type: PatternType.STANDARD,
             pattern_info: {},
         };
     }
@@ -162,7 +161,9 @@
             const escape = KitProxy.utils && KitProxy.utils.escapeHTML
                 ? KitProxy.utils.escapeHTML
                 : function(value) { return String(value == null ? '' : value); };
-            const patternText = PatternTypeStr[project.pattern_type] || '未知格式';
+            const patternText = project.length_policy && global.tcpLengthPolicyText
+                ? global.tcpLengthPolicyText(project.length_policy)
+                : 'TCP格式';
             return `
                 <span class="service-meta-item service-detail-chip project-pattern" id="pattern-info-${escape(project.id)}" title="该信息点击可编辑">
                     <span class="meta-label">格式</span>
@@ -218,30 +219,37 @@
                 const patternConfigButton = modal.querySelector('#pattern-infos');
                 const patternTypeSelect = modal.querySelector('#pattern-type');
                 const patternStatusElement = modal.querySelector('#first-pattern-import-status');
-                const currentPatternType = Number(project.pattern_type || PatternType.STANDARD);
+                const currentLengthPolicy = global.normalizeLengthPolicy
+                    ? global.normalizeLengthPolicy(patternInfo.length_policy || project.length_policy)
+                    : (patternInfo.length_policy || LengthPolicy.BODY_LENGTH);
 
                 patternConfigButton.dataset.patternInfos = JSON.stringify(patternInfo);
-                patternTypeSelect.value = String(currentPatternType);
+                patternTypeSelect.value = currentLengthPolicy;
                 patternStatusElement.style.display = 'inline';
-                bindTcpPatternTypeControls(patternTypeSelect, patternConfigButton, patternStatusElement, currentPatternType);
+                bindTcpPatternTypeControls(patternTypeSelect, patternConfigButton, patternStatusElement, currentLengthPolicy);
 
                 modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
                     confirmEvent.preventDefault();
                     confirmEvent.stopPropagation();
 
-                    const patternType = Number(modal.querySelector('#pattern-type').value || 0);
+                    const lengthPolicy = modal.querySelector('#pattern-type').value;
                     const patternCache = modal.querySelector('#pattern-infos').dataset.patternInfos;
+                    const patternInfo = buildV2TcpPatternInfoFromEditor(JSON.parse(patternCache), lengthPolicy);
 
                     if(!confirm('重新配置格式会使所有协议项失效，是否继续')) {
                         return;
                     }
 
-                    const ok = await updateTcpPatternInfoReq(patternType, patternCache);
+                    const ok = await updateTcpPatternInfoReq(project.id, patternInfo);
                     if(!ok) {
                         alert('TCP格式修改失败!');
                         return;
                     }
 
+                    const textNode = patternField.querySelector('.meta-value');
+                    if (textNode) {
+                        textNode.textContent = tcpLengthPolicyText(patternInfo.length_policy);
+                    }
                     KitProxy.utils.removeDomNode(modal);
                 });
 
@@ -262,7 +270,7 @@
             );
         },
         collectAddServiceExtraPayload: function(modal) {
-            const patternType = Number(modal.querySelector('#pattern-type').value);
+            const lengthPolicy = modal.querySelector('#pattern-type').value;
             const cachedPatternInfos = modal.querySelector('#pattern-infos').dataset.patternInfos;
 
             if (!cachedPatternInfos) {
@@ -271,11 +279,7 @@
 
             const parsedPatternInfo = JSON.parse(cachedPatternInfos);
             return {
-                pattern_type: patternType,
-                pattern_info: {
-                    least_byte_len: parsedPatternInfo.least_byte_len,
-                    special_fields: parsedPatternInfo.special_fields,
-                },
+                pattern_info: buildV2TcpPatternInfoFromEditor(parsedPatternInfo, lengthPolicy),
             };
         },
     });

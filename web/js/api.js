@@ -101,6 +101,20 @@
                 method: 'GET',
             }, '获取TCP格式信息失败');
         },
+        async updateProjectPatternInfo(projectId, patternInfo) {
+            if (isMockMode()) return KitProxy.mocks.updateProjectPatternInfo(projectId, patternInfo);
+
+            return requestJson('/projects/pattern_info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    id: projectId,
+                    pattern_info: patternInfo,
+                }),
+            }, '修改TCP格式信息失败');
+        },
         async getProtocolList(projectId, offset = 0, limit = 10) {
             if (isMockMode()) return KitProxy.mocks.getProtocolList(projectId, offset, limit);
 

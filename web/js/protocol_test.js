@@ -1727,7 +1727,6 @@ async function getProjectList(offset, limit) {
                     "status": 0,
                     "target_ip": "",
                     "user_id": 1,
-                    "pattern_type": 1,
                     "ctime": "2025-08-11 07:55:27"
                 },
                 {
@@ -1740,7 +1739,6 @@ async function getProjectList(offset, limit) {
                     "status": 0,
                     "target_ip": "",
                     "user_id": 1,
-                    "pattern_type": 0,
                     "ctime": "2025-08-11 07:55:15"
                 }
             ]}`);
@@ -1975,10 +1973,10 @@ async function addProject(project) {
 
 
 // 组装卡片页面
-function serviceCardHTML(id, name, protocol, port, mode, pattern_type, status = false) {
+function serviceCardHTML(id, name, protocol, port, mode, status = false) {
 
 
-    console.info(id, name, protocol, port, mode, pattern_type, status);
+    console.info(id, name, protocol, port, mode, status);
 
 return `<div class="service-header">
             <h3 class="service-title editable" data-default="Undef默认测试服务">${name || `默认测试服务${id}`}</h3>
@@ -2015,7 +2013,7 @@ return `<div class="service-header">
                 ${ProtocolType.CUSTOM_TCP === protocol ?
                 `<div class="service-field project-pattern" id="pattern-info-${id}" title="该信息点击可编辑">
                     <span class="field-label">格式信息</span>
-                    <span class="field-value" data-target="pattern-info-${id}">${PatternTypeStr[pattern_type]}</span>
+                    <span class="field-value" data-target="pattern-info-${id}">TCP格式</span>
                 </div>`: ``
                 }
             </div>
@@ -2090,7 +2088,7 @@ function addServiceCard(project, pos = -1) {
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
 
-    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.pattern_type, project.status);
+    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.status);
 
     // 点击三角图标展开/折叠
     const toggleIcon = serviceCard.querySelector('.toggle-icon');
@@ -2650,8 +2648,6 @@ document.addEventListener('DOMContentLoaded', function() {
             const serviceMode = Number(document.getElementById('service-mode').value);
             let servicePort = 0;
             let target_ip = '';
-            // TODO: 格式信息怎么获取
-            let pattern_type = PatternType.STANDARD;
             let pattern_info = {};
 
             if (serviceMode === ProjectMode.SERVER) {
@@ -2670,7 +2666,6 @@ document.addEventListener('DOMContentLoaded', function() {
             // TCP模式需要带格式
             if(protocolType === ProtocolType.CUSTOM_TCP) {
                 //TODO  从表格中获取格式信息
-                pattern_type = Number(document.getElementById('pattern-type').value)
                 const cachedPatternInfos = document.getElementById('pattern-infos').dataset.patternInfos;
                 
                 if (!cachedPatternInfos) {
@@ -2692,7 +2687,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 protocol_type: protocolType,
                 listen_port: servicePort,
                 target_ip: target_ip,
-                pattern_type: pattern_type,
                 pattern_info: pattern_info,
             });
 

@@ -202,7 +202,6 @@ describe('V1 config and API layer', () => {
             protocol_type: 1,
             listen_port: 18080,
             target_ip: '',
-            pattern_type: 0,
             pattern_info: {},
         });
         const projects = await context.KitProxy.api.getProject(addResult.project_id);
@@ -535,7 +534,7 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
             ],
         });
 
-        expect(Object.keys(serialized)).toEqual(['least_byte_len', 'special_fields', 'common_fields']);
+        expect(Object.keys(serialized)).toEqual(['length_policy', 'default_order', 'least_byte_len', 'special_fields', 'common_fields']);
         expect(serialized.least_byte_len).toBe(8);
         expect(serialized.special_fields.start_magic_num_field.byte_pos).toBe(0);
         expect(serialized.common_fields[0].byte_pos).toBe(0);
@@ -630,7 +629,6 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
             protocol_type: context.ProtocolType.HTTP,
             listen_port: 18080,
             mode: context.ProjectMode.SERVER,
-            pattern_type: 0,
             status: 1,
             ctime: '2025-08-11 07:55:15',
         };

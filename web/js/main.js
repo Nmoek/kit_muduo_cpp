@@ -1134,9 +1134,69 @@ async function  addHTTPProtocol(serviceCard, submit_protocol) {
 
 }
 
-function getDefaultTcpPatternInfo() {
-    // 新建 TCP 格式时的兜底字段，保持和旧页面默认值一致。
+function normalizeLengthPolicy(value, fallback = LengthPolicy.BODY_LENGTH) {
+    if (value === LengthPolicy.BODY_LENGTH || value === LengthPolicy.TOTAL_LENGTH || value === LengthPolicy.NO_LENGTH) {
+        return value;
+    }
+
+    const legacyType = Number(value);
+    if (legacyType === PatternType.BODY_LENGTH_DEP) return LengthPolicy.BODY_LENGTH;
+    if (legacyType === PatternType.TOTAL_LENGTH_DEP) return LengthPolicy.TOTAL_LENGTH;
+    if (legacyType === PatternType.NO_LENGTH_DEP) return LengthPolicy.NO_LENGTH;
+    return fallback;
+}
+
+function tcpLengthPolicyText(policy) {
+    return LengthPolicyStr[normalizeLengthPolicy(policy, '')] || '未知格式';
+}
+
+function getDefaultTcpPatternInfo(lengthPolicy = LengthPolicy.BODY_LENGTH) {
+    const policy = normalizeLengthPolicy(lengthPolicy);
+
+    if (policy === LengthPolicy.NO_LENGTH) {
+        return {
+            length_policy: policy,
+            default_order: 'raw',
+            least_byte_len: 24,
+            special_fields: {
+                start_magic_num_field: {
+                    name: '起始字符',
+                    idx: 0,
+                    byte_pos: 0,
+                    byte_len: 2,
+                    type: 'STR',
+                    value: 'H023A',
+                },
+                function_code_field: {
+                    name: '功能码',
+                    idx: 1,
+                    byte_pos: 2,
+                    byte_len: 2,
+                    type: 'STR',
+                    value: '',
+                },
+            },
+            common_fields: [
+                { name: '分隔符', idx: 2, byte_pos: 4, byte_len: 1, type: 'STR', value: '' },
+                { name: '设备类型', idx: 3, byte_pos: 5, byte_len: 2, type: 'STR', value: '' },
+                { name: '分隔符', idx: 4, byte_pos: 7, byte_len: 1, type: 'STR', value: '' },
+                { name: '站号', idx: 5, byte_pos: 8, byte_len: 2, type: 'STR', value: '' },
+                { name: '分隔符', idx: 6, byte_pos: 10, byte_len: 1, type: 'STR', value: '' },
+                { name: '序号', idx: 7, byte_pos: 11, byte_len: 10, type: 'STR', value: '' },
+                { name: '分隔符', idx: 8, byte_pos: 21, byte_len: 1, type: 'STR', value: '' },
+                { name: '结束符', idx: 9, byte_pos: 22, byte_len: 2, type: 'STR', value: '' },
+            ],
+        };
+    }
+
+    const lengthFieldKey = policy === LengthPolicy.TOTAL_LENGTH ? 'total_length_field' : 'body_length_field';
+    const lengthFieldName = policy === LengthPolicy.TOTAL_LENGTH ? '报文总长度' : '报文体长度';
+    const lengthFieldPos = policy === LengthPolicy.TOTAL_LENGTH ? 4 : 14;
+
+    // 新建 TCP 格式时的兜底字段，使用 V2 length_policy 作为唯一格式来源。
     return {
+        length_policy: policy,
+        default_order: 'big',
         least_byte_len: 26,
         special_fields: {
             start_magic_num_field: {
@@ -1155,23 +1215,190 @@ function getDefaultTcpPatternInfo() {
                 type: 'UINT16',
                 value: '',
             },
-            body_length_field: {
-                name: '报文体长度',
-                idx: 4,
-                byte_pos: 14,
+            [lengthFieldKey]: {
+                name: lengthFieldName,
+                idx: policy === LengthPolicy.TOTAL_LENGTH ? 1 : 4,
+                byte_pos: lengthFieldPos,
                 byte_len: 4,
                 type: 'UINT32',
                 value: '',
             },
         },
+        common_fields: policy === LengthPolicy.TOTAL_LENGTH
+            ? [
+                { name: '消息序列号', idx: 2, byte_pos: 8, byte_len: 4, type: 'UINT32', value: '' },
+                { name: '报文体长度', idx: 4, byte_pos: 14, byte_len: 4, type: 'UINT32', value: '' },
+                { name: '消息时间戳', idx: 5, byte_pos: 18, byte_len: 8, type: 'UINT64', value: '' },
+            ]
+            : [
+                { name: '消息总长度', idx: 1, byte_pos: 4, byte_len: 4, type: 'UINT32', value: '' },
+                { name: '消息序列号', idx: 2, byte_pos: 8, byte_len: 4, type: 'UINT32', value: '' },
+                { name: '消息时间戳', idx: 5, byte_pos: 18, byte_len: 8, type: 'UINT64', value: '' },
+            ],
+    };
+}
+
+function fieldRoleFromLegacySpecialKey(key) {
+    if (key === 'start_magic_num_field' || key === 'start_magic_field') return 'start_magic';
+    if (key === 'function_code_field') return 'function_code';
+    if (key === 'body_length_field') return 'body_length';
+    if (key === 'total_length_field') return 'total_length';
+    return 'common';
+}
+
+function legacySpecialKeyFromFieldRole(role) {
+    if (role === 'start_magic') return 'start_magic_num_field';
+    if (role === 'function_code') return 'function_code_field';
+    if (role === 'body_length') return 'body_length_field';
+    if (role === 'total_length') return 'total_length_field';
+    return '';
+}
+
+function fieldEnd(field) {
+    return Number(field.byte_pos || 0) + Number(field.byte_len || 0);
+}
+
+function normalizeEditorField(field, fallback = {}) {
+    return {
+        name: String(field && field.name != null ? field.name : fallback.name || ''),
+        idx: Number.isFinite(Number(field && field.idx)) ? Number(field.idx) : fallback.idx,
+        byte_pos: Number(field && field.byte_pos),
+        byte_len: Number(field && field.byte_len),
+        type: String(field && field.type != null ? field.type : fallback.type || 'STR'),
+        value: String(field && field.value != null ? field.value : fallback.value || ''),
+    };
+}
+
+function patternInfoV2ToEditorInfo(patternInfo) {
+    const editorInfo = {
+        length_policy: normalizeLengthPolicy(patternInfo.length_policy),
+        default_order: patternInfo.default_order || 'big',
+        least_byte_len: Number(patternInfo.header_bytes || 0),
+        special_fields: {},
+        common_fields: [],
+    };
+
+    (patternInfo.fields || []).forEach((field, index) => {
+        const role = field.role || 'common';
+        const editorField = normalizeEditorField({
+            name: field.name,
+            idx: index,
+            byte_pos: field.byte_pos,
+            byte_len: field.byte_len,
+            type: field.type,
+            value: field.match || '',
+        }, { idx: index });
+        const specialKey = legacySpecialKeyFromFieldRole(role);
+
+        if (specialKey) {
+            editorInfo.special_fields[specialKey] = editorField;
+        } else {
+            editorInfo.common_fields.push(editorField);
+        }
+    });
+
+    return editorInfo;
+}
+
+function patternInfoToEditorInfo(patternInfo) {
+    if (patternInfo && Number(patternInfo.version) === 2 && Array.isArray(patternInfo.fields)) {
+        return patternInfoV2ToEditorInfo(patternInfo);
+    }
+
+    return patternInfo || getDefaultTcpPatternInfo();
+}
+
+function addGapFields(fields, headerBytes) {
+    const sorted = fields
+        .filter(field => Number.isFinite(field.byte_pos) && Number.isFinite(field.byte_len) && field.byte_len > 0)
+        .sort((left, right) => left.byte_pos - right.byte_pos);
+    const result = [];
+    let cursor = 0;
+
+    sorted.forEach(field => {
+        if (field.byte_pos > cursor) {
+            result.push({
+                name: `保留字段${cursor}`,
+                byte_pos: cursor,
+                byte_len: field.byte_pos - cursor,
+                type: 'STR',
+                role: 'common',
+            });
+        }
+        result.push(field);
+        cursor = Math.max(cursor, fieldEnd(field));
+    });
+
+    if (headerBytes > cursor) {
+        result.push({
+            name: `保留字段${cursor}`,
+            byte_pos: cursor,
+            byte_len: headerBytes - cursor,
+            type: 'STR',
+            role: 'common',
+        });
+    }
+
+    return result;
+}
+
+function buildV2TcpPatternInfoFromEditor(editorInfo, lengthPolicy) {
+    const policy = normalizeLengthPolicy(lengthPolicy || editorInfo.length_policy);
+    const fields = [];
+    const specialFields = editorInfo.special_fields || {};
+    const defaultOrder = editorInfo.default_order || (policy === LengthPolicy.NO_LENGTH ? 'raw' : 'big');
+
+    Object.keys(specialFields).forEach(key => {
+        const role = fieldRoleFromLegacySpecialKey(key);
+        if ((role === 'body_length' && policy !== LengthPolicy.BODY_LENGTH)
+            || (role === 'total_length' && policy !== LengthPolicy.TOTAL_LENGTH)) {
+            return;
+        }
+
+        const source = normalizeEditorField(specialFields[key]);
+        const field = {
+            name: source.name,
+            byte_pos: source.byte_pos,
+            byte_len: source.byte_len,
+            type: source.type,
+            role,
+        };
+        if (role === 'start_magic') {
+            field.match = source.value;
+        }
+        fields.push(field);
+    });
+
+    (editorInfo.common_fields || []).forEach(fieldInfo => {
+        const source = normalizeEditorField(fieldInfo);
+        fields.push({
+            name: source.name,
+            byte_pos: source.byte_pos,
+            byte_len: source.byte_len,
+            type: source.type,
+            role: 'common',
+        });
+    });
+
+    const maxFieldEnd = fields.reduce((max, field) => Math.max(max, fieldEnd(field)), 0);
+    const headerBytes = Math.max(Number(editorInfo.least_byte_len || 0), maxFieldEnd);
+
+    return {
+        version: 2,
+        header_bytes: headerBytes,
+        default_order: defaultOrder,
+        length_policy: policy,
+        fields: addGapFields(fields, headerBytes),
     };
 }
 
 function buildTcpPatternModalInput(patternInfoText) {
-    const patternInfo = patternInfoText ? JSON.parse(patternInfoText) : getDefaultTcpPatternInfo();
+    const patternInfo = patternInfoText ? patternInfoToEditorInfo(JSON.parse(patternInfoText)) : getDefaultTcpPatternInfo();
     const inputPatternInfosMap = {};
 
     inputPatternInfosMap.least_byte_len = patternInfo.least_byte_len;
+    inputPatternInfosMap.length_policy = patternInfo.length_policy;
+    inputPatternInfosMap.default_order = patternInfo.default_order;
 
     const specialFields = patternInfo.special_fields;
     if (specialFields) {
@@ -1180,28 +1407,32 @@ function buildTcpPatternModalInput(patternInfoText) {
             inputPatternInfosMap.special_fields[key] = createPatternField('', key, specialFields[key]);
         });
     }
+    inputPatternInfosMap.common_fields = patternInfo.common_fields || [];
 
     return inputPatternInfosMap;
 }
 
 function openTcpPatternConfig(targetField, statusElement) {
-    const patternInfoText = targetField.dataset.patternInfos || JSON.stringify(getDefaultTcpPatternInfo());
+    const lengthPolicy = normalizeLengthPolicy(targetField.dataset.lengthPolicy);
+    const patternInfoText = targetField.dataset.patternInfos || JSON.stringify(getDefaultTcpPatternInfo(lengthPolicy));
     const inputPatternInfosMap = buildTcpPatternModalInput(patternInfoText);
 
     createCustomTcpPatternModal(targetField, '头部特殊字段', inputPatternInfosMap, statusElement, true);
 }
 
-function bindTcpPatternTypeControls(selectElement, configButton, statusElement, initialType = 0) {
-    // Pattern 类型切换会清空已配置内容，这个规则在“新增服务”和“编辑服务”里保持一致。
-    let previousPatternType = Number(initialType || 0);
+function bindTcpPatternTypeControls(selectElement, configButton, statusElement, initialPolicy = LengthPolicy.BODY_LENGTH) {
+    // 长度策略切换会清空已配置内容，这个规则在“新增服务”和“编辑服务”里保持一致。
+    let previousLengthPolicy = normalizeLengthPolicy(initialPolicy);
+    selectElement.value = previousLengthPolicy;
+    configButton.dataset.lengthPolicy = previousLengthPolicy;
 
     selectElement.addEventListener('change', function() {
-        const type = Number(this.value);
+        const policy = normalizeLengthPolicy(this.value, '');
         const targetField = configButton;
 
-        if (previousPatternType !== type && targetField.dataset.patternInfos) {
+        if (previousLengthPolicy !== policy && targetField.dataset.patternInfos) {
             if(!confirm('格式已配置, 切换会清空，是否继续?')) {
-                this.value = String(previousPatternType);
+                this.value = previousLengthPolicy;
                 return;
             }
 
@@ -1211,11 +1442,12 @@ function bindTcpPatternTypeControls(selectElement, configButton, statusElement, 
             }
         }
 
-        previousPatternType = type;
-        configButton.disabled = type === PatternType.STANDARD;
+        previousLengthPolicy = policy;
+        configButton.dataset.lengthPolicy = policy;
+        configButton.disabled = !policy;
     });
 
-    configButton.disabled = Number(selectElement.value || 0) === PatternType.STANDARD;
+    configButton.disabled = !selectElement.value;
     configButton.addEventListener('click', function() {
         openTcpPatternConfig(configButton, statusElement);
     });
@@ -1224,15 +1456,15 @@ function bindTcpPatternTypeControls(selectElement, configButton, statusElement, 
 function tcpPatternControlHTML() {
     return `
         <div class="pattern-header">
-            <label for="pattern-type">格式类型</label>
+            <label for="pattern-type">长度策略</label>
             <scan class="import-status" id="first-pattern-import-status" style="display: none">格式已设置</scan>
         </div>
         <div class="pattern-container">
             <select id="pattern-type" required>
-                <option value="">请选择格式类型</option>
-                <option value=1>${PatternTypeStr[1]}</option>
-                <option value=2>${PatternTypeStr[2]}</option>
-                <option value=3>${PatternTypeStr[3]}</option>
+                <option value="">请选择长度策略</option>
+                <option value="${LengthPolicy.BODY_LENGTH}">${LengthPolicyStr[LengthPolicy.BODY_LENGTH]}</option>
+                <option value="${LengthPolicy.TOTAL_LENGTH}">${LengthPolicyStr[LengthPolicy.TOTAL_LENGTH]}</option>
+                <option value="${LengthPolicy.NO_LENGTH}">${LengthPolicyStr[LengthPolicy.NO_LENGTH]}</option>
             </select>
             <button type="button" class="pattern-config-btn" id="pattern-infos">配置</button>
         </div>
@@ -1396,16 +1628,20 @@ function collectAddServicePayload(modal) {
         protocol_type: protocolType,
         listen_port: servicePort,
         target_ip: targetIp,
-        pattern_type: extraPayload.pattern_type,
         pattern_info: extraPayload.pattern_info,
     };
 }
 
 
 
-async function updateTcpPatternInfoReq(pattern_type, pattern_fields) {
-    // 当前后端接口规划里尚未明确“更新 TCP Pattern”的独立路径，V1 先保持原有占位行为。
-    return true;
+async function updateTcpPatternInfoReq(projectId, patternInfo) {
+    try {
+        await KitProxy.api.updateProjectPatternInfo(projectId, patternInfo);
+        return true;
+    } catch (error) {
+        console.error('修改TCP格式信息请求失败:', error.message);
+        return false;
+    }
 }
 
 async function getTcpPatternInfoReq(project_id) {
@@ -1626,13 +1862,11 @@ async function addProject(project) {
  * @param {number} protocol
  * @param {any} port
  * @param {number} mode
- * @param {string | number} pattern_type
  */
-function serviceCardHTML(id, name, protocol, port, mode, pattern_type, status = false, ctime = '', targetIp = '') {
+function serviceCardHTML(id, name, protocol, port, mode, status = false, ctime = '', targetIp = '') {
     const project = {
         id,
         protocol_type: protocol,
-        pattern_type,
     };
     const escape = KitProxy.utils.escapeHTML;
     const displayName = name || `默认测试服务${id}`;
@@ -1822,7 +2056,7 @@ function insertServiceCard(serviceCard, pos = -1) {
 
 
 /** 态生成测试服务卡片页面 + 事件监听
- * @param {{ id: string; name: any; protocol_type: number; listen_port: any; mode: any; pattern_type: any; status: boolean | undefined; }} project
+ * @param {{ id: string; name: any; protocol_type: number; listen_port: any; mode: any; status: boolean | undefined; }} project
  */
 function addServiceCard(project, pos = -1) {
 
@@ -1830,7 +2064,7 @@ function addServiceCard(project, pos = -1) {
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
 
-    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.pattern_type, project.status, project.ctime, project.target_ip);
+    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.status, project.ctime, project.target_ip);
 
     const titleElement = serviceCard.querySelector('.service-title');
     if (titleElement && KitProxy.utils.bindInlineTitleEditor) {

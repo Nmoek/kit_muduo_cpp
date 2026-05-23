@@ -43,12 +43,12 @@
                 id: 2,
                 listen_port: 2222,
                 protocol_type: 2,
+                length_policy: 'body_length',
                 mode: 1,
                 name: 'test2222',
                 status: 0,
                 target_ip: '',
                 user_id: 1,
-                pattern_type: 1,
                 ctime: '2025-08-11 07:55:27',
             },
             {
@@ -60,7 +60,6 @@
                 status: 0,
                 target_ip: '',
                 user_id: 1,
-                pattern_type: 0,
                 ctime: '2025-08-11 07:55:15',
             },
         ],
@@ -121,6 +120,7 @@
         },
         patternInfos: {
             2: {
+                length_policy: 'body_length',
                 least_byte_len: 26,
                 special_fields: clone(defaultSpecialFields),
             },
@@ -177,6 +177,7 @@
 
             if (created.pattern_info) {
                 state.patternInfos[projectId] = clone(created.pattern_info);
+                created.length_policy = created.pattern_info.length_policy || '';
             }
 
             return { project_id: projectId };
@@ -290,9 +291,18 @@
         },
         getProjectPatternInfo(projectId) {
             return clone(state.patternInfos[projectId] || {
+                length_policy: 'body_length',
                 least_byte_len: 26,
                 special_fields: defaultSpecialFields,
             });
+        },
+        updateProjectPatternInfo(projectId, patternInfo) {
+            state.patternInfos[projectId] = clone(patternInfo || {});
+            const project = findProject(projectId);
+            if (project) {
+                project.length_policy = patternInfo && patternInfo.length_policy ? patternInfo.length_policy : '';
+            }
+            return true;
         },
         getTcpCommonFields(protocolId, reqOrResp) {
             const protocol = findProtocol(protocolId);

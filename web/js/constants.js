@@ -38,6 +38,18 @@
         3: '无长度依赖',
     });
 
+    const LengthPolicy = Object.freeze({
+        BODY_LENGTH: 'body_length',
+        TOTAL_LENGTH: 'total_length',
+        NO_LENGTH: 'no_length',
+    });
+
+    const LengthPolicyStr = Object.freeze({
+        body_length: 'Body长度依赖',
+        total_length: '总长度依赖',
+        no_length: '无长度依赖',
+    });
+
     const PatternFieldType = Object.freeze({
         INT8: 1,
         UINT8: 2,
@@ -73,6 +85,8 @@
         ProtocolTypeStr,
         PatternType,
         PatternTypeStr,
+        LengthPolicy,
+        LengthPolicyStr,
         PatternFieldType,
         PatternFieldTypeStr,
         PatternFiledTypeStr: PatternFieldTypeStr,
@@ -85,6 +99,8 @@
     global.ProtocolTypeStr = ProtocolTypeStr;
     global.PatternType = PatternType;
     global.PatternTypeStr = PatternTypeStr;
+    global.LengthPolicy = LengthPolicy;
+    global.LengthPolicyStr = LengthPolicyStr;
     global.PatternFieldType = PatternFieldType;
     global.PatternFieldTypeStr = PatternFieldTypeStr;
     global.PatternFiledTypeStr = PatternFieldTypeStr;
