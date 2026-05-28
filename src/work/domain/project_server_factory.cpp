@@ -12,6 +12,7 @@
 #include "net/http/http_server.h"
 #include "base/event_loop_thread.h"
 #include "domain/custom_tcp_pattern.h"
+#include "domain/runtime_loop_pool.h"
 
 
 #include <vector>
@@ -23,7 +24,7 @@ using namespace kit_muduo;
 namespace kit_domain {
 
 // HttpProjectServerCreator实现
-std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain::Project &p) 
+std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) 
 {
     // 本地模式下 需要单开线程开启一个新server
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
@@ -32,7 +33,7 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
     // const InetAddress& address = InetAddress(p.m_listenPort);
     
     try {
-        auto pj_server = std::make_shared<HttpProjectServer>(p.m_id);
+        auto pj_server = std::make_shared<HttpProjectServer>(p.m_id, lease_loop);
 
         PJSERVER_F_INFO("Creating HttpProjectServer, project_id[%d] address[%s]\n", p.m_id, pj_server->getBindAddr().toIpPort().c_str());
 
@@ -44,7 +45,7 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
 }
 
 // HttpsProjectServerCreator实现
-std::shared_ptr<ProjectServer> HttpsProjectServerCreator::create(const kit_domain::Project &p) {
+std::shared_ptr<ProjectServer> HttpsProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) {
     
     PJSERVER_INFO() << "Creating HttpsProjectServer, project_id=" << p.m_id  << std::endl;
     
@@ -54,7 +55,7 @@ std::shared_ptr<ProjectServer> HttpsProjectServerCreator::create(const kit_domai
 }
 
 // TcpProjectServerCreator实现
-std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain::Project &p) 
+std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) 
 {
     
     // 本地模式下 需要单开线程开启一个新server
@@ -77,7 +78,7 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
             pattern_info.assign(tmp.begin(), tmp.end());
         }
 
-        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, pattern_info);
+        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, pattern_info, lease_loop);
 
         PJSERVER_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), tmp.c_str());
 
@@ -131,7 +132,7 @@ void ProjectServerFactoryManager::registerCreator(std::unique_ptr<ProjectServerC
     }
 }
 
-std::shared_ptr<ProjectServer> ProjectServerFactoryManager::createServer(const kit_domain::Project &p) 
+std::shared_ptr<ProjectServer> ProjectServerFactoryManager::createServer(const kit_domain::Project &p, std::shared_ptr<kit_domain::RuntimeLease> lease_loop) 
 {
 
     // 这个锁是否有存在必要?
@@ -148,7 +149,7 @@ std::shared_ptr<ProjectServer> ProjectServerFactoryManager::createServer(const k
     
     try {
 
-        return it->second->create(p);
+        return it->second->create(p, lease_loop);
 
     } catch (const std::exception& e) {
         PJSERVER_ERROR() << "Failed to create ProjectServer for protocol type " 

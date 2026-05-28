@@ -93,9 +93,9 @@ bool ProjectRepository::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t proj
     return _dao->UpdateStatus(ctx, projectId, status);
 }
 
-bool ProjectRepository::UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active)
+bool ProjectRepository::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort)
 {
-    return _dao->UpdateActiveStatus(ctx, projectId, active);
+    return _dao->UpdateRuntimeStatus(ctx, projectId, active, listenPort);
 }
 
 bool ProjectRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name)

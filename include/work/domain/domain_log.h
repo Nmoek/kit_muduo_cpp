@@ -77,3 +77,18 @@
 #define CUSTOM_F_ERROR(fmt, ...)     DOMAIN_F_ERROR("custom", fmt, ##__VA_ARGS__)
 #define CUSTOM_F_FATAL(fmt, ...)     DOMAIN_F_FATAL("custom", fmt, ##__VA_ARGS__)
 /*******custom tcp模块*********/
+
+
+/*******runtime模块*********/
+#define RUNTIME_DEBUG()     DOMAIN_DEBUG("runtime")
+#define RUNTIME_INFO()      DOMAIN_INFO("runtime")
+#define RUNTIME_WARN()      DOMAIN_WARN("runtime")
+#define RUNTIME_ERROR()     DOMAIN_ERROR("runtime")
+#define RUNTIME_FATAL()     DOMAIN_FATAL("runtime")
+
+#define RUNTIME_F_DEBUG(fmt, ...)     DOMAIN_F_DEBUG("runtime", fmt, ##__VA_ARGS__)
+#define RUNTIME_F_INFO(fmt, ...)      DOMAIN_F_INFO("runtime", fmt, ##__VA_ARGS__)
+#define RUNTIME_F_WARN(fmt, ...)      DOMAIN_F_WARN("runtime", fmt, ##__VA_ARGS__)
+#define RUNTIME_F_ERROR(fmt, ...)     DOMAIN_F_ERROR("runtime", fmt, ##__VA_ARGS__)
+#define RUNTIME_F_FATAL(fmt, ...)     DOMAIN_F_FATAL("runtime", fmt, ##__VA_ARGS__)
+/*******runtime模块*********/

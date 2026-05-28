@@ -70,10 +70,10 @@ option(WORK_TEST.WEB_PROTOCOL "build test_web_protocol" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
+option(WORK_TEST.RUNTIME "build test_runtime" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
-
 
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
@@ -207,6 +207,7 @@ set(WORK_SVC_SRC
 set(WORK_DOMAIN_SRC
     src/work/domain/type.cpp
     src/work/domain/runtime_result.cpp
+    src/work/domain/runtime_loop_pool.cpp
     
     src/work/domain/project_server.cpp
     src/work/domain/protocol_item.cpp
@@ -397,6 +398,10 @@ add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN_SPEC test_custom_pattern_spe
 
 # 自定义tcp格式测试 test_custom_pattern
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/work/domain/test_custom_pattern.cpp ${WORK_SRC})
+
+# 运行态测试 test_runtime
+add_kit_test(WORK_TEST WORK_TEST.RUNTIME test_runtime tests/work/domain/test_runtime.cpp ${WORK_SRC})
+
 
 
 # app服务器实例

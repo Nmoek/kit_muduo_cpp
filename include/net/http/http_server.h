@@ -28,6 +28,7 @@ class HttpServer: Noncopyable
 {
 public:
     using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
+    using StopCallBack = TcpServer::StopCb;
 
     struct BusinessThreadPoolConfig
     {
@@ -42,6 +43,10 @@ public:
     ~HttpServer() = default;
 
     void start();
+
+    void stop();
+    
+    void stopAsync(StopCallBack done = StopCallBack());
 
     const InetAddress& getBindAddr() const { return _server.getBindAddr(); }
 

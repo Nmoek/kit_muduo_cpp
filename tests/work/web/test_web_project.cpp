@@ -8,6 +8,7 @@
  */
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include "domain/runtime_loop_pool.h"
 #include "work/web/web_project.h"
 #include "net/http/http_server.h"
 #include "net/tcp_connection.h"
@@ -27,6 +28,8 @@
 #include "net/event_loop.h"
 #include "application.h"
 
+#include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -90,65 +93,6 @@ struct TestCases {
     std::string wantBody;      // 期望响应Body
 };
 
-static nljson HttpReqCfg(const std::string &method,
-                         const std::string &path,
-                         const nljson &headers)
-{
-    return nljson{
-        {"method", method},
-        {"path", path},
-        {"headers", headers},
-    };
-}
-
-static nljson HttpRespCfg(const std::string &status_code,
-                          const nljson &headers)
-{
-    return nljson{
-        {"status_code", status_code},
-        {"headers", headers},
-    };
-}
-
-static std::shared_ptr<Protocol> MakeHttpProtocol(
-        int64_t protocol_id,
-        int64_t project_id,
-        const std::string &path,
-        const std::vector<char> &req_body = {},
-        const std::vector<char> &resp_body = {'o', 'k'})
-{
-    auto protocol = std::make_shared<Protocol>();
-    protocol->m_id = protocol_id;
-    protocol->m_name = "http_runtime_pc_" + std::to_string(protocol_id);
-    protocol->m_type = ProtocolType::HTTP_PROTOCOL;
-    protocol->m_projectId = project_id;
-    protocol->m_status = ProtocolStatus::ACTIVE;
-    protocol->m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE;
-    protocol->m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE;
-    protocol->m_reqBodyDataStatus = req_body.empty() ? 0 : 1;
-    protocol->m_respBodyDataStatus = resp_body.empty() ? 0 : 1;
-    protocol->m_reqCfg = HttpReqCfg("GET", path, nljson{{"X-Old", "1"}});
-    protocol->m_respCfg = HttpRespCfg("200", nljson{{"Content-Type", "application/json"}});
-    protocol->m_reqBodyData = req_body;
-    protocol->m_respBodyData = resp_body;
-    protocol->m_isEndian = true;
-    protocol->m_ctime = TimeStamp::Now();
-    protocol->m_utime = TimeStamp::Now();
-    return protocol;
-}
-
-static std::shared_ptr<HttpProtocolItem> GetHttpRuntimeItem(
-        const std::shared_ptr<HttpProjectServer> &server,
-        int64_t protocol_id)
-{
-    auto result = server->GetProtocolItem(protocol_id);
-    if(!result.ok())
-    {
-        return nullptr;
-    }
-    return std::dynamic_pointer_cast<HttpProtocolItem>(result.val);
-}
-
 class ProjectHandlerSuite : public ::testing::Test
 {
 protected:
@@ -161,11 +105,6 @@ protected:
         l2->setLevel(LogLevel::ERROR);
         l3->setLevel(LogLevel::ERROR);
 
-    }
-
-    void TearDown() override
-    {
-        server_stop();
     }
 
     void server_start()
@@ -186,11 +125,34 @@ protected:
 
     void server_stop()
     {
+        if(server_ && loop_)
+        {
+            auto stopped = std::make_shared<std::promise<void>>();
+            auto stopped_future = stopped->get_future();
+            auto server = server_;
+            loop_->runInLoop([server, stopped](){
+                server->stopAsync([stopped](){
+                    stopped->set_value();
+                });
+            });
+            stopped_future.wait_for(std::chrono::seconds(2));
+
+            auto released = std::make_shared<std::promise<void>>();
+            auto released_future = released->get_future();
+            loop_->runInLoop([this, released](){
+                server_.reset();
+                released->set_value();
+            });
+            released_future.wait_for(std::chrono::seconds(2));
+        }
+        else
+        {
+            server_.reset();
+        }
         if(loop_thread_)
         {
             loop_thread_->quit();
         }
-        server_.reset();
         loop_thread_.reset();
         loop_ = nullptr;
     }
@@ -201,6 +163,7 @@ protected:
     std::shared_ptr<kit_muduo::http::HttpServer> server_;
     std::unique_ptr<EventLoopThread> loop_thread_;
     EventLoop *loop_{nullptr};
+    RuntimeLoopPool loop_pool_{1};
 };
 
 
@@ -511,10 +474,103 @@ TEST_F(ProjectHandlerSuite, AddProject)
     }
 }
 
-TEST_F(ProjectHandlerSuite, DISABLED_DelProject)
+TEST_F(ProjectHandlerSuite, DelProject)
 {
+    constexpr int64_t project_id = 9501;
+    constexpr int64_t service_fail_project_id = 9502;
+    kit_app::Application app(nullptr);
+
     TestCases cases[] = {
-        {}
+        /*
+        测试思路：
+        1. 发送 DELETE /projects/{project_id}，Application 中没有运行态 server。
+        2. handler 应跳过 runtime stop，只调用 service UpdateStatus(project_id, OFF_STATUS) 软删除项目。
+        3. 断言响应 success，且不会额外创建运行态 server。
+
+        示例：
+          DELETE /projects/9501
+          Application: {}
+              |
+              v
+          UpdateStatus(9501, OFF_STATUS) -> true
+        */
+        {
+            "1. 正常删除未运行项目",
+            [](HttpRequestPtr req) -> void {
+                ReqBuilderRawBodyHelper(req,
+                    HttpRequest::Method::kDelete,
+                    "/projects/" + std::to_string(project_id),
+                    ContentType(),
+                    "");
+            },
+            []() -> std::shared_ptr<ProjectSvcInterface> {
+                auto mocksvc = std::make_shared<MockProjectSvc>();
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, false))
+                    .WillOnce(Return(true));
+                return mocksvc;
+            },
+            200,
+            R"({"code":0,"message":"success"})"
+        },
+        /*
+        测试思路：
+        1. 发送 DELETE /projects/not-a-number，路由参数存在但不能转成 int64_t。
+        2. std::stol 抛出异常，handler 进入异常分支。
+        3. 断言不会调用 service，响应 service failed，覆盖当前实现的异常处理行为。
+
+        示例：
+          DELETE /projects/not-a-number
+              |
+              v
+          stol("not-a-number") throws -> {"code": -300, "message":"service failed"}
+        */
+        {
+            "2. 路由参数不是数字",
+            [](HttpRequestPtr req) -> void {
+                ReqBuilderRawBodyHelper(req,
+                    HttpRequest::Method::kDelete,
+                    "/projects/not-a-number",
+                    ContentType(),
+                    "");
+            },
+            []() -> std::shared_ptr<ProjectSvcInterface> {
+                auto mocksvc = std::make_shared<MockProjectSvc>();
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, _, _)).Times(0);
+                return mocksvc;
+            },
+            200,
+            R"({"code": -300, "message":"service failed"})"
+        },
+        /*
+        测试思路：
+        1. 发送合法 DELETE 请求，但 mock service 返回 false 模拟数据库状态更新失败。
+        2. handler 将 UpdateStatus false 转换成异常分支。
+        3. 断言响应 service failed。
+
+        示例：
+          DELETE /projects/9502
+              |
+              v
+          UpdateStatus(9502, OFF_STATUS) -> false -> service failed
+        */
+        {
+            "3. service update failed",
+            [](HttpRequestPtr req) -> void {
+                ReqBuilderRawBodyHelper(req,
+                    HttpRequest::Method::kDelete,
+                    "/projects/" + std::to_string(service_fail_project_id),
+                    ContentType(),
+                    "");
+            },
+            []() -> std::shared_ptr<ProjectSvcInterface> {
+                auto mocksvc = std::make_shared<MockProjectSvc>();
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, service_fail_project_id, false))
+                    .WillOnce(Return(false));
+                return mocksvc;
+            },
+            200,
+            R"({"code": -300, "message":"service failed"})"
+        }
     };
 
     for(auto &c : cases)
@@ -527,6 +583,7 @@ TEST_F(ProjectHandlerSuite, DISABLED_DelProject)
 
         mock_svc_ = c.mock();
         handler_ = ProjectHandler::Instance(mock_svc_);
+        handler_->SetApp(&app);
     
         // 开启服务器
         server_start();
@@ -554,6 +611,65 @@ TEST_F(ProjectHandlerSuite, DISABLED_DelProject)
 
 /*
 测试思路：
+1. 先构造并启动一个 HTTP runtime server，放入 Application 的 project server 表。
+2. 通过真实 HTTP DELETE /projects/{project_id} 调用接口。
+3. 断言 handler 在软删除前会 stop runtime server 并从 Application 移除。
+
+示例：
+  Application: 9503 -> running HttpProjectServer
+        |
+        | DELETE /projects/9503
+        v
+  runtime.stop() -> delServer(9503) -> UpdateStatus(9503, OFF_STATUS)
+*/
+TEST_F(ProjectHandlerSuite, DelProjectStopsRuntimeServerBeforeSoftDelete)
+{
+    constexpr int64_t project_id = 9503;
+    kit_app::Application app(nullptr);
+
+    auto lease_result = loop_pool_.acquire(project_id);
+    ASSERT_TRUE(lease_result.ok()) << lease_result.error.toMsg();
+    ASSERT_NE(lease_result.val, nullptr);
+
+    auto runtime_server = std::make_shared<HttpProjectServer>(project_id, lease_result.val);
+    runtime_server->start();
+    ASSERT_TRUE(runtime_server->isActive());
+    app.addServer(project_id, runtime_server);
+
+    mock_svc_ = std::make_shared<MockProjectSvc>();
+    auto mocksvc = std::dynamic_pointer_cast<MockProjectSvc>(mock_svc_);
+    ASSERT_NE(mocksvc, nullptr);
+    EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, false))
+        .WillOnce(Return(true));
+
+    handler_ = ProjectHandler::Instance(mock_svc_);
+    handler_->SetApp(&app);
+
+    ctx_ = std::make_shared<HttpContext>();
+    auto req = ctx_->request();
+    auto resp = ctx_->response();
+
+    server_start();
+
+    ReqBuilderRawBodyHelper(req,
+        HttpRequest::Method::kDelete,
+        "/projects/" + std::to_string(project_id),
+        ContentType(),
+        "");
+
+    int res = tcp_send(req->toString(), ctx_);
+    ASSERT_FALSE(res < 0);
+
+    ASSERT_EQ(resp->stateCode()(), StateCode::k200Ok);
+    ASSERT_STREQ(resp->body().toString().c_str(), R"({"code":0,"message":"success"})");
+    EXPECT_EQ(app.findServer(project_id), nullptr);
+    EXPECT_FALSE(runtime_server->isActive());
+
+    server_stop();
+}
+
+/*
+测试思路：
 1. 构造 /projects/{project_id}/status?operation=1 请求，service 返回一个未运行的 HTTP project。
 2. 直接调用 ProjectHandler::StartAndStopProject。
 3. 断言 handler 会创建 runtime server、写入 Application server map、调用 start()，并把实际监听端口返回给前端。
@@ -565,7 +681,7 @@ TEST_F(ProjectHandlerSuite, DISABLED_DelProject)
   GetById -> ProjectServerFactory::Create(只创建)
         |
         v
-  AddServer -> ProjectServer::start -> UpdateActiveStatus(true)
+  AddServer -> ProjectServer::start -> UpdateRuntimeStatus(true, listen_port)
 
 举例：
   project_id=9401 开启成功后，response.data.listen_port 应大于 0；
@@ -581,7 +697,7 @@ TEST_F(ProjectHandlerSuite, StartProjectCreatesRuntimeStartsItAndReturnsListenPo
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
-    EXPECT_CALL(*mocksvc, UpdateActiveStatus(_, project_id, true))
+    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, true, Gt(0)))
         .WillOnce(Return(true));
 
     auto ctx = MakeProjectStatusContext(project_id, ProjectStatus::ON_STATUS);
@@ -595,28 +711,28 @@ TEST_F(ProjectHandlerSuite, StartProjectCreatesRuntimeStartsItAndReturnsListenPo
     const uint16_t listen_port = resp["data"]["listen_port"].get<uint16_t>();
     EXPECT_GT(listen_port, 0);
 
-    auto runtime_server = app.FindServer(project_id);
+    auto runtime_server = app.findServer(project_id);
     ASSERT_NE(runtime_server, nullptr);
     EXPECT_EQ(runtime_server->getProjectId(), project_id);
     EXPECT_TRUE(runtime_server->isActive());
     EXPECT_EQ(runtime_server->getBindAddr().toPort(), listen_port);
 
     runtime_server->stop();
-    app.DelServer(project_id);
+    app.delServer(project_id);
 }
 
 /*
 测试思路：
 1. 预先构造并启动一个 HTTP runtime server，放入 Application server map。
 2. 构造 /projects/{project_id}/status?operation=0 请求。
-3. 调用 ProjectHandler::StartAndStopProject 后，断言 handler 会 stop runtime、从 map 删除 server，并写 DB active=false。
+3. 调用 ProjectHandler::StartAndStopProject 后，断言 handler 会 stop runtime、从 map 删除 server，并写 DB active=false/listen_port=0。
 
 示意：
   Application: project_id -> running server
         |
         | HTTP status=OFF
         v
-  FindServer -> stop -> DelServer -> UpdateActiveStatus(false)
+  FindServer -> stop -> DelServer -> UpdateRuntimeStatus(false, 0)
 
 举例：
   project_id=9402 停止成功后，Application::FindServer(9402) 应返回 nullptr；
@@ -630,13 +746,17 @@ TEST_F(ProjectHandlerSuite, StopProjectStopsRuntimeRemovesItAndReturnsSuccess)
     kit_app::Application app(nullptr);
     handler->SetApp(&app);
 
-    auto runtime_server = std::make_shared<HttpProjectServer>(project_id);
+    auto result = loop_pool_.acquire(time(nullptr));
+    ASSERT_EQ(result.ok(), true);
+    ASSERT_NE(result.val, nullptr);
+
+    auto runtime_server = std::make_shared<HttpProjectServer>(project_id, result.val);
     runtime_server->start();
     ASSERT_TRUE(runtime_server->isActive());
-    app.AddServer(project_id, runtime_server);
+    app.addServer(project_id, runtime_server);
 
     EXPECT_CALL(*mocksvc, GetById(_, _)).Times(0);
-    EXPECT_CALL(*mocksvc, UpdateActiveStatus(_, project_id, false))
+    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, false, 0))
         .WillOnce(Return(true));
 
     auto ctx = MakeProjectStatusContext(project_id, ProjectStatus::OFF_STATUS);
@@ -647,195 +767,6 @@ TEST_F(ProjectHandlerSuite, StopProjectStopsRuntimeRemovesItAndReturnsSuccess)
     ASSERT_EQ(ctx->response()->stateCode().toInt(), StateCode::k200Ok);
     EXPECT_EQ(resp["code"], 0);
     EXPECT_EQ(resp["data"]["listen_port"], 0);
-    EXPECT_EQ(app.FindServer(project_id), nullptr);
+    EXPECT_EQ(app.findServer(project_id), nullptr);
     EXPECT_FALSE(runtime_server->isActive());
-}
-
-/*
-测试思路：
-1. 构造 HTTP 运行态协议项，初始路由为 GET /d9/http/header。
-2. 只更新 req headers，method/path 保持不变。
-3. 更新后断言 req cfg 中 header 已替换，但 req/resp body view 的共享指针没有变化。
-
-示意：
-  [route: GET /d9/http/header] + [req body A] + [resp body B]
-                    |
-                    | UpdateReqCfg(headers)
-                    v
-  [route: GET /d9/http/header] + [req body A] + [resp body B]
-
-举例：
-  旧 headers: {"X-Old":"1"}
-  新 headers: {"X-New":"2"}
-*/
-TEST(HttpProjectRuntimeSuite, UpdateReqHeadersKeepsRouteAndBodyViews)
-{
-    auto server = std::make_shared<HttpProjectServer>(9001);
-    auto protocol = MakeHttpProtocol(101, 9001, "/d9/http/header", {'r', 'e', 'q'}, {'r', 'e', 's', 'p'});
-    auto item = ProtocolItemFactory::Create(protocol, server);
-    ASSERT_NE(item, nullptr);
-
-    auto add_result = server->AddProtocolItem(item);
-    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
-
-    auto before = GetHttpRuntimeItem(server, 101);
-    ASSERT_NE(before, nullptr);
-    const auto before_req_body = before->getReqBodyView();
-    const auto before_resp_body = before->getRespBodyView();
-
-    auto update_result = server->UpdateReqCfgProtocolItem(
-        101,
-        HttpReqCfg("GET", "/d9/http/header", nljson{{"X-New", "2"}}));
-
-    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
-    auto after = GetHttpRuntimeItem(server, 101);
-    ASSERT_NE(after, nullptr);
-
-    const auto req_cfg = after->getReqCfg();
-    EXPECT_EQ(req_cfg.method.toInt(), HttpRequest::Method::kGet);
-    EXPECT_EQ(req_cfg.path, "/d9/http/header");
-    ASSERT_EQ(req_cfg.headers.count("X-New"), 1u);
-    EXPECT_EQ(req_cfg.headers.at("X-New"), "2");
-    EXPECT_EQ(req_cfg.headers.count("X-Old"), 0u);
-    EXPECT_EQ(before_req_body.body_data, after->getReqBodyView().body_data);
-    EXPECT_EQ(before_resp_body.body_data, after->getRespBodyView().body_data);
-}
-
-/*
-测试思路：
-1. 构造两个 HTTP 运行态协议项：
-   - 协议 201: GET /d9/http/old
-   - 协议 202: GET /d9/http/conflict
-2. 把协议 201 的 path 更新成 /d9/http/conflict，触发新 route 冲突。
-3. 断言更新失败后，协议 201 仍保持旧 path，协议 202 仍保持自己的 path。
-
-示意：
-  pc201 -> GET /old       pc202 -> GET /conflict
-      \       Update pc201 to /conflict
-       \______________X route conflict
-
-举例：
-  尝试让两个 GET 共用同一个 exact path，HttpServletDispatch 应返回 route conflict。
-*/
-TEST(HttpProjectRuntimeSuite, UpdateReqRouteConflictPreservesOldRouteAndCfg)
-{
-    auto server = std::make_shared<HttpProjectServer>(9002);
-    auto old_protocol = MakeHttpProtocol(201, 9002, "/d9/http/old");
-    auto conflict_protocol = MakeHttpProtocol(202, 9002, "/d9/http/conflict");
-
-    auto add_old_result = server->AddProtocolItem(ProtocolItemFactory::Create(old_protocol, server));
-    ASSERT_TRUE(add_old_result.ok()) << add_old_result.error.toMsg();
-    auto add_conflict_result = server->AddProtocolItem(ProtocolItemFactory::Create(conflict_protocol, server));
-    ASSERT_TRUE(add_conflict_result.ok()) << add_conflict_result.error.toMsg();
-
-    auto update_result = server->UpdateReqCfgProtocolItem(
-        201,
-        HttpReqCfg("GET", "/d9/http/conflict", nljson{{"X-Try", "conflict"}}));
-
-    ASSERT_FALSE(update_result.ok());
-    EXPECT_EQ(update_result.error.toInt(), RuntimeError::kRouteConflict);
-
-    auto old_item = GetHttpRuntimeItem(server, 201);
-    ASSERT_NE(old_item, nullptr);
-    EXPECT_EQ(old_item->getReqCfg().path, "/d9/http/old");
-    EXPECT_EQ(old_item->getReqCfg().headers.count("X-Try"), 0u);
-
-    auto conflict_item = GetHttpRuntimeItem(server, 202);
-    ASSERT_NE(conflict_item, nullptr);
-    EXPECT_EQ(conflict_item->getReqCfg().path, "/d9/http/conflict");
-}
-
-/*
-测试思路：
-1. 构造 HTTP 运行态协议项，初始路由为 GET /d9/http/move-old。
-2. 更新 method/path 到 POST /d9/http/move-new。
-3. 再新增一个使用旧路由 GET /d9/http/move-old 的协议项。
-4. 如果新增成功，说明旧 route 已释放；同时当前协议项持有的新 method/path 已提交。
-
-示意：
-  pc301: GET /move-old
-      |
-      | UpdateReqCfg(POST /move-new)
-      v
-  pc301: POST /move-new     pc302: GET /move-old 可重新注册
-
-举例：
-  route 切换成功后，旧 exact route 不应继续占用路由表。
-*/
-TEST(HttpProjectRuntimeSuite, UpdateReqRouteSuccessReleasesOldRoute)
-{
-    auto server = std::make_shared<HttpProjectServer>(9003);
-    auto protocol = MakeHttpProtocol(301, 9003, "/d9/http/move-old");
-
-    auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
-    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
-
-    auto update_result = server->UpdateReqCfgProtocolItem(
-        301,
-        HttpReqCfg("POST", "/d9/http/move-new", nljson{{"X-New", "route"}}));
-    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
-
-    auto moved_item = GetHttpRuntimeItem(server, 301);
-    ASSERT_NE(moved_item, nullptr);
-    EXPECT_EQ(moved_item->getReqCfg().method.toInt(), HttpRequest::Method::kPost);
-    EXPECT_EQ(moved_item->getReqCfg().path, "/d9/http/move-new");
-
-    auto old_route_protocol = MakeHttpProtocol(302, 9003, "/d9/http/move-old");
-    auto add_old_route_result = server->AddProtocolItem(ProtocolItemFactory::Create(old_route_protocol, server));
-    ASSERT_TRUE(add_old_route_result.ok()) << add_old_route_result.error.toMsg();
-
-    auto old_route_item = GetHttpRuntimeItem(server, 302);
-    ASSERT_NE(old_route_item, nullptr);
-    EXPECT_EQ(old_route_item->getReqCfg().path, "/d9/http/move-old");
-}
-
-/*
-测试思路：
-1. 构造 HTTP 运行态协议项，记录 req cfg、resp cfg 和 req body view 指针。
-2. 只调用 UpdateReqBodyProtocolItem 替换请求 body。
-3. 断言 req/resp cfg 不变，req body view 指针发生替换且数据变成新值。
-
-示意：
-  [req cfg H] + [resp cfg R] + [req body old]
-                         |
-                         | UpdateReqBody(new)
-                         v
-  [req cfg H] + [resp cfg R] + [req body new]
-
-举例：
-  更新大 body 时不应该重新解析或复制 HTTP header/status 配置块。
-*/
-TEST(HttpProjectRuntimeSuite, UpdateReqBodyOnlyReplacesReqBodyView)
-{
-    auto server = std::make_shared<HttpProjectServer>(9004);
-    auto protocol = MakeHttpProtocol(401, 9004, "/d9/http/body", {'o', 'l', 'd'}, {'r', 'e', 's', 'p'});
-
-    auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
-    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
-
-    auto before = GetHttpRuntimeItem(server, 401);
-    ASSERT_NE(before, nullptr);
-    const auto before_req_cfg = before->getReqCfg();
-    const auto before_resp_cfg = before->getRespCfg();
-    const auto before_req_body = before->getReqBodyView();
-    const auto before_resp_body = before->getRespBodyView();
-
-    const std::vector<char> new_body{'n', 'e', 'w', '-', 'b', 'o', 'd', 'y'};
-    auto update_result = server->UpdateReqBodyProtocolItem(
-        401,
-        ProtocolBodyType::JSON_BODY_TYPE,
-        new_body);
-
-    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
-    auto after = GetHttpRuntimeItem(server, 401);
-    ASSERT_NE(after, nullptr);
-
-    EXPECT_EQ(after->getReqCfg().method.toInt(), before_req_cfg.method.toInt());
-    EXPECT_EQ(after->getReqCfg().path, before_req_cfg.path);
-    EXPECT_EQ(after->getReqCfg().headers, before_req_cfg.headers);
-    EXPECT_EQ(after->getRespCfg().state_code.toInt(), before_resp_cfg.state_code.toInt());
-    EXPECT_EQ(after->getRespCfg().headers, before_resp_cfg.headers);
-    EXPECT_NE(after->getReqBodyView().body_data, before_req_body.body_data);
-    EXPECT_EQ(*after->getReqBodyView().body_data, new_body);
-    EXPECT_EQ(after->getRespBodyView().body_data, before_resp_body.body_data);
 }

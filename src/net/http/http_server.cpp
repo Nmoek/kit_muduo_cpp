@@ -52,6 +52,20 @@ void HttpServer::start()
     _server.start();
 }
 
+void HttpServer::stop()
+{
+    stopAsync();
+}
+
+void HttpServer::stopAsync(StopCallBack done)
+{
+    if(_isPool)
+    {
+        _businessThreadPool.stop();
+    }
+    _server.stopAsync(std::move(done));
+}
+
 void HttpServer::setBusinessThreadPoolConfig(const BusinessThreadPoolConfig &config)
 {
     _businessThreadPoolConfig = config;

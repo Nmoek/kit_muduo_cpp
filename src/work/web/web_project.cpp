@@ -8,6 +8,7 @@
  */
 #include "web/web_project.h"
 #include "domain/type.h"
+#include "net/http/http_util.h"
 #include "work/service/svc_project.h"
 #include "domain/project.h"
 #include "net/http/http_server.h"
@@ -330,12 +331,6 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
     int64_t project_id = atoi(project_id_str.c_str());
     ProjectStatus will_status = static_cast<ProjectStatus>(atoi(operation_str.c_str()));
 
-    // if(!CheckProjectInfo(request))
-    // {
-    //     resp->body().appendData(R"({"code": -200, "message":"test service info invalid"})");
-    //     return;
-    // }
-
 
     bool ok = false;
     uint16_t cur_listen_port = 0;
@@ -343,10 +338,19 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
     {
         if(ProjectStatus::ON_STATUS == will_status)
         {
+
+            // 获取loop租约
+            auto lease_loop = _app->leaseLoop(project_id);
+            if(!lease_loop)
+            {
+                resp->body().appendData(R"({"code": -300, "message":"loop lease faild"})");
+                return;
+            }
+
             auto p = _svc->GetById(ctx, project_id);
 
             // 工厂模式创建测试服务
-            auto project_server = ProjectServerFactory::Create(p);
+            auto project_server = ProjectServerFactory::Create(p, lease_loop);
             if (!project_server) 
             {
                 PJ_F_ERROR("create ProjectServer faild! protocol_type[%d] project_id[%d] \n", static_cast<int32_t>(p.m_protocolType), project_id);
@@ -357,14 +361,14 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
             cur_listen_port = project_server->getBindAddr().toPort();
             // 主键id更新
             project_server->setProjectId(project_id);
-            _app->AddServer(project_id, project_server);
+            _app->addServer(project_id, project_server);
 
             project_server->start();
 
         }
         else if(ProjectStatus::OFF_STATUS == will_status)
         {
-            auto project_server = _app->FindServer(project_id);
+            auto project_server = _app->findServer(project_id);
             if (!project_server) 
             {
                 PJ_F_ERROR("ProjectServer not found!  project_id[%d] \n", project_id);
@@ -372,11 +376,11 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
                 resp->body().appendData(R"({"code": -300, "message":"not found project server"})");
                 return;
             }
-            project_server->stop();
-            _app->DelServer(project_id);
+            project_server->stop(); // 注意: 这里会阻塞执行
+            _app->delServer(project_id);
         }
 
-        ok = _svc->UpdateActiveStatus(ctx, project_id, will_status);
+        ok = _svc->UpdateRuntimeStatus(ctx, project_id, will_status, cur_listen_port);
         if(!ok)
         {
             PJ_F_ERROR("service update status failed \n");
@@ -427,26 +431,29 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    int64_t project_id = 0;
-    // int64_t user_id = 0;
-    try {
-
-        project_id = std::stol(val1);
-
-    } catch(const std::exception& e) {
-
-        PJ_F_ERROR("query param transform fail! %s , %s\n", val1.c_str(), e.what());
-        
-        resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
-        return;
-    }
-
-
     bool ok = false;
     // 查测试服务 信息
     try 
     {
+        int64_t project_id = std::stol(val1);
+
+        auto pj_server = _app->findServer(project_id);
+        if(!pj_server)
+        {
+            PJ_F_WARN("runtime project server not exist! pjId[%ld] \n", project_id);
+        }
+        else
+        {
+            pj_server->stop();
+            _app->delServer(project_id);
+        }
+
         ok = _svc->UpdateStatus(ctx, project_id, ProjectStatus::OFF_STATUS);
+        if(!ok)
+        {
+            throw std::runtime_error("UpdateStatus error!");
+        }
+
     }
     catch(const std::exception& e)
     {
@@ -454,12 +461,6 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
         resp->body().appendData(R"({"code": -300, "message":"service failed"})");
 
-        return;
-    }
-
-    if(!ok)
-    {
-        resp->body().appendData(R"({"code": 0, "message":"delete project fail!"})");
         return;
     }
 
@@ -476,7 +477,6 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-
 
     // user_id怎么获取??
     // 使用的是query param模式不需要进行body解析
@@ -525,6 +525,7 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     root["message"] = "success";
     root["data"].push_back(CovertProjectVo(project));
 
+    resp->body().setContentType(ContentType::kJsonType);
     resp->body().appendData(root.dump());
     PJ_DEBUG() << std::endl << root.dump(4) << std::endl;
 }

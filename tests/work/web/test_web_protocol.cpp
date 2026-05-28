@@ -12,6 +12,7 @@
 #include "domain/project_server.h"
 #include "domain/protocol.h"
 #include "domain/protocol_item.h"
+#include "domain/runtime_loop_pool.h"
 #include "domain/runtime_result.h"
 #include "net/call_backs.h"
 #include "net/http/http_context.h"
@@ -22,6 +23,7 @@
 #include "web/web_protocol.h"
 
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -112,11 +114,22 @@ std::shared_ptr<HttpProtocolItem> GetHttpRuntimeItem(
     return std::dynamic_pointer_cast<HttpProtocolItem>(result.val);
 }
 
+std::shared_ptr<RuntimeLease> GetRuntimeLoopLease(int64_t project_id)
+{
+    static RuntimeLoopPool loop_pool(15);
+    auto result = loop_pool.acquire(project_id);
+    if(!result.ok() || !result.val)
+    {
+        throw std::runtime_error("runtime loop lease faild");
+    }
+    return result.val;
+}
+
 std::shared_ptr<HttpProjectServer> MakeHttpRuntimeServer(
         int64_t project_id,
         const std::vector<std::shared_ptr<Protocol>> &protocols)
 {
-    auto server = std::make_shared<HttpProjectServer>(project_id);
+    auto server = std::make_shared<HttpProjectServer>(project_id, GetRuntimeLoopLease(project_id));
     for(const auto &protocol : protocols)
     {
         auto item = ProtocolItemFactory::Create(protocol, server);
@@ -249,7 +262,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
         project_id,
         {MakeHttpProtocol(protocol_id, project_id, "/d9/web/success")});
     kit_app::Application app(nullptr);
-    app.AddServer(project_id, server);
+    app.addServer(project_id, server);
     handler_->SetApp(&app);
 
     EXPECT_CALL(*mock_, UpdateCfg(testing::_, testing::_, testing::_,
@@ -323,7 +336,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
             MakeHttpProtocol(conflict_protocol_id, project_id, "/d9/web/conflict"),
         });
     kit_app::Application app(nullptr);
-    app.AddServer(project_id, server);
+    app.addServer(project_id, server);
     handler_->SetApp(&app);
 
     EXPECT_CALL(*mock_, UpdateCfg(testing::_, testing::_, testing::_,

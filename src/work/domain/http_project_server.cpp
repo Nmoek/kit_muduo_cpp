@@ -26,12 +26,16 @@
 #include "nlohmann/json.hpp"
 #include "domain/type.h"
 #include "service/svc_protocol.h"
+#include "domain/runtime_loop_pool.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <utility>
 
 using namespace kit_muduo;
@@ -44,7 +48,10 @@ namespace {
 
 inline static EventLoop* CheckLoop(EventLoop *loop)
 {
-    assert(loop);
+    if(!loop)
+    {
+        throw std::invalid_argument("loop* is null");
+    }
     return loop;
 }
     
@@ -53,10 +60,10 @@ inline static EventLoop* CheckLoop(EventLoop *loop)
 
 namespace kit_domain {
 
-HttpProjectServer::HttpProjectServer(int64_t project_id)
-    :ProjectServer(project_id)
+HttpProjectServer::HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop)
+    :ProjectServer(project_id, lease_loop)
     ,http_server_(std::make_shared<http::HttpServer>(
-        CheckLoop(loop_thread_.startLoop()), 
+        CheckLoop(lease_loop->loop()), 
         InetAddress(0, "0.0.0.0"), 
         "pj" + std::to_string(project_id_) + "http", 
         false, 
@@ -66,11 +73,43 @@ HttpProjectServer::HttpProjectServer(int64_t project_id)
 
 }
 
+HttpProjectServer::~HttpProjectServer()
+{
+    stop();
+}
+
 void HttpProjectServer::start()
 {
     http_server_->setThreadNum(0); // 使用单线程模式
     http_server_->start();
 }
+
+void HttpProjectServer::stop()
+{
+    bool expected = false;
+    if(!stopped_.compare_exchange_strong(expected, true))
+    {
+        return;
+    }
+
+    if(!http_server_)
+    {
+        lease_loop_->release();
+        return;
+    }
+
+    bool ok = WaitRuntimeStopDone("HttpProjectServer", project_id_, [this](std::function<void()> done){
+        http_server_->stopAsync(std::move(done));
+    });
+
+    if(!ok)
+    {
+        return;
+    }
+
+    lease_loop_->release();
+}
+
 
 const kit_muduo::InetAddress& HttpProjectServer::getBindAddr() const 
 {

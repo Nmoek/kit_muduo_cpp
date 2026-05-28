@@ -24,6 +24,8 @@ class InetAddress;
 
 namespace kit_domain {
 
+class RuntimeLease;
+
 /**
  * @brief ProjectServer创建器抽象基类
  * 采用工厂方法模式，每个具体的创建器负责创建特定类型的ProjectServer
@@ -37,7 +39,7 @@ public:
      * @param p Project实体
      * @return std::shared_ptr<ProjectServer> 
      */
-    virtual std::shared_ptr<ProjectServer> create(const kit_domain::Project &p) = 0;
+    virtual std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) = 0;
     
     /**
      * @brief 获取创建器支持的协议类型
@@ -51,7 +53,7 @@ public:
  */
 class HttpProjectServerCreator : public ProjectServerCreator {
 public:
-    std::shared_ptr<ProjectServer> create(const kit_domain::Project &p) override;
+    std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
     ProtocolType getProtocolType() const override { return ProtocolType::HTTP_PROTOCOL; }
 };
@@ -61,7 +63,7 @@ public:
  */
 class HttpsProjectServerCreator : public ProjectServerCreator {
 public:
-    std::shared_ptr<ProjectServer> create(const kit_domain::Project &pe) override;
+    std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
     ProtocolType getProtocolType() const override { return ProtocolType::HTTPS_PROTOCOL; }
 };
@@ -71,7 +73,7 @@ public:
  */
 class TcpProjectServerCreator : public ProjectServerCreator {
 public:
-    std::shared_ptr<ProjectServer> create(const kit_domain::Project &p) override;
+    std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
     ProtocolType getProtocolType() const override { return ProtocolType::CUSTOM_TCP_PROTOCOL; }
 };
@@ -100,7 +102,7 @@ public:
      * @param p Project实体
      * @return std::shared_ptr<ProjectServer> 
      */
-    std::shared_ptr<ProjectServer> createServer(const kit_domain::Project &p);
+    std::shared_ptr<ProjectServer> createServer(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop);
         
     /**
      * @brief 注册自定义创建器
@@ -147,9 +149,9 @@ public:
      * @param server_name 服务器名称
      * @return 返回ProjectServer的shared_ptr
      */
-    static std::shared_ptr<ProjectServer> Create(const kit_domain::Project &p) 
+    static std::shared_ptr<ProjectServer> Create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) 
     {
-        return ProjectServerFactoryManager::getInstance().createServer(p);
+        return ProjectServerFactoryManager::getInstance().createServer(p, lease_loop);
     }
 };
 

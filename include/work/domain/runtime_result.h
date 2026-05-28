@@ -49,6 +49,11 @@ public:
         kFuncCodeNotFound,
         kFuncCodeConflict,
 
+        /* runtime loop pool*/
+        kRuntimeLoopPoolStopped = 3000,
+        kRuntimeLoopPoolExhausted,
+        kRuntimeLoopPoolInvalidLease,
+
         kInternalError = 9000,
     };
 

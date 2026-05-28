@@ -26,11 +26,12 @@ std::shared_ptr<HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
     auto server = std::make_shared<HttpServer>(loop, InetAddress(5555), "http_server", true, TcpServer::Option::KReusePort);
     server->setThreadNum(4);
 
-    auto static_svl = std::make_shared<StaticFileServlet>();
+    auto static_file_svl = std::make_shared<StaticFileServlet>();
     //静态资源处理
-    server->Get("/html/*.html", static_svl);
-    server->Get("/css/*.css", static_svl);
-    server->Get("/js/*.js", static_svl);
+    server->Get("/html/*.html", static_file_svl);
+    server->Get("/css/*.css", static_file_svl);
+    server->Get("/js/*.js", static_file_svl);
+    server->Get("/assets/icons/*.svg", static_file_svl);
 
 
     projHdl->RegisterRoutes(server);

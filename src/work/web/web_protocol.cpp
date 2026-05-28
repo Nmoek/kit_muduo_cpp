@@ -25,6 +25,7 @@
 
 #include <functional>
 #include <memory>
+#include <stdexcept>
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
@@ -78,54 +79,48 @@ struct AddProtocolReq {
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, AddProtocolReq &req)
     {
         
-        // 必填
+        // 必填 且 不能为空
         auto it = parts.find("protocol_cfg_header");
-        if(it == parts.end()) 
+        if(it == parts.end() || it->second.data.empty()) 
         {
-            PC_F_ERROR("multiform name: protocol_cfg_header not found! \n");
+            PC_F_ERROR("multiform name 'protocol_cfg_header' invalid! \n");
             return false;
         }
-        req.header = nljson::parse(it->second.data).get<AddProtocolReqHeader>();
+        nljson::parse(it->second.data).get_to<AddProtocolReqHeader>(req.header);
 
+        // 必填 允许为空
         it = parts.find("protocol_req_cfg");
-        if(it != parts.end())
+        if(it == parts.end())
         {
-            req.protocol_req_cfg = nljson::parse(it->second.data);
+            PC_F_ERROR("multiform name 'protocol_req_cfg' invalid! \n");
+            return false;
         }
-        else
-        {
-            PC_F_WARN("multiform name: protocol_req_cfg not found! \n");
-        }
-
+        req.protocol_req_cfg = nljson::parse(it->second.data);
+  
         it = parts.find("protocol_resp_cfg");
-        if(it != parts.end())
+        if(it == parts.end())
         {
-            req.protocol_resp_cfg = nljson::parse(it->second.data);
+            PC_F_ERROR("multiform name 'protocol_resp_cfg' invalid! \n");
+            return false;
         }
-        else
-        {
-            PC_F_WARN("multiform name: protocol_resp_cfg not found! \n");
-        }
+        req.protocol_resp_cfg = nljson::parse(it->second.data);
 
         it = parts.find("protocol_req_body");
-        if(it != parts.end())
+        if(it == parts.end())
         {
-            req.protocol_req_body = std::move(it->second.data);
+            PC_F_ERROR("multiform name 'protocol_req_body' invalid! \n");
+            return false;
         }
-        else
-        {
-            PC_F_WARN("multiform name: protocol_req_body not found! \n");
-        }
+        req.protocol_req_body = std::move(it->second.data);
 
         it = parts.find("protocol_resp_body");
-        if(it != parts.end())
+        if(it == parts.end())
         {
-            req.protocol_resp_body = std::move(it->second.data);
+            PC_F_ERROR("multiform name 'protocol_resp_body' invalid! \n");
+            return false;
         }
-        else
-        {
-            PC_F_WARN("multiform name: protocol_resp_body not found! \n");
-        }
+        req.protocol_resp_body = std::move(it->second.data);
+
         return true;
     }
 
@@ -348,13 +343,27 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     p->m_respBodyData = std::move(request.protocol_resp_body);
     p->m_isEndian = request.header.is_endian;
 
+    //1. 先以http server进行调试 后续将tcp加入后再决定如何统一接口
+    //2. TODO: 还要考虑客户端接口设计
+    //3. TODO 接口重写 获取测试服务信息 要么从库中获取，要么从缓存获取
+    auto project_service = GetApp()->findServer(p->m_projectId);
+    if(!project_service)
+    {
+        //TODO: 兜底措施 没创建需要重新创建对应的测试服务
+        PC_F_WARN("project not found! %d \n",p->m_projectId);
+        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        return;
+    }
+
     int64_t protocol_id = -1;
     try 
     {
         // 生成对应协议种类的报文
         protocol_id = _svc->Add(ctx, *p);
         if(protocol_id < 0)
+        {
             throw std::runtime_error("protocol_id < 0");
+        }
     }
     catch(const std::exception& e)
     {
@@ -367,28 +376,22 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     p->m_id = protocol_id;
 
 
-    //1. 先以http server进行调试 后续将tcp加入后再决定如何统一接口
-    //2. TODO: 还要考虑客户端接口设计
-    //3. TODO 接口重写 获取测试服务信息 要么从库中获取，要么从缓存获取
-    auto project_service = GetApp()->FindServer(p->m_projectId);
-    if(!project_service)
-    {
-        //TODO: 兜底措施 没创建需要重新创建对应的测试服务
-        PC_F_WARN("project not found! %d \n",p->m_projectId);
-        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
-        return;
-    }
-
     // 工厂模式生成协议项对象ProtocolItem
     std::shared_ptr<ProtocolItem> protocol_item = nullptr;
     try {
 
         protocol_item = ProtocolItemFactory::Create(p, project_service);
         if(!protocol_item)
-            throw;
+        {
+            throw std::runtime_error("ProtocolItem create error");
+        }
     }catch(const std::exception& e) {
 
-        //TODO 需要删除该协议项
+        //删除该协议项
+        if(!_svc->Del(ctx, protocol_id))
+        {
+            PC_F_ERROR("rollback del ProtocolItem faild! protocol_type[%d] protocol_id[%d] project_id[%d] \n",static_cast<int32_t>(p->m_type), protocol_id, p->m_projectId);
+        }
 
         PC_F_ERROR("create ProtocolItem faild, %s! protocol_type[%d] protocol_id[%d] project_id[%d] \n", e.what(), static_cast<int32_t>(p->m_type), protocol_id, p->m_projectId);
 
@@ -406,6 +409,14 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     });
     if(!result.ok())
     {
+
+        //删除该协议项
+        if(!_svc->Del(ctx, protocol_id))
+        {
+            PC_F_ERROR("rollback del ProtocolItem faild! protocol_type[%d] protocol_id[%d] project_id[%d] \n",static_cast<int32_t>(p->m_type), protocol_id, p->m_projectId);
+        }
+
+
         PC_F_ERROR("InvokeOnLoopSync::AddProtocolItem error: %d : %s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_item->getId());
 
         resp->body().appendData(R"({"code": -300, "message":"protocolitem add failed"})");
@@ -467,7 +478,7 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     }
 
     // 向测试服务器通信 传递协议配置信息
-    auto project_service = GetApp()->FindServer(request.project_id);
+    auto project_service = GetApp()->findServer(request.project_id);
     if(!project_service)
     {
         PC_F_WARN("project not found! %d \n", project_id);
@@ -708,7 +719,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     int64_t project_id = request.project_id;
     int32_t req_or_resp = request.req_or_resp;
 
-    auto project_service = GetApp()->FindServer(request.project_id);
+    auto project_service = GetApp()->findServer(request.project_id);
     if(!project_service || !project_service->isActive())
     {
         PC_F_WARN("project not found! %d \n", project_id);
@@ -859,7 +870,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     int32_t req_or_resp = request.header.req_or_resp;
 
     // 更新服务器上的Body信息
-    auto project_service = GetApp()->FindServer(request.header.project_id);
+    auto project_service = GetApp()->findServer(request.header.project_id);
     if(!project_service)
     {
         PC_F_WARN("project not found! %d \n", project_id);

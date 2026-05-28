@@ -66,7 +66,7 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
         PCITEM_F_WARN("json not found 'method' field! \n");
         return false;
     }
-    method = HttpRequest::Method::FromString(it.value());
+    method = HttpRequest::Method::FromString(it.value().get<std::string>());
     
 
 
@@ -76,7 +76,7 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
         PCITEM_F_WARN("json not found 'path' field! \n");
         return false;
     }
-    path = std::move(it.value());
+    it.value().get_to<std::string>(path);
     
     
     it = req_json.find("headers");
@@ -85,7 +85,7 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
         PCITEM_F_WARN("json not found 'headers' field! \n");
         return false;
     }
-    headers = std::move(it.value());
+    it.value().get_to<std::unordered_map<std::string, std::string>>(headers);
 
     return true;
 }
@@ -135,7 +135,7 @@ bool HttpItemRespHeaderCfg::fromJson(const nlohmann::json &resp_json)
         PCITEM_F_WARN("json not found 'status_code' field! \n");
         return false;
     }
-    state_code = StateCode::FromString(it.value());
+    state_code = StateCode::FromString(it.value().get<std::string>());
     
     
     it = resp_json.find("headers");
@@ -144,8 +144,7 @@ bool HttpItemRespHeaderCfg::fromJson(const nlohmann::json &resp_json)
         PCITEM_F_WARN("json not found 'headers' field! \n");
         return false;
     }
-    headers = std::move(it.value());
-    
+    it.value().get_to<std::unordered_map<std::string, std::string>>(headers);
 
     return true;
 }
@@ -168,7 +167,6 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
     const nljson& resp_cfg_root = ori_protocol->m_respCfg;
 
     /*****请求****/
-    /**TODO 配置这部分按TCP的做法 整个进行json自定义转换**/
     if(!req_cfg_.fromJson(req_cfg_root))
     {
         PCITEM_F_ERROR("req cfg json parse error! %s\n", req_cfg_root.dump().c_str());
@@ -179,8 +177,6 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
     req_body_view_.body_data = std::make_shared<const std::vector<char>>(ori_protocol->m_reqBodyData);
     
     /*****响应****/
-    // int32_t status_code = resp_cfg_root.value("status_code", 0); 
-    // 状态码 协议版本 暂时不配
     if(!resp_cfg_.fromJson(resp_cfg_root))
     {
         PCITEM_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_root.dump().c_str());

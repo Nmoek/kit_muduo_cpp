@@ -10,6 +10,7 @@
 #define __KIT_SVC_PROJECT_H__
 
 #include "net/call_backs.h"
+#include <cstdint>
 #include <vector>
 
 namespace kit_domain
@@ -31,7 +32,7 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, bool status) = 0;
 
-    virtual bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, bool active) = 0;
+    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, bool active, uint16_t listen_port) = 0;
 
 
     virtual Project GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
@@ -65,7 +66,7 @@ public:
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, bool status) override;
 
-    bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, bool active) override;
+    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, bool active, uint16_t listen_port) override;
 
     Project GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 

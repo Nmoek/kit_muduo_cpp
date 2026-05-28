@@ -90,7 +90,7 @@ bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t pr
     return true;
 }
 
-bool SqliteOrmProjectDao::UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active)
+bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
     try {
@@ -102,6 +102,7 @@ bool SqliteOrmProjectDao::UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int6
         }
 
         pj->m_active = active;
+        pj->m_listenPort = listenPort;
         pj->m_utime = now;
 
         std::lock_guard<std::mutex> lock(_writeMtx);
@@ -111,13 +112,15 @@ bool SqliteOrmProjectDao::UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int6
 
     } catch(const std::exception& e) {
    
-        DAOPC_ERROR() << "UpdateActiveStatus faild! " << "id= " << projectId << ", " << e.what() << std::endl;
+        DAOPC_ERROR() << "UpdateRuntimeStatus faild! " << "id= " << projectId << ", " << e.what() << std::endl;
 
         _db->rollback();
         return false;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateActiveStatus "<< "id= " << projectId << std::endl;
+    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateRuntimeStatus "
+                  << "id= " << projectId
+                  << ", listen_port= " << listenPort << std::endl;
 
     return true;
 }

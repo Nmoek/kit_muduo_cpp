@@ -10,6 +10,7 @@
 #include "domain/project.h"
 #include "domain/project_server.h"
 #include "domain/project_server_factory.h"
+#include "domain/runtime_loop_pool.h"
 #include "net/event_loop.h"
 #include "net/inet_address.h"
 
@@ -76,6 +77,8 @@ void AssertLoopStillOwnedByProjectServer(const std::shared_ptr<ProjectServer>& p
     EXPECT_TRUE(future.get());
 }
 
+static RuntimeLoopPool pool(10);
+
 } // namespace
 
 /**
@@ -96,7 +99,11 @@ TEST(TestProjectServerFactory, CreateHttpServerKeepsLoopAliveAfterFactoryReturns
 {
     Project p = MakeBaseProject(101, ProtocolType::HTTP_PROTOCOL);
 
-    auto pj_server = ProjectServerFactory::Create(p);
+    auto result = pool.acquire(time(nullptr));
+    ASSERT_EQ(result.ok(), true);
+    ASSERT_NE(result.val, nullptr);
+
+    auto pj_server = ProjectServerFactory::Create(p, result.val);
     ASSERT_NE(std::dynamic_pointer_cast<HttpProjectServer>(pj_server), nullptr);
     AssertLoopStillOwnedByProjectServer(pj_server);
 }
@@ -119,7 +126,11 @@ TEST(TestProjectServerFactory, CreateCustomTcpServerKeepsLoopAliveAfterFactoryRe
 {
     Project p = MakeBaseProject(102, ProtocolType::CUSTOM_TCP_PROTOCOL);
 
-    auto pj_server = ProjectServerFactory::Create(p);
+    auto result = pool.acquire(time(nullptr));
+    ASSERT_EQ(result.ok(), true);
+    ASSERT_NE(result.val, nullptr);
+
+    auto pj_server = ProjectServerFactory::Create(p, result.val);
     ASSERT_NE(std::dynamic_pointer_cast<CustomTcpProjectServer>(pj_server), nullptr);
     AssertLoopStillOwnedByProjectServer(pj_server);
 }

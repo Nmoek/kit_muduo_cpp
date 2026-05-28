@@ -9,6 +9,7 @@
 
 #include "../../test_log.h"
 #include "./test_custom_project_server.h"
+#include "domain/runtime_loop_pool.h"
 #include "net/inet_address.h"
 #include "net/tcp_connection.h"
 #include "net/tcp_server.h"
@@ -73,6 +74,12 @@ struct TestCases2 {
 class CustomTcpServerSuite : public ::testing::Test
 {
 protected:
+    CustomTcpServerSuite()
+        :loop_pool_(10)
+    {
+
+    }
+
     void SetUp() override
     {
         // auto l = KIT_LOGGER("net");
@@ -86,10 +93,14 @@ protected:
 
     std::shared_ptr<CustomTcpProjectServer> server_start(const kit_domain::Project &p)
     {
+        auto result = loop_pool_.acquire(p.m_id);
+
         // 创建自定义TCP服务器必须带解析格式，否则无法解析。
         // R1 之后 runtime loop 和 TcpServer 生命周期由 CustomTcpProjectServer 自己持有。
-        return std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternInfo);
+        return std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternInfo, result.val);
     }
+
+    RuntimeLoopPool loop_pool_;
 };
 
 
@@ -764,9 +775,11 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
     const std::string req_cfg_partial_body = R"({"function_code":"H0100","fields":{}})";
     const std::string resp_cfg_partial_body = R"({"function_code":"H1080","fields":{}})";
 
+    auto result = loop_pool_.acquire(1001);
     auto server = std::make_shared<CustomTcpProjectServer>(
         1001,
-        std::vector<char>(pattern_json_partial_body.begin(), pattern_json_partial_body.end()));
+        std::vector<char>(pattern_json_partial_body.begin(), pattern_json_partial_body.end()),
+        result.val);
 
     auto pc = std::make_shared<kit_domain::Protocol>(kit_domain::Protocol{
         .m_id = 1001,

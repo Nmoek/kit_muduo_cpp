@@ -66,7 +66,7 @@ private:
 
 struct ContentType
 {
-    enum {kUnknowType, kJsonType, kXmlType, kPlainType, kImageJpgType, kMultiForm, kOctetStream, kHtml, kCss, kJavaScript, kMax};
+    enum {kUnknowType, kJsonType, kXmlType, kPlainType, kImageJpgType, kMultiForm, kOctetStream, kHtml, kCss, kJavaScript, kSvgXml, kMax};
 
     explicit ContentType(int32_t contentType = kUnknowType): m_content_type(contentType) { }
     int32_t operator()() const { return m_content_type; }
@@ -90,6 +90,7 @@ struct ContentType
             case kHtml: return "text/html";
             case kCss: return "text/css";
             case kJavaScript: return "text/javascript";
+            case kSvgXml: return "image/svg+xml";
 
             default: return "application/json";
         }
@@ -109,6 +110,8 @@ struct ContentType
 
         if(-1 != tmp.find("json"))
             return ContentType(kJsonType);
+        if(-1 != tmp.find("svg"))
+            return ContentType(kSvgXml);
         if(-1 != tmp.find("xml"))
             return ContentType(kXmlType);
         if(-1 != tmp.find("plain"))

@@ -6,9 +6,8 @@ mkdir -p bin
 
 rm -r ./bin/*
 
-cd build/
-cmake -S .. -B .
+cmake -S . -B build -G "Ninja"
 echo "build...."
-ninja
+cmake --build build
 
 echo "build finish!"

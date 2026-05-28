@@ -32,6 +32,11 @@ const std::unordered_map<int32_t, std::string> RuntimeError::s_error_msg{
     {kFuncCodeNotFound, "func code not found"},
     {kFuncCodeConflict, "func code conflict"},
 
+    /* runtime loop pool*/
+    {kRuntimeLoopPoolStopped, "runtime loop pool stopped"},
+    {kRuntimeLoopPoolExhausted, "runtime loop pool exhausted"},
+    {kRuntimeLoopPoolInvalidLease, "runtime loop pool invalid lease"},
+
     {kInternalError, "internal error"}
 };
 

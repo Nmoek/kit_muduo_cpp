@@ -33,6 +33,8 @@ public:
 
     void listen();
 
+    void stop();
+
     const InetAddress& getBindAddr() const { return _bind_addr; }
 
 
@@ -45,7 +47,7 @@ private:
     InetAddress _bind_addr;
     Channel _acceptChannel;
     NewConnectionCb _newConnectionCallback;
-    bool _listening;
+    std::atomic_int32_t _listening;
 };
 
 

@@ -24,6 +24,7 @@
 #include <cerrno>
 #include <cstring>
 #include <future>
+#include <memory>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
@@ -204,15 +205,31 @@ public:
             return;
         }
 
-        std::promise<void> done;
-        auto done_future = done.get_future();
-        loop_->runInLoop([this, &done](){
+        auto stopped = std::make_shared<std::promise<void>>();
+        auto stopped_future = stopped->get_future();
+        loop_->runInLoop([this, stopped](){
+            if(server_ && *server_)
+            {
+                (*server_)->stopAsync([stopped](){
+                    stopped->set_value();
+                });
+            }
+            else
+            {
+                stopped->set_value();
+            }
+        });
+        stopped_future.wait_for(std::chrono::seconds(2));
+
+        auto done = std::make_shared<std::promise<void>>();
+        auto done_future = done->get_future();
+        loop_->runInLoop([this, done](){
             if(server_)
             {
                 server_->reset();
             }
             loop_->quit();
-            done.set_value();
+            done->set_value();
         });
 
         done_future.wait_for(std::chrono::seconds(2));

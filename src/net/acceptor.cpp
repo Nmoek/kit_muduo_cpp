@@ -22,7 +22,7 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     ,_acceptSocket(Socket::CreateTcpIpv4(true))
     ,_acceptChannel(loop, _acceptSocket.fd())
     ,_newConnectionCallback(nullptr)
-    ,_listening(false)
+    ,_listening(0)
 {
     _acceptSocket.setReuseAddr(reuseport);
     _acceptSocket.setReusePort(reuseport);
@@ -44,18 +44,31 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
 
 Acceptor::~Acceptor()
 {
-    CHANNEL_F_DEBUG("~Acceptor::fd[%d] \n", _acceptSocket.fd());
-    _acceptChannel.disableAll();
-    _acceptChannel.remove();
-
+    stop();
 }
 
 void Acceptor::listen()
 {
-    _listening = true;
+    if(_listening > 0)
+    {
+        return;
+    }
+    ++_listening;
     _acceptSocket.listen();
     _acceptChannel.enableReading();
+}
 
+void Acceptor::stop()
+{
+    if(_listening <= 0)
+    {
+        return;
+    }
+    --_listening;
+    CHANNEL_F_DEBUG("~Acceptor::fd[%d] \n", _acceptSocket.fd());
+
+    _acceptChannel.disableAll();
+    _acceptChannel.remove();
 }
 
 void Acceptor::handleRead()

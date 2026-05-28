@@ -12,6 +12,7 @@
 #include "net/call_backs.h"
 #include "dao/init.h"
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -29,7 +30,7 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) = 0;
 
-    virtual bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active) = 0;
+    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort) = 0;
 
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) = 0;
 
@@ -60,7 +61,7 @@ public:
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) override;
 
-    bool UpdateActiveStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active) override;
+    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort) override;
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) override;
 

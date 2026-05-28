@@ -53,9 +53,9 @@ static void InitLog(void)
     l->addAppender(std::make_shared<FileAppender>("log/base.log"));
     l2->addAppender(std::make_shared<FileAppender>("log/net.log"));
     l3->addAppender(std::make_shared<FileAppender>("log/web.log"));
-    // l->setLevel(LogLevel::INFO);
-    // l2->setLevel(LogLevel::INFO);
-    // l3->setLevel(LogLevel::INFO);
+    l->setLevel(LogLevel::INFO);
+    l2->setLevel(LogLevel::INFO);
+    l3->setLevel(LogLevel::INFO);
 
 }
 
@@ -89,7 +89,7 @@ static std::shared_ptr<Application> InitApp()
 
 
     // 先恢复当前库上正在运行的服务器, 恢复服务器的同时需要重新添加协议
-    if(!app->Recover(projSvc, protocSvc))
+    if(!app->recover(projSvc, protocSvc))
     {
         std::cerr << "application recover error!" << std::endl;
         abort();

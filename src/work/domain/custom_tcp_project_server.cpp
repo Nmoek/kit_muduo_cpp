@@ -17,6 +17,7 @@
 #include "net/http/http_util.h"
 #include "domain/custom_tcp_protocol_item.h"
 #include "domain/custom_tcp_pattern.h"
+#include "domain/runtime_loop_pool.h"
 
 #include "nlohmann/json.hpp"
 #include <assert.h>
@@ -42,10 +43,10 @@ namespace kit_domain {
 
 CustomTcpProjectServer::CustomTcpProjectServer(
     int64_t project_id, 
-    const std::vector<char> &info)
-    :ProjectServer(project_id)
+    const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop)
+    :ProjectServer(project_id, lease_loop)
     ,tcp_server_(std::make_shared<TcpServer>(
-        CheckLoop(loop_thread_.startLoop()), 
+        CheckLoop(lease_loop->loop()), 
         InetAddress(0, "0.0.0.0"), 
         "pj" + std::to_string(project_id_) + "tcp", 
         kit_muduo::TcpServer::KReusePort
@@ -70,12 +71,43 @@ CustomTcpProjectServer::CustomTcpProjectServer(
 
 }
 
+CustomTcpProjectServer::~CustomTcpProjectServer()
+{
+    stop();
+}
 
 void CustomTcpProjectServer::start() 
 {
     tcp_server_->setThreadNum(0); // 使用单线程模式
     tcp_server_->start();
 }
+
+void CustomTcpProjectServer::stop()
+{
+    bool expected = false;
+    if(!stopped_.compare_exchange_strong(expected, true))
+    {
+        return;
+    }
+
+    if(!tcp_server_)
+    {
+        lease_loop_->release();
+        return;
+    }
+
+    bool ok = WaitRuntimeStopDone("CustomTcpProjectServer", project_id_, [this](std::function<void()> done){
+        tcp_server_->stopAsync(std::move(done));
+    });
+
+    if(!ok)
+    {
+        return;
+    }
+
+    lease_loop_->release();
+}
+
 
 const kit_muduo::InetAddress& CustomTcpProjectServer::getBindAddr() const
 {

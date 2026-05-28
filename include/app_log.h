@@ -8,44 +8,29 @@
  */
 #include "base/log.h"
 
-static auto g_app_logger = KIT_LOGGER("app");
 
 /*********流式输出**********/
-#define APP_DEBUG(module) \
-    KIT_DEBUG(g_app_logger, module)
-#define APP_INFO(module) \
-    KIT_INFO(g_app_logger, module)
-#define APP_WARN(module) \
-    KIT_WARN(g_app_logger, module)
-#define APP_ERROR(module) \
-    KIT_ERROR(g_app_logger, module)
-#define APP_FATAL(module) \
-    KIT_FATAL(g_app_logger, module)
+#define APP_DEBUG() \
+    KIT_DEBUG(KIT_LOGGER("app"), "app")
+#define APP_INFO() \
+    KIT_INFO(KIT_LOGGER("app"), "app")
+#define APP_WARN() \
+    KIT_WARN(KIT_LOGGER("app"), "app")
+#define APP_ERROR() \
+    KIT_ERROR(KIT_LOGGER("app"), "app")
+#define APP_FATAL() \
+    KIT_FATAL(KIT_LOGGER("app"), "app")
 
 /**********变参输出***********/
-#define APP_F_DEBUG(module, fmt, ...) \
-    KIT_FMT_DEBUG(g_app_logger, module, fmt, ##__VA_ARGS__)
-#define APP_F_INFO(module, fmt, ...) \
-    KIT_FMT_INFO(g_app_logger, module, fmt, ##__VA_ARGS__)
-#define APP_F_WARN(module, fmt, ...) \
-    KIT_FMT_WARN(g_app_logger, module, fmt, ##__VA_ARGS__)
-#define APP_F_ERROR(module, fmt, ...) \
-    KIT_FMT_ERROR(g_app_logger, module, fmt, ##__VA_ARGS__)
-#define APP_F_FATAL(module, fmt, ...) \
-    KIT_FMT_FATAL(g_app_logger, module, fmt, ##__VA_ARGS__)
+#define APP_F_DEBUG(fmt, ...) \
+    KIT_FMT_DEBUG(KIT_LOGGER("app"), "app", fmt, ##__VA_ARGS__)
+#define APP_F_INFO(fmt, ...) \
+    KIT_FMT_INFO(KIT_LOGGER("app"), "app", fmt, ##__VA_ARGS__)
+#define APP_F_WARN(fmt, ...) \
+    KIT_FMT_WARN(KIT_LOGGER("app"), "app", fmt, ##__VA_ARGS__)
+#define APP_F_ERROR(fmt, ...) \
+    KIT_FMT_ERROR(KIT_LOGGER("app"), "app", fmt, ##__VA_ARGS__)
+#define APP_F_FATAL(fmt, ...) \
+    KIT_FMT_FATAL(KIT_LOGGER("app"), "app", fmt, ##__VA_ARGS__)
 
-/*******device recover模块*********/
-#define RECOVER_DEBUG()     APP_DEBUG("recover")
-#define RECOVER_INFO()      APP_INFO("recover")
-#define RECOVER_WARN()      APP_WARN("recover")
-#define RECOVER_ERROR()     APP_ERROR("recover")
-#define RECOVER_FATAL()     APP_FATAL("recover")
-
-#define RECOVER_F_DEBUG(fmt, ...)     APP_F_DEBUG("recover", fmt, ##__VA_ARGS__)
-#define RECOVER_F_INFO(fmt, ...)      APP_F_INFO("recover", fmt, ##__VA_ARGS__)
-#define RECOVER_F_WARN(fmt, ...)      APP_F_WARN("recover", fmt, ##__VA_ARGS__)
-#define RECOVER_F_ERROR(fmt, ...)     APP_F_ERROR("recover", fmt, ##__VA_ARGS__)
-#define RECOVER_F_FATAL(fmt, ...)     APP_F_FATAL("recover", fmt, ##__VA_ARGS__)
-
-/*******device recover模块*********/
 

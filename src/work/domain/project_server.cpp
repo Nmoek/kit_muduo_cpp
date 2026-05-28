@@ -7,24 +7,54 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/project_server.h"
+#include "domain/runtime_loop_pool.h"
+#include "domain/domain_log.h"
 
-
+#include <chrono>
+#include <future>
 
 
 namespace kit_domain {
 
-ProjectServer::ProjectServer(int64_t project_id)
+ProjectServer::ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop)
     :project_id_(project_id)
-    ,loop_thread_(nullptr, std::string("pj" + std::to_string(project_id) + "loop"))
+    ,lease_loop_(lease_loop)
 { 
 
 }
 
-ProjectServer::~ProjectServer()
-{
-    stop();
+bool ProjectServer::isActive() const 
+{ 
+    return !lease_loop_->isRelease(); // 未归还说明还活跃
 }
 
+kit_muduo::EventLoop *ProjectServer::getLoop() 
+{ 
+    return lease_loop_->loop();
+}
+
+bool WaitRuntimeStopDone(const char *name,
+    int64_t project_id,
+    const std::function<void(std::function<void()>)> &start_stop)
+{
+    auto p = std::make_shared<std::promise<void>>();
+    auto f = p->get_future();
+
+    start_stop([p](){
+        p->set_value();
+    });
+
+    auto status = f.wait_for(std::chrono::seconds(5));
+    if(std::future_status::ready != status)
+    {
+        PJSERVER_F_ERROR("%s stop timeout! pjId[%ld]\n", name, project_id);
+        return false;
+    }
+
+
+    return true;
+
+}
 
 
 }

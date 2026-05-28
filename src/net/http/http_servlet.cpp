@@ -330,6 +330,8 @@ static int32_t GetStaticType(const std::string &suffix_type)
         return ContentType::kHtml;
     else if(suffix_type == "jpg" || suffix_type == "jpeg")
         return ContentType::kImageJpgType;
+    else if(suffix_type == "svg")
+        return ContentType::kSvgXml;
     else if(suffix_type == "css")
         return ContentType::kCss;
     else if(suffix_type == "js")
@@ -355,7 +357,7 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     resp->body().setContentType(GetStaticType(suffix_type));
 
-    const std::string target_path = "web/" + suffix_type + "/" + file_name;
+    const std::string target_path = "web/" + path;
 
     /// TODO: 可使用sendfile优化 减少拷贝
     std::fstream tmp_f(target_path, std::ios::in | std::ios::binary);

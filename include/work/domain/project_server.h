@@ -43,26 +43,27 @@ class CustomTcpPattern;
 struct HttpItemReqHeaderCfg;
 class CustomTcpMessage;
 struct CustomTcpItemCfg;
+class RuntimeLease;
 
 class ProjectServer
 {
 public:
 
-    ProjectServer(int64_t project_id);
+    ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop);
 
-    virtual ~ProjectServer();
+    virtual ~ProjectServer() = default;
 
     void setProjectId(int64_t project_id) { project_id_ = project_id;}
     int64_t getProjectId() const { return project_id_; }
 
-    void stop() { loop_thread_.quit(); }
+    bool isActive() const;
 
-    bool isActive() const { return loop_thread_.isRunning(); }
-
-    kit_muduo::EventLoop *getLoop() { return loop_thread_.getLoop(); }
+    kit_muduo::EventLoop *getLoop();
 
 
     virtual void start() = 0;
+    virtual void stop() = 0;
+
 
     virtual const kit_muduo::InetAddress& getBindAddr() const = 0;
 
@@ -84,10 +85,14 @@ public:
 protected:
     /// @brief 测试服务id
     int64_t project_id_;
-    /// @brief 事件循环线程
-    kit_muduo::EventLoopThread loop_thread_;
-    
+    /// @brief 租赁Loop
+    std::shared_ptr<RuntimeLease> lease_loop_;
+    std::atomic_bool stopped_{false};
 };
+
+bool WaitRuntimeStopDone(const char *name,
+    int64_t project_id,
+    const std::function<void(std::function<void()>)> &start_stop);
 
 
 class HttpProjectServer: 
@@ -100,9 +105,13 @@ public:
         uint64_t route_id;
     };
 
-    HttpProjectServer(int64_t project_id);
+    HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop);
+
+    ~HttpProjectServer() override;
 
     void start() override;
+
+    void stop() override;
 
     const kit_muduo::InetAddress& getBindAddr() const override;
 
@@ -155,9 +164,13 @@ public:
      * @param project_id 项目ID
      * @param tcp_server TCP服务器指针
      */
-    CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info);
+    CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop);
+
+    ~CustomTcpProjectServer() override;
 
     void start() override;
+
+    void stop() override;
 
     const kit_muduo::InetAddress& getBindAddr() const override;
 
