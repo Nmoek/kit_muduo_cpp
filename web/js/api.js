@@ -42,6 +42,24 @@
         return parseJsonResponse(response, fallbackMessage);
     }
 
+    function normalizePatternInfoForBackend(patternInfo) {
+        if (!patternInfo || Number(patternInfo.version) !== 2) return patternInfo;
+
+        const normalized = Object.assign({}, patternInfo);
+        if (normalized.byte_order && !normalized.default_order) {
+            normalized.default_order = normalized.byte_order;
+        }
+        return normalized;
+    }
+
+    function normalizeProjectForBackend(project) {
+        const normalized = Object.assign({}, project || {});
+        if (normalized.pattern_info) {
+            normalized.pattern_info = normalizePatternInfoForBackend(normalized.pattern_info);
+        }
+        return normalized;
+    }
+
     const api = {
         isMockMode,
         apiUrl,
@@ -71,8 +89,16 @@
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(project),
+                body: JSON.stringify(normalizeProjectForBackend(project)),
             }, '添加测试服务失败');
+        },
+        async setProjectActive(projectId, active) {
+            if (isMockMode()) return KitProxy.mocks.setProjectActive(projectId, active);
+
+            const operation = active ? 1 : 0;
+            return requestJson('/projects/' + String(projectId) + '/status?operation=' + String(operation), {
+                method: 'POST',
+            }, active ? '启动测试服务失败' : '停止测试服务失败');
         },
         async updateProjectName(projectId, name) {
             if (isMockMode()) return KitProxy.mocks.updateProjectName(projectId, name);
@@ -111,7 +137,7 @@
                 },
                 body: JSON.stringify({
                     id: projectId,
-                    pattern_info: patternInfo,
+                    pattern_info: normalizePatternInfoForBackend(patternInfo),
                 }),
             }, '修改TCP格式信息失败');
         },
@@ -276,10 +302,17 @@
         async getAllPatternFields(projectId, protocolId, reqOrResp) {
             if (isMockMode()) return KitProxy.mocks.getAllPatternFields(projectId, protocolId, reqOrResp);
 
-            return Promise.all([
+            const [patternInfo, cfgInfo] = await Promise.all([
                 api.getProjectPatternInfo(projectId),
-                api.getTcpCommonFields(protocolId, reqOrResp),
+                api.getProtocolDetailsCfg(protocolId),
             ]);
+            const sideCfg = Number(reqOrResp) === 1
+                ? (cfgInfo && cfgInfo.req_cfg) || {}
+                : (cfgInfo && cfgInfo.resp_cfg) || {};
+            const fields = KitProxy.tcpPatternEditor
+                ? KitProxy.tcpPatternEditor.patternInfoToItemFields(patternInfo, sideCfg)
+                : [];
+            return [patternInfo, fields];
         },
     };
 

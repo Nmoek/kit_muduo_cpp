@@ -1823,6 +1823,14 @@
     width: min(1120px, 96vw);
 }
 
+.config-pattern-modal.is-project-pattern {
+    --pattern-field-grid: 70px minmax(130px, 1.1fr) 100px 84px minmax(108px, 0.84fr) 196px;
+}
+
+.config-pattern-modal.is-project-pattern .pattern-cell-value {
+    display: none;
+}
+
 .config-pattern-modal .pattern-field-info {
     overflow: hidden;
 }
@@ -1909,32 +1917,285 @@
     min-width: 0;
 }
 
+.config-pattern-modal .pattern-wire-hex-input {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    background: #ffffff;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.config-pattern-modal .pattern-wire-hex-input:focus-within {
+    border-color: #8bb7f0;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.config-pattern-modal .pattern-wire-hex-input.is-display-value {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.config-pattern-modal .pattern-wire-hex-input.is-display-value .pattern-hex-prefix {
+    display: none;
+}
+
+.config-pattern-modal .pattern-wire-hex-input.is-readonly {
+    background: #f8fbff;
+}
+
+.config-pattern-modal .pattern-wire-hex-input.is-readonly .pattern-hex-prefix {
+    background: #eef2f7;
+    color: #667085;
+}
+
+.config-pattern-modal .pattern-hex-prefix {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    border-right: 1px solid var(--v13-border, #d9e6f5);
+    background: #f0f7ff;
+    color: #1f6ed4;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field .pattern-value-editor-input,
+.config-pattern-modal .pattern-fixed-value-popover .pattern-fixed-value-hex-digits {
+    width: 100%;
+    min-width: 0;
+    height: 32px;
+    padding: 0 8px;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    box-shadow: none;
+    box-sizing: border-box;
+    color: #101828;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: 0;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-field .pattern-value-editor-input::placeholder,
+.config-pattern-modal .pattern-fixed-value-popover .pattern-fixed-value-hex-digits::placeholder {
+    color: #98a2b3;
+}
+
 .config-pattern-modal .pattern-field-value-display-btn {
     width: 34px;
     min-width: 34px;
     height: 34px;
     padding: 0;
+    border-width: 1px;
+    font-weight: 800;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn.value-display-hex {
+    border-color: #93c5fd;
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn.value-display-int {
+    border-color: #fdba74;
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn.value-display-uint {
+    border-color: #86efac;
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn.value-display-float {
+    border-color: #c4b5fd;
+    background: #f5f3ff;
+    color: #6d28d9;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn.value-display-str {
+    border-color: #5eead4;
+    background: #f0fdfa;
+    color: #0f766e;
+}
+
+.config-pattern-modal .pattern-field-value-display-btn.value-display-display {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+    color: #475569;
 }
 
 .config-pattern-modal .pattern-field-actions {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    display: flex;
     gap: 6px;
-    justify-content: initial;
+    align-items: center;
+    justify-content: flex-start;
     min-width: 0;
+}
+
+.config-pattern-modal.is-project-pattern .pattern-field-actions {
+    justify-content: flex-start;
+}
+
+.config-pattern-modal .pattern-fixed-value-btn {
+    flex: 0 0 58px;
+    border-color: #b7d7ff;
+    background: #f0f7ff;
+    color: #1f6ed4;
+}
+
+.config-pattern-modal .pattern-fixed-value-btn.has-fixed-value {
+    border-color: #95d5b2;
+    background: #edfdf4;
+    color: #087443;
+}
+
+.config-pattern-modal .pattern-cell-actions {
+    position: relative;
+}
+
+.config-pattern-modal .pattern-fixed-value-popover {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 8px);
+    z-index: 8;
+    width: min(320px, 72vw);
+    padding: 12px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.config-pattern-modal .pattern-fixed-value-popover::before {
+    content: "";
+    position: absolute;
+    right: 20px;
+    top: -7px;
+    width: 12px;
+    height: 12px;
+    border-top: 1px solid var(--v13-border, #d9e6f5);
+    border-left: 1px solid var(--v13-border, #d9e6f5);
+    background: #ffffff;
+    transform: rotate(45deg);
+}
+
+.config-pattern-modal .pattern-fixed-value-popover label {
+    position: static;
+    display: block;
+    width: auto;
+    height: auto;
+    margin: 0 0 6px;
+    padding: 0;
+    overflow: visible;
+    clip: auto;
+    color: #344054;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: normal;
+}
+
+.config-pattern-modal .pattern-fixed-value-popover > input {
+    width: 100%;
+    height: 34px;
+    padding: 0 9px;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: 6px;
+    box-sizing: border-box;
+}
+
+.config-pattern-modal .pattern-fixed-value-wire-input {
+    width: 100%;
+}
+
+.config-pattern-modal .pattern-fixed-value-hint {
+    margin-top: 6px;
+    color: #667085;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.config-pattern-modal .pattern-fixed-value-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.config-pattern-modal .pattern-fixed-value-actions button {
+    width: auto;
+    min-width: 64px;
 }
 
 .config-pattern-modal .pattern-field-actions button,
 .config-pattern-modal .pattern-field-container .del-field-btn {
+    display: inline-flex;
+    flex: 0 0 40px;
+    align-items: center;
+    justify-content: center;
     min-width: 0;
-    width: 100%;
+    width: 40px;
     height: 34px;
-    padding: 0 6px;
+    padding: 0 8px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
     white-space: nowrap;
+}
+
+.config-pattern-modal .pattern-field-actions .pattern-fixed-value-btn {
+    width: 58px;
+}
+
+.config-pattern-modal .pattern-field-actions .pattern-fixed-value-btn[hidden] {
+    display: none;
 }
 
 .config-pattern-modal .pattern-field-container.is-readonly .pattern-field {
     background: #f8fbff;
+}
+
+.config-pattern-modal .pattern-byte-block.role-start-magic {
+    border-color: #f0b429;
+    background: #fff8db;
+}
+
+.config-pattern-modal .pattern-byte-block.role-function-code {
+    border-color: #b692f6;
+    background: #f4f0ff;
+}
+
+.config-pattern-modal .pattern-byte-block.role-body-length {
+    border-color: #72d6c9;
+    background: #e9fbf8;
+}
+
+.config-pattern-modal .pattern-byte-block.role-total-length {
+    border-color: #f7b27a;
+    background: #fff3e8;
+}
+
+.config-pattern-modal .pattern-byte-block.role-end-magic {
+    border-color: #c7d7fe;
+    background: #eef4ff;
+}
+
+.config-pattern-modal .pattern-byte-block.role-checksum {
+    border-color: #fda4af;
+    background: #fff1f2;
+}
+
+.config-pattern-modal .pattern-byte-block.is-error {
+    border-color: #ffb4aa;
+    background: #fff6f5;
 }
 
 @media (max-width: 920px) {
@@ -1966,6 +2227,16 @@
     }
 
     .config-pattern-modal .pattern-field-actions {
-        grid-template-columns: repeat(3, minmax(86px, 1fr));
+        flex-wrap: wrap;
+    }
+
+    .config-pattern-modal.is-project-pattern .pattern-field-actions {
+        flex-wrap: wrap;
+    }
+
+    .config-pattern-modal .pattern-fixed-value-popover {
+        left: 0;
+        right: auto;
+        width: min(320px, 86vw);
     }
 }

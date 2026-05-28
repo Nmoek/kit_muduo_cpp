@@ -58,7 +58,7 @@
 
     function matchStatus(project, statusFilter) {
         if (!statusFilter || statusFilter === 'all') return true;
-        const isActive = Number(project.status) === 1;
+        const isActive = Number(project && project.active) === 1;
 
         if (statusFilter === 'active') return isActive;
         if (statusFilter === 'inactive') return !isActive;

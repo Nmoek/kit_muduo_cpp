@@ -194,53 +194,18 @@
                 await delay(200);
                 hideLoading(loading);
 
-                const modal = document.createElement('div');
-                modal.className = 'modal-overlay';
-                modal.innerHTML = `
-                    <div class="tcp-pattern-change-modal">
-                        <div class="modal-header">
-                            <h3>TCP格式修改</h3>
-                            <button class="close-modal">&times;</button>
-                        </div>
-                        <div class="modal-body">
-                            <div class="form-group pattern-control">
-                                ${tcpPatternControlHTML()}
-                            </div>
-                            <div class="form-actions">
-                                <button type="button" class="cancel-btn">取消</button>
-                                <button type="button" class="confirm-btn">确定修改</button>
-                            </div>
-                        </div>
-                    </div>
-                `;
-
-                document.body.appendChild(modal);
-
-                const patternConfigButton = modal.querySelector('#pattern-infos');
-                const patternTypeSelect = modal.querySelector('#pattern-type');
-                const patternStatusElement = modal.querySelector('#first-pattern-import-status');
-                const currentLengthPolicy = global.normalizeLengthPolicy
-                    ? global.normalizeLengthPolicy(patternInfo.length_policy || project.length_policy)
-                    : (patternInfo.length_policy || LengthPolicy.BODY_LENGTH);
-
-                patternConfigButton.dataset.patternInfos = JSON.stringify(patternInfo);
-                patternTypeSelect.value = currentLengthPolicy;
-                patternStatusElement.style.display = 'inline';
-                bindTcpPatternTypeControls(patternTypeSelect, patternConfigButton, patternStatusElement, currentLengthPolicy);
-
-                modal.querySelector('.confirm-btn').addEventListener('click', async function(confirmEvent) {
-                    confirmEvent.preventDefault();
-                    confirmEvent.stopPropagation();
-
-                    const lengthPolicy = modal.querySelector('#pattern-type').value;
-                    const patternCache = modal.querySelector('#pattern-infos').dataset.patternInfos;
-                    const patternInfo = buildV2TcpPatternInfoFromEditor(JSON.parse(patternCache), lengthPolicy);
-
+                createCustomTcpPatternModal(
+                    patternField,
+                    '项目格式字段',
+                    patternInfo,
+                    null,
+                    true,
+                    async function(nextPatternInfo) {
                     if(!confirm('重新配置格式会使所有协议项失效，是否继续')) {
                         return;
                     }
 
-                    const ok = await updateTcpPatternInfoReq(project.id, patternInfo);
+                    const ok = await updateTcpPatternInfoReq(project.id, nextPatternInfo);
                     if(!ok) {
                         alert('TCP格式修改失败!');
                         return;
@@ -248,12 +213,10 @@
 
                     const textNode = patternField.querySelector('.meta-value');
                     if (textNode) {
-                        textNode.textContent = tcpLengthPolicyText(patternInfo.length_policy);
+                        textNode.textContent = tcpLengthPolicyText(nextPatternInfo.length_policy);
                     }
-                    KitProxy.utils.removeDomNode(modal);
-                });
-
-                KitProxy.utils.bindModalCloseActions(modal);
+                    },
+                );
             });
         },
         renderAddServiceExtraControl: function(formContainer) {
@@ -270,7 +233,6 @@
             );
         },
         collectAddServiceExtraPayload: function(modal) {
-            const lengthPolicy = modal.querySelector('#pattern-type').value;
             const cachedPatternInfos = modal.querySelector('#pattern-infos').dataset.patternInfos;
 
             if (!cachedPatternInfos) {
@@ -279,7 +241,7 @@
 
             const parsedPatternInfo = JSON.parse(cachedPatternInfos);
             return {
-                pattern_info: buildV2TcpPatternInfoFromEditor(parsedPatternInfo, lengthPolicy),
+                pattern_info: buildV2TcpPatternInfoFromEditor(parsedPatternInfo, parsedPatternInfo.length_policy),
             };
         },
     });

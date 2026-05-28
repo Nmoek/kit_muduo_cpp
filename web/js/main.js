@@ -4,6 +4,23 @@ const serviceFilterState = KitProxy.serviceFilters
     : { filters: { startDate: '', endDate: '', status: 'all', protocolType: 'all' }, active: false };
 let currentPageProjects = [];
 
+function isProjectActive(project) {
+    return Number(project && project.active) === 1;
+}
+
+function getProjectRuntimeStatusText(project) {
+    return isProjectActive(project) ? '开启' : '未开启';
+}
+
+function getProjectEndpointDisplay(project) {
+    if (!project) return '未开启';
+    if (!isProjectActive(project)) return '未开启';
+    if (Number(project.mode) === ProjectMode.SERVER) {
+        return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+    }
+    return project.target_ip || '未设置';
+}
+
 // 更新协议项显示
 function updateProtocolItem(id_str, protocol) {
     const protocolItem = document.getElementById(id_str);
@@ -330,6 +347,31 @@ async function updateProtocolCfg(protocolItemId, req_or_resp, key, newValue) {
     return true;
 };
 
+async function updateProtocolTcpHeaderValues(protocolItemId, reqOrResp, cfgJson) {
+    const idStr = `protocol-item-${protocolItemId}`;
+    const protocolItem = document.getElementById(idStr);
+    const projectId = ExtractId(protocolItem.dataset.projectId);
+
+    try {
+        if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
+            throw new Error("无效的协议项ID");
+        }
+        if(reqOrResp != 1 && reqOrResp != 2) {
+            throw new Error("req_or_resp fail");
+        }
+
+        const ok = await updateProtocolCfgReq(protocolItemId, projectId, reqOrResp, cfgJson);
+        if(!ok) {
+            throw new Error("修改 TCP 头部字段值失败");
+        }
+    } catch(e) {
+        console.error('修改 TCP 头部字段值失败! ', e.message);
+        return false;
+    }
+
+    return true;
+}
+
 
 
 // 发起修改协议名称请求
@@ -511,6 +553,7 @@ let activeProtocolInlineFieldEditor = null;
  *   validate: Function;
  *   onSave: Function;
  *   normalize?: Function;
+ *   canEnter?: Function;
  * }} options
  */
 function bindProtocolInlineFieldEditor(options) {
@@ -636,6 +679,9 @@ function bindProtocolInlineFieldEditor(options) {
             event.stopPropagation();
         }
         if (isSaving) return;
+        if (typeof options.canEnter === 'function' && !options.canEnter()) {
+            return;
+        }
 
         if (activeProtocolInlineFieldEditor && activeProtocolInlineFieldEditor !== editorApi) {
             activeProtocolInlineFieldEditor.cancel();
@@ -796,38 +842,11 @@ function bindProtocolHttpStatusEditor(protocolItem) {
 }
 
 /**
- * 绑定 TCP 功能码行内编辑。
- * @param {HTMLElement} protocolItem
- */
-function bindProtocolTcpFunctionCodeEditor(protocolItem) {
-    protocolItem.querySelectorAll('.protocol-field[data-field-name="function_code_filed_value"]').forEach(field => {
-        const reqOrResp = field.classList.contains('resp-cfg') ? 2 : 1;
-        bindProtocolInlineFieldEditor({
-            field,
-            inputType: 'text',
-            placeholder: 'H1000',
-            hint: '需要填写时必须以 H 开头',
-            validate: function(value) {
-                return !value || value.startsWith('H') ? '' : '功能码必须以 H 开头';
-            },
-            onSave: function(value) {
-                return updateProtocolCfg(
-                    ExtractId(protocolItem.id),
-                    reqOrResp,
-                    'function_code_filed_value',
-                    value,
-                );
-            },
-        });
-    });
-}
-
-/**
- * 绑定 TCP 普通字段点击编辑弹窗。
+ * 绑定 TCP 头部字段值点击编辑弹窗。
  * @param {HTMLElement} protocolItem
  */
 function bindProtocolTcpCommonFieldsEditor(protocolItem) {
-    protocolItem.querySelectorAll('.protocol-field[data-field-name="common_fields"]').forEach(field => {
+    protocolItem.querySelectorAll('.protocol-field[data-field-name="fields"]').forEach(field => {
         field.style.cursor = 'pointer';
 
         field.addEventListener('click', async function(event) {
@@ -839,15 +858,15 @@ function bindProtocolTcpCommonFieldsEditor(protocolItem) {
             const headerIndicator = field.querySelector('.header-fields-indicator');
             if (!valueElement || !headerIndicator) return;
 
-            const loading = showLoading('加载格式字段信息...');
+            const loading = showLoading('加载头部字段值...');
             let patternFields;
 
             try {
                 patternFields = await getPatternFields(ExtractId(protocolItem.id), reqOrResp);
             } catch(error) {
-                console.error('获取格式字段信息失败: ', error);
+                console.error('获取头部字段值失败: ', error);
                 hideLoading(loading);
-                alert('获取格式字段信息失败!');
+                alert('获取头部字段值失败!');
                 return;
             }
 
@@ -856,27 +875,36 @@ function bindProtocolTcpCommonFieldsEditor(protocolItem) {
 
             createCustomTcpPatternModal(
                 field,
-                reqOrResp === 1 ? '请求头部字段' : '响应头部字段',
+                reqOrResp === 1 ? '请求头部字段值' : '响应头部字段值',
                 patternFields,
                 null,
                 false,
                 async function(patternFieldInfos) {
-                    const commonFields = patternFieldInfos.common_fields || [];
-                    const ok = await updateProtocolCfg(
-                        ExtractId(protocolItem.id),
-                        reqOrResp,
-                        'common_fields',
-                        commonFields,
-                    );
-
-                    if (!ok) {
-                        alert('字段修改失败!');
+                    const itemFields = patternFieldInfos.fields || [];
+                    const cfg = KitProxy.tcpPatternEditor.buildTcpHeaderValueCfg
+                        ? KitProxy.tcpPatternEditor.buildTcpHeaderValueCfg(itemFields)
+                        : KitProxy.tcpPatternEditor.buildTcpItemCfg('', itemFields);
+                    const validation = KitProxy.tcpPatternEditor.validateTcpItemCfg(patternFields, cfg);
+                    if (!validation.valid) {
+                        alert(validation.errors.join('；'));
                         return;
                     }
 
-                    valueElement.textContent = commonFields.length ? '已设置' : '未设置';
-                    headerIndicator.classList.toggle('has', commonFields.length > 0);
-                    headerIndicator.classList.toggle('no', commonFields.length === 0);
+                    const ok = await updateProtocolTcpHeaderValues(
+                        ExtractId(protocolItem.id),
+                        reqOrResp,
+                        cfg,
+                    );
+
+                    if (!ok) {
+                        alert('头部字段值修改失败!');
+                        return;
+                    }
+
+                    const fieldCount = (cfg.function_code ? 1 : 0) + Object.keys(cfg.fields || {}).length;
+                    valueElement.textContent = fieldCount ? `已设置 ${fieldCount} 个` : '未设置';
+                    headerIndicator.classList.toggle('has', fieldCount > 0);
+                    headerIndicator.classList.toggle('no', fieldCount === 0);
                 },
             );
         });
@@ -891,7 +919,6 @@ function bindProtocolFieldEditors(protocolItem) {
     bindProtocolHttpMethodEditor(protocolItem);
     bindProtocolHttpPathEditor(protocolItem);
     bindProtocolHttpStatusEditor(protocolItem);
-    bindProtocolTcpFunctionCodeEditor(protocolItem);
     bindProtocolTcpCommonFieldsEditor(protocolItem);
 }
 
@@ -1155,36 +1182,21 @@ function getDefaultTcpPatternInfo(lengthPolicy = LengthPolicy.BODY_LENGTH) {
 
     if (policy === LengthPolicy.NO_LENGTH) {
         return {
+            version: 2,
+            header_bytes: 24,
+            byte_order: 'raw',
             length_policy: policy,
-            default_order: 'raw',
-            least_byte_len: 24,
-            special_fields: {
-                start_magic_num_field: {
-                    name: '起始字符',
-                    idx: 0,
-                    byte_pos: 0,
-                    byte_len: 2,
-                    type: 'STR',
-                    value: 'H023A',
-                },
-                function_code_field: {
-                    name: '功能码',
-                    idx: 1,
-                    byte_pos: 2,
-                    byte_len: 2,
-                    type: 'STR',
-                    value: '',
-                },
-            },
-            common_fields: [
-                { name: '分隔符', idx: 2, byte_pos: 4, byte_len: 1, type: 'STR', value: '' },
-                { name: '设备类型', idx: 3, byte_pos: 5, byte_len: 2, type: 'STR', value: '' },
-                { name: '分隔符', idx: 4, byte_pos: 7, byte_len: 1, type: 'STR', value: '' },
-                { name: '站号', idx: 5, byte_pos: 8, byte_len: 2, type: 'STR', value: '' },
-                { name: '分隔符', idx: 6, byte_pos: 10, byte_len: 1, type: 'STR', value: '' },
-                { name: '序号', idx: 7, byte_pos: 11, byte_len: 10, type: 'STR', value: '' },
-                { name: '分隔符', idx: 8, byte_pos: 21, byte_len: 1, type: 'STR', value: '' },
-                { name: '结束符', idx: 9, byte_pos: 22, byte_len: 2, type: 'STR', value: '' },
+            fields: [
+                { name: '起始字符', byte_pos: 0, byte_len: 2, type: 'STR', role: 'start_magic', match: 'H023A' },
+                { name: '功能码', byte_pos: 2, byte_len: 2, type: 'STR', role: 'function_code' },
+                { name: '分隔符', byte_pos: 4, byte_len: 1, type: 'STR', role: 'common' },
+                { name: '设备类型', byte_pos: 5, byte_len: 2, type: 'STR', role: 'common' },
+                { name: '分隔符', byte_pos: 7, byte_len: 1, type: 'STR', role: 'common' },
+                { name: '站号', byte_pos: 8, byte_len: 2, type: 'STR', role: 'common' },
+                { name: '分隔符', byte_pos: 10, byte_len: 1, type: 'STR', role: 'common' },
+                { name: '序号', byte_pos: 11, byte_len: 10, type: 'STR', role: 'common' },
+                { name: '分隔符', byte_pos: 21, byte_len: 1, type: 'STR', role: 'common' },
+                { name: '结束符', byte_pos: 22, byte_len: 2, type: 'STR', role: 'common' },
             ],
         };
     }
@@ -1195,45 +1207,26 @@ function getDefaultTcpPatternInfo(lengthPolicy = LengthPolicy.BODY_LENGTH) {
 
     // 新建 TCP 格式时的兜底字段，使用 V2 length_policy 作为唯一格式来源。
     return {
+        version: 2,
+        header_bytes: 26,
+        byte_order: 'big',
         length_policy: policy,
-        default_order: 'big',
-        least_byte_len: 26,
-        special_fields: {
-            start_magic_num_field: {
-                name: '起始标识',
-                idx: 0,
-                byte_pos: 0,
-                byte_len: 4,
-                type: 'INT32',
-                value: 'H23232323',
-            },
-            function_code_field: {
-                name: '功能码',
-                idx: 3,
-                byte_pos: 12,
-                byte_len: 2,
-                type: 'UINT16',
-                value: '',
-            },
-            [lengthFieldKey]: {
-                name: lengthFieldName,
-                idx: policy === LengthPolicy.TOTAL_LENGTH ? 1 : 4,
-                byte_pos: lengthFieldPos,
-                byte_len: 4,
-                type: 'UINT32',
-                value: '',
-            },
-        },
-        common_fields: policy === LengthPolicy.TOTAL_LENGTH
+        fields: policy === LengthPolicy.TOTAL_LENGTH
             ? [
-                { name: '消息序列号', idx: 2, byte_pos: 8, byte_len: 4, type: 'UINT32', value: '' },
-                { name: '报文体长度', idx: 4, byte_pos: 14, byte_len: 4, type: 'UINT32', value: '' },
-                { name: '消息时间戳', idx: 5, byte_pos: 18, byte_len: 8, type: 'UINT64', value: '' },
+                { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+                { name: lengthFieldName, byte_pos: lengthFieldPos, byte_len: 4, type: 'UINT32', role: 'total_length' },
+                { name: '消息序列号', byte_pos: 8, byte_len: 4, type: 'UINT32', role: 'common' },
+                { name: '功能码', byte_pos: 12, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: '报文体长度', byte_pos: 14, byte_len: 4, type: 'UINT32', role: 'common' },
+                { name: '消息时间戳', byte_pos: 18, byte_len: 8, type: 'UINT64', role: 'common' },
             ]
             : [
-                { name: '消息总长度', idx: 1, byte_pos: 4, byte_len: 4, type: 'UINT32', value: '' },
-                { name: '消息序列号', idx: 2, byte_pos: 8, byte_len: 4, type: 'UINT32', value: '' },
-                { name: '消息时间戳', idx: 5, byte_pos: 18, byte_len: 8, type: 'UINT64', value: '' },
+                { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+                { name: '消息总长度', byte_pos: 4, byte_len: 4, type: 'UINT32', role: 'common' },
+                { name: '消息序列号', byte_pos: 8, byte_len: 4, type: 'UINT32', role: 'common' },
+                { name: '功能码', byte_pos: 12, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: lengthFieldName, byte_pos: lengthFieldPos, byte_len: 4, type: 'UINT32', role: 'body_length' },
+                { name: '消息时间戳', byte_pos: 18, byte_len: 8, type: 'UINT64', role: 'common' },
             ],
     };
 }
@@ -1270,6 +1263,10 @@ function normalizeEditorField(field, fallback = {}) {
 }
 
 function patternInfoV2ToEditorInfo(patternInfo) {
+    if (KitProxy.tcpPatternEditor && typeof KitProxy.tcpPatternEditor.normalizePatternInfo === 'function') {
+        return KitProxy.tcpPatternEditor.normalizePatternInfo(patternInfo);
+    }
+
     const editorInfo = {
         length_policy: normalizeLengthPolicy(patternInfo.length_policy),
         default_order: patternInfo.default_order || 'big',
@@ -1301,10 +1298,13 @@ function patternInfoV2ToEditorInfo(patternInfo) {
 }
 
 function patternInfoToEditorInfo(patternInfo) {
+    if (KitProxy.tcpPatternEditor && typeof KitProxy.tcpPatternEditor.normalizePatternInfo === 'function') {
+        return KitProxy.tcpPatternEditor.normalizePatternInfo(patternInfo || getDefaultTcpPatternInfo());
+    }
+
     if (patternInfo && Number(patternInfo.version) === 2 && Array.isArray(patternInfo.fields)) {
         return patternInfoV2ToEditorInfo(patternInfo);
     }
-
     return patternInfo || getDefaultTcpPatternInfo();
 }
 
@@ -1343,6 +1343,14 @@ function addGapFields(fields, headerBytes) {
 }
 
 function buildV2TcpPatternInfoFromEditor(editorInfo, lengthPolicy) {
+    if (KitProxy.tcpPatternEditor && typeof KitProxy.tcpPatternEditor.toPatternInfoV2 === 'function') {
+        const source = Object.assign({}, editorInfo || {});
+        if (lengthPolicy) {
+            source.length_policy = normalizeLengthPolicy(lengthPolicy);
+        }
+        return KitProxy.tcpPatternEditor.toPatternInfoV2(source);
+    }
+
     const policy = normalizeLengthPolicy(lengthPolicy || editorInfo.length_policy);
     const fields = [];
     const specialFields = editorInfo.special_fields || {};
@@ -1394,22 +1402,7 @@ function buildV2TcpPatternInfoFromEditor(editorInfo, lengthPolicy) {
 
 function buildTcpPatternModalInput(patternInfoText) {
     const patternInfo = patternInfoText ? patternInfoToEditorInfo(JSON.parse(patternInfoText)) : getDefaultTcpPatternInfo();
-    const inputPatternInfosMap = {};
-
-    inputPatternInfosMap.least_byte_len = patternInfo.least_byte_len;
-    inputPatternInfosMap.length_policy = patternInfo.length_policy;
-    inputPatternInfosMap.default_order = patternInfo.default_order;
-
-    const specialFields = patternInfo.special_fields;
-    if (specialFields) {
-        inputPatternInfosMap.special_fields = {};
-        Object.keys(specialFields).forEach(key => {
-            inputPatternInfosMap.special_fields[key] = createPatternField('', key, specialFields[key]);
-        });
-    }
-    inputPatternInfosMap.common_fields = patternInfo.common_fields || [];
-
-    return inputPatternInfosMap;
+    return patternInfo;
 }
 
 function openTcpPatternConfig(targetField, statusElement) {
@@ -1421,12 +1414,14 @@ function openTcpPatternConfig(targetField, statusElement) {
 }
 
 function bindTcpPatternTypeControls(selectElement, configButton, statusElement, initialPolicy = LengthPolicy.BODY_LENGTH) {
-    // 长度策略切换会清空已配置内容，这个规则在“新增服务”和“编辑服务”里保持一致。
+    // V2 长度策略在 config-pattern-modal 内维护；这个函数保留给旧调用点绑定“配置”按钮。
     let previousLengthPolicy = normalizeLengthPolicy(initialPolicy);
-    selectElement.value = previousLengthPolicy;
+    if (selectElement) {
+        selectElement.value = previousLengthPolicy;
+    }
     configButton.dataset.lengthPolicy = previousLengthPolicy;
 
-    selectElement.addEventListener('change', function() {
+    selectElement?.addEventListener('change', function() {
         const policy = normalizeLengthPolicy(this.value, '');
         const targetField = configButton;
 
@@ -1447,7 +1442,7 @@ function bindTcpPatternTypeControls(selectElement, configButton, statusElement, 
         configButton.disabled = !policy;
     });
 
-    configButton.disabled = !selectElement.value;
+    configButton.disabled = false;
     configButton.addEventListener('click', function() {
         openTcpPatternConfig(configButton, statusElement);
     });
@@ -1456,16 +1451,10 @@ function bindTcpPatternTypeControls(selectElement, configButton, statusElement, 
 function tcpPatternControlHTML() {
     return `
         <div class="pattern-header">
-            <label for="pattern-type">长度策略</label>
+            <label for="pattern-infos">TCP格式</label>
             <scan class="import-status" id="first-pattern-import-status" style="display: none">格式已设置</scan>
         </div>
         <div class="pattern-container">
-            <select id="pattern-type" required>
-                <option value="">请选择长度策略</option>
-                <option value="${LengthPolicy.BODY_LENGTH}">${LengthPolicyStr[LengthPolicy.BODY_LENGTH]}</option>
-                <option value="${LengthPolicy.TOTAL_LENGTH}">${LengthPolicyStr[LengthPolicy.TOTAL_LENGTH]}</option>
-                <option value="${LengthPolicy.NO_LENGTH}">${LengthPolicyStr[LengthPolicy.NO_LENGTH]}</option>
-            </select>
             <button type="button" class="pattern-config-btn" id="pattern-infos">配置</button>
         </div>
     `;
@@ -1527,7 +1516,8 @@ function renderServiceEndpointControl(formContainer, mode) {
         portControl.className = 'form-group port-control';
         portControl.innerHTML = `
             <label for="service-port">监听端口</label>
-            <input type="number" id="service-port" min="1" max="65535" placeholder="1-65535" required>
+            <input type="number" id="service-port" value="0" disabled>
+            <div class="path-hint">新增后默认未开启，启动时由后端自动分配监听端口</div>
         `;
         formContainer.appendChild(portControl);
     } else if (mode === ProjectMode.CLIENT) {
@@ -1603,11 +1593,7 @@ function collectAddServicePayload(modal) {
     }
 
     if (serviceMode === ProjectMode.SERVER) {
-        const portInput = modal.querySelector('#service-port');
-        servicePort = portInput ? Number(portInput.value) : 0;
-        if(!KitProxy.utils.validatePort(servicePort)) {
-            throw new Error('监听端口必须是 1-65535 的整数');
-        }
+        servicePort = 0;
     } else if (serviceMode === ProjectMode.CLIENT) {
         const addressInput = modal.querySelector('#target-address');
 
@@ -1700,6 +1686,37 @@ async function updateProjectName(id_str, tilte_name) {
     await delay(500);
     hideLoading(loading);
     return true;
+}
+
+async function setProjectActiveReq(projectId, active) {
+    try {
+        return await KitProxy.api.setProjectActive(projectId, active);
+    } catch (error) {
+        console.error(active ? '启动测试服务请求失败:' : '停止测试服务请求失败:', error.message);
+        throw error;
+    }
+}
+
+function mergeProjectRuntimeState(projectId, runtimeData, active) {
+    const project = currentPageProjects.find(item => Number(item.id) === Number(projectId));
+    if (!project) return null;
+
+    project.active = active ? 1 : 0;
+    if (runtimeData && Object.prototype.hasOwnProperty.call(runtimeData, 'listen_port')) {
+        project.listen_port = runtimeData.listen_port;
+    } else if (!active && Number(project.mode) === ProjectMode.SERVER) {
+        project.listen_port = 0;
+    }
+
+    return project;
+}
+
+async function setProjectActive(projectId, active) {
+    const runtimeData = await setProjectActiveReq(projectId, active);
+    return mergeProjectRuntimeState(projectId, runtimeData || {}, active) || Object.assign({}, runtimeData || {}, {
+        id: projectId,
+        active: active ? 1 : 0,
+    });
 }
 
 // 添加测试服务 http请求
@@ -1863,18 +1880,22 @@ async function addProject(project) {
  * @param {any} port
  * @param {number} mode
  */
-function serviceCardHTML(id, name, protocol, port, mode, status = false, ctime = '', targetIp = '') {
+function serviceCardHTML(id, name, protocol, port, mode, active = false, ctime = '', targetIp = '') {
     const project = {
         id,
         protocol_type: protocol,
+        mode,
+        listen_port: port,
+        target_ip: targetIp,
+        active: active ? 1 : 0,
     };
     const escape = KitProxy.utils.escapeHTML;
     const displayName = name || `默认测试服务${id}`;
     const endpointLabel = mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
-    const endpointValue = mode === ProjectMode.SERVER ? port || '未设置' : targetIp || '未设置';
+    const endpointValue = getProjectEndpointDisplay(project);
     const protocolText = ProtocolTypeStr[protocol] || '未知协议';
     const modeText = ProjectModeStr[mode] || '未知模式';
-    const statusText = status ? '开启' : '未开启';
+    const statusText = getProjectRuntimeStatusText(project);
     const createTime = ctime || '未知';
 
     return `
@@ -1906,10 +1927,10 @@ function serviceCardHTML(id, name, protocol, port, mode, status = false, ctime =
                         <span class="meta-label">${escape(endpointLabel)}</span>
                         <span class="meta-value field-value">${escape(endpointValue)}</span>
                     </span>
-                    <span class="service-meta-item service-detail-chip project-status">
+                    <button type="button" class="service-meta-item service-detail-chip project-status service-active-toggle" data-next-active="${active ? '0' : '1'}" aria-label="${active ? '停止测试服务' : '启动测试服务'}">
                         <span class="meta-label">状态</span>
-                        <span class="meta-value field-value status ${status ? 'status-active' : 'status-inactive'}">${escape(statusText)}</span>
-                    </span>
+                        <span class="meta-value field-value status ${active ? 'status-active' : 'status-inactive'}">${escape(statusText)}</span>
+                    </button>
                     ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
                 </div>
             </div>
@@ -1947,10 +1968,27 @@ function updateServiceCard(id_str, project) {
     // serviceCard.querySelector(".project-protocol-cnt .field-value").textContent = project.protocol_cnt || '0';
     // TODO: 待考虑 是否能修改
 
+    serviceCard.dataset.active = String(isProjectActive(project) ? 1 : 0);
+
+    const endpointValue = serviceCard.querySelector(project.mode === ProjectMode.SERVER
+        ? '.project-listen-port .field-value'
+        : '.project-target-ip .field-value');
+    if (endpointValue) {
+        endpointValue.textContent = getProjectEndpointDisplay(project);
+    }
+
+    const statusButton = serviceCard.querySelector('.project-status.service-active-toggle');
+    if (statusButton) {
+        statusButton.dataset.nextActive = isProjectActive(project) ? '0' : '1';
+        statusButton.setAttribute('aria-label', isProjectActive(project) ? '停止测试服务' : '启动测试服务');
+        statusButton.disabled = false;
+        statusButton.classList.remove('is-busy');
+    }
+
     const statusValue = serviceCard.querySelector(".project-status .field-value");
     if (statusValue) {
-        statusValue.textContent = project.status === 1 ? '开启' : '未开启';
-        statusValue.className = `meta-value field-value status ${project.status === 1 ? 'status-active' : 'status-inactive'}`;
+        statusValue.textContent = getProjectRuntimeStatusText(project);
+        statusValue.className = `meta-value field-value status ${isProjectActive(project) ? 'status-active' : 'status-inactive'}`;
     }
     
 }
@@ -2005,6 +2043,31 @@ function bindOpenProtocolItemsAction(serviceCard, project) {
             window.location.href = targetUrl;
         });
     }
+}
+
+function bindServiceActiveToggle(serviceCard, project) {
+    const toggleButton = serviceCard.querySelector('.service-active-toggle');
+    if (!toggleButton) return;
+
+    toggleButton.addEventListener('click', async function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const projectId = Number(project.id);
+        const nextActive = toggleButton.dataset.nextActive === '1';
+        const actionText = nextActive ? '启动' : '停止';
+        toggleButton.disabled = true;
+        toggleButton.classList.add('is-busy');
+
+        try {
+            const nextProject = await setProjectActive(projectId, nextActive);
+            updateServiceCard(serviceCard.id, Object.assign({}, project, nextProject));
+        } catch (error) {
+            alert(`${actionText}测试服务失败：${error.message}`);
+            toggleButton.disabled = false;
+            toggleButton.classList.remove('is-busy');
+        }
+    });
 }
 
 function bindServiceDeleteAction(serviceCard) {
@@ -2063,8 +2126,9 @@ function addServiceCard(project, pos = -1) {
     const serviceCard = document.createElement('div');
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
+    serviceCard.dataset.active = String(isProjectActive(project) ? 1 : 0);
 
-    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, project.status, project.ctime, project.target_ip);
+    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, isProjectActive(project), project.ctime, project.target_ip);
 
     const titleElement = serviceCard.querySelector('.service-title');
     if (titleElement && KitProxy.utils.bindInlineTitleEditor) {
@@ -2078,6 +2142,7 @@ function addServiceCard(project, pos = -1) {
     }
 
     ProtocolTypeRegistry.bindServiceExtraActions(serviceCard, project);
+    bindServiceActiveToggle(serviceCard, project);
     bindOpenProtocolItemsAction(serviceCard, project);
     bindServiceDeleteAction(serviceCard);
     insertServiceCard(serviceCard, pos);

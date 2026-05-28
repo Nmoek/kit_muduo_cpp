@@ -126,6 +126,40 @@ describe('V1 utils', () => {
         expect(JSON.parse(formData.get('protocol_cfg_header')).name).toBe('接口1');
         expect(JSON.parse(formData.get('protocol_req_cfg')).path).toBe('/api/test');
         expect(formData.get('protocol_req_body')).toBe('{"a":1}');
+        expect(formData.has('protocol_resp_body')).toBe(true);
+        expect(formData.get('protocol_resp_body')).toBe('');
+    });
+
+    /**
+     * 测试思路：后端新增协议 multipart 解析要求 req/resp body 的 name 必须存在，即使业务上未配置 Body。
+     * 示例：请求和响应 Body 都为空时，FormData 仍包含 protocol_req_body/protocol_resp_body，值为空字符串。
+     */
+    it('新增协议项空 Body 仍保留 multipart body 字段名', () => {
+        const formData = context.KitProxy.utils.createAddProtocolFormData({
+            cfg_header: {
+                name: '空Body接口',
+                type: 'HTTP',
+                project_id: 1,
+                req_body_type: 'json',
+                resp_body_type: 'json',
+            },
+            req_cfg: {
+                method: 'GET',
+                path: '/api/empty',
+                headers: {},
+            },
+            resp_cfg: {
+                status_code: 200,
+                headers: {},
+            },
+            request_body: '',
+            response_body: '',
+        });
+
+        expect(formData.has('protocol_req_body')).toBe(true);
+        expect(formData.has('protocol_resp_body')).toBe(true);
+        expect(formData.get('protocol_req_body')).toBe('');
+        expect(formData.get('protocol_resp_body')).toBe('');
     });
 
     it('escapeHTML 转义 HTML 特殊字符', () => {
@@ -208,6 +242,58 @@ describe('V1 config and API layer', () => {
 
         expect(projects[0].name).toBe('新增服务');
         expect(projects[0].listen_port).toBe(18080);
+        expect(projects[0].status).toBe(1);
+        expect(projects[0].active).toBe(0);
+    });
+
+    /**
+     * 测试思路：服务启停由 active 表示，Mock 启动时模拟分配端口，停止时 active 回到 0。
+     * 示例：新增服务器模式服务 listen_port=0，启动后获得端口，停止后页面可显示“未开启”。
+     */
+    it('mock 模式 setProjectActive 更新 active 和监听端口', async () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const addResult = await context.KitProxy.api.addProject({
+            name: '待启动服务',
+            mode: 1,
+            protocol_type: 1,
+            listen_port: 0,
+            target_ip: '',
+            pattern_info: {},
+        });
+
+        const started = await context.KitProxy.api.setProjectActive(addResult.project_id, true);
+        expect(started.active).toBe(1);
+        expect(started.listen_port).toBeGreaterThan(0);
+
+        const stopped = await context.KitProxy.api.setProjectActive(addResult.project_id, false);
+        expect(stopped.active).toBe(0);
+        expect(stopped.listen_port).toBe(0);
+    });
+
+    /**
+     * 测试思路：Real API 启停只走 /projects/{id}/status?operation=1|0，不发送 JSON body。
+     * 示例：启动传 operation=1，停止传 operation=0。
+     */
+    it('real 模式 setProjectActive 调用后端启停入口', async () => {
+        const context = createBrowserContext('');
+        loadCoreScripts(context);
+        context.fetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({ code: 0, data: { listen_port: 18080 } }),
+        });
+
+        await context.KitProxy.api.setProjectActive(7, true);
+        expect(context.fetch).toHaveBeenLastCalledWith('/projects/7/status?operation=1', {
+            method: 'POST',
+        });
+
+        await context.KitProxy.api.setProjectActive(7, false);
+        expect(context.fetch).toHaveBeenLastCalledWith('/projects/7/status?operation=0', {
+            method: 'POST',
+        });
     });
 
     it('mock 服务列表支持 offset 和 limit 分页切片', async () => {
@@ -377,14 +463,18 @@ describe('V1.2 pagination and protocol registry', () => {
 });
 
 describe('V1.3 service filters and body editor', () => {
-    it('服务筛选支持状态、协议种类和日期范围', () => {
+    /**
+     * 测试思路：服务运行态筛选必须看 active，而 status 只代表软删除有效性。
+     * 示例：status 都是 1 时，只有 active=1 的 HTTP 服务能命中“开启 + HTTP + 日期”组合。
+     */
+    it('服务筛选支持 active 运行态、协议种类和日期范围', () => {
         const context = createBrowserContext('?apiMode=mock');
         loadCoreScripts(context);
 
         const projects = [
-            { id: 1, protocol_type: 1, status: 1, ctime: '2025-08-11 07:55:15' },
-            { id: 2, protocol_type: 2, status: 0, ctime: '2025-08-12 07:55:15' },
-            { id: 3, protocol_type: 1, status: 0, ctime: '' },
+            { id: 1, protocol_type: 1, status: 1, active: 1, ctime: '2025-08-11 07:55:15' },
+            { id: 2, protocol_type: 2, status: 1, active: 0, ctime: '2025-08-12 07:55:15' },
+            { id: 3, protocol_type: 1, status: 1, active: 0, ctime: '' },
         ];
 
         expect(context.KitProxy.serviceFilters.apply(projects, {
@@ -485,59 +575,210 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         runScript(context, 'js/main.js');
     });
 
-    it('TCP Pattern 普通字段能排序并自动计算 byte_pos', () => {
+    /**
+     * 测试思路：V2 字段以 byte_pos 为唯一位置索引，不再依赖 idx。
+     * 示例：byte_pos=2 的字段应排在 byte_pos=4 的字段前面，序列化后仍输出 V2 fields。
+     */
+    it('TCP Pattern V2 普通字段按 byte_pos 排序并输出 fields', () => {
         const editor = context.KitProxy.tcpPatternEditor;
         const sorted = editor.sortPatternFields([
-            { name: 'b', idx: 2, byte_len: 4, type: 'UINT32' },
-            { name: 'a', idx: 1, byte_len: 2, type: 'UINT16' },
+            { name: 'b', byte_pos: 4, byte_len: 4, type: 'UINT32', role: 'common' },
+            { name: 'a', byte_pos: 2, byte_len: 2, type: 'UINT16', role: 'common' },
         ]);
         expect(sorted.map(field => field.name)).toEqual(['a', 'b']);
 
         const serialized = editor.serializePatternInfo({
-            least_byte_len: 0,
-            special_fields: {},
-            common_fields: sorted,
+            version: 2,
+            header_bytes: 8,
+            byte_order: 'big',
+            length_policy: 'no_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 1, type: 'UINT8', role: 'start_magic', match: 'H02' },
+                { name: '功能码', byte_pos: 1, byte_len: 1, type: 'UINT8', role: 'function_code' },
+                ...sorted,
+            ],
         });
-        expect(serialized.common_fields.map(field => field.byte_pos)).toEqual([0, 2]);
+        expect(serialized.fields.map(field => field.byte_pos)).toEqual([0, 1, 2, 4]);
+        expect(serialized.fields.some(field => Object.prototype.hasOwnProperty.call(field, 'idx'))).toBe(false);
     });
 
-    it('TCP Pattern 校验拦截空名称、非法 byte_len 和非法 idx', () => {
+    /**
+     * 测试思路：V2 校验应拦截缺名称、非法 byte_pos、非法 byte_len 和缺失必需角色。
+     * 示例：一个空字段不能通过，也不应再出现 idx 相关错误文案。
+     */
+    it('TCP Pattern V2 校验拦截空名称、非法 byte_pos 和非法 byte_len', () => {
         const validation = context.KitProxy.tcpPatternEditor.validatePatternInfo({
-            least_byte_len: 0,
-            special_fields: {},
-            common_fields: [
-                { name: '', idx: 'x', byte_len: 0, type: '' },
+            version: 2,
+            header_bytes: 0,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: '', byte_pos: 'x', byte_len: 0, type: '', role: 'common' },
             ],
         });
 
         expect(validation.valid).toBe(false);
         expect(validation.errors.join('\n')).toContain('字段名称不能为空');
-        expect(validation.errors.join('\n')).toContain('idx');
+        expect(validation.errors.join('\n')).toContain('Byte 起始位置');
         expect(validation.errors.join('\n')).toContain('Byte 长度');
+        expect(validation.errors.join('\n')).not.toContain('idx');
     });
 
-    it('TCP Pattern 序列化保持 least_byte_len/special_fields/common_fields 结构', () => {
+    /**
+     * 测试思路：项目 TCP 格式提交必须是 JSON V2，不能再把 legacy 字段带到 payload。
+     * 示例：start_magic 使用 match，fields 内不含 idx，根对象不含 least_byte_len/special_fields/common_fields。
+     */
+    it('TCP Pattern 序列化输出 JSON V2 且不包含 legacy 字段', () => {
         const serialized = context.KitProxy.tcpPatternEditor.serializePatternInfo({
-            least_byte_len: 8,
-            special_fields: {
-                start_magic_num_field: {
-                    name: '开始魔数',
-                    idx: 0,
-                    byte_pos: 0,
-                    byte_len: 4,
-                    type: 'UINT32',
-                    value: 'H01020304',
-                },
-            },
-            common_fields: [
-                { name: '字段1', idx: 0, byte_len: 2, type: 'UINT16', value: '' },
+            version: 2,
+            header_bytes: 8,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: '开始魔数', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H01020304' },
+                { name: '功能码', byte_pos: 4, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: '长度', byte_pos: 6, byte_len: 2, type: 'UINT16', role: 'body_length' },
             ],
         });
 
-        expect(Object.keys(serialized)).toEqual(['length_policy', 'default_order', 'least_byte_len', 'special_fields', 'common_fields']);
-        expect(serialized.least_byte_len).toBe(8);
-        expect(serialized.special_fields.start_magic_num_field.byte_pos).toBe(0);
-        expect(serialized.common_fields[0].byte_pos).toBe(0);
+        expect(Object.keys(serialized)).toEqual(['version', 'header_bytes', 'byte_order', 'length_policy', 'fields']);
+        expect(serialized.header_bytes).toBe(8);
+        expect(serialized.fields[0].match).toBe('H01020304');
+        expect(serialized.fields.some(field => Object.prototype.hasOwnProperty.call(field, 'idx'))).toBe(false);
+        expect(serialized).not.toHaveProperty('least_byte_len');
+        expect(serialized).not.toHaveProperty('special_fields');
+        expect(serialized).not.toHaveProperty('common_fields');
+    });
+
+    /**
+     * 测试思路：config-pattern-modal 内部承担长度策略选择和 V2 字段编辑。
+     * 示例：弹窗应有 length_policy 下拉框，不再有“最小解析长度”；固定值不单开输入列，而是在操作列冒泡填写。
+     */
+    it('config-pattern-modal 内置长度策略、移除最小解析长度并用操作列填写固定值', () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '项目格式字段', {
+            version: 2,
+            header_bytes: 7,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+                { name: '功能码', byte_pos: 4, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: '长度', byte_pos: 6, byte_len: 1, type: 'UINT8', role: 'body_length' },
+            ],
+        }, null, true);
+
+        const modal = context.document.querySelector('.config-pattern-modal');
+        expect(modal.querySelector('.pattern-length-policy')).toBeTruthy();
+        expect(modal.querySelector('.pattern-least-length')).toBeNull();
+        expect(modal.classList.contains('is-project-pattern')).toBe(true);
+        expect(modal.querySelector('.pattern-field-grid-labels').textContent).not.toContain('match');
+        expect(modal.querySelector('.pattern-field-grid-labels').textContent).not.toContain('固定值');
+
+        const firstField = modal.querySelector('.pattern-field-container');
+        const byteLenInput = firstField.querySelector('.pattern-field-byte-len');
+        const typeSelect = firstField.querySelector('.pattern-field-type');
+        const fixedValueButton = firstField.querySelector('.pattern-fixed-value-btn');
+        expect(byteLenInput.readOnly).toBe(true);
+        expect(fixedValueButton.hidden).toBe(false);
+        expect(firstField.querySelector('.pattern-field-value').value).toBe('H23232323');
+        expect(firstField.querySelector('.pattern-hex-prefix').textContent).toBe('H');
+        expect(firstField.querySelector('.pattern-value-editor-input').value).toBe('23 23 23 23');
+
+        fixedValueButton.click();
+        const popover = firstField.querySelector('.pattern-fixed-value-popover');
+        expect(popover).toBeTruthy();
+        expect(popover.querySelector('label').textContent).toBe('固定值');
+        expect(popover.querySelector('.pattern-hex-prefix').textContent).toBe('H');
+        expect(popover.querySelector('.pattern-fixed-value-hex-digits').placeholder).toBe('00 00 00 00');
+        popover.querySelector('.pattern-fixed-value-hex-digits').value = '01020304FF';
+        popover.querySelector('.pattern-fixed-value-hex-digits').dispatchEvent(new context.Event('input', { bubbles: true }));
+        popover.querySelector('.pattern-fixed-value-save').click();
+        expect(firstField.querySelector('.pattern-field-value').value).toBe('H01020304');
+        expect(firstField.querySelector('.pattern-value-editor-input').value).toBe('01 02 03 04');
+        expect(firstField.querySelector('.pattern-fixed-value-popover')).toBeNull();
+
+        typeSelect.value = 'UINT16';
+        typeSelect.dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(byteLenInput.value).toBe('2');
+    });
+
+    /**
+     * 测试思路：字节布局预览只显示字段名称、类型和长度，角色通过颜色区分。
+     * 示例：start_magic/function_code/body_length 三种角色分别带不同 role-* class，不直接显示 role 字符串。
+     */
+    it('字节布局预览隐藏 role 文本并按角色添加颜色 class', () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '项目格式字段', {
+            version: 2,
+            header_bytes: 7,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+                { name: '功能码', byte_pos: 4, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: '长度', byte_pos: 6, byte_len: 1, type: 'UINT8', role: 'body_length' },
+            ],
+        }, null, true);
+
+        const blocks = Array.from(context.document.querySelectorAll('.pattern-byte-block'));
+        expect(blocks[0].classList.contains('role-start-magic')).toBe(true);
+        expect(blocks[1].classList.contains('role-function-code')).toBe(true);
+        expect(blocks[2].classList.contains('role-body-length')).toBe(true);
+        expect(blocks.map(block => block.textContent).join('\n')).not.toContain('start_magic');
+        expect(blocks.map(block => block.textContent).join('\n')).not.toContain('function_code');
+        expect(blocks.map(block => block.textContent).join('\n')).toContain('UINT32 · 4 Byte');
+    });
+
+    /**
+     * 测试思路：字段值按钮只切换显示态，提交语义仍然保持 H 开头 wire hex。
+     * 示例：H313233 的 STR 字段显示真值为 123，再切回时仍是 H313233。
+     */
+    it('pattern-field-value-display-btn 支持 STR 真值显示和切回 wire hex', () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '协议项字段', {
+            version: 2,
+            header_bytes: 3,
+            byte_order: 'raw',
+            length_policy: 'no_length',
+            fields: [
+                { name: '字符串字段', byte_pos: 0, byte_len: 3, type: 'STR', role: 'common', value: 'H313233' },
+            ],
+        }, null, false);
+
+        const field = context.document.querySelector('.pattern-field-container');
+        const input = field.querySelector('.pattern-field-value');
+        const editor = field.querySelector('.pattern-value-editor-input');
+        const button = field.querySelector('.pattern-field-value-display-btn');
+        const byteLen = field.querySelector('.pattern-field-byte-len');
+
+        expect(byteLen.value).toBe('3');
+        expect(field.querySelector('.pattern-hex-prefix').textContent).toBe('H');
+        expect(editor.placeholder).toBe('00 00 00');
+        expect(editor.value).toBe('31 32 33');
+        editor.value = '31323344';
+        editor.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(input.value).toBe('H313233');
+        expect(editor.value).toBe('31 32 33');
+        expect(button.classList.contains('value-display-hex')).toBe(true);
+
+        button.click();
+        expect(button.textContent).toBe('S');
+        expect(input.value).toBe('123');
+        expect(editor.value).toBe('123');
+        expect(button.classList.contains('value-display-str')).toBe(true);
+
+        button.click();
+        expect(button.textContent).toBe('H');
+        expect(input.value).toBe('H313233');
+        expect(editor.value).toBe('31 32 33');
+        expect(byteLen.value).toBe('3');
     });
 
     it('Body 高亮生成 JSON/XML token，并对 Text 只转义', () => {
@@ -650,6 +891,33 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         expect(card.dataset.protocolItemsUrl).toBe('protocol_items.html?apiMode=mock&projectId=1');
         expect(navigatedUrl).toBe('protocol_items.html?apiMode=mock&projectId=1');
     });
+
+    /**
+     * 测试思路：服务卡片状态按钮应调用 setProjectActive，并用返回端口刷新卡片。
+     * 示例：active=0 的服务器模式服务点击后变为“开启”，监听端口显示 Mock 返回值。
+     */
+    it('服务卡片状态开关调用 setProjectActive 并刷新 active 与端口', async () => {
+        const project = {
+            id: 9,
+            name: '待启动服务',
+            protocol_type: context.ProtocolType.HTTP,
+            listen_port: 0,
+            mode: context.ProjectMode.SERVER,
+            status: 1,
+            active: 0,
+            ctime: '2025-08-11 07:55:15',
+        };
+        const setActive = vi.spyOn(context.KitProxy.api, 'setProjectActive')
+            .mockResolvedValue({ active: 1, listen_port: 39009 });
+
+        const card = context.addServiceCard(project);
+        card.querySelector('.service-active-toggle').click();
+        await flushPromises(8);
+
+        expect(setActive).toHaveBeenCalledWith(9, true);
+        expect(card.querySelector('.project-status .field-value').textContent).toBe('开启');
+        expect(card.querySelector('.project-listen-port .field-value').textContent).toBe('39009');
+    });
 });
 
 describe('V1.5 protocol item form page and compact cards', () => {
@@ -692,6 +960,52 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         expect(addButton.dataset.protocolItemFormUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
         expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
+    });
+
+    /**
+     * 测试思路：active 只表示服务运行态，不应阻止协议项配置维护。
+     * 示例：Mock projectId=2 active=0，初始化后新增按钮仍可进入协议项表单。
+     */
+    it('协议项管理页未开启服务时仍允许新增协议项', async () => {
+        const dom = new JSDOM(`<!doctype html><html><body>
+            <button id="add-protocol-item" disabled>添加协议项</button>
+            <a id="back-service-list"></a>
+            <h2 id="protocol-items-title"></h2>
+            <div id="protocol-page-error"></div>
+            <div class="protocol-items-page">
+                <div id="protocol-service-meta"></div>
+                <div class="protocol-list"></div>
+                <div id="protocol-pagination"></div>
+            </div>
+        </body></html>`, {
+            url: 'http://localhost/html/protocol_items.html?apiMode=mock&projectId=2',
+        });
+        const context = vm.createContext(dom.window);
+        context.console = console;
+        context.fetch = vi.fn();
+        context.TextEncoder = TextEncoder;
+        context.TextDecoder = TextDecoder;
+
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+
+        await context.KitProxy.protocolItemsPage.initPage?.();
+        await flushPromises(12);
+
+        const addButton = context.document.getElementById('add-protocol-item');
+        let targetUrl = '';
+        addButton.addEventListener('protocol-items:navigate-create', event => {
+            event.preventDefault();
+            targetUrl = event.detail.url;
+        });
+        addButton.click();
+
+        expect(addButton.disabled).toBe(false);
+        expect(addButton.dataset.protocolItemFormUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=2');
+        expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=2');
+        expect(context.document.querySelector('#protocol-service-meta .status-inactive').textContent.trim()).toBe('未开启');
     });
 
     it('协议项管理页分页条支持每页数量切换', async () => {
@@ -824,19 +1138,22 @@ describe('V1.5 protocol item form page and compact cards', () => {
             id: 2,
             type: 'TCP',
             req_cfg: {
-                function_code_filed_value: 'H1000',
-                common_fields: [{ name: '字段1', idx: 1, byte_pos: 0, byte_len: 2, type: 'UINT16', value: '' }],
+                function_code: 'H1000',
+                fields: { 4: 'H00000001' },
             },
             resp_cfg: {
-                function_code_filed_value: 'H1080',
-                common_fields: [],
+                function_code: 'H1080',
+                fields: {},
             },
             req_body_status: 0,
             resp_body_status: 0,
         });
         context.document.body.appendChild(tcpGrid);
-        tcpGrid.querySelector('[data-field-name="function_code_filed_value"]').click();
-        tcpGrid.querySelector('[data-field-name="common_fields"]').click();
+        expect(tcpGrid.querySelector('[data-field-name="function_code"]')).toBeNull();
+        expect(tcpGrid.textContent).toContain('请求头部字段值');
+        expect(tcpGrid.textContent).toContain('响应头部字段值');
+        expect(tcpGrid.querySelectorAll('[data-field-name="fields"]').length).toBe(2);
+        tcpGrid.querySelector('[data-field-name="fields"]').click();
         expect(context.document.querySelector('.modal-overlay')).toBeNull();
     });
 
@@ -932,7 +1249,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(protocolItem.querySelector('[data-field-name="status_code"] .value').textContent).toBe('201');
     });
 
-    it('协议项 TCP function_code 使用行内编辑，common_fields 保持 modal', async () => {
+    it('协议项未开启服务时仍允许配置 TCP 头部字段值', async () => {
         const context = createBrowserContext('?apiMode=mock&projectId=2');
         loadCoreScripts(context);
         [
@@ -946,9 +1263,21 @@ describe('V1.5 protocol item form page and compact cards', () => {
         context.delay = function delayImmediately() {
             return Promise.resolve();
         };
+        const updateCfg = vi.spyOn(context.KitProxy.api, 'updateProtocolCfg');
+        vi.spyOn(context.KitProxy.api, 'getProtocolDetailsCfg').mockResolvedValue({
+            req_cfg: {
+                function_code: 'H1000',
+                fields: { 4: 'H00000001' },
+            },
+            resp_cfg: {
+                function_code: 'H1080',
+                fields: {},
+            },
+        });
 
         const root = context.document.createElement('div');
         root.id = 'service-card-2';
+        root.dataset.active = '0';
         root.innerHTML = '<div class="protocol-list"></div>';
         context.document.body.appendChild(root);
 
@@ -958,12 +1287,12 @@ describe('V1.5 protocol item form page and compact cards', () => {
             project_id: 2,
             type: 'TCP',
             req_cfg: {
-                function_code_filed_value: 'H1000',
-                common_fields: [{ name: '字段1', idx: 1, byte_pos: 0, byte_len: 2, type: 'UINT16', value: '' }],
+                function_code: 'H1000',
+                fields: { 4: 'H00000001' },
             },
             resp_cfg: {
-                function_code_filed_value: 'H1080',
-                common_fields: [],
+                function_code: 'H1080',
+                fields: {},
             },
             req_body_status: 0,
             resp_body_status: 0,
@@ -971,18 +1300,59 @@ describe('V1.5 protocol item form page and compact cards', () => {
             utime: '2025-12-02 06:01:03',
         });
 
-        protocolItem.querySelector('[data-field-name="function_code_filed_value"]').click();
-        expect(context.document.getElementById('new-function-code')).toBeNull();
-        expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .inline-field-editor')).toBeTruthy();
-        protocolItem.querySelector('[data-field-name="function_code_filed_value"] .inline-field-control').value = 'H2000';
-        protocolItem.querySelector('[data-field-name="function_code_filed_value"] .inline-field-save').click();
-        await flushPromises(8);
-        expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .value').textContent).toBe('H2000');
-        expect(protocolItem.querySelector('[data-field-name="function_code_filed_value"] .value').getAttribute('title')).toBe('H2000');
+        expect(protocolItem.querySelector('[data-field-name="function_code"]')).toBeNull();
+        expect(protocolItem.querySelector('[data-field-name="fields"] .value').textContent).toBe('已设置 2 个');
 
-        protocolItem.querySelector('[data-field-name="common_fields"]').click();
+        protocolItem.querySelector('[data-field-name="fields"]').click();
         await flushPromises(12);
-        expect(context.document.querySelector('.config-pattern-modal')).toBeTruthy();
+        const modal = context.document.querySelector('.config-pattern-modal');
+        expect(modal).toBeTruthy();
+        expect(modal.querySelector('.pattern-field-info-header').textContent).toContain('请求头部字段值');
+
+        const fieldNodes = Array.from(modal.querySelectorAll('.pattern-field-container'));
+        const functionNode = fieldNodes.find(node => node.querySelector('.pattern-field-role')?.value === 'function_code');
+        const commonNode = fieldNodes.find(node => Number(node.querySelector('.pattern-field-byte-pos')?.value) === 4);
+        const startNode = fieldNodes.find(node => node.querySelector('.pattern-field-role')?.value === 'start_magic');
+        const lengthNode = fieldNodes.find(node => node.querySelector('.pattern-field-role')?.value === 'body_length');
+        expect(functionNode).toBeTruthy();
+        expect(commonNode).toBeTruthy();
+        expect(startNode).toBeTruthy();
+        expect(lengthNode).toBeTruthy();
+        expect(startNode.querySelector('.pattern-value-editor-input').disabled).toBe(true);
+        expect(lengthNode.querySelector('.pattern-value-editor-input').disabled).toBe(true);
+        expect(functionNode.querySelector('.pattern-value-editor-input').disabled).toBe(false);
+        expect(commonNode.querySelector('.pattern-value-editor-input').disabled).toBe(false);
+        const previewText = Array.from(modal.querySelectorAll('.pattern-byte-block'))
+            .map(block => block.textContent)
+            .join('\n');
+        expect(previewText).toContain('H23232323');
+        expect(previewText).toContain('H1000');
+        expect(previewText).toContain('H00000001');
+        expect(previewText).not.toContain('UINT32 · 4 Byte');
+
+        functionNode.querySelector('.pattern-value-editor-input').value = '';
+        functionNode.querySelector('.pattern-value-editor-input').dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(modal.querySelector('.pattern-summary-item.is-error').textContent).toContain('校验状态');
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toContain('功能码必须配置');
+
+        functionNode.querySelector('.pattern-value-editor-input').value = '2000';
+        functionNode.querySelector('.pattern-value-editor-input').dispatchEvent(new context.Event('input', { bubbles: true }));
+        commonNode.querySelector('.pattern-value-editor-input').value = '00000002';
+        commonNode.querySelector('.pattern-value-editor-input').dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(modal.querySelector('.pattern-summary-item.is-ok').textContent).toContain('校验状态');
+        expect(modal.querySelector('.pattern-validation-errors').style.display).toBe('none');
+        modal.querySelector('#config-pattern-modal-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(12);
+
+        expect(updateCfg).toHaveBeenCalledWith(3, 2, 1, {
+            function_code: 'H2000',
+            fields: {
+                4: 'H00000002',
+            },
+        });
+        expect(protocolItem.querySelector('[data-field-name="fields"] .value').textContent).toBe('已设置 2 个');
+        expect(context.alert).not.toHaveBeenCalledWith('请先开启测试服务，再执行该操作');
     });
 
     it('表单页新增 HTTP payload 与 Body 切换状态保持一致', () => {
@@ -1029,6 +1399,27 @@ describe('V1.5 protocol item form page and compact cards', () => {
             context.document.getElementById('protocol-item-name').value = '新增HTTP';
             context.document.querySelector('input[name="request-method"][value="POST"]').checked = true;
             context.document.getElementById('request-path').value = '/api/new';
+            expect(context.document.querySelectorAll('.protocol-config-card')).toHaveLength(2);
+
+            context.document.getElementById('req-http-headers').click();
+            let headersModal = context.document.querySelector('.http-headers-modal');
+            expect(headersModal).toBeTruthy();
+            expect(headersModal.querySelector('.modal-header').textContent).toContain('配置请求 Headers');
+            headersModal.querySelector('.add-http-header-btn').click();
+            headersModal.querySelector('.http-header-name').value = 'X-Req';
+            headersModal.querySelector('.http-header-value').value = '1';
+            headersModal.querySelector('.confirm-btn').click();
+            expect(context.document.querySelector('.http-headers-modal')).toBeNull();
+
+            context.document.getElementById('resp-http-headers').click();
+            headersModal = context.document.querySelector('.http-headers-modal');
+            expect(headersModal).toBeTruthy();
+            expect(headersModal.querySelector('.modal-header').textContent).toContain('配置响应 Headers');
+            headersModal.querySelector('.add-http-header-btn').click();
+            headersModal.querySelector('.http-header-name').value = 'X-Resp';
+            headersModal.querySelector('.http-header-value').value = '2';
+            headersModal.querySelector('.confirm-btn').click();
+            expect(context.document.querySelector('.http-headers-modal')).toBeNull();
 
             const editor = state.bodyEditor;
             editor.setValue('{"req":true}');
@@ -1040,13 +1431,120 @@ describe('V1.5 protocol item form page and compact cards', () => {
             const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
 
             expect(payload.cfg_header.type).toBe('HTTP');
-            expect(payload.req_cfg).toEqual({ method: 'POST', path: '/api/new' });
-            expect(payload.resp_cfg).toEqual({ status_code: 200 });
+            expect(payload.req_cfg).toEqual({
+                method: 'POST',
+                path: '/api/new',
+                headers: { 'X-Req': '1' },
+            });
+            expect(payload.resp_cfg).toEqual({
+                status_code: '200',
+                headers: { 'X-Resp': '2' },
+            });
             expect(payload.cfg_header.req_body_type).toBe('json');
             expect(payload.cfg_header.resp_body_type).toBe('text');
             expect(payload.request_body).toBe('{"req":true}');
             expect(payload.response_body).toBe('ok');
         });
+    });
+
+    /**
+     * 测试思路：TCP 协议项表单提交新结构，只输出 { function_code, fields }。
+     * 示例：功能码在“头部字段值”中填写为 H1000，普通字段 byte_pos=4 的值为 H00000209，payload 不应含旧 function_code_filed_value/common_fields。
+     */
+    it('表单页新增 TCP payload 输出 function_code 和 fields', async () => {
+        const dom = new JSDOM(`<!doctype html><html><body>
+            <a id="back-protocol-list"></a>
+            <h2 id="protocol-form-title"></h2>
+            <p id="protocol-form-subtitle"></p>
+            <div id="protocol-form-error"></div>
+            <div id="protocol-form-project-context"></div>
+            <form id="protocol-item-form">
+                <input id="protocol-item-name">
+                <div id="protocol-type-fields"></div>
+                <button type="button" class="body-switch-btn is-active" data-body-tab="request">校验请求Body</button>
+                <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
+                <div id="protocol-body-editor-host"></div>
+                <button id="save-protocol-form" type="submit"></button>
+                <button id="cancel-protocol-form" type="button"></button>
+            </form>
+        </body></html>`, {
+            url: 'http://localhost/html/protocol_item_form.html?apiMode=mock&projectId=2',
+        });
+        const context = vm.createContext(dom.window);
+        context.console = console;
+        context.fetch = vi.fn();
+        context.TextEncoder = TextEncoder;
+        context.TextDecoder = TextDecoder;
+
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(8);
+
+        const state = context.KitProxy.protocolItemForm.pageState;
+        context.document.getElementById('protocol-item-name').value = '新增TCP';
+        expect(context.document.getElementById('req-function-code-value')).toBeNull();
+        expect(context.document.getElementById('resp-function-code-value')).toBeNull();
+        expect(context.document.getElementById('protocol-type-fields').textContent).toContain('校验请求头部字段值');
+        expect(context.document.getElementById('protocol-type-fields').textContent).toContain('目标响应头部字段值');
+
+        const reqFunctionField = state.reqPatternFields.find(field => field.role === 'function_code');
+        const respFunctionField = state.respPatternFields.find(field => field.role === 'function_code');
+        const reqCommonField = state.reqPatternFields.find(field => field.role === 'common' && Number(field.byte_pos) === 4);
+        const reqStartField = state.reqPatternFields.find(field => field.role === 'start_magic');
+        const reqLengthField = state.reqPatternFields.find(field => field.role === 'body_length');
+        expect(reqFunctionField).toBeTruthy();
+        expect(respFunctionField).toBeTruthy();
+        expect(reqCommonField).toBeTruthy();
+        expect(reqStartField.value).toBe('H23232323');
+        expect(reqStartField.value_editable).toBe(false);
+        expect(reqLengthField.value_editable).toBe(false);
+
+        reqFunctionField.value = 'H1000';
+        respFunctionField.value = 'H1080';
+        reqCommonField.value = 'H00000209';
+
+        const data = context.KitProxy.protocolItemForm.collectFormData();
+        const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
+
+        expect(payload.cfg_header.type).toBe('TCP');
+        expect(payload.req_cfg).toEqual({
+            function_code: 'H1000',
+            fields: { 4: 'H00000209' },
+        });
+        expect(payload.resp_cfg).toEqual({
+            function_code: 'H1080',
+            fields: {},
+        });
+        expect(payload.req_cfg).not.toHaveProperty('function_code_filed_value');
+        expect(payload.req_cfg).not.toHaveProperty('common_fields');
+    });
+
+    /**
+     * 测试思路：TCP item cfg 校验必须按项目 Pattern 中功能码和普通字段 byte_len 执行。
+     * 示例：功能码少 1 字节、普通字段 byte_pos=4 少 1 字节，都应失败。
+     */
+    it('TCP item cfg 校验拦截功能码和普通字段长度不匹配', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        runScript(context, 'js/tcp_pattern_modal.js');
+        const patternInfo = context.KitProxy.mocks.state.patternInfos[2];
+
+        const validation = context.KitProxy.tcpPatternEditor.validateTcpItemCfg(patternInfo, {
+            function_code: 'H10',
+            fields: { 4: 'H0209' },
+        });
+
+        expect(validation.valid).toBe(false);
+        expect(validation.errors.join('\n')).toContain('功能码字节数必须等于 2');
+        expect(validation.errors.join('\n')).toContain('字段值字节数必须等于 4');
     });
 
     it('表单页编辑模式只提交变更字段', async () => {
@@ -1101,7 +1599,11 @@ describe('V1.5 protocol item form page and compact cards', () => {
         await flushPromises(12);
 
         expect(updateName).toHaveBeenCalledWith(1, 'test1修改');
-        expect(updateCfg).toHaveBeenCalledWith(1, 1, 1, { method: 'GET', path: '/api/changed' });
+        expect(updateCfg).toHaveBeenCalledWith(1, 1, 1, {
+            method: 'GET',
+            path: '/api/changed',
+            headers: {},
+        });
         expect(updateCfg).toHaveBeenCalledTimes(1);
         expect(updateBody).not.toHaveBeenCalled();
     });

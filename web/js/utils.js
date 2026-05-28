@@ -557,10 +557,14 @@
     }
 
     function appendProtocolBodyData(formData, body, bodyType, bodyData) {
-        // 后端新增协议接口要求 req/resp body 使用不同字段名，不能合并成同一个 key。
-        if (!bodyData || bodyData.length <= 0) return;
-
+        // 新增协议接口要求 req/resp body 的 multipart name 即使内容为空也必须出现。
         const bodyKey = body === 1 ? 'protocol_req_body' : 'protocol_resp_body';
+        if (bodyData == null || String(bodyData).length <= 0) {
+            formData.append(bodyKey, '');
+            return;
+        }
+
+        // 后端新增协议接口要求 req/resp body 使用不同字段名，不能合并成同一个 key。
         let bodyValue = '';
 
         if (bodyType.includes('json')) {

@@ -6,32 +6,20 @@
         return JSON.parse(JSON.stringify(value));
     }
 
-    // 模拟后端中“项目 TCP 解析格式”的特殊字段配置。
-    const defaultSpecialFields = {
-        start_magic_num_field: {
-            name: '起始标识',
-            idx: 0,
-            byte_pos: 0,
-            byte_len: 4,
-            type: 'INT32',
-            value: 'H23232323',
-        },
-        body_length_field: {
-            name: '报文体长度',
-            idx: 4,
-            byte_pos: 14,
-            byte_len: 4,
-            type: 'UINT32',
-            value: '',
-        },
-        function_code_field: {
-            name: '功能码',
-            idx: 3,
-            byte_pos: 12,
-            byte_len: 2,
-            type: 'UINT16',
-            value: '',
-        },
+    // 模拟后端中“项目 TCP 解析格式”的 JSON V2 配置。
+    const defaultPatternInfo = {
+        version: 2,
+        header_bytes: 26,
+        byte_order: 'big',
+        length_policy: 'body_length',
+        fields: [
+            { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+            { name: '消息总长度', byte_pos: 4, byte_len: 4, type: 'UINT32', role: 'common' },
+            { name: '消息序列号', byte_pos: 8, byte_len: 4, type: 'UINT32', role: 'common' },
+            { name: '功能码', byte_pos: 12, byte_len: 2, type: 'UINT16', role: 'function_code' },
+            { name: '报文体长度', byte_pos: 14, byte_len: 4, type: 'UINT32', role: 'body_length' },
+            { name: '消息时间戳', byte_pos: 18, byte_len: 8, type: 'UINT64', role: 'common' },
+        ],
     };
 
     // V1 Mock 是浏览器内存态：刷新页面会还原，适合本地无后端时验证 UI 流程。
@@ -41,12 +29,13 @@
         projects: [
             {
                 id: 2,
-                listen_port: 2222,
+                listen_port: 0,
                 protocol_type: 2,
                 length_policy: 'body_length',
                 mode: 1,
                 name: 'test2222',
-                status: 0,
+                status: 1,
+                active: 0,
                 target_ip: '',
                 user_id: 1,
                 ctime: '2025-08-11 07:55:27',
@@ -57,7 +46,8 @@
                 protocol_type: 1,
                 mode: 1,
                 name: 'test1111',
-                status: 0,
+                status: 1,
+                active: 1,
                 target_ip: '',
                 user_id: 1,
                 ctime: '2025-08-11 07:55:15',
@@ -70,20 +60,19 @@
                 project_id: 2,
                 type: 'TCP',
                 req_cfg: {
-                    function_code_filed_value: 'H1000',
-                    common_fields: [
-                        { name: '消息总长度', idx: 1, byte_pos: 4, byte_len: 4, type: 'UINT32', value: 'H0209' },
-                        { name: '消息序列号', idx: 2, byte_pos: 8, byte_len: 4, type: 'UINT32', value: 'H0003' },
-                        { name: '消息时间戳', idx: 5, byte_pos: 18, byte_len: 8, type: 'UINT64', value: '' },
-                    ],
+                    function_code: 'H1000',
+                    fields: {
+                        4: 'H00000209',
+                        8: 'H00000003',
+                    },
                 },
                 resp_cfg: {
-                    function_code_filed_value: 'H1080',
-                    common_fields: [
-                        { name: '消息总长度', idx: 1, byte_pos: 4, byte_len: 4, type: 'UINT32', value: 'H02090000' },
-                        { name: '消息序列号', idx: 2, byte_pos: 8, byte_len: 4, type: 'UINT32', value: 'H00000003' },
-                        { name: '消息时间戳', idx: 5, byte_pos: 18, byte_len: 8, type: 'UINT64', value: 'HA86D9F9F9A010000' },
-                    ],
+                    function_code: 'H1080',
+                    fields: {
+                        4: 'H00000209',
+                        8: 'H00000003',
+                        18: 'HA86D9F9F9A010000',
+                    },
                 },
                 resp_body_status: 0,
                 resp_body_type: 'json',
@@ -100,9 +89,11 @@
                 req_cfg: {
                     method: 'GET',
                     path: '/api/test1',
+                    headers: {},
                 },
                 resp_cfg: {
                     status_code: 200,
+                    headers: {},
                 },
                 resp_body_status: 0,
                 resp_body_type: 'json',
@@ -119,11 +110,7 @@
             '2-2': { body_type: 'json', body_data: '' },
         },
         patternInfos: {
-            2: {
-                length_policy: 'body_length',
-                least_byte_len: 26,
-                special_fields: clone(defaultSpecialFields),
-            },
+            2: clone(defaultPatternInfo),
         },
     };
 
@@ -167,12 +154,15 @@
             // 尽量模拟真实后端“先添加再返回 id，再查单项”的交互方式。
             const created = Object.assign({
                 id: projectId,
-                status: 0,
+                status: 1,
+                active: 0,
                 user_id: 1,
                 ctime: nowText(),
             }, clone(project));
 
             created.id = projectId;
+            created.status = 1;
+            created.active = 0;
             state.projects.unshift(created);
 
             if (created.pattern_info) {
@@ -181,6 +171,26 @@
             }
 
             return { project_id: projectId };
+        },
+        setProjectActive(projectId, active) {
+            const project = findProject(projectId);
+            if (!project) return {};
+
+            project.active = active ? 1 : 0;
+            if (Number(project.mode) === 1) {
+                if (project.active) {
+                    project.listen_port = Number(project.listen_port) > 0
+                        ? Number(project.listen_port)
+                        : 30000 + Number(project.id);
+                } else {
+                    project.listen_port = 0;
+                }
+            }
+
+            return clone({
+                active: project.active,
+                listen_port: project.listen_port,
+            });
         },
         updateProjectName(projectId, name) {
             const project = findProject(projectId);
@@ -290,11 +300,7 @@
             return [body.body_type, encodeText(body.body_data)];
         },
         getProjectPatternInfo(projectId) {
-            return clone(state.patternInfos[projectId] || {
-                length_policy: 'body_length',
-                least_byte_len: 26,
-                special_fields: defaultSpecialFields,
-            });
+            return clone(state.patternInfos[projectId] || defaultPatternInfo);
         },
         updateProjectPatternInfo(projectId, patternInfo) {
             state.patternInfos[projectId] = clone(patternInfo || {});
@@ -309,12 +315,27 @@
             if (!protocol) return [];
 
             const cfg = Number(reqOrResp) === 1 ? protocol.req_cfg : protocol.resp_cfg;
-            return clone(cfg.common_fields || []);
+            if (Array.isArray(cfg.common_fields)) return clone(cfg.common_fields);
+
+            const patternInfo = state.patternInfos[protocol.project_id] || defaultPatternInfo;
+            return clone((patternInfo.fields || [])
+                .filter(field => field.role === 'common')
+                .map(field => Object.assign({}, field, {
+                    value: cfg.fields && cfg.fields[String(field.byte_pos)] ? cfg.fields[String(field.byte_pos)] : '',
+                })));
         },
         getAllPatternFields(projectId, protocolId, reqOrResp) {
+            const protocol = findProtocol(protocolId);
+            const cfg = protocol
+                ? (Number(reqOrResp) === 1 ? protocol.req_cfg : protocol.resp_cfg)
+                : {};
+            const patternInfo = this.getProjectPatternInfo(projectId);
+            const fields = KitProxy.tcpPatternEditor
+                ? KitProxy.tcpPatternEditor.patternInfoToItemFields(patternInfo, cfg)
+                : this.getTcpCommonFields(protocolId, reqOrResp);
             return [
-                this.getProjectPatternInfo(projectId),
-                this.getTcpCommonFields(protocolId, reqOrResp),
+                patternInfo,
+                fields,
             ];
         },
     };

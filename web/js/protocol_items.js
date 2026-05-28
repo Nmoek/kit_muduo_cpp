@@ -53,6 +53,25 @@
         return root ? root.querySelector('.protocol-list') : null;
     }
 
+    function isProjectActive(project) {
+        return Number(project && project.active) === 1;
+    }
+
+    function getProjectEndpointDisplay(project) {
+        if (!isProjectActive(project)) return '未开启';
+        if (Number(project.mode) === ProjectMode.SERVER) {
+            return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+        }
+        return project.target_ip || '未设置';
+    }
+
+    function setAddButtonState(project) {
+        const addBtn = document.getElementById('add-protocol-item');
+        if (!addBtn) return;
+        addBtn.disabled = !project;
+        addBtn.title = project ? '' : '请先选择测试服务';
+    }
+
     /**
      * @param {string} message
      */
@@ -94,6 +113,7 @@
         if (root) {
             root.id = `service-card-${project.id}`;
             root.dataset.protocolType = String(project.protocol_type);
+            root.dataset.active = String(isProjectActive(project) ? 1 : 0);
         }
 
         if (title) {
@@ -104,11 +124,10 @@
             backLink.href = buildMainPageUrl();
         }
 
-        if (addBtn) {
-            addBtn.disabled = false;
-        }
+        setAddButtonState(project);
 
         if (meta) {
+            const statusText = isProjectActive(project) ? '开启' : '未开启';
             meta.innerHTML = `
                 <div class="service-field project-protocol-type">
                     <span class="field-label">协议种类</span>
@@ -120,14 +139,14 @@
                 </div>
                 <div class="service-field project-${project.mode === ProjectMode.SERVER ? 'listen-port' : 'target-ip'}">
                     <span class="field-label">${project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口'}</span>
-                    <span class="field-value">${escape(project.mode === ProjectMode.SERVER ? project.listen_port : project.target_ip || '未设置')}</span>
+                    <span class="field-value">${escape(getProjectEndpointDisplay(project))}</span>
                 </div>
-                <div class="service-field project-status">
+                <button type="button" class="service-field project-status service-active-toggle" data-next-active="${isProjectActive(project) ? '0' : '1'}" aria-label="${isProjectActive(project) ? '停止测试服务' : '启动测试服务'}">
                     <span class="field-label">服务状态</span>
-                    <span class="field-value status ${project.status ? 'status-active' : 'status-inactive'}">
-                        ${escape(project.status ? '开启' : '未开启')}
+                    <span class="field-value status ${isProjectActive(project) ? 'status-active' : 'status-inactive'}">
+                        ${escape(statusText)}
                     </span>
-                </div>
+                </button>
                 ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
             `;
         }
@@ -135,6 +154,38 @@
         if (root) {
             ProtocolTypeRegistry.bindServiceExtraActions(root, project);
         }
+
+        bindProjectActiveToggle();
+    }
+
+    function bindProjectActiveToggle() {
+        const toggleButton = document.querySelector('#protocol-service-meta .service-active-toggle');
+        if (!toggleButton) return;
+
+        toggleButton.addEventListener('click', async function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!pageContext.project) return;
+
+            const nextActive = toggleButton.dataset.nextActive === '1';
+            toggleButton.disabled = true;
+            toggleButton.classList.add('is-busy');
+
+            try {
+                const runtimeData = await KitProxy.api.setProjectActive(pageContext.project.id, nextActive);
+                pageContext.project = Object.assign({}, pageContext.project, runtimeData || {}, {
+                    active: nextActive ? 1 : 0,
+                });
+                if (!nextActive && Number(pageContext.project.mode) === ProjectMode.SERVER) {
+                    pageContext.project.listen_port = 0;
+                }
+                renderProjectContext(pageContext.project);
+            } catch (error) {
+                alert(`${nextActive ? '启动' : '停止'}测试服务失败：${error.message}`);
+                toggleButton.disabled = false;
+                toggleButton.classList.remove('is-busy');
+            }
+        });
     }
 
     /**
@@ -240,7 +291,6 @@
                 alert('请先选择测试服务');
                 return;
             }
-
             const targetUrl = buildProtocolItemCreateUrl(pageContext.project.id);
             addBtn.dataset.protocolItemFormUrl = targetUrl;
             const navigateEvent = new CustomEvent('protocol-items:navigate-create', {

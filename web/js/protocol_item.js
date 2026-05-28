@@ -87,7 +87,7 @@ async function getSpecialPatternFields(projectId) {
         
         console.log('pattern_info: ', pattern_info);
         
-        return pattern_info.special_fields || [];
+        return pattern_info.fields || [];
     } catch (error) {
         console.error('获取特殊字段信息失败!');
         throw error;
@@ -97,13 +97,22 @@ async function getSpecialPatternFields(projectId) {
 async function getPatternFields(protocolId, req_or_resp) {
 
     try {
+        const protocolItem = document.getElementById(`protocol-item-${protocolId}`);
+        const projectId = ExtractId(protocolItem.dataset.projectId);
+        const [patternInfo, cfgInfo] = await Promise.all([
+            KitProxy.api.getProjectPatternInfo(projectId),
+            KitProxy.api.getProtocolDetailsCfg(protocolId),
+        ]);
+        const sideCfg = Number(req_or_resp) === 1
+            ? (cfgInfo && cfgInfo.req_cfg) || {}
+            : (cfgInfo && cfgInfo.resp_cfg) || {};
 
-        const [pattern_info, common_fields] = await getAllPatternFieldsReq(protocolId, req_or_resp)
-
-        return {
-            "special_fields": pattern_info.special_fields || [],
-            "common_fields": common_fields || [],
-        }
+        return Object.assign({}, patternInfo, {
+            item_value_scope: 'header',
+            fields: KitProxy.tcpPatternEditor.patternInfoToHeaderValueFields
+                ? KitProxy.tcpPatternEditor.patternInfoToHeaderValueFields(patternInfo, sideCfg)
+                : KitProxy.tcpPatternEditor.patternInfoToItemFields(patternInfo, sideCfg),
+        });
 
     } catch (error) {
         console.error('获取所有字段信息失败!');
@@ -122,18 +131,14 @@ var customTcpProtocolItemGrids = {
             : function(value) { return String(value == null ? '' : value); };
         const reqCfg = protocol.req_cfg || {};
         const respCfg = protocol.resp_cfg || {};
-        const reqCommonFields = Array.isArray(reqCfg.common_fields) ? reqCfg.common_fields : [];
-        const respCommonFields = Array.isArray(respCfg.common_fields) ? respCfg.common_fields : [];
-        const reqFunctionCode = reqCfg.function_code_filed_value || '';
-        const respFunctionCode = respCfg.function_code_filed_value || '';
+        const reqTcpCfg = KitProxy.tcpPatternEditor.normalizeTcpItemCfg(reqCfg);
+        const respTcpCfg = KitProxy.tcpPatternEditor.normalizeTcpItemCfg(respCfg);
+        const reqHeaderValueCount = (reqTcpCfg.function_code ? 1 : 0) + Object.keys(reqTcpCfg.fields || {}).length;
+        const respHeaderValueCount = (respTcpCfg.function_code ? 1 : 0) + Object.keys(respTcpCfg.fields || {}).length;
         grids.innerHTML = `
-            <div class="protocol-field req-cfg editable-field tcp-function-code" data-field-name="function_code_filed_value" title="点击编辑请求功能码">
-                <label><span class="field-label-text">请求功能码</span><span class="field-edit-hint">编辑</span></label>
-                <div class="value" title="${escape(reqFunctionCode)}">${escape(reqFunctionCode)}</div>
-            </div>
-            <div class="protocol-field req-cfg" data-field-name="common_fields">
-                <label><span class="field-label-main"><span class="header-fields-indicator ${reqCommonFields.length ? 'has' : 'no'}"></span><span class="field-label-text">请求头部字段</span></span></label>
-                <div class="value" id="${escape(protocol.id)}-header-fields">${reqCommonFields.length ? '已设置' : '未设置'}</div>
+            <div class="protocol-field req-cfg editable-field tcp-header-values" data-field-name="fields" title="点击配置请求头部字段值">
+                <label><span class="field-label-main"><span class="header-fields-indicator ${reqHeaderValueCount ? 'has' : 'no'}"></span><span class="field-label-text">请求头部字段值</span></span><span class="field-edit-hint">配置</span></label>
+                <div class="value" id="${escape(protocol.id)}-header-fields">${reqHeaderValueCount ? `已设置 ${reqHeaderValueCount} 个` : '未设置'}</div>
             </div>
 
             <div class="protocol-field request-body" data-field-name="request-body">
@@ -141,13 +146,9 @@ var customTcpProtocolItemGrids = {
                 <div class="value">${protocol.req_body_status === 1 ? '已设置' : '未设置'}</div>
             </div>
 
-            <div class="protocol-field resp-cfg editable-field tcp-function-code" data-field-name="function_code_filed_value" title="点击编辑响应功能码">
-                <label><span class="field-label-text">响应功能码</span><span class="field-edit-hint">编辑</span></label>
-                <div class="value" title="${escape(respFunctionCode)}">${escape(respFunctionCode)}</div>
-            </div>
-            <div class="protocol-field resp-cfg" data-field-name="common_fields">
-                <label><span class="field-label-main"><span class="header-fields-indicator ${respCommonFields.length ? 'has' : 'no'}"></span><span class="field-label-text">响应头部字段</span></span></label>
-                <div class="value">${respCommonFields.length ? '已设置' : '未设置'}</div>
+            <div class="protocol-field resp-cfg editable-field tcp-header-values" data-field-name="fields" title="点击配置响应头部字段值">
+                <label><span class="field-label-main"><span class="header-fields-indicator ${respHeaderValueCount ? 'has' : 'no'}"></span><span class="field-label-text">响应头部字段值</span></span><span class="field-edit-hint">配置</span></label>
+                <div class="value">${respHeaderValueCount ? `已设置 ${respHeaderValueCount} 个` : '未设置'}</div>
             </div>
             <div class="protocol-field response-body" data-field-name="response-body">
                 <label><span class="field-label-main"><span class="body-indicator ${protocol.resp_body_status === 1 ? 'has' : 'no'}"></span><span class="field-label-text">目标响应Body</span></span></label>

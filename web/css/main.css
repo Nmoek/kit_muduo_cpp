@@ -1566,6 +1566,29 @@ body {
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7);
 }
 
+button.service-detail-chip,
+button.service-field.service-active-toggle {
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+button.service-detail-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+button.service-field.service-active-toggle {
+    width: 100%;
+}
+
+.service-active-toggle.is-busy,
+.service-active-toggle:disabled {
+    cursor: wait;
+    opacity: 0.72;
+}
+
 .service-detail-chip .meta-label {
     padding-right: 7px;
     border-right: 1px solid #d9e6f5;
@@ -2911,7 +2934,7 @@ body {
 
 .protocol-form-grid {
     display: grid;
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
     align-items: start;
 }
@@ -2929,8 +2952,6 @@ body {
 }
 
 .protocol-name-group {
-    position: sticky;
-    top: 104px;
     align-self: start;
     padding: 16px;
     border: 1px solid var(--v13-border);
@@ -3034,6 +3055,168 @@ body {
     width: 100%;
     min-height: 38px;
     background: #fff;
+}
+
+.http-headers-modal {
+    width: min(760px, 96vw);
+    max-width: 96vw;
+    border: 1px solid var(--v13-border, #d9e6f5);
+    border-radius: var(--v13-radius, 8px);
+    background: #fff;
+    box-shadow: 0 24px 70px rgba(25, 54, 92, 0.22);
+    color: var(--v13-text, #172033);
+}
+
+.http-headers-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.http-headers-toolbar button,
+.http-header-actions button {
+    min-height: 32px;
+    padding: 5px 10px;
+    border: 1px solid var(--v13-border);
+    border-radius: 5px;
+    background: #fff;
+    color: var(--v13-text);
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.http-headers-toolbar button:hover,
+.http-header-actions button:hover {
+    border-color: var(--v13-primary);
+    color: var(--v13-primary);
+}
+
+.http-headers-table {
+    overflow: hidden;
+    border: 1px solid #d0d7de;
+    border-radius: 7px;
+    background: #fff;
+}
+
+.http-headers-head,
+.http-header-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 0.95fr) minmax(280px, 1.35fr) 44px;
+}
+
+.http-headers-head {
+    border-bottom: 1px solid #d8dee4;
+    background: #f6f8fa;
+    color: #57606a;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.http-headers-head span {
+    min-width: 0;
+    padding: 10px 12px;
+    border-right: 1px solid #d8dee4;
+}
+
+.http-headers-head span:last-child {
+    border-right: 0;
+}
+
+.http-headers-list {
+    display: block;
+    max-height: 48vh;
+    overflow: auto;
+}
+
+.http-header-row {
+    min-height: 42px;
+    border-bottom: 1px solid #eaeef3;
+    background: #ffffff;
+}
+
+.http-header-row:last-child {
+    border-bottom: 0;
+}
+
+.http-header-row:hover,
+.http-header-row:focus-within {
+    background: #fbfdff;
+}
+
+.http-header-cell {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    border-right: 1px solid #edf1f5;
+}
+
+.http-header-cell label,
+.http-header-actions label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+.http-header-cell input {
+    height: 41px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--v13-text);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 41px;
+    outline: none;
+}
+
+.http-header-cell input::placeholder {
+    color: #8c959f;
+    font-weight: 600;
+}
+
+.http-header-cell input:focus {
+    background: #ffffff;
+    box-shadow: inset 0 0 0 2px rgba(47, 128, 237, 0.45);
+}
+
+.http-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.http-header-actions .delete-http-header-btn {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: #8c959f;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 26px;
+}
+
+.http-header-actions .delete-http-header-btn:hover {
+    background: #fff1f0;
+    color: #b42318;
+}
+
+.http-headers-error {
+    margin-top: 10px;
+    color: var(--v13-danger);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.5;
 }
 
 .protocol-body-section {
@@ -3242,12 +3425,9 @@ body {
 
     .protocol-type-fields,
     .protocol-form-project-context,
-    .protocol-config-card {
+    .protocol-config-card,
+    .http-header-row {
         grid-template-columns: 1fr;
-    }
-
-    .protocol-name-group {
-        position: static;
     }
 
     .service-context-summary {
@@ -3289,5 +3469,15 @@ body {
     .protocol-time {
         max-width: 100%;
         min-width: 0;
+    }
+
+    .http-headers-table {
+        overflow-x: auto;
+    }
+
+    .http-headers-head,
+    .http-header-row {
+        grid-template-columns: minmax(170px, 0.95fr) minmax(190px, 1.2fr) 40px;
+        min-width: 430px;
     }
 }

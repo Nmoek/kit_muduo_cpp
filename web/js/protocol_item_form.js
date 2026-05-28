@@ -26,6 +26,9 @@
         },
         initialReqCfg: {},
         initialRespCfg: {},
+        reqHttpHeaders: {},
+        respHttpHeaders: {},
+        projectPatternInfo: null,
         reqPatternFields: null,
         respPatternFields: null,
         bodyEditor: null,
@@ -137,6 +140,10 @@
         return JSON.parse(JSON.stringify(value == null ? {} : value));
     }
 
+    function isProjectActive(project) {
+        return Number(project && project.active) === 1;
+    }
+
     /**
      * @param {any} project
      */
@@ -145,10 +152,12 @@
         if (!context) return;
 
         const endpointLabel = project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
-        const endpointValue = project.mode === ProjectMode.SERVER ? project.listen_port : project.target_ip || '未设置';
+        const endpointValue = isProjectActive(project)
+            ? (project.mode === ProjectMode.SERVER ? project.listen_port || '未分配' : project.target_ip || '未设置')
+            : '未开启';
         const protocolText = ProtocolTypeStr[project.protocol_type] || '未知协议';
         const modeText = ProjectModeStr[project.mode] || '未知模式';
-        const statusText = project.status ? '开启' : '未开启';
+        const statusText = isProjectActive(project) ? '开启' : '未开启';
         const patternHTML = Number(project.protocol_type) === ProtocolType.CUSTOM_TCP
             ? `
                 <span class="service-context-item">
@@ -164,7 +173,7 @@
                     <span class="service-context-kicker">当前测试服务</span>
                     <div class="service-context-title-row">
                         <strong class="service-context-title">${escapeHTML(project.name || '未命名服务')}</strong>
-                        <span class="service-context-status ${project.status ? 'is-active' : 'is-inactive'}">${escapeHTML(statusText)}</span>
+                        <span class="service-context-status ${isProjectActive(project) ? 'is-active' : 'is-inactive'}">${escapeHTML(statusText)}</span>
                     </div>
                 </div>
                 <span class="service-context-id">ID ${escapeHTML(project.id || '')}</span>
@@ -227,14 +236,279 @@
         ];
     }
 
+    const HTTP_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+    /**
+     * @param {any} headers
+     * @returns {Record<string, string>}
+     */
+    function normalizeHttpHeaders(headers) {
+        const normalized = {};
+        if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
+            return normalized;
+        }
+
+        Object.keys(headers).forEach(name => {
+            const headerName = String(name || '').trim();
+            if (!headerName) return;
+            normalized[headerName] = String(headers[name] == null ? '' : headers[name]);
+        });
+        return normalized;
+    }
+
+    /**
+     * @param {any} reqCfg
+     * @returns {{ method: string; path: string; headers: Record<string, string>; }}
+     */
+    function normalizeHttpReqCfgForSubmit(reqCfg) {
+        const cfg = reqCfg && typeof reqCfg === 'object' ? reqCfg : {};
+        return {
+            method: cfg.method || 'GET',
+            path: cfg.path || '/api/',
+            headers: normalizeHttpHeaders(cfg.headers),
+        };
+    }
+
+    /**
+     * @param {any} respCfg
+     * @returns {{ status_code: string; headers: Record<string, string>; }}
+     */
+    function normalizeHttpRespCfgForSubmit(respCfg) {
+        const cfg = respCfg && typeof respCfg === 'object' ? respCfg : {};
+        const statusCode = utils.normalizeHttpStatusCode
+            ? utils.normalizeHttpStatusCode(cfg.status_code, 200)
+            : (Number(cfg.status_code) || 200);
+        return {
+            status_code: String(statusCode),
+            headers: normalizeHttpHeaders(cfg.headers),
+        };
+    }
+
+    /**
+     * @param {Record<string, string>} headers
+     * @returns {string}
+     */
+    function summarizeHttpHeaders(headers) {
+        const count = Object.keys(normalizeHttpHeaders(headers)).length;
+        return count > 0 ? `已设置 ${count} 条` : '未设置';
+    }
+
+    /**
+     * @param {HTMLElement} button
+     * @param {Record<string, string>} headers
+     */
+    function updateHttpHeaderButtonState(button, headers) {
+        if (!button) return;
+        const normalized = normalizeHttpHeaders(headers);
+        const status = button.closest('.form-group')?.querySelector('.import-status');
+        button.dataset.headers = JSON.stringify(normalized);
+        if (status) {
+            status.textContent = summarizeHttpHeaders(normalized);
+            status.style.display = 'inline';
+        }
+    }
+
+    /**
+     * @param {{ name?: string; value?: string; }} header
+     * @returns {HTMLElement}
+     */
+    function createHttpHeaderRow(header = {}) {
+        const row = document.createElement('div');
+        row.className = 'http-header-row';
+        row.innerHTML = `
+            <div class="http-header-cell">
+                <label>Header 名称</label>
+                <input type="text" class="http-header-name" value="${escapeHTML(header.name || '')}" placeholder="Key" aria-label="Header 名称">
+            </div>
+            <div class="http-header-cell">
+                <label>Header 值</label>
+                <input type="text" class="http-header-value" value="${escapeHTML(header.value || '')}" placeholder="Value" aria-label="Header 值">
+            </div>
+            <div class="http-header-actions">
+                <button type="button" class="delete-http-header-btn" aria-label="删除 Header" title="删除 Header">&times;</button>
+            </div>
+        `;
+        row.querySelector('.delete-http-header-btn')?.addEventListener('click', function() {
+            row.remove();
+        });
+        return row;
+    }
+
+    /**
+     * @param {Record<string, string>} headers
+     * @returns {Array<{ name: string; value: string; }>}
+     */
+    function httpHeaderEntries(headers) {
+        return Object.keys(normalizeHttpHeaders(headers)).map(name => ({
+            name,
+            value: normalizeHttpHeaders(headers)[name],
+        }));
+    }
+
+    /**
+     * @param {HTMLElement} modal
+     * @returns {{ valid: boolean; headers: Record<string, string>; errors: Array<string>; }}
+     */
+    function collectHttpHeadersFromModal(modal) {
+        const headers = {};
+        const errors = [];
+        const seenNames = new Set();
+
+        modal.querySelectorAll('.http-header-row').forEach((row, index) => {
+            const name = row.querySelector('.http-header-name')?.value.trim() || '';
+            const value = row.querySelector('.http-header-value')?.value.trim() || '';
+
+            if (!name && !value) return;
+
+            if (!name) {
+                errors.push(`第 ${index + 1} 行：Header 名称不能为空`);
+                return;
+            }
+
+            if (!HTTP_HEADER_NAME_RE.test(name)) {
+                errors.push(`第 ${index + 1} 行：Header 名称只能使用 HTTP token 字符`);
+                return;
+            }
+
+            const normalizedName = name.toLowerCase();
+            if (seenNames.has(normalizedName)) {
+                errors.push(`第 ${index + 1} 行：Header 名称重复`);
+                return;
+            }
+
+            seenNames.add(normalizedName);
+            headers[name] = value;
+        });
+
+        return {
+            valid: errors.length === 0,
+            headers,
+            errors,
+        };
+    }
+
+    /**
+     * @param {string} title
+     * @param {Record<string, string>} headers
+     * @param {(headers: Record<string, string>) => void} onSave
+     */
+    function openHttpHeadersModal(title, headers, onSave) {
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="http-headers-modal">
+                <div class="modal-header">
+                    <h3>${escapeHTML(title)}</h3>
+                    <button type="button" class="close-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form class="http-headers-form">
+                        <div class="http-headers-toolbar">
+                            <button type="button" class="add-http-header-btn">新增 Header</button>
+                            <button type="button" class="clear-http-headers-btn">清空</button>
+                        </div>
+                        <div class="http-headers-table">
+                            <div class="http-headers-head" aria-hidden="true">
+                                <span>Key</span>
+                                <span>Value</span>
+                                <span></span>
+                            </div>
+                            <div class="http-headers-list"></div>
+                        </div>
+                        <div class="http-headers-error" aria-live="polite"></div>
+                        <div class="form-actions">
+                            <button type="button" class="cancel-btn">取消</button>
+                            <button type="submit" class="confirm-btn">确定</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        const closeModal = utils.bindModalCloseActions
+            ? utils.bindModalCloseActions(modal)
+            : function() { utils.removeDomNode ? utils.removeDomNode(modal) : modal.remove(); };
+        const list = modal.querySelector('.http-headers-list');
+        const errorBox = modal.querySelector('.http-headers-error');
+
+        const entries = httpHeaderEntries(headers);
+        entries.forEach(entry => {
+            list.appendChild(createHttpHeaderRow(entry));
+        });
+        if (entries.length === 0) {
+            list.appendChild(createHttpHeaderRow());
+        }
+
+        modal.querySelector('.add-http-header-btn')?.addEventListener('click', function() {
+            list.appendChild(createHttpHeaderRow());
+        });
+
+        modal.querySelector('.clear-http-headers-btn')?.addEventListener('click', function() {
+            list.innerHTML = '';
+            list.appendChild(createHttpHeaderRow());
+            if (errorBox) errorBox.textContent = '';
+        });
+
+        modal.querySelector('.http-headers-form')?.addEventListener('submit', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const result = collectHttpHeadersFromModal(modal);
+            if (!result.valid) {
+                if (errorBox) {
+                    errorBox.innerHTML = result.errors
+                        .map(error => `<div>${escapeHTML(error)}</div>`)
+                        .join('');
+                }
+                return;
+            }
+
+            onSave(result.headers);
+            closeModal();
+        });
+
+        return modal;
+    }
+
+    /**
+     * @param {HTMLElement} container
+     */
+    function bindHttpHeadersButtons(container) {
+        container.querySelectorAll('.http-headers-config-btn').forEach(button => {
+            button.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                const isReq = button.id === 'req-http-headers';
+                openHttpHeadersModal(
+                    isReq ? '配置请求 Headers' : '配置响应 Headers',
+                    isReq ? pageState.reqHttpHeaders : pageState.respHttpHeaders,
+                    function(headers) {
+                        if (isReq) {
+                            pageState.reqHttpHeaders = headers;
+                        } else {
+                            pageState.respHttpHeaders = headers;
+                        }
+                        updateHttpHeaderButtonState(button, headers);
+                    },
+                );
+            });
+        });
+    }
+
     /**
      * @param {HTMLElement} container
      * @param {any=} protocol
      */
     function renderHTTPFields(container, protocol) {
-        const method = protocol && protocol.req_cfg ? protocol.req_cfg.method : 'GET';
-        const path = protocol && protocol.req_cfg ? protocol.req_cfg.path : '/api/';
+        const reqCfg = protocol && protocol.req_cfg ? protocol.req_cfg : {};
         const respCfg = protocol && protocol.resp_cfg ? protocol.resp_cfg : {};
+        const method = reqCfg.method || 'GET';
+        const path = reqCfg.path || '/api/';
+        pageState.reqHttpHeaders = normalizeHttpHeaders(reqCfg.headers);
+        pageState.respHttpHeaders = normalizeHttpHeaders(respCfg.headers);
         // 老数据可能没有响应码，表单统一按后端当前默认行为显示为 200。
         const statusCode = utils.normalizeHttpStatusCode
             ? utils.normalizeHttpStatusCode(respCfg.status_code, 200)
@@ -256,6 +530,13 @@
                         <input type="text" id="request-path" value="${escapeHTML(path || '/api/')}" placeholder="输入请求路径" required>
                         <div class="path-hint">必须以 / 开头，例如：/api/v1/test</div>
                     </div>
+                    <div class="form-group protocol-http-headers-group">
+                        <div class="pattern-header">
+                            <label>请求 Headers</label>
+                            <span class="import-status">${escapeHTML(summarizeHttpHeaders(pageState.reqHttpHeaders))}</span>
+                        </div>
+                        <button type="button" class="pattern-config-btn http-headers-config-btn" id="req-http-headers">配置请求 Headers</button>
+                    </div>
                 </div>
             </div>
             <div class="protocol-config-card protocol-config-card-response">
@@ -263,12 +544,22 @@
                 <div class="protocol-config-card-fields">
                     <div class="form-group protocol-http-status-group">
                         <label for="response-status-code">响应码</label>
-                        <input type="number" id="response-status-code" min="100" max="599" step="1" value="${escapeHTML(statusCode)}" placeholder="200" required>
+                        <input type="text" id="response-status-code" inputmode="numeric" pattern="[0-9]{3}" value="${escapeHTML(statusCode)}" placeholder="200" required>
                         <div class="path-hint">填写 100 - 599 的 HTTP 状态码</div>
+                    </div>
+                    <div class="form-group protocol-http-headers-group">
+                        <div class="pattern-header">
+                            <label>响应 Headers</label>
+                            <span class="import-status">${escapeHTML(summarizeHttpHeaders(pageState.respHttpHeaders))}</span>
+                        </div>
+                        <button type="button" class="pattern-config-btn http-headers-config-btn" id="resp-http-headers">配置响应 Headers</button>
                     </div>
                 </div>
             </div>
         `;
+        updateHttpHeaderButtonState(container.querySelector('#req-http-headers'), pageState.reqHttpHeaders);
+        updateHttpHeaderButtonState(container.querySelector('#resp-http-headers'), pageState.respHttpHeaders);
+        bindHttpHeadersButtons(container);
     }
 
     /**
@@ -276,7 +567,44 @@
      * @returns {string}
      */
     function summarizePatternFields(fields) {
-        return Array.isArray(fields) && fields.length > 0 ? `已设置 ${fields.length} 个字段` : '未设置';
+        const cfg = buildHeaderValueCfg(fields);
+        const count = (cfg.function_code ? 1 : 0) + Object.keys(cfg.fields || {}).length;
+        return count > 0 ? `已设置 ${count} 个字段` : '未设置';
+    }
+
+    /**
+     * @param {Array<any>} fields
+     * @returns {{ function_code: string; fields: Record<string, string>; }}
+     */
+    function buildHeaderValueCfg(fields) {
+        if (KitProxy.tcpPatternEditor && typeof KitProxy.tcpPatternEditor.buildTcpHeaderValueCfg === 'function') {
+            return KitProxy.tcpPatternEditor.buildTcpHeaderValueCfg(fields || []);
+        }
+
+        const cfg = { function_code: '', fields: {} };
+        (Array.isArray(fields) ? fields : []).forEach(field => {
+            if (!field || !field.value) return;
+            if (field.role === 'function_code') {
+                cfg.function_code = field.value;
+                return;
+            }
+            if (field.role === 'common') {
+                cfg.fields[String(field.byte_pos)] = field.value;
+            }
+        });
+        return cfg;
+    }
+
+    /**
+     * @param {any} patternInfo
+     * @param {any} cfg
+     * @returns {Array<any>}
+     */
+    function toHeaderValueFields(patternInfo, cfg) {
+        if (KitProxy.tcpPatternEditor && typeof KitProxy.tcpPatternEditor.patternInfoToHeaderValueFields === 'function') {
+            return KitProxy.tcpPatternEditor.patternInfoToHeaderValueFields(patternInfo, cfg);
+        }
+        return KitProxy.tcpPatternEditor.patternInfoToItemFields(patternInfo, cfg);
     }
 
     /**
@@ -284,11 +612,9 @@
      * @param {Array<any>} fields
      */
     function updatePatternButtonState(button, fields) {
+        if (!button) return;
         const status = button.closest('.form-group')?.querySelector('.import-status');
-        button.dataset.patternInfos = JSON.stringify({
-            special_fields: {},
-            common_fields: fields || [],
-        });
+        button.dataset.patternInfos = JSON.stringify({ fields: fields || [] });
         if (status) {
             status.textContent = summarizePatternFields(fields);
             status.style.display = 'inline';
@@ -302,24 +628,25 @@
     function renderTCPFields(container, protocol) {
         const reqCfg = protocol && protocol.req_cfg ? protocol.req_cfg : {};
         const respCfg = protocol && protocol.resp_cfg ? protocol.resp_cfg : {};
-        pageState.reqPatternFields = clone(reqCfg.common_fields || []);
-        pageState.respPatternFields = clone(respCfg.common_fields || []);
+        const reqTcpCfg = KitProxy.tcpPatternEditor.normalizeTcpItemCfg(reqCfg);
+        const respTcpCfg = KitProxy.tcpPatternEditor.normalizeTcpItemCfg(respCfg);
+        pageState.reqPatternFields = pageState.projectPatternInfo
+            ? toHeaderValueFields(pageState.projectPatternInfo, reqTcpCfg)
+            : [];
+        pageState.respPatternFields = pageState.projectPatternInfo
+            ? toHeaderValueFields(pageState.projectPatternInfo, respTcpCfg)
+            : [];
 
         container.innerHTML = `
             <div class="protocol-config-card protocol-config-card-request">
                 <div class="protocol-config-card-title">请求侧配置</div>
                 <div class="protocol-config-card-fields">
                     <div class="form-group">
-                        <label for="req-function-code-value">请求功能码</label>
-                        <input id="req-function-code-value" class="req-function-code-value" value="${escapeHTML(reqCfg.function_code_filed_value || '')}" placeholder="示例：H010203">
-                        <div class="path-hint">需要填写时必须以 H 开头</div>
-                    </div>
-                    <div class="form-group">
                         <div class="pattern-header">
-                            <label>校验请求头部</label>
+                            <label>校验请求头部字段值</label>
                             <span class="import-status">${escapeHTML(summarizePatternFields(pageState.reqPatternFields))}</span>
                         </div>
-                        <button type="button" class="pattern-config-btn" id="req-pattern-infos">配置请求头部字段</button>
+                        <button type="button" class="pattern-config-btn" id="req-pattern-infos">配置请求头部字段值</button>
                     </div>
                 </div>
             </div>
@@ -327,16 +654,11 @@
                 <div class="protocol-config-card-title">响应侧配置</div>
                 <div class="protocol-config-card-fields">
                     <div class="form-group">
-                        <label for="resp-function-code-value">响应功能码</label>
-                        <input id="resp-function-code-value" class="resp-function-code-value" value="${escapeHTML(respCfg.function_code_filed_value || '')}" placeholder="示例：H010203">
-                        <div class="path-hint">需要填写时必须以 H 开头</div>
-                    </div>
-                    <div class="form-group">
                         <div class="pattern-header">
-                            <label>目标响应头部</label>
+                            <label>目标响应头部字段值</label>
                             <span class="import-status">${escapeHTML(summarizePatternFields(pageState.respPatternFields))}</span>
                         </div>
-                        <button type="button" class="pattern-config-btn" id="resp-pattern-infos">配置响应头部字段</button>
+                        <button type="button" class="pattern-config-btn" id="resp-pattern-infos">配置响应头部字段值</button>
                     </div>
                 </div>
             </div>
@@ -357,34 +679,35 @@
                 event.preventDefault();
                 event.stopPropagation();
 
-                const loading = showLoading('正在加载 TCP 格式字段...');
-                let specialFields = {};
+                const loading = showLoading('正在加载 TCP 头部字段值...');
+                let patternInfo = null;
                 try {
-                    const patternInfo = await KitProxy.api.getProjectPatternInfo(pageState.projectId);
-                    specialFields = patternInfo && patternInfo.special_fields ? patternInfo.special_fields : {};
+                    patternInfo = pageState.projectPatternInfo || await KitProxy.api.getProjectPatternInfo(pageState.projectId);
+                    pageState.projectPatternInfo = patternInfo;
                 } catch (error) {
                     hideLoading(loading);
-                    setInlineError('获取 TCP 格式字段失败：' + error.message);
+                    setInlineError('获取 TCP 头部字段失败：' + error.message);
                     return;
                 }
 
                 await delay(100);
                 hideLoading(loading);
 
-                const currentCommonFields = isReq ? pageState.reqPatternFields : pageState.respPatternFields;
-                const patternInfosMap = {
-                    special_fields: specialFields,
-                    common_fields: currentCommonFields || [],
-                };
+                const currentFields = isReq ? pageState.reqPatternFields : pageState.respPatternFields;
+                const currentCfg = buildHeaderValueCfg(currentFields || []);
+                const patternInfosMap = Object.assign({}, patternInfo, {
+                    item_value_scope: 'header',
+                    fields: toHeaderValueFields(patternInfo, currentCfg),
+                });
                 const statusElement = button.closest('.form-group')?.querySelector('.import-status');
                 createCustomTcpPatternModal(
                     button,
-                    isReq ? '请求头部全部字段' : '响应头部全部字段',
+                    isReq ? '请求头部字段值' : '响应头部字段值',
                     patternInfosMap,
                     statusElement,
                     false,
                     function(patternFieldInfos) {
-                        const fields = clone(patternFieldInfos.common_fields || []);
+                        const fields = clone(patternFieldInfos.fields || []);
                         if (isReq) {
                             pageState.reqPatternFields = fields;
                         } else {
@@ -512,8 +835,15 @@
         }
 
         return {
-            req_cfg: { method, path },
-            resp_cfg: { status_code: Number(statusCodeValue) },
+            req_cfg: {
+                method,
+                path,
+                headers: clone(pageState.reqHttpHeaders || {}),
+            },
+            resp_cfg: {
+                status_code: statusCodeValue,
+                headers: clone(pageState.respHttpHeaders || {}),
+            },
         };
     }
 
@@ -521,25 +851,21 @@
      * @returns {{ req_cfg: any; resp_cfg: any; }}
      */
     function collectTCPCfg() {
-        const reqFunctionCode = document.getElementById('req-function-code-value')?.value.trim() || '';
-        const respFunctionCode = document.getElementById('resp-function-code-value')?.value.trim() || '';
+        const reqCfg = buildHeaderValueCfg(pageState.reqPatternFields || []);
+        const respCfg = buildHeaderValueCfg(pageState.respPatternFields || []);
 
-        if (reqFunctionCode && !reqFunctionCode.startsWith('H')) {
-            throw new Error('请求功能码必须以 H 开头');
+        const reqValidation = KitProxy.tcpPatternEditor.validateTcpItemCfg(pageState.projectPatternInfo, reqCfg);
+        if (!reqValidation.valid) {
+            throw new Error('请求侧 TCP 配置错误：' + reqValidation.errors.join('；'));
         }
-        if (respFunctionCode && !respFunctionCode.startsWith('H')) {
-            throw new Error('响应功能码必须以 H 开头');
+        const respValidation = KitProxy.tcpPatternEditor.validateTcpItemCfg(pageState.projectPatternInfo, respCfg);
+        if (!respValidation.valid) {
+            throw new Error('响应侧 TCP 配置错误：' + respValidation.errors.join('；'));
         }
 
         return {
-            req_cfg: {
-                function_code_filed_value: reqFunctionCode,
-                common_fields: clone(pageState.reqPatternFields || []),
-            },
-            resp_cfg: {
-                function_code_filed_value: respFunctionCode,
-                common_fields: clone(pageState.respPatternFields || []),
-            },
+            req_cfg: reqCfg,
+            resp_cfg: respCfg,
         };
     }
 
@@ -696,8 +1022,13 @@
         }
 
         pageState.protocol = protocols[0];
-        pageState.initialReqCfg = clone(pageState.protocol.req_cfg || {});
-        pageState.initialRespCfg = clone(pageState.protocol.resp_cfg || {});
+        if (Number(pageState.protocolType) === ProtocolType.HTTP) {
+            pageState.initialReqCfg = normalizeHttpReqCfgForSubmit(pageState.protocol.req_cfg || {});
+            pageState.initialRespCfg = normalizeHttpRespCfgForSubmit(pageState.protocol.resp_cfg || {});
+        } else {
+            pageState.initialReqCfg = clone(pageState.protocol.req_cfg || {});
+            pageState.initialRespCfg = clone(pageState.protocol.resp_cfg || {});
+        }
 
         const [requestBodyInfo, responseBodyInfo] = await Promise.all([
             KitProxy.api.getProtocolBody(pageState.protocolId, REQ_BODY),
@@ -747,6 +1078,9 @@
 
             pageState.project = projects[0];
             pageState.protocolType = pageState.project.protocol_type;
+            if (Number(pageState.protocolType) === ProtocolType.CUSTOM_TCP) {
+                pageState.projectPatternInfo = await KitProxy.api.getProjectPatternInfo(pageState.projectId);
+            }
 
             if (pageState.mode === 'edit') {
                 await loadEditProtocol();
