@@ -1824,7 +1824,7 @@
 }
 
 .config-pattern-modal.is-project-pattern {
-    --pattern-field-grid: 70px minmax(130px, 1.1fr) 100px 84px minmax(108px, 0.84fr) 196px;
+    --pattern-field-grid: 70px minmax(130px, 1.1fr) 100px 84px minmax(108px, 0.84fr) 250px;
 }
 
 .config-pattern-modal.is-project-pattern .pattern-cell-value {
@@ -1866,6 +1866,18 @@
     overflow-x: hidden;
 }
 
+.config-pattern-modal .pattern-empty-field-row {
+    border-bottom: 1px solid var(--v13-border, #d9e6f5);
+}
+
+.config-pattern-modal .pattern-field-container {
+    transform-origin: center;
+}
+
+.config-pattern-modal .pattern-field-container.is-delete-marked {
+    opacity: 1;
+}
+
 .config-pattern-modal .pattern-field-info .pattern-field {
     display: grid;
     grid-template-columns: var(--pattern-field-grid);
@@ -1880,6 +1892,28 @@
     box-shadow: none;
 }
 
+.config-pattern-modal .pattern-field-container.is-added .pattern-field {
+    animation: pattern-field-added-pulse 820ms ease-out;
+}
+
+.config-pattern-modal .pattern-field-container.is-moved .pattern-field {
+    animation: pattern-field-moved-pulse 820ms ease-out;
+}
+
+.config-pattern-modal .pattern-field-container.is-delete-marked .pattern-field {
+    animation: none;
+    background: #fff1f3;
+    box-shadow: inset 4px 0 #f04438;
+    transition:
+        background 120ms ease,
+        box-shadow 120ms ease,
+        transform 420ms ease;
+}
+
+.config-pattern-modal .pattern-field-container.is-deleting .pattern-field {
+    transform: scale(0.995);
+}
+
 .config-pattern-modal .pattern-field-main,
 .config-pattern-modal .pattern-field-identity,
 .config-pattern-modal .pattern-field-spec {
@@ -1888,6 +1922,25 @@
 
 .config-pattern-modal .pattern-cell {
     min-width: 0;
+}
+
+.config-pattern-modal .pattern-empty-field .pattern-empty-message {
+    grid-column: 1 / -2;
+    align-self: center;
+    min-height: 34px;
+    color: #667085;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.config-pattern-modal .pattern-empty-field .pattern-cell-actions {
+    grid-column: -2 / -1;
+}
+
+.config-pattern-modal .pattern-empty-field .pattern-empty-message span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 34px;
 }
 
 .config-pattern-modal .pattern-cell label {
@@ -2198,6 +2251,50 @@
     background: #fff6f5;
 }
 
+@keyframes pattern-field-added-pulse {
+    0% {
+        background: #ecfdf3;
+        box-shadow: inset 4px 0 #12b76a;
+    }
+    70% {
+        background: #f6fef9;
+        box-shadow: inset 4px 0 rgba(18, 183, 106, 0.36);
+    }
+    100% {
+        background: #ffffff;
+        box-shadow: none;
+    }
+}
+
+@keyframes pattern-field-moved-pulse {
+    0% {
+        background: #eff8ff;
+        box-shadow: inset 4px 0 #2e90fa;
+    }
+    70% {
+        background: #f5fbff;
+        box-shadow: inset 4px 0 rgba(46, 144, 250, 0.34);
+    }
+    100% {
+        background: #ffffff;
+        box-shadow: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .config-pattern-modal .pattern-field-container {
+        transition: none !important;
+    }
+
+    .config-pattern-modal .pattern-field-container.is-delete-marked .pattern-field,
+    .config-pattern-modal .pattern-field-container.is-added .pattern-field,
+    .config-pattern-modal .pattern-field-container.is-moved .pattern-field,
+    .config-pattern-modal .pattern-field-container.is-deleting .pattern-field {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
 @media (max-width: 920px) {
     .config-pattern-modal .pattern-field-grid-labels,
     .config-pattern-modal .pattern-field-labels {
@@ -2208,6 +2305,11 @@
         grid-template-columns: minmax(0, 1fr);
         gap: 10px;
         align-items: stretch;
+    }
+
+    .config-pattern-modal .pattern-empty-field .pattern-empty-message,
+    .config-pattern-modal .pattern-empty-field .pattern-cell-actions {
+        grid-column: auto;
     }
 
     .config-pattern-modal .pattern-cell label {

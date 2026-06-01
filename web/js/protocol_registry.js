@@ -187,7 +187,7 @@
                 } catch(error) {
                     hideLoading(loading);
                     console.error('获取格式信息失败!', error.message);
-                    alert('获取格式信息失败!');
+                    KitProxy.utils.showGlobalError('获取格式信息失败!');
                     return;
                 }
 
@@ -207,14 +207,15 @@
 
                     const ok = await updateTcpPatternInfoReq(project.id, nextPatternInfo);
                     if(!ok) {
-                        alert('TCP格式修改失败!');
-                        return;
+                        KitProxy.utils.showGlobalError('TCP格式修改失败!');
+                        return false;
                     }
 
                     const textNode = patternField.querySelector('.meta-value');
                     if (textNode) {
                         textNode.textContent = tcpLengthPolicyText(nextPatternInfo.length_policy);
                     }
+                    return true;
                     },
                 );
             });

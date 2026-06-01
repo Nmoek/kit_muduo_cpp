@@ -6,6 +6,92 @@ body {
     background-color: #f5f5f5;
 }
 
+/* 登录页复用全局通知弹框结构，避免加载主页面样式影响登录布局。 */
+.global-error-popup {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    z-index: 3000;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: min(540px, calc(100vw - 32px));
+    padding: 14px 16px 14px 14px;
+    border: 1px solid var(--notification-border, #ffd5cf);
+    border-radius: 8px;
+    background: var(--notification-bg, #fff6f5);
+    color: var(--notification-fg, #d92d20);
+    box-shadow: 0 16px 36px var(--notification-shadow, rgba(217, 45, 32, 0.16));
+    opacity: 0;
+    transform: translate(-50%, -18px);
+    transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.global-error-popup.is-error {
+    --notification-bg: #fff6f5;
+    --notification-border: #ffd5cf;
+    --notification-fg: #d92d20;
+    --notification-shadow: rgba(217, 45, 32, 0.16);
+}
+
+.global-error-popup.is-success {
+    --notification-bg: #f0fdf6;
+    --notification-border: #bbf7d0;
+    --notification-fg: #16865f;
+    --notification-shadow: rgba(22, 134, 95, 0.15);
+}
+
+.global-error-popup.is-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.global-notification-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-top: 1px;
+}
+
+.global-notification-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.global-error-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.global-error-content p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.global-error-close {
+    width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: currentColor;
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 22px;
+}
+
+.global-error-close:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+
 .login-container {
     display: flex;
     flex-direction: column;

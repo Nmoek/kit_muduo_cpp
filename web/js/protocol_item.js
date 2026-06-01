@@ -217,18 +217,28 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {
         e.stopPropagation();
         e.preventDefault();
 
+        const confirmButton = this;
+        if (confirmButton.disabled) return;
+
         const validation = bodyEditor.validate();
         if(!validation.valid) {
-            alert(validation.message);
+            KitProxy.utils.showGlobalError(validation.message);
             return;
         }
 
         const newBodyType = bodyEditor.getType();
         const newBody = bodyEditor.getValue().trim();
 
-        await handleCb(newBodyType, newBody);
+        confirmButton.disabled = true;
 
-        KitProxy.utils.removeDomNode(modal);
+        try {
+            const result = await handleCb(newBodyType, newBody);
+            if (result === false) return;
+
+            KitProxy.utils.removeDomNode(modal);
+        } finally {
+            confirmButton.disabled = false;
+        }
     });
 
     KitProxy.utils.bindModalCloseActions(modal);

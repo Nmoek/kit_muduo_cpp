@@ -60,6 +60,17 @@
         return normalized;
     }
 
+    function runMutation(key, action, message) {
+        if (KitProxy.utils && typeof KitProxy.utils.runMutationOnce === 'function') {
+            return KitProxy.utils.runMutationOnce(key, action, {
+                message,
+                mockVisibleDelayMs: 1200,
+            });
+        }
+
+        return action();
+    }
+
     const api = {
         isMockMode,
         apiUrl,
@@ -82,43 +93,51 @@
             }, '获取单个测试服务失败');
         },
         async addProject(project) {
-            if (isMockMode()) return KitProxy.mocks.addProject(project);
+            return runMutation('api-add-project', async function() {
+                if (isMockMode()) return KitProxy.mocks.addProject(project);
 
-            return requestJson('/projects/add', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(normalizeProjectForBackend(project)),
-            }, '添加测试服务失败');
+                return requestJson('/projects/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(normalizeProjectForBackend(project)),
+                }, '添加测试服务失败');
+            }, '正在添加测试服务...');
         },
         async setProjectActive(projectId, active) {
-            if (isMockMode()) return KitProxy.mocks.setProjectActive(projectId, active);
+            return runMutation(`api-set-project-active-${projectId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.setProjectActive(projectId, active);
 
-            const operation = active ? 1 : 0;
-            return requestJson('/projects/' + String(projectId) + '/status?operation=' + String(operation), {
-                method: 'POST',
-            }, active ? '启动测试服务失败' : '停止测试服务失败');
+                const operation = active ? 1 : 0;
+                return requestJson('/projects/' + String(projectId) + '/status?operation=' + String(operation), {
+                    method: 'POST',
+                }, active ? '启动测试服务失败' : '停止测试服务失败');
+            }, active ? '正在启动测试服务...' : '正在停止测试服务...');
         },
         async updateProjectName(projectId, name) {
-            if (isMockMode()) return KitProxy.mocks.updateProjectName(projectId, name);
+            return runMutation(`api-update-project-name-${projectId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.updateProjectName(projectId, name);
 
-            return requestJson('/projects/' + projectId + '/name', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ name }),
-            }, '修改测试服务标题失败');
+                return requestJson('/projects/' + projectId + '/name', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ name }),
+                }, '修改测试服务标题失败');
+            }, '正在保存测试服务名称...');
         },
         async deleteProject(projectId) {
-            if (isMockMode()) return KitProxy.mocks.deleteProject(projectId);
+            return runMutation(`api-delete-project-${projectId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.deleteProject(projectId);
 
-            await requestJson('/projects/' + String(projectId), {
-                method: 'DELETE',
-            }, '删除测试服务失败');
+                await requestJson('/projects/' + String(projectId), {
+                    method: 'DELETE',
+                }, '删除测试服务失败');
 
-            return true;
+                return true;
+            }, '正在删除测试服务...');
         },
         async getProjectPatternInfo(projectId) {
             if (isMockMode()) return KitProxy.mocks.getProjectPatternInfo(projectId);
@@ -128,18 +147,20 @@
             }, '获取TCP格式信息失败');
         },
         async updateProjectPatternInfo(projectId, patternInfo) {
-            if (isMockMode()) return KitProxy.mocks.updateProjectPatternInfo(projectId, patternInfo);
+            return runMutation(`api-update-project-pattern-${projectId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.updateProjectPatternInfo(projectId, patternInfo);
 
-            return requestJson('/projects/pattern_info', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    id: projectId,
-                    pattern_info: normalizePatternInfoForBackend(patternInfo),
-                }),
-            }, '修改TCP格式信息失败');
+                return requestJson('/projects/pattern_info', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: projectId,
+                        pattern_info: normalizePatternInfoForBackend(patternInfo),
+                    }),
+                }, '修改TCP格式信息失败');
+            }, '正在保存 TCP 格式信息...');
         },
         async getProtocolList(projectId, offset = 0, limit = 10) {
             if (isMockMode()) return KitProxy.mocks.getProtocolList(projectId, offset, limit);
@@ -164,64 +185,73 @@
             }, '获取单个协议项失败');
         },
         async addProtocol(protocol) {
-            if (isMockMode()) return KitProxy.mocks.addProtocol(protocol);
+            const projectId = protocol && protocol.cfg_header ? protocol.cfg_header.project_id : 'unknown';
+            return runMutation(`api-add-protocol-${projectId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.addProtocol(protocol);
 
-            const formData = KitProxy.utils.createAddProtocolFormData(protocol);
+                const formData = KitProxy.utils.createAddProtocolFormData(protocol);
 
-            return requestJson('/protocols/add', {
-                method: 'POST',
-                body: formData,
-            }, '添加协议项失败');
+                return requestJson('/protocols/add', {
+                    method: 'POST',
+                    body: formData,
+                }, '添加协议项失败');
+            }, '正在添加协议项...');
         },
         async updateProtocolName(protocolId, name) {
-            if (isMockMode()) return KitProxy.mocks.updateProtocolName(protocolId, name);
+            return runMutation(`api-update-protocol-name-${protocolId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.updateProtocolName(protocolId, name);
 
-            await requestJson('/protocols/name', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    id: protocolId,
-                    name,
-                }),
-            }, '修改协议项标题失败');
+                await requestJson('/protocols/name', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: protocolId,
+                        name,
+                    }),
+                }, '修改协议项标题失败');
 
-            return true;
+                return true;
+            }, '正在保存协议项名称...');
         },
         async deleteProtocol(protocolId, projectId) {
-            if (isMockMode()) return KitProxy.mocks.deleteProtocol(protocolId, projectId);
+            return runMutation(`api-delete-protocol-${protocolId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.deleteProtocol(protocolId, projectId);
 
-            await requestJson('/protocols/del', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    id: protocolId,
-                    project_id: projectId,
-                }),
-            }, '删除协议项失败');
+                await requestJson('/protocols/del', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: protocolId,
+                        project_id: projectId,
+                    }),
+                }, '删除协议项失败');
 
-            return true;
+                return true;
+            }, '正在删除协议项...');
         },
         async updateProtocolCfg(protocolId, projectId, reqOrResp, cfgJson) {
-            if (isMockMode()) return KitProxy.mocks.updateProtocolCfg(protocolId, reqOrResp, cfgJson);
+            return runMutation(`api-update-protocol-cfg-${protocolId}-${reqOrResp}-${JSON.stringify(cfgJson || {})}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.updateProtocolCfg(protocolId, reqOrResp, cfgJson);
 
-            await requestJson('/protocols/details/cfg', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    id: protocolId,
-                    project_id: projectId,
-                    req_or_resp: reqOrResp,
-                    cfg_data: cfgJson,
-                }),
-            }, '修改协议项配置失败');
+                await requestJson('/protocols/details/cfg', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        id: protocolId,
+                        project_id: projectId,
+                        req_or_resp: reqOrResp,
+                        cfg_data: cfgJson,
+                    }),
+                }, '修改协议项配置失败');
 
-            return true;
+                return true;
+            }, '正在保存协议项配置...');
         },
         async getProtocolDetailsCfg(protocolId) {
             if (isMockMode()) return KitProxy.mocks.getProtocolDetailsCfg(protocolId);
@@ -231,23 +261,25 @@
             }, '查询协议项配置失败');
         },
         async updateProtocolBody(protocolId, projectId, reqOrResp, protocolType, bodyType, body) {
-            if (isMockMode()) return KitProxy.mocks.updateProtocolBody(protocolId, reqOrResp, bodyType, body);
+            return runMutation(`api-update-protocol-body-${protocolId}-${reqOrResp}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.updateProtocolBody(protocolId, reqOrResp, bodyType, body);
 
-            const formData = KitProxy.utils.createProtocolBodyFormData(
-                protocolId,
-                projectId,
-                reqOrResp,
-                protocolType,
-                bodyType,
-                body,
-            );
+                const formData = KitProxy.utils.createProtocolBodyFormData(
+                    protocolId,
+                    projectId,
+                    reqOrResp,
+                    protocolType,
+                    bodyType,
+                    body,
+                );
 
-            await requestJson('/protocols/details/body', {
-                method: 'POST',
-                body: formData,
-            }, '修改协议项Body失败');
+                await requestJson('/protocols/details/body', {
+                    method: 'POST',
+                    body: formData,
+                }, '修改协议项Body失败');
 
-            return true;
+                return true;
+            }, reqOrResp === 1 ? '正在保存校验请求Body...' : '正在保存目标响应Body...');
         },
         async getProtocolBody(protocolId, reqOrResp) {
             if (isMockMode()) return KitProxy.mocks.getProtocolBody(protocolId, reqOrResp);

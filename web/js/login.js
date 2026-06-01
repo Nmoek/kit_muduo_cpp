@@ -13,7 +13,9 @@ document.getElementById('loginForm')?.addEventListener('submit', async function(
     
     // 如果用户名或密码为空，弹出提示信息并返回
     if (!username || !password) {
-        alert('请输入用户名和密码');
+        if (window.KitProxy && KitProxy.utils && typeof KitProxy.utils.showGlobalError === 'function') {
+            KitProxy.utils.showGlobalError('请输入用户名和密码');
+        }
         return;
     }
 

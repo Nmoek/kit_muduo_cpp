@@ -160,7 +160,8 @@ var httpProtocolModal = {
         // 处理表单提交
         modal.querySelector('#add-protocol-item-form').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const loading = showLoading('正在添加协议项...');
+            const submitButton = modal.querySelector('.confirm-btn');
+            if (submitButton) submitButton.disabled = true;
             
             try {
                 const itemName = document.getElementById('protocol-item-name').value;
@@ -230,18 +231,17 @@ var httpProtocolModal = {
 
                 console.info('当前协议信息:', submit_protocol);
 
-                addHTTPProtocol(serviceCard, submit_protocol);
+                const addedProtocol = await addHTTPProtocol(serviceCard, submit_protocol);
+                if (!addedProtocol) return;
 
                 KitProxy.utils.removeDomNode(modal);
 
             } catch (error) {
                 console.error('添加协议项出错:', error);
-                alert('添加协议项失败: ' + error.message);
-                hideLoading(loading);
+                KitProxy.utils.showGlobalError('添加协议项失败: ' + error.message);
+            } finally {
+                if (submitButton) submitButton.disabled = false;
             } 
-
-            await delay(500);
-            hideLoading(loading);
             
         });
 
@@ -357,7 +357,7 @@ var customTcpProtocolModal = {
         })
         .catch (error => {
 
-            alert('格式信息请求失败!');
+            KitProxy.utils.showGlobalError('格式信息请求失败!');
             hideLoading(loading);
             KitProxy.utils.removeDomNode(modal);
         });
@@ -430,7 +430,8 @@ var customTcpProtocolModal = {
         // 处理表单提交
         modal.querySelector('#add-protocol-item-form').addEventListener('submit', async function(e) {
             e.preventDefault();
-            const loading = showLoading('正在添加协议项...');
+            const submitButton = modal.querySelector('.confirm-btn');
+            if (submitButton) submitButton.disabled = true;
             
             try {
                 const itemName = document.getElementById('protocol-item-name').value;
@@ -511,18 +512,17 @@ var customTcpProtocolModal = {
 
                 console.info('当前协议信息:', submit_protocol);
 
-                addHTTPProtocol(serviceCard, submit_protocol);
+                const addedProtocol = await addHTTPProtocol(serviceCard, submit_protocol);
+                if (!addedProtocol) return;
 
                 KitProxy.utils.removeDomNode(modal);
 
             } catch (error) {
                 console.error('添加协议项出错:', error);
-                alert('添加协议项失败: ' + error.message);
-                hideLoading(loading);
+                KitProxy.utils.showGlobalError('添加协议项失败: ' + error.message);
+            } finally {
+                if (submitButton) submitButton.disabled = false;
             } 
-
-            await delay(500);
-            hideLoading(loading);
             
         });
 

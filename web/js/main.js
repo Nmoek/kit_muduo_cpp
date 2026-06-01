@@ -8,6 +8,12 @@ function isProjectActive(project) {
     return Number(project && project.active) === 1;
 }
 
+function showErrorPopup(message, options) {
+    if (KitProxy.utils && typeof KitProxy.utils.showGlobalError === 'function') {
+        KitProxy.utils.showGlobalError(message, options);
+    }
+}
+
 function getProjectRuntimeStatusText(project) {
     return isProjectActive(project) ? '开启' : '未开启';
 }
@@ -175,7 +181,9 @@ async function updateProtocolBody(idStr, req_or_resp, protocolType, newBodyType,
     const protocolItem = document.getElementById(idStr);
     const serviceCardId = ExtractId(protocolItem.dataset.projectId);
 
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `update-protocol-body-${protocolItemId}-${req_or_resp}`,
+        async function() {
         if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
             throw new Error("无效的协议项ID");
         }
@@ -185,12 +193,16 @@ async function updateProtocolBody(idStr, req_or_resp, protocolType, newBodyType,
             throw new Error("修改协议项请求体失败!");
         }
 
-    } catch(error) {
-        console.error('修改协议项请求体失败!');
+        return true;
+        },
+        {
+            message: req_or_resp === 1 ? '正在保存校验请求Body...' : '正在保存目标响应Body...',
+            successMessage: req_or_resp === 1 ? '校验请求Body保存成功' : '目标响应Body保存成功',
+        },
+    ).catch(function(error) {
+        console.error('修改协议项请求体失败!', error && error.message ? error.message : error);
         return false;
-    }
-
-    return true;
+    });
 }
 
 
@@ -300,7 +312,7 @@ async function updateProtocolHttpMethod(protocolItemId, newMethod) {
 };
 
 async function updateProtocolHttpStatus(protocolItemId, newStatusCode) {
-    return updateProtocolCfg(protocolItemId, 2, 'status_code', Number(newStatusCode));
+    return updateProtocolCfg(protocolItemId, 2, 'status_code', String(newStatusCode));
 }
 
 
@@ -319,7 +331,9 @@ async function updateProtocolCfg(protocolItemId, req_or_resp, key, newValue) {
     //     "method": newMethod
     // };
 
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `update-protocol-cfg-${protocolItemId}-${req_or_resp}-${key}`,
+        async function() {
 
         if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
             throw new Error("无效的协议项ID");
@@ -339,12 +353,16 @@ async function updateProtocolCfg(protocolItemId, req_or_resp, key, newValue) {
             throw new Error("修改协议项配置数据失败");
         }
 
-    } catch(e) {
+        return true;
+        },
+        {
+            message: '正在保存协议项配置...',
+            successMessage: '协议项配置保存成功',
+        },
+    ).catch(function(e) {
         console.error('修改协议项配置数据失败! ', e.message);
         return false;
-    }
-
-    return true;
+    });
 };
 
 async function updateProtocolTcpHeaderValues(protocolItemId, reqOrResp, cfgJson) {
@@ -352,7 +370,9 @@ async function updateProtocolTcpHeaderValues(protocolItemId, reqOrResp, cfgJson)
     const protocolItem = document.getElementById(idStr);
     const projectId = ExtractId(protocolItem.dataset.projectId);
 
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `update-protocol-tcp-header-${protocolItemId}-${reqOrResp}`,
+        async function() {
         if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
             throw new Error("无效的协议项ID");
         }
@@ -364,12 +384,16 @@ async function updateProtocolTcpHeaderValues(protocolItemId, reqOrResp, cfgJson)
         if(!ok) {
             throw new Error("修改 TCP 头部字段值失败");
         }
-    } catch(e) {
+        return true;
+        },
+        {
+            message: '正在保存 TCP 头部字段值...',
+            successMessage: 'TCP 头部字段值保存成功',
+        },
+    ).catch(function(e) {
         console.error('修改 TCP 头部字段值失败! ', e.message);
         return false;
-    }
-
-    return true;
+    });
 }
 
 
@@ -396,9 +420,9 @@ async function updateProtocolName(id_str, tilte_name) {
 
     const protocolItem = document.getElementById(id_str);
 
-    const loading = showLoading();
-
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `update-protocol-name-${protocolItemId}`,
+        async function() {
 
         if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
             throw new Error("无效的协议项ID");
@@ -412,16 +436,16 @@ async function updateProtocolName(id_str, tilte_name) {
         // 动态更新页面数据
         protocolItem.querySelector(".protocol-name").textContent = tilte_name;
 
-    } catch(error) {
+        return true;
+        },
+        {
+            message: '正在保存协议项名称...',
+            successMessage: '协议项名称保存成功',
+        },
+    ).catch(function(error) {
         console.error('修改测试服务标题失败:', error);
-        hideLoading(loading);
         return false;
-    } 
-
-
-    await delay(500);
-    hideLoading(loading);
-    return true;
+    });
 }
 
 function bindProtocolTitleEdit(protocolItem) {
@@ -452,10 +476,9 @@ function bindProtocolDeleteAction(protocolItem) {
                 } else {
                     protocolItem.remove();
                 }
-                alert('删除协议项成功!');
 
             } else {
-                alert('删除协议项失败!');
+                showErrorPopup('删除协议项失败!');
             }
         }
     });
@@ -866,7 +889,7 @@ function bindProtocolTcpCommonFieldsEditor(protocolItem) {
             } catch(error) {
                 console.error('获取头部字段值失败: ', error);
                 hideLoading(loading);
-                alert('获取头部字段值失败!');
+                showErrorPopup('获取头部字段值失败!');
                 return;
             }
 
@@ -886,7 +909,7 @@ function bindProtocolTcpCommonFieldsEditor(protocolItem) {
                         : KitProxy.tcpPatternEditor.buildTcpItemCfg('', itemFields);
                     const validation = KitProxy.tcpPatternEditor.validateTcpItemCfg(patternFields, cfg);
                     if (!validation.valid) {
-                        alert(validation.errors.join('；'));
+                        showErrorPopup(validation.errors.join('；'));
                         return;
                     }
 
@@ -897,14 +920,15 @@ function bindProtocolTcpCommonFieldsEditor(protocolItem) {
                     );
 
                     if (!ok) {
-                        alert('头部字段值修改失败!');
-                        return;
+                        showErrorPopup('头部字段值修改失败!');
+                        return false;
                     }
 
                     const fieldCount = (cfg.function_code ? 1 : 0) + Object.keys(cfg.fields || {}).length;
                     valueElement.textContent = fieldCount ? `已设置 ${fieldCount} 个` : '未设置';
                     headerIndicator.classList.toggle('has', fieldCount > 0);
                     headerIndicator.classList.toggle('no', fieldCount === 0);
+                    return true;
                 },
             );
         });
@@ -949,7 +973,7 @@ function bindProtocolBodyEditor(protocolItem) {
             } catch(error) {
                 console.error('获取协议请求体信息失败: ', error);
                 hideLoading(loading);
-                alert('获取协议请求体信息失败!');
+                showErrorPopup('获取协议请求体信息失败!');
                 return;
             }
 
@@ -966,8 +990,8 @@ function bindProtocolBodyEditor(protocolItem) {
                 const protocolType = protocolItem.dataset.protocolType || 'HTTP';
                 const ok = await updateProtocolBody(protocolItem.id, req_or_resp, protocolType, newBodyType, newBody);
                 if(!ok) {
-                    alert("修改协议请求体信息失败!");
-                    return;
+                    showErrorPopup("修改协议请求体信息失败!");
+                    return false;
                 }
         
                 if (newBody) {
@@ -979,6 +1003,7 @@ function bindProtocolBodyEditor(protocolItem) {
                     bodyIndicator.classList.remove('has');
                     bodyIndicator.classList.add('no');
                 }
+                return true;
             }, {
                 protocolType: protocolItem.dataset.protocolType || 'HTTP',
                 placeholder: req_or_resp === 1 ? '输入校验请求Body内容...' : '输入目标响应Body内容...',
@@ -1129,9 +1154,14 @@ async function  addHTTPProtocolReq(protocol) {
 // 添加HTTP协议项
 async function  addHTTPProtocol(serviceCard, submit_protocol) {
 
-    const loading = showLoading();
-    let protocols;
-    try {
+    const projectId = submit_protocol && submit_protocol.cfg_header
+        ? submit_protocol.cfg_header.project_id
+        : ExtractId(serviceCard.id);
+
+    return KitProxy.utils.runMutationOnce(
+        `add-protocol-${projectId}`,
+        async function() {
+        let protocols;
 
         // 1. 先添加服务
         const addResult = await addHTTPProtocolReq(submit_protocol);
@@ -1141,24 +1171,24 @@ async function  addHTTPProtocol(serviceCard, submit_protocol) {
         protocols = await getProtocolReq(addResult.protocol_id);
         console.info('获取的单个协议项:', protocols);
 
-    } catch (error) {
+        // 3. 添加到页面显示；协议项独立页需要回到第一页并刷新当前列表。
+        if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.handleProtocolAdded === 'function') {
+            await KitProxy.protocolItemsPage.handleProtocolAdded(protocols[0]);
+        } else {
+            addProtocolItem(serviceCard, protocols[0], 1);
+        }
+
+        return protocols[0];
+        },
+        {
+            message: '正在添加协议项...',
+            successMessage: '协议项添加成功',
+        },
+    ).catch(function(error) {
         console.error('添加测试协议项失败: ', error);
-        hideLoading(loading);
-        alert('添加测试协议项失败!');
-        return;
-    }
-
-    await delay(1000);
-    hideLoading(loading);
-    alert("添加测试协议项成功!");
-
-    // 3. 添加到页面显示；协议项独立页需要回到第一页并刷新当前列表。
-    if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.handleProtocolAdded === 'function') {
-        await KitProxy.protocolItemsPage.handleProtocolAdded(protocols[0]);
-    } else {
-        addProtocolItem(serviceCard, protocols[0], 1);
-    }
-
+        showErrorPopup('添加测试协议项失败!');
+        return null;
+    });
 }
 
 function normalizeLengthPolicy(value, fallback = LengthPolicy.BODY_LENGTH) {
@@ -1659,11 +1689,11 @@ async function updateProjectName(id_str, tilte_name) {
     const serviceCardId = ExtractId(id_str)
 
     const serviceCard = document.getElementById(id_str);
-    let projects;
 
-    const loading = showLoading();
-
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `update-project-name-${serviceCardId}`,
+        async function() {
+        let projects;
 
         if(!Number.isInteger(serviceCardId) || serviceCardId <= 0) {
             throw new Error("无效的测试服务ID");
@@ -1676,16 +1706,16 @@ async function updateProjectName(id_str, tilte_name) {
         // 动态更新页面数据
         updateServiceCard(id_str, projects[0]) 
 
-    } catch(error) {
+        return true;
+        },
+        {
+            message: '正在保存测试服务名称...',
+            successMessage: '测试服务名称保存成功',
+        },
+    ).catch(function(error) {
         console.error('修改测试服务标题失败:', error);
-        hideLoading(loading);
         return false;
-    } 
-
-
-    await delay(500);
-    hideLoading(loading);
-    return true;
+    });
 }
 
 async function setProjectActiveReq(projectId, active) {
@@ -1712,11 +1742,20 @@ function mergeProjectRuntimeState(projectId, runtimeData, active) {
 }
 
 async function setProjectActive(projectId, active) {
-    const runtimeData = await setProjectActiveReq(projectId, active);
-    return mergeProjectRuntimeState(projectId, runtimeData || {}, active) || Object.assign({}, runtimeData || {}, {
-        id: projectId,
-        active: active ? 1 : 0,
-    });
+    return KitProxy.utils.runMutationOnce(
+        `set-project-active-${projectId}`,
+        async function() {
+            const runtimeData = await setProjectActiveReq(projectId, active);
+            return mergeProjectRuntimeState(projectId, runtimeData || {}, active) || Object.assign({}, runtimeData || {}, {
+                id: projectId,
+                active: active ? 1 : 0,
+            });
+        },
+        {
+            message: active ? '正在启动测试服务...' : '正在停止测试服务...',
+            successMessage: active ? '测试服务启动成功' : '测试服务停止成功',
+        },
+    );
 }
 
 // 添加测试服务 http请求
@@ -1779,9 +1818,9 @@ async function delProtocol(id_str) {
     const protocolItem = document.getElementById(id_str);
     const serviceCardId = ExtractId(protocolItem.dataset.projectId);
 
-    const loading = showLoading();
-
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `delete-protocol-${protocolItemId}`,
+        async function() {
 
         if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
             throw new Error("无效的协议项ID");
@@ -1789,18 +1828,18 @@ async function delProtocol(id_str) {
 
         await delProtocolReq(protocolItemId, serviceCardId);
 
-    } catch(error) {
+        return true;
+        },
+        {
+            message: '正在删除协议项...',
+            successMessage: '协议项删除成功',
+        },
+    ).catch(function(error) {
 
         console.error('删除协议项失败:', error);
 
-        hideLoading(loading);
         return false;
-    } 
-
-    await delay(500);
-    hideLoading(loading);
-    return true;
-
+    });
 }
 
 
@@ -1824,50 +1863,50 @@ async function delProject(id_str) {
 
     const serviceCard = document.getElementById(id_str);
 
-
-    const loading = showLoading();
-
-    try {
+    return KitProxy.utils.runMutationOnce(
+        `delete-project-${serviceCardId}`,
+        async function() {
         if(!Number.isInteger(serviceCardId) || serviceCardId <= 0) {
             throw new Error("无效的测试服务ID");
         }
         
         await delProjectReq(serviceCardId);
 
-    } catch(error) {
+        return true;
+        },
+        {
+            message: '正在删除测试服务...',
+            successMessage: '测试服务删除成功',
+        },
+    ).catch(function(error) {
         console.error('删除测试服务失败:', error);
-        hideLoading(loading);
         return false;
-    } 
-
-    await delay(500);
-    hideLoading(loading);
-    return true;
-
+    });
 }
 
 async function addProject(project) {
 
-    const loading = showLoading();
-
-    try {
+    return KitProxy.utils.runMutationOnce(
+        'add-project',
+        async function() {
         // 1. 先添加服务
         const addResult = await addProjectReq(project);
 
         // 2. 再获取单个项
         project = await getProjectReq(addResult.project_id);
 
-    } catch (error) {
+        await loadAllProjects(1);
+        return project[0];
+        },
+        {
+            message: '正在添加测试服务...',
+            successMessage: '测试服务添加成功',
+        },
+    ).catch(function(error) {
         console.error('添加测试服务失败: ', error);
-        hideLoading(loading);
-        alert('添加测试服务失败!');
-        return;
-    }
-
-    await delay(1000);
-    hideLoading(loading);
-    alert("添加测试服务成功!");
-    await loadAllProjects(1);
+        showErrorPopup('添加测试服务失败!');
+        return null;
+    });
     
 }
 
@@ -2063,7 +2102,7 @@ function bindServiceActiveToggle(serviceCard, project) {
             const nextProject = await setProjectActive(projectId, nextActive);
             updateServiceCard(serviceCard.id, Object.assign({}, project, nextProject));
         } catch (error) {
-            alert(`${actionText}测试服务失败：${error.message}`);
+            showErrorPopup(`${actionText}测试服务失败：${error.message}`);
             toggleButton.disabled = false;
             toggleButton.classList.remove('is-busy');
         }
@@ -2083,9 +2122,8 @@ function bindServiceDeleteAction(serviceCard) {
                 const visibleCountBeforeDelete = document.querySelectorAll('.service-cards .service-card').length;
                 const nextPage = KitProxy.pagination.nextPageAfterDelete(servicePageState, visibleCountBeforeDelete);
                 await loadAllProjects(nextPage);
-                alert('删除测试服务成功!');
             } else {
-                alert('删除测试服务失败!');
+                showErrorPopup('删除测试服务失败!');
             }
         }
     });
@@ -2306,7 +2344,7 @@ async function loadAllProjects(page = servicePageState.currentPage) {
 
     } catch(error) {
         console.error('加载服务列表出错:', error);
-        alert('加载服务列表出错： ' + error.message);
+        showErrorPopup('加载服务列表出错： ' + error.message);
 
     }finally{
         await delay(1000);
@@ -2345,11 +2383,12 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 project = collectAddServicePayload(modal);
             } catch(error) {
-                alert(error.message);
+                showErrorPopup(error.message);
                 return;
             }
 
-            await addProject(project);
+            const addedProject = await addProject(project);
+            if (!addedProject) return;
 
             KitProxy.utils.removeDomNode(modal);
 

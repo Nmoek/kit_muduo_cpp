@@ -41,6 +41,10 @@
         UINT64: 8,
         DOUBLE: 8,
     });
+    const FIELD_REORDER_ANIMATION_MS = 200;
+    const FIELD_DELETE_HOLD_MS = 220;
+    const FIELD_DELETE_ANIMATION_MS = 420;
+    const FIELD_FEEDBACK_MS = 820;
 
     function toFiniteNumber(value, fallback = null) {
         if (value === '' || value == null) return fallback;
@@ -679,6 +683,194 @@
         syncValueEditorFromHidden(fieldNode);
     }
 
+    function createDefaultPatternFieldInfo() {
+        return {
+            byte_pos: 0,
+            byte_len: 1,
+            type: 'UINT8',
+            role: 'common',
+        };
+    }
+
+    function patternFieldRows(patternList) {
+        return Array.from(patternList?.children || [])
+            .filter(child => child.classList && child.classList.contains('pattern-field-container'));
+    }
+
+    function scheduleAnimationFrame(callback) {
+        if (typeof global.requestAnimationFrame === 'function') {
+            global.requestAnimationFrame(callback);
+            return;
+        }
+        global.setTimeout(callback, 0);
+    }
+
+    function prefersReducedMotion() {
+        return typeof global.matchMedia === 'function'
+            && global.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    function animatePatternListReorder(patternList, mutate) {
+        if (!patternList || typeof mutate !== 'function') return;
+
+        const beforeRects = new Map();
+        patternFieldRows(patternList).forEach(row => {
+            beforeRects.set(row, row.getBoundingClientRect());
+        });
+
+        mutate();
+
+        patternFieldRows(patternList).forEach(row => {
+            const beforeRect = beforeRects.get(row);
+            if (!beforeRect) return;
+
+            const afterRect = row.getBoundingClientRect();
+            const offsetX = beforeRect.left - afterRect.left;
+            const offsetY = beforeRect.top - afterRect.top;
+            if (!offsetX && !offsetY) return;
+
+            row.style.transition = 'none';
+            row.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
+            row.style.willChange = 'transform';
+
+            scheduleAnimationFrame(() => {
+                row.style.transition = `transform ${FIELD_REORDER_ANIMATION_MS}ms ease`;
+                row.style.transform = '';
+                global.setTimeout(() => {
+                    row.style.transition = '';
+                    row.style.willChange = '';
+                }, FIELD_REORDER_ANIMATION_MS);
+            });
+        });
+    }
+
+    function markPatternFieldChanged(fieldNode, changeType) {
+        if (!fieldNode) return;
+
+        clearPatternFieldFeedback(fieldNode);
+        void fieldNode.offsetWidth;
+        fieldNode.classList.add(changeType === 'added' ? 'is-added' : 'is-moved');
+
+        const timer = global.setTimeout(() => {
+            fieldNode.classList.remove('is-added', 'is-moved');
+            fieldNode.__patternFeedbackTimer = null;
+        }, FIELD_FEEDBACK_MS);
+        fieldNode.__patternFeedbackTimer = timer;
+    }
+
+    function clearPatternFieldFeedback(fieldNode) {
+        if (!fieldNode) return;
+
+        if (fieldNode.__patternFeedbackTimer) {
+            global.clearTimeout(fieldNode.__patternFeedbackTimer);
+            fieldNode.__patternFeedbackTimer = null;
+        }
+
+        fieldNode.classList.remove('is-added', 'is-moved');
+    }
+
+    function cancelPatternFieldAnimations(fieldNode) {
+        if (!fieldNode || typeof fieldNode.getAnimations !== 'function') return;
+
+        fieldNode.getAnimations({ subtree: true }).forEach(animation => {
+            try {
+                animation.cancel();
+            } catch (error) {
+                // 已完成或被浏览器回收的动画可以忽略。
+            }
+        });
+    }
+
+    /**
+     * 根据字段在列表中的展示顺序，按 Byte 长度连续回填 Byte 起始位置。
+     * @param {HTMLElement} patternList 字段列表容器。
+     */
+    function recalculatePatternFieldBytePositions(patternList) {
+        if (!patternList) return;
+
+        let byteCursor = 0;
+        patternList.querySelectorAll('.pattern-field-container').forEach(fieldNode => {
+            if (fieldNode.classList.contains('is-deleting')) return;
+            const bytePosInput = fieldNode.querySelector('.pattern-field-byte-pos');
+            const byteLen = toFiniteNumber(fieldNode.querySelector('.pattern-field-byte-len')?.value, 0);
+            if (bytePosInput) bytePosInput.value = String(byteCursor);
+            byteCursor += Math.max(0, Number(byteLen) || 0);
+        });
+    }
+
+    /**
+     * 字段列表被清空时保留一个可新增的空状态行。
+     * @param {HTMLElement} patternList 字段列表容器。
+     * @param {HTMLElement} modal 当前 TCP 格式配置弹窗。
+     * @param {boolean} isProjectMode 是否为项目格式字段编辑。
+     */
+    function syncPatternListEmptyState(patternList, modal, isProjectMode) {
+        if (!patternList) return;
+
+        let emptyRow = null;
+        Array.from(patternList.children).forEach(child => {
+            if (child.classList && child.classList.contains('pattern-empty-field-row')) {
+                emptyRow = child;
+            }
+        });
+
+        const hasFields = Boolean(patternList.querySelector('.pattern-field-container'));
+        if (hasFields) {
+            if (emptyRow) emptyRow.remove();
+            return;
+        }
+
+        if (emptyRow) return;
+
+        emptyRow = document.createElement('div');
+        emptyRow.className = 'pattern-empty-field-row';
+        emptyRow.innerHTML = `
+            <div class="pattern-field pattern-empty-field">
+                <div class="pattern-cell pattern-empty-message">
+                    <span>暂无字段</span>
+                </div>
+                <div class="pattern-cell pattern-cell-actions">
+                    <label>操作</label>
+                    <div class="pattern-field-actions">
+                        <button type="button" class="add-field-btn" title="新增字段" ${isProjectMode ? '' : 'hidden disabled'}>新增</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        emptyRow.querySelector('.add-field-btn')?.addEventListener('click', function() {
+            if (!isProjectMode) return;
+            insertNewPatternFieldAfter(patternList, null, modal, isProjectMode);
+        });
+        patternList.appendChild(emptyRow);
+    }
+
+    /**
+     * 在指定字段行下方新增字段，并触发 Byte 起始位置重算。
+     * @param {HTMLElement} patternList 字段列表容器。
+     * @param {?HTMLElement} anchorFieldNode 作为插入锚点的字段行；为空时追加到列表。
+     * @param {HTMLElement} modal 当前 TCP 格式配置弹窗。
+     * @param {boolean} isProjectMode 是否为项目格式字段编辑。
+     * @returns {?HTMLElement} 新增的字段行。
+     */
+    function insertNewPatternFieldAfter(patternList, anchorFieldNode, modal, isProjectMode) {
+        if (!isProjectMode || !patternList) return null;
+
+        closeFixedValuePopovers(modal);
+        const fieldNode = createPatternField('字段名称', '', createDefaultPatternFieldInfo());
+        animatePatternListReorder(patternList, () => {
+            appendFieldNode(patternList, fieldNode, modal, isProjectMode, anchorFieldNode);
+        });
+        recalculatePatternFieldBytePositions(patternList);
+        refreshPatternModal(modal, isProjectMode);
+        markPatternFieldChanged(fieldNode, 'added');
+
+        const nameInput = fieldNode.querySelector('.pattern-field-name');
+        if (nameInput && typeof nameInput.focus === 'function') {
+            nameInput.focus();
+        }
+        return fieldNode;
+    }
+
     function createPatternField(namePlaceholder = '', specialName = '', fieldInfo = null) {
         const field = cloneField(fieldInfo || {});
         if (specialName && (!field.role || field.role === 'common')) {
@@ -730,6 +922,7 @@
                     <label>操作</label>
                     <div class="pattern-field-actions">
                         <button type="button" class="pattern-fixed-value-btn" title="填写固定值" hidden>固定值</button>
+                        <button type="button" class="add-field-btn" title="在下方新增字段">新增</button>
                         <button type="button" class="pattern-field-move-up" title="上移">上移</button>
                         <button type="button" class="pattern-field-move-down" title="下移">下移</button>
                         <button type="button" class="del-field-btn" title="删除字段">删除</button>
@@ -772,17 +965,6 @@
         return fieldNode;
     }
 
-    function patternListSortByIdx(patternList) {
-        const children = Array.isArray(patternList)
-            ? patternList
-            : Array.from(patternList && patternList.children ? patternList.children : []);
-        return children.sort((left, right) => {
-            const leftPos = toFiniteNumber(left.querySelector('.pattern-field-byte-pos')?.value, Number.MAX_SAFE_INTEGER);
-            const rightPos = toFiniteNumber(right.querySelector('.pattern-field-byte-pos')?.value, Number.MAX_SAFE_INTEGER);
-            return leftPos - rightPos;
-        });
-    }
-
     function setFieldMetadataReadonly(fieldNode, readonly) {
         ['.pattern-field-name', '.pattern-field-byte-pos', '.pattern-field-byte-len', '.pattern-field-type', '.pattern-field-role'].forEach(selector => {
             const input = fieldNode.querySelector(selector);
@@ -820,6 +1002,7 @@
     function readPatternInfoFromDOM(modal, isProjectMode) {
         const fields = [];
         modal.querySelectorAll('.pattern-field-container').forEach(fieldNode => {
+            if (fieldNode.classList.contains('is-deleting')) return;
             const field = fieldFromNode(fieldNode);
             const value = readFieldValueInput(fieldNode);
             field.byte_pos = Number(field.byte_pos);
@@ -994,7 +1177,7 @@
         });
     }
 
-    function bindFixedValuePopover(fieldNode, modal, isProjectMode) {
+    function bindFixedValuePopover(fieldNode, patternList, modal, isProjectMode) {
         const button = fieldNode.querySelector('.pattern-fixed-value-btn');
         const hiddenInput = fieldNode.querySelector('.pattern-field-value');
         if (!button || !hiddenInput) return;
@@ -1051,6 +1234,7 @@
                 syncValueEditorFromHidden(fieldNode);
                 syncValueAvailability(fieldNode, isProjectMode);
                 popover.remove();
+                recalculatePatternFieldBytePositions(patternList);
                 refreshPatternModal(modal, isProjectMode);
             });
             popover.querySelector('.pattern-fixed-value-cancel').addEventListener('click', function(cancelEvent) {
@@ -1070,16 +1254,99 @@
         });
     }
 
+    function animatePatternFieldRemoval(fieldNode, patternList, modal, isProjectMode) {
+        if (!fieldNode || fieldNode.dataset.deleting === 'true') return;
+
+        fieldNode.dataset.deleting = 'true';
+        closeFixedValuePopovers(modal);
+        fieldNode.querySelectorAll('button, input, select').forEach(control => {
+            control.disabled = true;
+        });
+        clearPatternFieldFeedback(fieldNode);
+        cancelPatternFieldAnimations(fieldNode);
+        fieldNode.style.transform = '';
+        fieldNode.style.willChange = '';
+
+        const rowHeight = Math.max(
+            fieldNode.getBoundingClientRect().height,
+            fieldNode.querySelector('.pattern-field')?.getBoundingClientRect().height || 0,
+            fieldNode.scrollHeight || 0,
+        );
+        fieldNode.style.overflow = 'hidden';
+        if (rowHeight > 0) {
+            fieldNode.style.height = `${rowHeight}px`;
+        }
+        fieldNode.style.transition = '';
+        fieldNode.style.opacity = '1';
+        fieldNode.classList.add('is-delete-marked');
+        void fieldNode.offsetHeight;
+
+        const holdMs = prefersReducedMotion() ? 0 : FIELD_DELETE_HOLD_MS;
+        const collapseMs = prefersReducedMotion() ? 0 : FIELD_DELETE_ANIMATION_MS;
+        let removalFinished = false;
+        function finishRemoval() {
+            if (removalFinished) return;
+            removalFinished = true;
+            if (fieldNode.parentNode === patternList) {
+                fieldNode.remove();
+            }
+            recalculatePatternFieldBytePositions(patternList);
+            syncPatternListEmptyState(patternList, modal, isProjectMode);
+            refreshPatternModal(modal, isProjectMode);
+        }
+
+        global.setTimeout(() => {
+            fieldNode.classList.add('is-deleting');
+
+            if (collapseMs > 0 && typeof fieldNode.animate === 'function') {
+                fieldNode.style.transition = 'none';
+                fieldNode.style.height = `${rowHeight}px`;
+                fieldNode.style.opacity = '1';
+                const deleteAnimation = fieldNode.animate([
+                    { height: `${rowHeight}px`, opacity: 1 },
+                    { height: '0px', opacity: 0 },
+                ], {
+                    duration: collapseMs,
+                    easing: 'ease',
+                    fill: 'forwards',
+                });
+                fieldNode.querySelector('.pattern-field')?.animate([
+                    { transform: 'scale(1)' },
+                    { transform: 'scale(0.995)' },
+                ], {
+                    duration: collapseMs,
+                    easing: 'ease',
+                    fill: 'forwards',
+                });
+                deleteAnimation.finished.then(finishRemoval).catch(finishRemoval);
+                global.setTimeout(finishRemoval, collapseMs + 80);
+                return;
+            }
+
+            fieldNode.style.transition = collapseMs > 0
+                ? `height ${collapseMs}ms ease, opacity ${Math.min(collapseMs, 360)}ms ease`
+                : 'none';
+            void fieldNode.offsetHeight;
+            scheduleAnimationFrame(() => {
+                fieldNode.style.opacity = '0';
+                fieldNode.style.height = '0px';
+            });
+            global.setTimeout(finishRemoval, collapseMs + 40);
+        }, holdMs);
+    }
+
     function bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode) {
         syncValueAvailability(fieldNode, isProjectMode);
         bindValueDisplayToggle(fieldNode, modal, isProjectMode);
-        bindFixedValuePopover(fieldNode, modal, isProjectMode);
+        bindFixedValuePopover(fieldNode, patternList, modal, isProjectMode);
+
+        fieldNode.querySelector('.add-field-btn')?.addEventListener('click', function() {
+            insertNewPatternFieldAfter(patternList, fieldNode, modal, isProjectMode);
+        });
 
         fieldNode.querySelector('.del-field-btn')?.addEventListener('click', function() {
             if (!isProjectMode) return;
-            closeFixedValuePopovers(modal);
-            fieldNode.remove();
-            refreshPatternModal(modal, isProjectMode);
+            animatePatternFieldRemoval(fieldNode, patternList, modal, isProjectMode);
         });
 
         fieldNode.querySelector('.pattern-field-move-up')?.addEventListener('click', function() {
@@ -1087,8 +1354,12 @@
             const previous = fieldNode.previousElementSibling;
             if (previous) {
                 closeFixedValuePopovers(modal);
-                patternList.insertBefore(fieldNode, previous);
+                animatePatternListReorder(patternList, () => {
+                    patternList.insertBefore(fieldNode, previous);
+                });
+                recalculatePatternFieldBytePositions(patternList);
                 refreshPatternModal(modal, isProjectMode);
+                markPatternFieldChanged(fieldNode, 'moved');
             }
         });
 
@@ -1097,8 +1368,12 @@
             const next = fieldNode.nextElementSibling;
             if (next) {
                 closeFixedValuePopovers(modal);
-                patternList.insertBefore(next, fieldNode);
+                animatePatternListReorder(patternList, () => {
+                    patternList.insertBefore(next, fieldNode);
+                });
+                recalculatePatternFieldBytePositions(patternList);
                 refreshPatternModal(modal, isProjectMode);
+                markPatternFieldChanged(fieldNode, 'moved');
             }
         });
 
@@ -1107,6 +1382,9 @@
                 syncHiddenValueFromEditor(fieldNode);
                 updateByteLenByType(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
+                if (isProjectMode) {
+                    recalculatePatternFieldBytePositions(patternList);
+                }
             }
             refreshPatternModal(modal, isProjectMode);
         });
@@ -1120,6 +1398,9 @@
                 input.dataset.displayMode = 'H';
                 updateByteLenByType(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
+                if (isProjectMode) {
+                    recalculatePatternFieldBytePositions(patternList);
+                }
             }
             if (event.target.classList.contains('pattern-field-role')) {
                 syncValueAvailability(fieldNode, isProjectMode);
@@ -1128,18 +1409,26 @@
         });
     }
 
-    function appendFieldNode(patternList, fieldNode, modal, isProjectMode) {
+    function appendFieldNode(patternList, fieldNode, modal, isProjectMode, afterNode = null) {
+        fieldNode.querySelector('.pattern-field-byte-pos').readOnly = Boolean(isProjectMode);
         fieldNode.querySelector('.pattern-field-byte-len').readOnly = true;
 
         if (!isProjectMode) {
             setFieldMetadataReadonly(fieldNode, true);
+            fieldNode.querySelector('.add-field-btn').hidden = true;
+            fieldNode.querySelector('.add-field-btn').disabled = true;
             fieldNode.querySelector('.del-field-btn').disabled = true;
             fieldNode.querySelector('.pattern-field-move-up').disabled = true;
             fieldNode.querySelector('.pattern-field-move-down').disabled = true;
         }
 
         bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode);
-        patternList.appendChild(fieldNode);
+        if (afterNode && afterNode.parentNode === patternList) {
+            patternList.insertBefore(fieldNode, afterNode.nextElementSibling);
+        } else {
+            patternList.appendChild(fieldNode);
+        }
+        syncPatternListEmptyState(patternList, modal, isProjectMode);
         return fieldNode;
     }
 
@@ -1199,10 +1488,6 @@
                         <div class="pattern-field-info" id="special-pattern-fields">
                             <div class="pattern-field-info-header">
                                 <label>${escapeHTML(fieldTitle || '字段配置')}</label>
-                                <div class="pattern-field-toolbar">
-                                    <button type="button" class="add-field-btn" ${isProjectMode ? '' : 'hidden'}>新增字段</button>
-                                    <button type="button" class="sort-field-btn" title="按 Byte 起始位置升序排列">按 Byte 排序</button>
-                                </div>
                             </div>
                             <div class="pattern-field-grid-labels" aria-hidden="true">
                                 <span>Byte起始</span>
@@ -1234,6 +1519,7 @@
             updatePatternField(fieldNode, field, isProjectMode);
             appendFieldNode(patternList, fieldNode, configModal, isProjectMode);
         });
+        syncPatternListEmptyState(patternList, configModal, isProjectMode);
 
         refreshPatternModal(configModal, isProjectMode);
 
@@ -1243,22 +1529,6 @@
         });
         configModal.querySelector('.pattern-byte-order')?.addEventListener('change', function() {
             configModal.dataset.byteOrder = this.value;
-            refreshPatternModal(configModal, isProjectMode);
-        });
-
-        configModal.querySelector('.add-field-btn')?.addEventListener('click', function() {
-            const fieldNode = createPatternField('字段名称', '', {
-                byte_pos: 0,
-                byte_len: 1,
-                type: 'UINT8',
-                role: 'common',
-            });
-            appendFieldNode(patternList, fieldNode, configModal, isProjectMode);
-            refreshPatternModal(configModal, isProjectMode);
-        });
-
-        configModal.querySelector('.sort-field-btn')?.addEventListener('click', function() {
-            patternList.replaceChildren(...patternListSortByIdx(patternList));
             refreshPatternModal(configModal, isProjectMode);
         });
 
@@ -1273,6 +1543,7 @@
             if (resolvedStatusElement) {
                 resolvedStatusElement.style.display = 'none';
             }
+            syncPatternListEmptyState(patternList, configModal, isProjectMode);
             refreshPatternModal(configModal, isProjectMode);
         });
 
@@ -1286,6 +1557,8 @@
         configModal.querySelector('#config-pattern-modal-form').addEventListener('submit', async function(event) {
             event.preventDefault();
             event.stopPropagation();
+            const submitButton = configModal.querySelector('.confirm-btn');
+            if (submitButton && submitButton.disabled) return;
 
             let model;
             try {
@@ -1308,6 +1581,9 @@
             if (!validation.valid) return;
 
             const serialized = isProjectMode ? toPatternInfoV2(model) : model;
+            if (submitButton) submitButton.disabled = true;
+
+            try {
             if (resolvedTargetElement && resolvedTargetElement.dataset) {
                 resolvedTargetElement.dataset.patternInfos = JSON.stringify(serialized);
             }
@@ -1317,10 +1593,14 @@
             }
 
             if (userHandleCb) {
-                await userHandleCb(serialized);
+                const result = await userHandleCb(serialized);
+                if (result === false) return;
             }
 
             closeModal();
+            } finally {
+                if (submitButton) submitButton.disabled = false;
+            }
         });
 
         return configModal;
@@ -1466,6 +1746,5 @@
 
     global.updatePatternField = updatePatternField;
     global.createPatternField = createPatternField;
-    global.patternListSortByIdx = patternListSortByIdx;
     global.createCustomTcpPatternModal = createCustomTcpPatternModal;
 })(typeof window !== 'undefined' ? window : globalThis);

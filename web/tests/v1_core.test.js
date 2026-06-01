@@ -99,6 +99,41 @@ describe('V1 utils', () => {
         expect(context.KitProxy.utils.validatePort(65536)).toBe(false);
     });
 
+    /**
+     * 测试思路：全局错误提示不再使用浏览器 alert 或页面内嵌错误区，而是创建顶部弹框。
+     * 示例：错误文案包含 HTML 标签时，弹框应显示文本本身，不应插入可执行节点。
+     */
+    it('全局错误提示使用顶部弹框并转义文案', () => {
+        context.KitProxy.utils.showGlobalError('<script>alert(1)</script>', {
+            durationMs: 0,
+        });
+
+        const popup = context.document.querySelector('.global-error-popup');
+        expect(popup).toBeTruthy();
+        expect(popup.getAttribute('role')).toBe('alert');
+        expect(popup.classList.contains('is-error')).toBe(true);
+        expect(popup.querySelector('.global-notification-icon svg')).toBeTruthy();
+        expect(popup.textContent).toContain('<script>alert(1)</script>');
+        expect(popup.querySelector('script')).toBeNull();
+    });
+
+    /**
+     * 测试思路：成功提示复用同一套顶部弹框，但切换为成功状态和绿色对钩图标。
+     * 示例：保存成功后应创建 status 弹框，并带 is-success 状态类。
+     */
+    it('全局成功提示复用顶部弹框和图标结构', () => {
+        context.KitProxy.utils.showGlobalSuccess('保存成功', {
+            durationMs: 0,
+        });
+
+        const popup = context.document.querySelector('.global-error-popup');
+        expect(popup).toBeTruthy();
+        expect(popup.getAttribute('role')).toBe('status');
+        expect(popup.classList.contains('is-success')).toBe(true);
+        expect(popup.querySelector('.global-notification-icon svg')).toBeTruthy();
+        expect(popup.textContent).toContain('保存成功');
+    });
+
     it('校验和格式化 JSON 文本', () => {
         expect(context.KitProxy.utils.validateJsonText('{"ok":true}')).toBe(true);
         expect(context.KitProxy.utils.validateJsonText('{bad')).toBe(false);
@@ -678,9 +713,11 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         expect(modal.querySelector('.pattern-field-grid-labels').textContent).not.toContain('固定值');
 
         const firstField = modal.querySelector('.pattern-field-container');
+        const bytePosInput = firstField.querySelector('.pattern-field-byte-pos');
         const byteLenInput = firstField.querySelector('.pattern-field-byte-len');
         const typeSelect = firstField.querySelector('.pattern-field-type');
         const fixedValueButton = firstField.querySelector('.pattern-fixed-value-btn');
+        expect(bytePosInput.readOnly).toBe(true);
         expect(byteLenInput.readOnly).toBe(true);
         expect(fixedValueButton.hidden).toBe(false);
         expect(firstField.querySelector('.pattern-field-value').value).toBe('H23232323');
@@ -703,6 +740,95 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         typeSelect.value = 'UINT16';
         typeSelect.dispatchEvent(new context.Event('change', { bubbles: true }));
         expect(byteLenInput.value).toBe('2');
+    });
+
+    /**
+     * 测试思路：项目 TCP 格式字段列表的新增按钮位于每行操作列，结构变化后按行顺序重算 Byte 起始。
+     * 示例：在 4 字节起始标识下方新增 1 字节字段后，后续 2 字节功能码应从 byte_pos=5 开始；下移、删除后继续自动回填。
+     */
+    it('项目字段行内新增、移动和删除后自动回填 Byte 起始', async () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '项目格式字段', {
+            version: 2,
+            header_bytes: 7,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+                { name: '功能码', byte_pos: 4, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: '长度', byte_pos: 6, byte_len: 1, type: 'UINT8', role: 'body_length' },
+            ],
+        }, null, true);
+
+        const modal = context.document.querySelector('.config-pattern-modal');
+        const readPositions = () => Array.from(modal.querySelectorAll('.pattern-field-container .pattern-field-byte-pos'))
+            .map(input => Number(input.value));
+        const readFields = () => Array.from(modal.querySelectorAll('.pattern-field-container'));
+
+        expect(modal.querySelector('.pattern-field-info-header .add-field-btn')).toBeNull();
+        expect(modal.querySelector('.sort-field-btn')).toBeNull();
+        expect(readFields()[0].querySelector('.pattern-cell-actions .add-field-btn')).toBeTruthy();
+        expect(readFields().every(field => field.querySelector('.pattern-field-byte-pos').readOnly)).toBe(true);
+
+        readFields()[0].querySelector('.add-field-btn').click();
+        expect(readFields()).toHaveLength(4);
+        expect(readFields()[1].querySelector('.pattern-field-name').value).toBe('');
+        expect(readFields()[1].classList.contains('is-added')).toBe(true);
+        expect(readPositions()).toEqual([0, 4, 5, 7]);
+
+        readFields()[1].querySelector('.pattern-field-move-down').click();
+        expect(readFields()[2].querySelector('.pattern-field-name').value).toBe('');
+        expect(readFields()[2].classList.contains('is-moved')).toBe(true);
+        expect(readPositions()).toEqual([0, 4, 6, 7]);
+
+        const deletingField = readFields()[1];
+        deletingField.querySelector('.del-field-btn').click();
+        expect(deletingField.classList.contains('is-delete-marked')).toBe(true);
+        expect(deletingField.classList.contains('is-deleting')).toBe(false);
+        expect(readFields()).toHaveLength(4);
+        await new Promise(resolve => setTimeout(resolve, 280));
+        expect(deletingField.classList.contains('is-deleting')).toBe(true);
+        await new Promise(resolve => setTimeout(resolve, 700));
+        expect(readFields()).toHaveLength(3);
+        expect(readPositions()).toEqual([0, 4, 5]);
+    });
+
+    /**
+     * 测试思路：新增字段的高亮动画不能覆盖随后的删除反馈。
+     * 示例：刚新增的字段立刻删除时，应先清除 is-added，再进入红色删除确认态和收起流程。
+     */
+    it('新增字段后立即删除时删除动画接管新增高亮', async () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '项目格式字段', {
+            version: 2,
+            header_bytes: 7,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 4, type: 'UINT32', role: 'start_magic', match: 'H23232323' },
+                { name: '功能码', byte_pos: 4, byte_len: 2, type: 'UINT16', role: 'function_code' },
+                { name: '长度', byte_pos: 6, byte_len: 1, type: 'UINT8', role: 'body_length' },
+            ],
+        }, null, true);
+
+        const modal = context.document.querySelector('.config-pattern-modal');
+        const readFields = () => Array.from(modal.querySelectorAll('.pattern-field-container'));
+
+        readFields()[0].querySelector('.add-field-btn').click();
+        const addedField = readFields()[1];
+        expect(addedField.classList.contains('is-added')).toBe(true);
+
+        addedField.querySelector('.del-field-btn').click();
+        expect(addedField.classList.contains('is-added')).toBe(false);
+        expect(addedField.classList.contains('is-delete-marked')).toBe(true);
+        await new Promise(resolve => setTimeout(resolve, 280));
+        expect(addedField.classList.contains('is-deleting')).toBe(true);
+        await new Promise(resolve => setTimeout(resolve, 700));
+        expect(readFields()).toHaveLength(3);
     });
 
     /**
@@ -926,7 +1052,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             <button id="add-protocol-item" disabled>添加协议项</button>
             <a id="back-service-list"></a>
             <h2 id="protocol-items-title"></h2>
-            <div id="protocol-page-error"></div>
             <div class="protocol-items-page">
                 <div id="protocol-service-meta"></div>
                 <div class="protocol-list"></div>
@@ -971,7 +1096,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             <button id="add-protocol-item" disabled>添加协议项</button>
             <a id="back-service-list"></a>
             <h2 id="protocol-items-title"></h2>
-            <div id="protocol-page-error"></div>
             <div class="protocol-items-page">
                 <div id="protocol-service-meta"></div>
                 <div class="protocol-list"></div>
@@ -1013,7 +1137,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             <button id="add-protocol-item" disabled>添加协议项</button>
             <a id="back-service-list"></a>
             <h2 id="protocol-items-title"></h2>
-            <div id="protocol-page-error"></div>
             <div class="protocol-items-page">
                 <div id="protocol-service-meta"></div>
                 <div class="protocol-list"></div>
@@ -1360,7 +1483,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             <a id="back-protocol-list"></a>
             <h2 id="protocol-form-title"></h2>
             <p id="protocol-form-subtitle"></p>
-            <div id="protocol-form-error"></div>
             <div id="protocol-form-project-context"></div>
             <form id="protocol-item-form">
                 <input id="protocol-item-name">
@@ -1456,7 +1578,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             <a id="back-protocol-list"></a>
             <h2 id="protocol-form-title"></h2>
             <p id="protocol-form-subtitle"></p>
-            <div id="protocol-form-error"></div>
             <div id="protocol-form-project-context"></div>
             <form id="protocol-item-form">
                 <input id="protocol-item-name">
@@ -1552,7 +1673,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             <a id="back-protocol-list"></a>
             <h2 id="protocol-form-title"></h2>
             <p id="protocol-form-subtitle"></p>
-            <div id="protocol-form-error"></div>
             <div id="protocol-form-project-context"></div>
             <form id="protocol-item-form">
                 <input id="protocol-item-name">

@@ -76,10 +76,6 @@
      * @param {string} message
      */
     function renderPageError(message) {
-        const escape = KitProxy.utils && KitProxy.utils.escapeHTML
-            ? KitProxy.utils.escapeHTML
-            : function(value) { return String(value == null ? '' : value); };
-        const errorBox = document.getElementById('protocol-page-error');
         const addBtn = document.getElementById('add-protocol-item');
         const title = document.getElementById('protocol-items-title');
         const meta = document.getElementById('protocol-service-meta');
@@ -88,12 +84,12 @@
         if (meta) meta.innerHTML = '';
         if (addBtn) addBtn.disabled = true;
 
-        if (errorBox) {
-            errorBox.style.display = 'block';
-            errorBox.innerHTML = `
-                <p>${escape(message)}</p>
-                <a class="back-link" href="${buildMainPageUrl()}">返回测试服务列表</a>
-            `;
+        if (KitProxy.utils && typeof KitProxy.utils.showGlobalError === 'function') {
+            KitProxy.utils.showGlobalError(message, {
+                actionText: '返回测试服务列表',
+                actionHref: buildMainPageUrl(),
+                durationMs: 0,
+            });
         }
     }
 
@@ -181,7 +177,7 @@
                 }
                 renderProjectContext(pageContext.project);
             } catch (error) {
-                alert(`${nextActive ? '启动' : '停止'}测试服务失败：${error.message}`);
+                KitProxy.utils.showGlobalError(`${nextActive ? '启动' : '停止'}测试服务失败：${error.message}`);
                 toggleButton.disabled = false;
                 toggleButton.classList.remove('is-busy');
             }
@@ -269,7 +265,7 @@
             renderProtocolPagination();
         } catch(error) {
             console.error('加载协议项列表出错:', error);
-            alert('加载协议项列表出错： ' + error.message);
+            KitProxy.utils.showGlobalError('加载协议项列表出错： ' + error.message);
         } finally {
             await delay(500);
             hideLoading(loading);
@@ -288,7 +284,7 @@
             e.preventDefault();
 
             if (!pageContext.project) {
-                alert('请先选择测试服务');
+                KitProxy.utils.showGlobalError('请先选择测试服务');
                 return;
             }
             const targetUrl = buildProtocolItemCreateUrl(pageContext.project.id);

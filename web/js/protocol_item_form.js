@@ -68,33 +68,33 @@
      * @param {string} message
      */
     function showPageError(message) {
-        const errorBox = document.getElementById('protocol-form-error');
-        if (!errorBox) return;
+        if (!utils.showGlobalError) return;
 
-        errorBox.style.display = 'block';
-        errorBox.innerHTML = `
-            <p>${escapeHTML(message)}</p>
-            <a class="back-link" href="${escapeHTML(buildProtocolListUrl())}">返回协议项列表</a>
-        `;
+        utils.showGlobalError(message, {
+            actionText: '返回协议项列表',
+            actionHref: buildProtocolListUrl(),
+            durationMs: 0,
+        });
     }
 
     function clearPageError() {
-        const errorBox = document.getElementById('protocol-form-error');
-        if (!errorBox) return;
-
-        errorBox.style.display = 'none';
-        errorBox.textContent = '';
+        if (utils.clearGlobalErrorPopup) {
+            utils.clearGlobalErrorPopup();
+        }
     }
 
     /**
      * @param {string} message
      */
     function setInlineError(message) {
-        const errorBox = document.getElementById('protocol-form-error');
-        if (!errorBox) return;
+        if (!message) {
+            clearPageError();
+            return;
+        }
 
-        errorBox.style.display = message ? 'block' : 'none';
-        errorBox.textContent = message || '';
+        if (utils.showGlobalError) {
+            utils.showGlobalError(message);
+        }
     }
 
     function navigateBack() {
@@ -979,27 +979,36 @@
         if (pageState.isSubmitting) return;
 
         const saveButton = document.getElementById('save-protocol-form');
-        const loading = showLoading(pageState.mode === 'edit' ? '正在保存协议项...' : '正在添加协议项...');
-        pageState.isSubmitting = true;
-        if (saveButton) saveButton.disabled = true;
-        clearPageError();
+        const mutationKey = pageState.mode === 'edit'
+            ? `protocol-form-edit-${pageState.protocolId}`
+            : `protocol-form-add-${pageState.projectId}`;
 
-        try {
+        pageState.isSubmitting = true;
+        await KitProxy.utils.runMutationOnce(
+            mutationKey,
+            async function() {
+            clearPageError();
             const data = collectFormData();
             if (pageState.mode === 'edit') {
                 await handleEdit(data);
             } else {
                 await handleAdd(data);
             }
-            await delay(300);
-            navigateBack();
-        } catch (error) {
+            return true;
+            },
+            {
+                message: pageState.mode === 'edit' ? '正在保存协议项...' : '正在添加协议项...',
+                successMessage: pageState.mode === 'edit' ? '协议项修改成功' : '协议项添加成功',
+                button: saveButton,
+                busyText: pageState.mode === 'edit' ? '保存中...' : '添加中...',
+            },
+        ).then(function() {
+            setTimeout(navigateBack, 650);
+        }).catch(function(error) {
             setInlineError((pageState.mode === 'edit' ? '修改协议项失败：' : '添加协议项失败：') + error.message);
-        } finally {
-            hideLoading(loading);
+        }).finally(function() {
             pageState.isSubmitting = false;
-            if (saveButton) saveButton.disabled = false;
-        }
+        });
     }
 
     /**

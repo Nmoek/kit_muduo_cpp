@@ -1067,6 +1067,105 @@ body {
     margin: 0 0 8px;
 }
 
+/* 全局通知弹框：错误和成功共用顶部居中浮层，左侧图标表达状态。 */
+.global-error-popup {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    z-index: 3000;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    width: min(540px, calc(100vw - 32px));
+    padding: 14px 16px 14px 14px;
+    border: 1px solid var(--notification-border, #ffd5cf);
+    border-radius: 8px;
+    background: var(--notification-bg, #fff6f5);
+    color: var(--notification-fg, var(--v13-danger, #d92d20));
+    box-shadow: 0 16px 36px var(--notification-shadow, rgba(217, 45, 32, 0.16));
+    opacity: 0;
+    transform: translate(-50%, -18px);
+    transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.global-error-popup.is-error {
+    --notification-bg: #fff6f5;
+    --notification-border: #ffd5cf;
+    --notification-fg: var(--v13-danger, #d92d20);
+    --notification-shadow: rgba(217, 45, 32, 0.16);
+}
+
+.global-error-popup.is-success {
+    --notification-bg: #f0fdf6;
+    --notification-border: #bbf7d0;
+    --notification-fg: var(--v13-success, #16865f);
+    --notification-shadow: rgba(22, 134, 95, 0.15);
+}
+
+.global-error-popup.is-visible {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+.global-notification-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-top: 1px;
+}
+
+.global-notification-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.global-error-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.global-error-content p {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.global-error-action {
+    display: inline-block;
+    margin-top: 8px;
+    color: var(--v13-primary-strong, #1f6ed4);
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.global-error-action:hover {
+    text-decoration: underline;
+}
+
+.global-error-close {
+    width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: currentColor;
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 22px;
+}
+
+.global-error-close:hover {
+    background: color-mix(in srgb, currentColor 9%, transparent);
+}
+
 /* Body内容查看弹窗 */
 .body-content-modal {
     position: fixed;
@@ -1187,6 +1286,63 @@ body {
         var(--v13-bg);
     color: var(--v13-text);
     letter-spacing: 0;
+}
+
+/* 全局加载遮罩：由 js/utils.js 的 showLoading/hideLoading 控制。 */
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background:
+        radial-gradient(circle at 50% 45%, rgba(232, 243, 255, 0.68), rgba(243, 248, 255, 0.38) 38%, rgba(23, 32, 51, 0.24) 100%);
+    backdrop-filter: blur(8px);
+}
+
+.loading-content {
+    display: grid;
+    justify-items: center;
+    gap: 14px;
+    width: min(320px, calc(100vw - 48px));
+    padding: 26px 28px;
+    border: 1px solid rgba(185, 211, 240, 0.82);
+    border-radius: var(--v13-radius);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 24px 60px rgba(47, 128, 237, 0.18), 0 1px 0 rgba(255, 255, 255, 0.95) inset;
+    text-align: center;
+}
+
+.loading-spinner {
+    width: 42px;
+    height: 42px;
+    border: 3px solid var(--v13-primary-soft);
+    border-top-color: var(--v13-primary);
+    border-right-color: var(--v13-primary-strong);
+    border-radius: 50%;
+    animation: loadingSpin 0.9s linear infinite;
+}
+
+.loading-message {
+    margin: 0;
+    color: var(--v13-text);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+@keyframes loadingSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .loading-spinner {
+        animation-duration: 1.8s;
+    }
 }
 
 .admin-container {
@@ -1585,6 +1741,12 @@ button.service-field.service-active-toggle {
 
 .service-active-toggle.is-busy,
 .service-active-toggle:disabled {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+button.is-mutation-busy,
+button.is-mutation-busy:disabled {
     cursor: wait;
     opacity: 0.72;
 }
@@ -2953,10 +3115,28 @@ button.service-field.service-active-toggle {
 
 .protocol-name-group {
     align-self: start;
-    padding: 16px;
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 18px 18px 20px;
     border: 1px solid var(--v13-border);
     border-radius: var(--v13-radius);
-    background: #fff;
+    background: var(--v13-surface-soft);
+}
+
+.protocol-item-form .protocol-name-group > label {
+    margin: 0;
+    color: var(--v13-primary-strong);
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1.35;
+    overflow: visible;
+}
+
+.protocol-name-group #protocol-item-name {
+    min-height: 42px;
+    padding: 9px 12px;
 }
 
 .protocol-item-form input[type="text"],

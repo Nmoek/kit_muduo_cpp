@@ -6,60 +6,253 @@
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
+    /**
+     * 显示全局加载遮罩。
+     * @param {string} message 加载提示文案。
+     * @returns {HTMLDivElement} 可传给 hideLoading 的遮罩节点。
+     */
     function showLoading(message = '处理中，请稍候...') {
         const loadingOverlay = document.createElement('div');
         loadingOverlay.className = 'loading-overlay';
-        loadingOverlay.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: rgba(0,0,0,0.7);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-        `;
         loadingOverlay.innerHTML = `
-            <div class="loading-content" style="
-                background: white;
-                padding: 30px;
-                border-radius: 8px;
-                text-align: center;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                min-width: 300px;
-            ">
-                <div class="loading-spinner" style="
-                    width: 50px;
-                    height: 50px;
-                    border: 5px solid #f3f3f3;
-                    border-top: 5px solid #3498db;
-                    border-radius: 50%;
-                    margin: 0 auto 20px;
-                    animation: spin 1s linear infinite;
-                "></div>
-                <p class="loading-message" style="
-                    margin: 0;
-                    font-size: 16px;
-                    color: #333;
-                ">${message}</p>
-                <style>
-                    @keyframes spin {
-                        0% { transform: rotate(0deg); }
-                        100% { transform: rotate(360deg); }
-                    }
-                </style>
+            <div class="loading-content" role="status" aria-live="polite" aria-label="${escapeHTML(message)}">
+                <div class="loading-spinner" aria-hidden="true"></div>
+                <p class="loading-message">${escapeHTML(message)}</p>
             </div>
         `;
         document.body.appendChild(loadingOverlay);
         return loadingOverlay;
     }
 
+    /**
+     * 隐藏 showLoading 创建的全局加载遮罩。
+     * @param {HTMLElement | null | undefined} loadingOverlay 待移除的遮罩节点。
+     */
     function hideLoading(loadingOverlay) {
         if (loadingOverlay && document.body.contains(loadingOverlay)) {
             document.body.removeChild(loadingOverlay);
         }
+    }
+
+    let activeGlobalNotificationPopup = null;
+    let activeGlobalNotificationTimer = null;
+
+    function clearGlobalNotificationPopup() {
+        if (activeGlobalNotificationTimer) {
+            clearTimeout(activeGlobalNotificationTimer);
+            activeGlobalNotificationTimer = null;
+        }
+
+        const popup = activeGlobalNotificationPopup;
+        activeGlobalNotificationPopup = null;
+        if (!popup || !popup.parentNode) return;
+
+        popup.classList.remove('is-visible');
+        setTimeout(function() {
+            removeDomNode(popup);
+        }, 180);
+    }
+
+    /**
+     * @param {'success' | 'error'} type
+     * @returns {string}
+     */
+    function notificationIconHTML(type) {
+        const iconPath = type === 'success'
+            ? '<path d="M9 12l2 2 4-4"></path>'
+            : '<path d="m15 9-6 6"></path><path d="m9 9 6 6"></path>';
+
+        return `
+            <span class="global-notification-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+                    <circle cx="12" cy="12" r="9"></circle>
+                    ${iconPath}
+                </svg>
+            </span>
+        `;
+    }
+
+    /**
+     * 显示全局顶部通知弹框，成功和错误共用同一套位置、动效和布局。
+     * @param {string} message 提示文案。
+     * @param {{type?: 'success' | 'error', durationMs?: number, actionText?: string, actionHref?: string}=} options 展示选项。
+     * @returns {HTMLElement | null}
+     */
+    function showGlobalNotification(message, options = {}) {
+        const type = options.type === 'success' ? 'success' : 'error';
+        const fallbackMessage = type === 'success' ? '操作成功' : '操作失败，请稍后重试';
+        const notificationMessage = String(message || fallbackMessage).trim() || fallbackMessage;
+        if (typeof document === 'undefined' || !document.body) {
+            return null;
+        }
+
+        clearGlobalNotificationPopup();
+
+        const popup = document.createElement('div');
+        popup.className = `global-error-popup global-notification-popup is-${type}`;
+        popup.setAttribute('role', type === 'error' ? 'alert' : 'status');
+        popup.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+
+        const actionHTML = options.actionHref
+            ? `<a class="global-error-action" href="${escapeHTML(options.actionHref)}">${escapeHTML(options.actionText || '查看')}</a>`
+            : '';
+        popup.innerHTML = `
+            ${notificationIconHTML(type)}
+            <div class="global-error-content">
+                <p>${escapeHTML(notificationMessage)}</p>
+                ${actionHTML}
+            </div>
+            <button type="button" class="global-error-close" aria-label="关闭错误提示">&times;</button>
+        `;
+
+        popup.querySelector('.global-error-close')?.addEventListener('click', clearGlobalNotificationPopup);
+        document.body.appendChild(popup);
+        activeGlobalNotificationPopup = popup;
+
+        const show = function() {
+            popup.classList.add('is-visible');
+        };
+        if (typeof global.requestAnimationFrame === 'function') {
+            global.requestAnimationFrame(show);
+        } else {
+            setTimeout(show, 0);
+        }
+
+        const durationMs = options.durationMs == null ? 4800 : Number(options.durationMs);
+        if (durationMs > 0) {
+            activeGlobalNotificationTimer = setTimeout(clearGlobalNotificationPopup, durationMs);
+        }
+
+        return popup;
+    }
+
+    /**
+     * 显示全局错误弹框，统一替代浏览器 alert 和页面内嵌错误区。
+     * @param {string} message 错误提示文案。
+     * @param {{durationMs?: number, actionText?: string, actionHref?: string}=} options 展示选项。
+     * @returns {HTMLElement | null}
+     */
+    function showGlobalError(message, options = {}) {
+        return showGlobalNotification(message, Object.assign({}, options, { type: 'error' }));
+    }
+
+    /**
+     * 显示全局成功弹框。
+     * @param {string} message 成功提示文案。
+     * @param {{durationMs?: number, actionText?: string, actionHref?: string}=} options 展示选项。
+     * @returns {HTMLElement | null}
+     */
+    function showGlobalSuccess(message, options = {}) {
+        return showGlobalNotification(message, Object.assign({}, options, { type: 'success' }));
+    }
+
+    const pendingMutations = new Map();
+    let activeMutationDepth = 0;
+
+    function getMutationButtons(options) {
+        const buttons = [];
+        if (options.button) buttons.push(options.button);
+        if (Array.isArray(options.buttons)) {
+            options.buttons.forEach(button => {
+                if (button) buttons.push(button);
+            });
+        }
+        return buttons;
+    }
+
+    function setMutationButtonsBusy(buttons, busy, busyText) {
+        buttons.forEach(button => {
+            if (!button) return;
+
+            if (busy) {
+                button.dataset.mutationWasDisabled = button.disabled ? '1' : '0';
+                if (busyText) {
+                    button.dataset.mutationOriginalText = button.textContent;
+                    button.textContent = busyText;
+                }
+                button.disabled = true;
+                button.classList.add('is-mutation-busy');
+                button.setAttribute('aria-busy', 'true');
+            } else {
+                button.disabled = button.dataset.mutationWasDisabled === '1';
+                if (Object.prototype.hasOwnProperty.call(button.dataset, 'mutationOriginalText')) {
+                    button.textContent = button.dataset.mutationOriginalText;
+                    delete button.dataset.mutationOriginalText;
+                }
+                delete button.dataset.mutationWasDisabled;
+                button.classList.remove('is-mutation-busy');
+                button.removeAttribute('aria-busy');
+            }
+        });
+    }
+
+    function isJsdomRuntime() {
+        return typeof navigator !== 'undefined'
+            && /jsdom/i.test(String(navigator.userAgent || ''));
+    }
+
+    /**
+     * 执行修改类操作，同一个 key 在完成前只会真正执行一次。
+     * @param {string} key 修改操作唯一标识，例如 delete-project-12。
+     * @param {Function} action 返回 Promise 的实际修改操作。
+     * @param {{message?: string, button?: HTMLElement, buttons?: HTMLElement[], busyText?: string, loading?: boolean, minDurationMs?: number}=} options
+     * @returns {Promise<any>} 当前修改操作的 Promise；重复触发时复用正在执行的 Promise。
+     */
+    async function runMutationOnce(key, action, options = {}) {
+        const mutationKey = String(key || 'default');
+        if (pendingMutations.has(mutationKey)) {
+            return pendingMutations.get(mutationKey);
+        }
+
+        if (typeof action !== 'function') {
+            throw new Error('runMutationOnce 需要传入 action 函数');
+        }
+
+        const mutationPromise = (async function executeMutation() {
+            const buttons = getMutationButtons(options);
+            const shouldShowLoading = options.loading !== false && activeMutationDepth === 0;
+            const isMockMode = typeof KitProxy.config === 'object' && KitProxy.config && KitProxy.config.apiMode === 'mock';
+            const mockVisibleDelayMs = Number(options.mockVisibleDelayMs || 0);
+            const shouldApplyMockVisibleDelay = isMockMode && mockVisibleDelayMs > 0 && !isJsdomRuntime();
+            const loading = !shouldShowLoading
+                ? null
+                : showLoading(options.message || '正在处理，请稍候...');
+            const startedAt = Date.now();
+
+            setMutationButtonsBusy(buttons, true, options.busyText);
+            activeMutationDepth += 1;
+
+            try {
+                // Mock 数据读写是同步完成的；调试延迟放在 action 前，才能让界面和 mock 状态都真实停留在“处理中”。
+                if (shouldApplyMockVisibleDelay) {
+                    await delay(mockVisibleDelayMs);
+                }
+
+                const result = await action();
+                if (options.successMessage) {
+                    showGlobalSuccess(options.successMessage);
+                }
+                return result;
+            } finally {
+                const minDurationMs = Math.max(0, Number(options.minDurationMs || 0));
+                const remainMs = minDurationMs - (Date.now() - startedAt);
+                if (remainMs > 0) {
+                    await delay(remainMs);
+                }
+
+                hideLoading(loading);
+                setMutationButtonsBusy(buttons, false);
+                activeMutationDepth = Math.max(0, activeMutationDepth - 1);
+                pendingMutations.delete(mutationKey);
+            }
+        })();
+
+        pendingMutations.set(mutationKey, mutationPromise);
+        return mutationPromise;
+    }
+
+    function isMutationPending(key) {
+        return pendingMutations.has(String(key || 'default'));
     }
 
     function removeDomNode(node) {
@@ -148,7 +341,7 @@
             if (bodyEditor) {
                 const validation = bodyEditor.validate();
                 if (!validation.valid) {
-                    alert(validation.message);
+                    showGlobalError(validation.message);
                     return;
                 }
             }
@@ -616,6 +809,13 @@
         delay,
         showLoading,
         hideLoading,
+        showGlobalNotification,
+        showGlobalError,
+        showGlobalSuccess,
+        clearGlobalNotificationPopup,
+        clearGlobalErrorPopup: clearGlobalNotificationPopup,
+        runMutationOnce,
+        isMutationPending,
         removeDomNode,
         escapeHTML,
         bindModalCloseActions,
@@ -641,6 +841,10 @@
     global.delay = delay;
     global.showLoading = showLoading;
     global.hideLoading = hideLoading;
+    global.showGlobalNotification = showGlobalNotification;
+    global.showGlobalError = showGlobalError;
+    global.showGlobalSuccess = showGlobalSuccess;
+    global.runMutationOnce = runMutationOnce;
     global.removeDomNode = removeDomNode;
     global.escapeHTML = escapeHTML;
     global.ExtractId = ExtractId;
