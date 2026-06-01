@@ -8,7 +8,9 @@
  */
 #include "dao/init.h"
 #include "dao/dao_log.h"
+#include "dao/sqlite_orm_pool.h"
 
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -57,6 +59,11 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
 
     // 移动构造
     return db;
+}
+
+std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(SqliteOrmPoolConfig config)
+{
+    return std::make_shared<SqliteOrmPool>(config);
 }
 
 }   // namespace kit_dao

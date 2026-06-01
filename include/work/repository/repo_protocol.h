@@ -11,6 +11,7 @@
 
 #include "net/call_backs.h"
 #include "nlohmann/json.hpp"
+#include "domain/type.h"
 
 #include <memory>
 #include <vector>
@@ -21,16 +22,18 @@ class HttpContext;
 }
 }
 
+namespace kit_dao {
+class ProtocolDaoInterface;
+}
+
 namespace kit_domain {
 
 class Protocol;
-class ProtocolDaoInterface;
-enum class ProtocolBodyType;
 
 class ProtocolRepoInterface
 {
 public:
-    ProtocolRepoInterface(std::shared_ptr<ProtocolDaoInterface> dao)
+    ProtocolRepoInterface(std::shared_ptr<kit_dao::ProtocolDaoInterface> dao)
         :_dao(dao)
     {  }
 
@@ -52,12 +55,12 @@ public:
 
     virtual Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) = 0;
 
-    virtual std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit) = 0;
+    virtual std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId,ProtocolStatus status, int32_t offset, int32_t limit) = 0;
+
+    virtual std::vector<Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) = 0;
 
 
-    virtual std::vector<Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
-
-    virtual int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
+    virtual int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) = 0;
 
     virtual nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
 
@@ -70,13 +73,13 @@ public:
     virtual nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
 
 protected:
-    std::shared_ptr<ProtocolDaoInterface> _dao;
+    std::shared_ptr<kit_dao::ProtocolDaoInterface> _dao;
 };
 
 class ProtocolRepository : public ProtocolRepoInterface
 {
 public:
-    ProtocolRepository(std::shared_ptr<ProtocolDaoInterface> dao);
+    ProtocolRepository(std::shared_ptr<kit_dao::ProtocolDaoInterface> dao);
 
     ~ProtocolRepository();
 
@@ -96,18 +99,17 @@ public:
 
     Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) override;
     
-    std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t offset, int32_t limit) override;
+    std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit) override;
 
-    std::vector<Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    std::vector<Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) override;
 
-
-    int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) override;
 
     nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
 
-    ProtocolBodyType GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp);
+    ProtocolBodyType GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
 
-    bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data);
+    bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data) override;
 
     bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, ProtocolBodyType &body_type, std::vector<char> &body_data) override;
 

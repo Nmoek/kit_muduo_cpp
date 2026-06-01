@@ -39,30 +39,30 @@ bool ProjectService::Del(kit_muduo::HttpContextPtr ctx, int64_t pjId)
 }
 
 
-bool ProjectService::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status)
+bool ProjectService::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectStatus status)
 {
-    return _repo->UpdateStatus(ctx, projectId, status);
+    return _repo->UpdateStatus(ctx, project_id, status);
 }
 
-bool ProjectService::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listen_port)
+bool ProjectService::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectStatus active, uint16_t listen_port)
 {
-    return _repo->UpdateRuntimeStatus(ctx, projectId, active, listen_port);
+    return _repo->UpdateRuntimeStatus(ctx, project_id, active, listen_port);
 }
 
 
-bool ProjectService::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name)
+bool ProjectService::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::string& name)
 {
-    return _repo->UpdateName(ctx, projectId, name);
+    return _repo->UpdateName(ctx, project_id, name);
 }
 
-Project ProjectService::GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId)  
+Project ProjectService::GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id)  
 { 
-    return _repo->GetById(ctx, projectId); 
+    return _repo->GetById(ctx, project_id); 
 }
 
-std::vector<Project> ProjectService::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit)  
+std::vector<Project> ProjectService::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit)  
 { 
-    return _repo->GetByUser(ctx, userId, offset, limit); 
+    return _repo->GetByUser(ctx, userId, status, offset, limit); 
 }
 
 std::vector<char> ProjectService::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)

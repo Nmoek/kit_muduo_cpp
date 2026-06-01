@@ -22,9 +22,9 @@ public:
     MOCK_METHOD(bool, UpdateCfg, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json), (override));
     MOCK_METHOD(bool, UpdateBody, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data), (override));
     MOCK_METHOD(Protocol, GetById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id), (override));
-    MOCK_METHOD(std::vector<Protocol>, GetByProject, (kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit), (override));
-    MOCK_METHOD(std::vector<Protocol>, GetActiveByProject, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
-    MOCK_METHOD(int32_t, GetProtocolCnt, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id), (override));
+    MOCK_METHOD(std::vector<Protocol>, GetByProject, (kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status, int32_t offset, int32_t limit), (override));
+    MOCK_METHOD(std::vector<Protocol>, GetAllActive, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
+    MOCK_METHOD(int32_t, GetProtocolCnt, (kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status), (override));
     MOCK_METHOD(nlohmann::json, GetTcpCommonFieldsById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp), (override));
     MOCK_METHOD(ProtocolBodyType, GetBodyTypeById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp), (override));
     MOCK_METHOD(bool, GetBodyDataById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data), (override));

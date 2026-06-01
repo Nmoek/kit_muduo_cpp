@@ -2,7 +2,6 @@
 
 #include <gmock/gmock.h>
 #include "work/service/svc_project.h"
-#include "domain/project.h"
 
 namespace kit_domain {
 
@@ -15,10 +14,10 @@ public:
     MOCK_METHOD(int64_t, Add, (kit_muduo::HttpContextPtr ctx, Project &domainPj), (override));
     MOCK_METHOD(bool, Del, (kit_muduo::HttpContextPtr ctx, int64_t pjId), (override));
     MOCK_METHOD(bool, UpdateName, (kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::string& name), (override));
-    MOCK_METHOD(bool, UpdateStatus, (kit_muduo::HttpContextPtr ctx, int64_t project_id, bool status), (override));
-    MOCK_METHOD(bool, UpdateRuntimeStatus, (kit_muduo::HttpContextPtr ctx, int64_t project_id, bool active, uint16_t listen_port), (override));
+    MOCK_METHOD(bool, UpdateStatus, (kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectStatus status), (override));
+    MOCK_METHOD(bool, UpdateRuntimeStatus, (kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectStatus active, uint16_t listen_port), (override));
     MOCK_METHOD(Project, GetById, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
-    MOCK_METHOD(std::vector<Project>, GetByUser, (kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit), (override));
+    MOCK_METHOD(std::vector<Project>, GetByUser, (kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit), (override));
     MOCK_METHOD(std::vector<char>, GetPatternInfoById, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
     MOCK_METHOD(bool, UpdatePatternInfo, (kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info), (override));
     MOCK_METHOD(std::vector<Project>, GetAllValid, (kit_muduo::HttpContextPtr ctx), (override));

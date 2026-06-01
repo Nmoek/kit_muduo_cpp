@@ -33,7 +33,7 @@ enum ProjectMode {
     ClientMode = 2,  //客户端模式
 };
 
-enum ProjectStatus {
+enum class ProjectStatus {
     OFF_STATUS = 0,  //关闭
     ON_STATUS = 1,  //开启
 };
@@ -51,7 +51,8 @@ enum class ProtocolBodyType {
     UNKNOWN_BODY_TYPE   = 0,     //未知格式(没有设置)
     JSON_BODY_TYPE      = 1,    // json格式
     XML_BODY_TYPE       = 2,    // xml格式
-    BINARY_BODY_TYPE    = 3,    // TCP 二进制数据流
+    TEXT_BODY_TYPE      = 3,    // 纯文本
+    BINARY_BODY_TYPE    = 4,    // TCP 二进制数据流
     MAX,
 };
 

@@ -555,7 +555,7 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
     try 
     {
         // DEBUG: 给一个默认admin用户 写死为1 所有访问都共用一个账户
-        projects = _svc->GetByUser(ctx, 1/*request.user_id*/, request.offset, request.limit);
+        projects = _svc->GetByUser(ctx, 1/*request.user_id*/, ProjectStatus::ON_STATUS, request.offset, request.limit);
     }
     catch(const std::exception& e)
     {

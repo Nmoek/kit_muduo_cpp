@@ -13,6 +13,9 @@
 #include "domain/project.h"
 #include "base/time_stamp.h"
 
+
+using namespace kit_dao;
+
 namespace kit_domain {
 ProjectRepository::ProjectRepository(std::shared_ptr<ProjectDaoInterface> dao)
     :ProjectRepoInterface(dao)
@@ -88,14 +91,14 @@ int64_t ProjectRepository::Create(kit_muduo::HttpContextPtr ctx, Project &domain
     return _dao->Insert(ctx, CovertDaoProject(domainPj));
 }
 
-bool ProjectRepository::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status)
+bool ProjectRepository::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus status)
 {
-    return _dao->UpdateStatus(ctx, projectId, status);
+    return _dao->UpdateStatus(ctx, projectId, static_cast<int32_t>(status));
 }
 
-bool ProjectRepository::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort)
+bool ProjectRepository::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus active, uint16_t listenPort)
 {
-    return _dao->UpdateRuntimeStatus(ctx, projectId, active, listenPort);
+    return _dao->UpdateRuntimeStatus(ctx, projectId, static_cast<int32_t>(active), listenPort);
 }
 
 bool ProjectRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name)
@@ -109,9 +112,9 @@ Project ProjectRepository::GetById(kit_muduo::HttpContextPtr ctx, int64_t projec
     return CovertDomainProject(_dao->GetById(ctx, projectId));
 }
 
-std::vector<Project> ProjectRepository::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit)
+std::vector<Project> ProjectRepository::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit)
 {
-    return CovertDomainProjects(_dao->GetByUser(ctx, userId, offset, limit));
+    return CovertDomainProjects(_dao->GetByUser(ctx, userId, static_cast<int32_t>(status), offset, limit));
 }
 
 std::vector<char> ProjectRepository::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
@@ -126,7 +129,7 @@ bool ProjectRepository::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t
 
 std::vector<Project> ProjectRepository::GetAllValid(kit_muduo::HttpContextPtr ctx)
 {
-    return CovertDomainProjects(_dao->GetAllByStatus(ctx, kit_domain::ProjectStatus::ON_STATUS));
+    return CovertDomainProjects(_dao->GetAllByStatus(ctx, static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)));
 }
 
 std::vector<Project> ProjectRepository::GetAllActive(kit_muduo::HttpContextPtr ctx) 

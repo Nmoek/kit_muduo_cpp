@@ -18,6 +18,7 @@
 #include "service/svc_protocol.h"
 #include "repository/repo_protocol.h"
 #include "dao/dao_protocol.h"
+#include "dao/sqlite_orm_pool.h"
 
 #include "dao/init.h"
 #include "ioc/web.h"
@@ -41,6 +42,7 @@ using namespace kit_app;
 using namespace kit_muduo;
 using namespace kit_muduo::http;
 using namespace kit_domain;
+using namespace kit_dao;
 
 /// @brief 全局事件循环
 static EventLoop loop;
@@ -55,7 +57,7 @@ static void InitLog(void)
     l3->addAppender(std::make_shared<FileAppender>("log/web.log"));
     l->setLevel(LogLevel::INFO);
     l2->setLevel(LogLevel::INFO);
-    l3->setLevel(LogLevel::INFO);
+    // l3->setLevel(LogLevel::INFO);
 
 }
 
@@ -66,13 +68,13 @@ static void InitLog(void)
 static std::shared_ptr<Application> InitApp()
 {
     // TODO 根据配置文件进行数据库初始化
-    auto sqliteDb = kit_dao::InitSqliteDb();
+    auto sqliteDbPool = InitSqliteDbPool(SqliteOrmPoolConfig());
 
-    std::shared_ptr<ProtocolDaoInterface> protocDao = std::make_shared<SqliteOrmProtocolDao>(sqliteDb);
+    std::shared_ptr<ProtocolDaoInterface> protocDao = std::make_shared<SqliteOrmProtocolDao>(sqliteDbPool);
     std::shared_ptr<ProtocolRepoInterface> protocRepo = std::make_shared<ProtocolRepository>(protocDao);
     std::shared_ptr<ProtocolSvcInterface> protocSvc = std::make_shared<ProtocolService>(protocRepo);
 
-    std::shared_ptr<ProjectDaoInterface> projDao = std::make_shared<SqliteOrmProjectDao>(sqliteDb);
+    std::shared_ptr<ProjectDaoInterface> projDao = std::make_shared<SqliteOrmProjectDao>(sqliteDbPool);
     std::shared_ptr<ProjectRepoInterface> projRepo = std::make_shared<ProjectRepository>(projDao);
     std::shared_ptr<ProjectSvcInterface> projSvc = std::make_shared<ProjectService>(projRepo);
 

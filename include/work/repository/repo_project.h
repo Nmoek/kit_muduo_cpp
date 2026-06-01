@@ -10,6 +10,7 @@
 #define __KIT_REPO_PROJECT_H__
 
 #include "net/call_backs.h"
+#include "domain/type.h"
 
 #include <cstdint>
 #include <memory>
@@ -21,15 +22,20 @@ class HttpContext;
 }
 }
 
+namespace kit_dao {
+
+class ProjectDaoInterface;
+
+}
+
 namespace kit_domain {
 
 class Project;
-class ProjectDaoInterface;
 
 class ProjectRepoInterface
 {
 public:
-    ProjectRepoInterface(std::shared_ptr<ProjectDaoInterface> dao)
+    ProjectRepoInterface(std::shared_ptr<kit_dao::ProjectDaoInterface> dao)
         :_dao(dao)
     {  }
 
@@ -38,15 +44,15 @@ public:
     virtual int64_t Create(kit_muduo::HttpContextPtr ctx, Project &pjdm) = 0;
 
 
-    virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) = 0;
+    virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus status) = 0;
 
-    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort) = 0;
+    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus active, uint16_t listenPort) = 0;
 
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) = 0;
 
     virtual Project GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId) = 0;
 
-    virtual std::vector<Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit) = 0;
+    virtual std::vector<Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit) = 0;
 
     virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
@@ -58,27 +64,27 @@ public:
 
 
 protected:
-    std::shared_ptr<ProjectDaoInterface> _dao;
+    std::shared_ptr<kit_dao::ProjectDaoInterface> _dao;
 };
 
 class ProjectRepository : public ProjectRepoInterface
 {
 public:
-    ProjectRepository(std::shared_ptr<ProjectDaoInterface> dao);
+    ProjectRepository(std::shared_ptr<kit_dao::ProjectDaoInterface> dao);
 
     ~ProjectRepository();
 
     int64_t Create(kit_muduo::HttpContextPtr ctx, Project &pjdm) override;
 
-    bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status) override;
+    bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus status) override;
 
-    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort) override;
+    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus active, uint16_t listenPort) override;
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) override;
 
     Project GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId) override;
     
-    std::vector<Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit) override;
+    std::vector<Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit) override;
 
     std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 

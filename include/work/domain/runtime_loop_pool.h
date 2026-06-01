@@ -101,7 +101,7 @@ private:
 
     std::unique_ptr<Slot[]> slots_;
     size_t capacity_{0};
-    std::atomic_bool is_shutdowning_{false};
+    std::atomic_bool is_shutdown_{false};
     std::atomic_size_t active_count_{0};
 };
 

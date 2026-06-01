@@ -11,6 +11,7 @@
 
 #include "net/call_backs.h"
 #include "nlohmann/json.hpp"
+#include "domain/type.h"
 
 #include <vector>
 
@@ -18,7 +19,6 @@ namespace kit_domain {
 
 class Protocol;
 class ProtocolRepoInterface;
-enum class ProtocolBodyType;
 
 class ProtocolSvcInterface
 {
@@ -45,11 +45,11 @@ public:
 
     virtual Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
 
-    virtual std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit) = 0;
+    virtual std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
+    virtual std::vector<Protocol> GetAllActive(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
-    virtual int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
+    virtual int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolStatus status) = 0;
 
 
     virtual nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
@@ -92,11 +92,11 @@ public:
 
     Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
     
-    std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t offset, int32_t limit) override;
+    std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProtocolStatus status, int32_t offset, int32_t limit) override;
 
-    std::vector<Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    std::vector<Protocol> GetAllActive(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 
-    int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+    int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolStatus status) override;
 
     nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
 

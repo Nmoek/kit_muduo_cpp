@@ -68,19 +68,19 @@ Protocol ProtocolService::GetById(kit_muduo::HttpContextPtr ctx, int64_t protoco
     return _repo->GetById(ctx, protocol_id);
 }
 
-std::vector<Protocol> ProtocolService::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t offset, int32_t limit)
+std::vector<Protocol> ProtocolService::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProtocolStatus status, int32_t offset, int32_t limit)
 {
-    return _repo->GetByProject(ctx, projectId, offset, limit);
+    return _repo->GetByProject(ctx, projectId, status, offset, limit);
 }
 
-std::vector<Protocol> ProtocolService::GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
+std::vector<Protocol> ProtocolService::GetAllActive(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
 {
-    return _repo->GetActiveByProject(ctx, project_id);
+    return _repo->GetAllByProject(ctx, project_id, ProtocolStatus::ACTIVE);
 }
 
-int32_t ProtocolService::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+int32_t ProtocolService::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
 {
-    return _repo->GetProtocolCnt(ctx, project_id);
+    return _repo->GetProtocolCnt(ctx, project_id, status);
 }
 
 nlohmann::json ProtocolService::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)

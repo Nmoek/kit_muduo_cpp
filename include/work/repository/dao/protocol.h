@@ -35,8 +35,5 @@ struct Protocol
     int64_t                  m_ctime;            // 创建时间
     int64_t                  m_utime;            // 修改时间
 };
-    
-
-
 } // namespace kit_dao
 #endif  //__KIT_DAOS_PROTOCOL_H__

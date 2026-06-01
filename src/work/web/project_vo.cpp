@@ -38,8 +38,8 @@ ProjectVo CovertProjectVo(const Project &p)
         p.m_listenPort,
         p.m_targetIp,
         p.m_userId,
-        p.m_status,
-        p.m_active,
+        static_cast<int32_t>(p.m_status),
+        static_cast<int32_t>(p.m_active),
         p.m_ctime.toString()
     };
 }

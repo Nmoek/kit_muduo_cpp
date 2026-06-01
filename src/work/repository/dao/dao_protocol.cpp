@@ -8,56 +8,79 @@
  */
 
 #include "dao/dao_protocol.h"
+#include "dao/protocol.h"
 #include "domain/protocol.h"
 #include "dao/dao_log.h"
 #include "base/time_stamp.h"
+#include "dao/sqlite_orm_pool.h"
+#include "domain/type.h"
 
+#include <cstdio>
+#include <exception>
+#include <sstream>
+#include <system_error>
 #include <thread>
 
 using nljson = nlohmann::json;
- 
-namespace kit_domain {
+using namespace sqlite_orm;
+
+namespace kit_dao {
+
+namespace {
+
+inline static std::string MakeSqliteErrorMsg(const std::system_error &e)
+{
+    const std::error_code &ec = e.code();
+
+    char tmp[128] = {0};
+    snprintf(tmp, sizeof(tmp), "sqlite/system error: code[%d], category[%s], message[%s], what[%s]!",   ec.value(),
+        ec.category().name(),
+        ec.message().c_str(),
+        e.what());
+    return tmp;
+}
+
+
+}
 
 int64_t SqliteOrmProtocolDao::Insert(std::shared_ptr<kit_muduo::http::HttpContext> ctx, kit_dao::Protocol daoPc)
 {
     daoPc.m_id = 0;
     auto now = kit_muduo::TimeStamp::NowMs();
     daoPc.m_ctime = daoPc.m_utime = now;
-
-    int retry = 3;
     int64_t protocol_id = -1;
-    while(retry--)
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
     {
-        try {
-            // 这个锁保护的是事务开启动作 + 写入动作
-            std::lock_guard<std::mutex> lock(_writeMtx);
-            // 系统设计问题 SQLite不支持高并发写 WAL模式仅支持 TPS:100 ~ 300 否则迁移Mysql/PostorgeSql
-            _db->begin_transaction();
-            protocol_id = _db->insert(daoPc);
-            _db->commit();
-
-            break;
-        } catch (const std::system_error& code) {
-            _db->rollback();
-
-            // 专门处理一下 忙状态
-            if(SQLITE_BUSY == code.code().value())
-            {
-                DAODB_WARN() << "sqlite3 busy, retry..." << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
-            else
-            {
-                throw;
-            }
-        } catch (...) {     //其他异常抛出
-            _db->rollback();
-            protocol_id = -1;
-            throw;
-        }
-
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return protocol_id;
     }
+
+    try {
+
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            DAOPC_F_ERROR("sqlite begin write transaction error: %d\n", tx_result.toInt());
+            return protocol_id;
+        }
+        // 系统设计问题 SQLite不支持高并发写 WAL模式仅支持 TPS:100 ~ 300 否则迁移Mysql/PostorgeSql
+        protocol_id = tx_result.val->db().insert(daoPc);
+        
+        tx_result.val->commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s name[%s], type[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            daoPc.m_name.c_str(),
+            daoPc.m_type);
+
+        protocol_id = -1;
+    }
+    
 
     DAODB_INFO() << "qliteOrmProtocolDao::Insert, id= " << protocol_id << std::endl;
 
@@ -68,27 +91,52 @@ bool SqliteOrmProtocolDao::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
     try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT * FROM xxx WHERE id = ? 
-        auto pc = _db->get_pointer<kit_dao::Protocol>(protocol_id);
-        if(!pc)
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Protocol>(where(
+            protocol_id == c(&kit_dao::Protocol::m_id)
+        ));
+        if(0 == n)
         {
-            DAOPC_F_WARN("protocol dont exist! id=%ld \n", protocol_id);
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
             return false;
         }
 
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        pc->m_status = status;
-        pc->m_utime = now;
-        _db->update(*pc);
-        _db->commit();
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "UpdateStatusById faild! " << "id= " << protocol_id << ", " << e.what() << std::endl;
-        _db->rollback();
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+
+
+        // UPDATE Protocols SET `status`= ?, `utime` = ? WHERE id = ? 
+
+        tx_result.val->db().update_all(
+            set(
+                    c(&kit_dao::Protocol::m_status) = status,
+                    c(&kit_dao::Protocol::m_utime) = now
+            ),
+            where(c(&kit_dao::Protocol::m_id) == protocol_id)
+        );
+
+        tx_result.val->commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], status[%d], type[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            status);
+
         return false;
     }
 
@@ -100,16 +148,30 @@ bool SqliteOrmProtocolDao::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64
 bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Protocol daoPc) 
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
 
     try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
+
         // SELCT * FROM xxx WHERE id = ? 
-        auto pc = _db->get_pointer<kit_dao::Protocol>(daoPc.m_id);
-        if(!pc)
+        auto pc = lease_result.val->db().get_pointer<kit_dao::Protocol>(daoPc.m_id);
+        if(!pc 
+            || kit_domain::ProtocolStatus::ACTIVE != static_cast<kit_domain::ProtocolStatus>(pc->m_status))
         {
-            DAOPC_F_WARN("protocol dont exist! id=%ld \n", daoPc.m_id);
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", daoPc.m_id);
             return false;
         }
+
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+
         pc->m_name = daoPc.m_name;
         pc->m_reqBodyType = daoPc.m_reqBodyType;
         pc->m_respBodyType = daoPc.m_respBodyType;
@@ -117,17 +179,22 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
         pc->m_respCfg = std::move(daoPc.m_respCfg);
         pc->m_reqBodyData = std::move(daoPc.m_reqBodyData);
         pc->m_respBodyData = std::move(daoPc.m_respBodyData);
+        pc->m_isEndian = daoPc.m_isEndian;
         pc->m_utime = now;
 
         // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        _db->update(*pc);
-        _db->commit();
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "UpdateStatusById faild! " << "id= " << daoPc.m_id << ", " << e.what() << std::endl;
-        _db->rollback();
+        tx_result.val->db().update(*pc);
+
+        tx_result.val->commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], type[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            daoPc.m_id,
+            daoPc.m_type);
         return false;
     }
 
@@ -139,28 +206,51 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
 bool SqliteOrmProtocolDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const std::string &name)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
-    try {
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
 
-        auto pc = _db->get_pointer<kit_dao::Protocol>(protocol_id);
-        if(!pc)
+    try {
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Protocol>(where(
+            c(&kit_dao::Protocol::m_id) == protocol_id
+            &&
+            c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+        ));
+        if(0 == n)
         {
-            DAOPC_F_WARN("protocol dont exist! id=%ld \n", protocol_id);
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
             return false;
         }
 
-        pc->m_name = name;
-        pc->m_utime = now;
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
 
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        _db->update(*pc);
-        _db->commit();
+        // UPDATE Protocols SET `status`= ?, `utime` = ? WHERE id = ? 
+        tx_result.val->db().update_all(
+            set(
+                c(&kit_dao::Protocol::m_name) = name
+                ,c(&kit_dao::Protocol::m_utime) = now
+            ),
+            where(protocol_id == c(&kit_dao::Protocol::m_id))
+        );
 
-    } catch(const std::exception& e) {
-   
-        DAOPC_ERROR() << "UpdateName faild! " << "id= " << protocol_id << ", " << e.what() << std::endl;
-        _db->rollback();
+        tx_result.val->commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], name[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            name.c_str());
+
         return false;
     }
 
@@ -170,40 +260,60 @@ bool SqliteOrmProtocolDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t pro
 }
 
 
-// 这个接口是整个配置进行替换
+// 注意: 这个接口是req_cfg 整个json更新
 bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const std::string& cfg_data)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
     const auto field_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqCfg : &kit_dao::Protocol::m_respCfg;
+    
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
 
     // 1，req_cfg 整个json更新 (目前先采用这种)
     // 2. req_cfg 利用json路径更新
     try {
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Protocol>(where(
+            c(&kit_dao::Protocol::m_id) == protocol_id
+            &&
+            c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+        ));
+        if(0 == n)
+        {
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return false;
+        }
 
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
         /* 事务 */
-        _db->begin_immediate_transaction();
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+        // UPDATE Protocols SET `status`= ? WHERE id = ? 
 
-        _db->update_all(
-            sqlite_orm::set(
-                // 更新json
-                sqlite_orm::c(field_ptr) = cfg_data,
-                // 更新修改时间
-                sqlite_orm::c(&kit_dao::Protocol::m_utime) = now
+        tx_result.val->db().update_all(
+            set(
+                c(field_ptr) = cfg_data
+                ,c(&kit_dao::Protocol::m_utime) = now
             ),
-            sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
+            where(c(&kit_dao::Protocol::m_id) == protocol_id)
         );
 
 
-        _db->commit();
+        tx_result.val->commit();
         /* 事务 */
 
-    } catch(const std::exception& e) {
-   
-        DAOPC_ERROR() << "UpdateCfg faild! " << "id= " << protocol_id << ", " << e.what() << std::endl;
+    } catch (const std::system_error &e) {
 
-        _db->rollback();
+        DAOPC_F_ERROR(
+            "%s pcId[%ld] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id);
         return false;
     }
 
@@ -212,17 +322,42 @@ bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t prot
     return true;
 }
 
+// 注意: 这个接口 req_cfg 利用json路径更新
 bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json)
 {
 
     auto field_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqCfg : &kit_dao::Protocol::m_respCfg;
 
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
     std::string json_path;
     try {
-        std::lock_guard<std::mutex> lock(_writeMtx);
+
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Protocol>(where(
+            c(&kit_dao::Protocol::m_id) == protocol_id
+            &&
+            c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+        ));
+        if(0 == n)
+        {
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return false;
+        }
+
         /* 事务 */
-        _db->begin_immediate_transaction();
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
 
         // 把传入的可能部分路径都进行更新
         for(auto &obj : cfg_json.items())
@@ -233,24 +368,27 @@ bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t prot
 
             DAOPC_F_DEBUG("UpdateCfg Path id[%d], json_path[%s], value[%s][%s] \n", protocol_id, json_path.c_str(),obj.value().type_name(), json_value.c_str());
             // UPDATE protocols SET `req_cfg`= JSON_REPALCE(`req_cfg`, ?, ?) WHERE id = ?
-            _db->update_all(
-                sqlite_orm::set(
-                    sqlite_orm::c(field_ptr) = sqlite_orm::json_replace(field_ptr, json_path, sqlite_orm::json(json_value)),
+            tx_result.val->db().update_all(
+                set(
+                    c(field_ptr) = json_replace(field_ptr, json_path, json(json_value)),
                     // 更新修改时间
-                    sqlite_orm::c(&kit_dao::Protocol::m_utime) = now
+                    c(&kit_dao::Protocol::m_utime) = now
                 ),
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
+                where(c(&kit_dao::Protocol::m_id) == protocol_id)
             );
         }
 
 
-        _db->commit();
+        tx_result.val->commit();
 
-    } catch (const std::exception& e) {
+    } catch (const std::system_error &e) {
 
-        DAOPC_F_ERROR("SqliteOrmProtocolDao::UpdateCfg json字段更新失败: %s! pjId[%d], req_or_resp[%d], json_path[%s] \n", e.what(), protocol_id, req_or_resp, json_path.c_str());
-
-        _db->rollback();
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], req_or_resp[%d] cfg_json[%s] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            req_or_resp,
+            cfg_json.dump().c_str());
 
         return false;
     }
@@ -263,60 +401,58 @@ bool SqliteOrmProtocolDao::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t prot
 bool SqliteOrmProtocolDao::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, int32_t body_type, const std::vector<char>& body_data)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
+    const auto body_type_ptr =  req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyType : &kit_dao::Protocol::m_respBodyType;
     const auto body_data_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyData : &kit_dao::Protocol::m_respBodyData;
     const auto body_status_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyDataStatus : &kit_dao::Protocol::m_respBodyDataStatus;
 
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
     try {
-#if 0
-        auto pc = _db->get_pointer<kit_dao::Protocol>(protocol_id);
-        if(!pc)
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Protocol>(where(
+            c(&kit_dao::Protocol::m_id) == protocol_id
+            &&
+            c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+        ));
+        if(0 == n)
         {
-            DAOPC_F_WARN("protocol dont exist! id=%ld \n", protocol_id);
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
             return false;
         }
 
-        if(1 == req_or_resp)
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
         {
-            pc->m_reqBodyData = std::move(cfg_data);
-            pc->m_reqBodyType = body_type;
-            pc->m_reqBodyDataStatus = cfg_data.empty() ? 0 : 1;
-        }
-        else if(2 == req_or_resp)
-        {
-            pc->m_respBodyData = std::move(cfg_data);
-            pc->m_respBodyType = body_type;
-            pc->m_respBodyDataStatus = cfg_data.empty() ? 0 : 1;
-
-        }
-        else
             return false;
-
-        
-        pc->m_utime = now;
-#endif
-
+        }
         // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
 
-        _db->update_all(
-            sqlite_orm::set(
-                // 更新json
-                sqlite_orm::c(body_data_ptr) = body_data,
-                sqlite_orm::c(body_status_ptr) = body_data.size() ? 1 : 0,
-                // 更新修改时间
-                sqlite_orm::c(&kit_dao::Protocol::m_utime) = now
+        tx_result.val->db().update_all(
+            set(
+                c(body_type_ptr) = body_type
+                ,c(body_data_ptr) = body_data
+                ,c(body_status_ptr) = (body_data.size() ? 1 : 0)
+                ,c(&kit_dao::Protocol::m_utime) = now
             ),
-            sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
+            where(c(&kit_dao::Protocol::m_id) == protocol_id)
         );
 
+        tx_result.val->commit();
 
-        _db->commit();
+    } catch (const std::system_error &e) {
 
-    } catch(const std::exception& e) {
-   
-        DAOPC_ERROR() << "UpdateBody faild! " << "id= " << protocol_id << ", " << e.what() << std::endl;
-        _db->rollback();
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], req_or_resp[%d], body_type[%d], body_size[%ld]\n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            req_or_resp,
+            body_type,
+            body_data.size());
         return false;
     }
 
@@ -329,20 +465,32 @@ kit_dao::Protocol SqliteOrmProtocolDao::GetById(kit_muduo::HttpContextPtr ctx, i
 {
     kit_dao::Protocol pc;
     pc.m_id = -1;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pc;
+    }
+
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT * FROM xxx WHERE id == protocol_id 
-        auto pc_ptr = _db->get_pointer<kit_dao::Protocol>(protocol_id);
+        auto pc_ptr = lease_result.val->db().get_pointer<kit_dao::Protocol>(protocol_id);
         if(!pc_ptr)
         {
-            DAOPJ_INFO() << "GetById protocol not exist! id= " << protocol_id << std::endl;
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
             return pc;
         }
 
         pc = std::move(*pc_ptr);
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetById faild! " << e.what() << std::endl;
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id);
         return pc;
     }
 
@@ -351,14 +499,46 @@ kit_dao::Protocol SqliteOrmProtocolDao::GetById(kit_muduo::HttpContextPtr ctx, i
     return pc;
 }
 
-std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t offset, int32_t limit)
+std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t offset, int32_t limit)
 {
     std::vector<kit_dao::Protocol> pcs;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pcs;
+    }
+
     try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
+        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列, 这里不查询Body数据
+        
         // SELCT id,name,... FROM xxx WHERE m_userId = ? and status = ?
-        // tmps 是个元组vector<tutle<10>>
-        auto tmps = _db->select(sqlite_orm::columns(
+        // BUG: 多结构体映射同一个表 sqlite3不支持
+#if 0
+        auto tmps = lease_result.val->db().get_all<kit_dao::Protocol>(
+            where(
+                c(&ProtocolList::m_projectId) == project_id
+                &&
+                c(&ProtocolList::m_status) == status
+            )
+            ,order_by(&kit_dao::Protocol::m_ctime).desc()
+            ,sqlite_orm::limit(offset, limit)
+        );
+
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("protocol dont exist! pjId[%ld] \n", project_id);
+            return pcs;
+        }
+        pcs.swap(tmps);
+
+        
+#else
+
+        // 旧写法是利用元组vector<tutle<10>>
+        auto tmps = lease_result.val->db().select(
+        columns(
             &kit_dao::Protocol::m_id,
             &kit_dao::Protocol::m_name,
             &kit_dao::Protocol::m_type,
@@ -370,15 +550,23 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::Htt
             &kit_dao::Protocol::m_reqCfg,
             &kit_dao::Protocol::m_respCfg,
             &kit_dao::Protocol::m_ctime,
-            &kit_dao::Protocol::m_utime),
-        sqlite_orm::where(
-            sqlite_orm::c(&kit_dao::Protocol::m_projectId) == project_id
-            and
-            sqlite_orm::c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(ProtocolStatus::ACTIVE)
+            &kit_dao::Protocol::m_utime
+        ),
+        where(
+            c(&kit_dao::Protocol::m_projectId) ==  project_id
+            &&
+            c(&kit_dao::Protocol::m_status) ==  static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
         ), 
-        sqlite_orm::order_by(&kit_dao::Protocol::m_ctime).desc(),
+        order_by(&kit_dao::Protocol::m_ctime).desc(),
         sqlite_orm::limit(offset, limit)
         );
+
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("protocol dont exist! pjId[%ld] \n", project_id);
+            return pcs;
+        }
+
 
         // 一边转换一边copy
         std::transform(tmps.begin(), tmps.end(), std::back_inserter(pcs), [](auto &item){
@@ -402,56 +590,99 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::Htt
 
             return p;
         });
+#endif
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetByProject faild! " << e.what() << std::endl;
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], status[%d], offset[%d], limit[%d]\n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id,
+            status,
+            offset,
+            limit);
+        return pcs;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", " << offset << ", " << limit << ", size= " << pcs.size() << std::endl;
+    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", status= " << status << ", size= " << pcs.size() << std::endl;
 
     return pcs;
 }
 
-
-
-std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status)
 {
     std::vector<kit_dao::Protocol> pcs;
-    try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT * FROM xxx WHERE m_projectId = ? and status = ?
-        pcs = _db->get_all<kit_dao::Protocol>(
-        sqlite_orm::where(
-            sqlite_orm::c(&kit_dao::Protocol::m_projectId) == project_id &&
-            sqlite_orm::c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(ProtocolStatus::ACTIVE))
-        );
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetActiveByProject faild! " << e.what() << std::endl;
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pcs;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetActiveByProject " << project_id << ", size= " << pcs.size() << std::endl;
+    try {
+        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列, 这里不查询Body数据
+        
+        // SELCT id,name,... FROM xxx WHERE project_id = ? and status = ?
+        auto tmps = lease_result.val->db().get_all<kit_dao::Protocol>(
+            where(
+                c(&Protocol::m_projectId) == project_id
+                &&
+                c(&Protocol::m_status) == status
+            )
+        );
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("protocol dont exist! pjId[%ld] \n", project_id);
+            return pcs;
+        }
+
+        pcs.swap(tmps);
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], status[%d]\n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id,
+            status);
+        return pcs;
+    }
+
+    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", status= " << status << ", size= " << pcs.size() << std::endl;
 
     return pcs;
 }
 
 
-
-int32_t SqliteOrmProtocolDao::CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+int32_t SqliteOrmProtocolDao::CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status)
 {
     int32_t protocol_cnt = -1;
-    try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT id,name,... FROM xxx WHERE m_userId = ? and status = ?
-        // tmps 是个元组vector<tutle<10>>
 
-        protocol_cnt = _db->count<kit_dao::Protocol>(sqlite_orm::where(
-            sqlite_orm::c(&kit_dao::Protocol::m_projectId) == project_id
-            && sqlite_orm::c(&kit_dao::Protocol::m_status) == 1
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
+    try {
+
+        // SELCT COUNT(*) FROM xxx WHERE `projec_id` = ? and `status` = ?
+
+        protocol_cnt = lease_result.val->db().count<kit_dao::Protocol>(where(
+            c(&kit_dao::Protocol::m_projectId) == project_id
+            && 
+            c(&kit_dao::Protocol::m_status) == status
         ));
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "CountByProject faild! " << e.what() << std::endl;
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], status[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id,
+            status);
         protocol_cnt = -1;
     }
 
@@ -460,19 +691,30 @@ int32_t SqliteOrmProtocolDao::CountByProject(kit_muduo::HttpContextPtr ctx, int6
     return protocol_cnt;
 }
 
+
+// 注意: 这个接口弃用
+#if 1
 std::string SqliteOrmProtocolDao::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
 {
     auto cfg = req_or_resp == 1 ? &kit_dao::Protocol::m_reqCfg : &kit_dao::Protocol::m_respCfg;
 
     std::vector<std::string> reses;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return "";
+    }
+
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT req_body_type FROM xxx WHERE protocol_id 
 
 
-        reses = _db->select(
-            sqlite_orm::json_extract<std::string>(cfg, "$.common_fields"),
-            sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
+        reses = lease_result.val->db().select(
+            json_extract<std::string>(cfg, "$.common_fields"),
+            where(c(&kit_dao::Protocol::m_id) == protocol_id)
         );
         
 
@@ -487,34 +729,53 @@ std::string SqliteOrmProtocolDao::GetTcpCommonFieldsById(kit_muduo::HttpContextP
 
     return reses.at(0);
 }
-
+#endif
 
 int32_t SqliteOrmProtocolDao::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
 {
     int32_t body_type = -1;
+    const auto body_type_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyType : &kit_dao::Protocol::m_respBodyType;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
     std::vector<int32_t> body_types;
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT req_body_type FROM xxx WHERE protocol_id 
-        if(1 == req_or_resp)
-        {
-            body_types = _db->select(&kit_dao::Protocol::m_reqBodyType,
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-            );
-        }
-        else if(2 == req_or_resp)
-        {
-            body_types = _db->select(&kit_dao::Protocol::m_respBodyType,
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-            );
-        }
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetBodyTypeById faild! " << e.what() << std::endl;
-        body_type = -1;
+        const auto& tmps = lease_result.val->db().select(body_type_ptr,
+            where(
+                c(&kit_dao::Protocol::m_id) == protocol_id)
+                && c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+        );
+
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return -1;
+        }
+        if(tmps.size() > 1)
+        {
+            DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
+        }
+      
+        body_type = tmps.at(0);
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], req_or_resp[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            req_or_resp);
+        return -1;
     }
     
-    body_type = body_types.empty() ? -1 : body_types[0];
     
     DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetBodyTypeById "<< protocol_id << ", " << body_type << std::endl;
 
@@ -523,29 +784,45 @@ int32_t SqliteOrmProtocolDao::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int
 
 bool SqliteOrmProtocolDao::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data)
 {
-    std::vector<std::vector<char>> tmp_datas;
-    try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_body_type FROM xxx WHERE protocol_id 
-        if(1 == req_or_resp)
-        {
-            tmp_datas = _db->select(&kit_dao::Protocol::m_reqBodyData,
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-            );
-        }
-        else if(2 == req_or_resp)
-        {
-            tmp_datas = _db->select(&kit_dao::Protocol::m_respBodyData,
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-            );
-        }
+    const auto body_data_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyData : &kit_dao::Protocol::m_respBodyData;
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetBodyDataById faild! " << e.what() << std::endl;
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
         return false;
     }
 
-    body_data = std::move(tmp_datas[0]);
+    try {
+        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
+        // SELCT req_body_type FROM xxx WHERE protocol_id 
+
+        auto tmps = lease_result.val->db().select(body_data_ptr,
+            where(
+                c(&kit_dao::Protocol::m_id) == protocol_id
+                && c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+        ));
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return -1;
+        }
+        if(tmps.size() > 1)
+        {
+            DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
+        }
+      
+        body_data.swap(tmps.at(0));
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], req_or_resp[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            req_or_resp);
+        return false;
+    }
 
     DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetBodyDataById "<< protocol_id << ", " << body_data.size() << std::endl;
 
@@ -555,45 +832,51 @@ bool SqliteOrmProtocolDao::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_
 
 bool SqliteOrmProtocolDao::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, int32_t &body_type, std::vector<char> &body_data)
 {
+    const auto body_type_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyType : &kit_dao::Protocol::m_respBodyType;
+    const auto body_data_ptr = req_or_resp == 1 ? &kit_dao::Protocol::m_reqBodyData : &kit_dao::Protocol::m_respBodyData;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT req_body_type FROM xxx WHERE protocol_id 
-        if(1 == req_or_resp)
+  
+        auto tmps = lease_result.val->db().select(
+            columns(
+                body_type_ptr,
+                body_data_ptr
+            ),
+            where(
+                c(&kit_dao::Protocol::m_id) == protocol_id
+                && c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+            )
+        );
+        if(tmps.empty())
         {
-            auto tmp_datas = _db->select(
-                sqlite_orm::columns(
-                    &kit_dao::Protocol::m_reqBodyType,
-                    &kit_dao::Protocol::m_reqBodyData
-                ),
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-            );
-            
-            for(auto &t : tmp_datas)
-            {
-                body_type = std::get<0>(t);
-                body_data = std::move(std::get<1>(t));
-            }
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return false;
         }
-        else if(2 == req_or_resp)
+        if(tmps.size() > 1)
         {
-            auto tmp_datas = _db->select(
-                sqlite_orm::columns(
-                    &kit_dao::Protocol::m_respBodyType,
-                    &kit_dao::Protocol::m_respBodyData
-                ),
-                sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
-            );
-
-            for(auto &t : tmp_datas)
-            {
-                body_type = std::get<0>(t);
-                body_data = std::move(std::get<1>(t));
-            }
+            DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
         }
+    
+        body_type = std::get<0>(tmps.at(0));
+        body_data = std::move(std::get<1>(tmps.at(0)));
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetBodyInfoById faild! " << e.what() << std::endl;
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld], req_or_resp[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id,
+            req_or_resp);
+
         return false;
     }
 
@@ -607,26 +890,47 @@ bool SqliteOrmProtocolDao::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_
 nlohmann::json SqliteOrmProtocolDao::GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
 {
     nlohmann::json root = nlohmann::json::object();
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return root;
+    }
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT req_cfg, resp_cfg FROM xxx WHERE protocol_id 
 
-        auto tmp_datas = _db->select(
-            sqlite_orm::columns(
+        auto tmps = lease_result.val->db().select(
+            columns(
                 &kit_dao::Protocol::m_reqCfg,
                 &kit_dao::Protocol::m_respCfg
             ),
-            sqlite_orm::where(sqlite_orm::c(&kit_dao::Protocol::m_id) == protocol_id)
+            where(
+                c(&kit_dao::Protocol::m_id) == protocol_id
+                && c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+            )
         );
-
-        for(auto &t : tmp_datas)
+        if(tmps.empty())
         {
-            root["req_cfg"] = nlohmann::json::parse(std::get<0>(t));
-            root["resp_cfg"] = nlohmann::json::parse(std::get<1>(t));
+            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return root;
+        }
+        if(tmps.size() > 1)
+        {
+            DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
         }
 
-    } catch(const std::exception &e) {
-        DAOPC_ERROR() << "GetById faild! " << e.what() << std::endl;
+        root["req_cfg"] = nlohmann::json::parse(std::get<0>(tmps.at(0)));
+        root["resp_cfg"] = nlohmann::json::parse(std::get<1>(tmps.at(0)));
+        
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pcId[%ld] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            protocol_id);
 
         return nlohmann::json::object();
     }

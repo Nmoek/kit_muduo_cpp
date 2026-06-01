@@ -65,6 +65,7 @@ option(MUDUO_TEST.CONTENT_PARSER "build test_content_parser" OFF)
 option(WORK_TEST "build all work tests" OFF)
 option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
 option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
+option(WORK_TEST.SQLITE_ORM_POOL "build test_sqlite_orm_pool" OFF)
 option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
 option(WORK_TEST.WEB_PROTOCOL "build test_web_protocol" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
@@ -188,6 +189,8 @@ set(MUDUO_SRC
 
 set(WORK_DAO_SRC
     src/work/repository/dao/init.cpp
+    src/work/repository/dao/sqlite_orm_pool.cpp
+
     src/work/repository/dao/dao_project.cpp
     src/work/repository/dao/dao_protocol.cpp
 )
@@ -374,6 +377,12 @@ add_kit_test(WORK_TEST WORK_TEST.SQLITE3 test_sqlite3 tests/db/test_sqlite3.cpp 
 
 # sqlite_orm 测试 test_sqlite_orm
 add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM test_sqlite_orm tests/db/test_sqlite_orm.cpp ${WORK_SRC})
+
+# sqlite_orm pool 测试 test_sqlite_orm_pool
+add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM_POOL test_sqlite_orm_pool
+    tests/db/test_sqlite_orm_pool.cpp
+    src/work/repository/dao/init.cpp
+    src/work/repository/dao/sqlite_orm_pool.cpp)
 
 # web端测试服务 测试 test_web_project
 add_kit_test(WORK_TEST WORK_TEST.WEB_PROJECT test_web_project tests/work/web/test_web_project.cpp ${WORK_SRC})

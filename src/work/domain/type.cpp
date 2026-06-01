@@ -36,6 +36,7 @@ ProtocolBodyType ProtocolBodyTypeFromString(const std::string &type)
 {
     if("json" == type) return ProtocolBodyType::JSON_BODY_TYPE;
     else if("xml" == type) return ProtocolBodyType::XML_BODY_TYPE;
+    else if("text" == type) return ProtocolBodyType::TEXT_BODY_TYPE;
     else if("binary" == type) return ProtocolBodyType::BINARY_BODY_TYPE;
     return ProtocolBodyType::UNKNOWN_BODY_TYPE;
 }
@@ -44,6 +45,7 @@ std::string ProtocolBodyTypeToString(ProtocolBodyType type)
 {
     if(ProtocolBodyType::JSON_BODY_TYPE == type) return "json";
     else if(ProtocolBodyType::XML_BODY_TYPE == type) return "xml";
+    else if(ProtocolBodyType::TEXT_BODY_TYPE == type) return "text";
     else if(ProtocolBodyType::BINARY_BODY_TYPE == type) return "binary";
 
     return "";

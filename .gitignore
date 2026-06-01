@@ -21,6 +21,8 @@
 !README.md
 
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 *.patch
 .gitattributes
 *.bin

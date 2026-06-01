@@ -128,7 +128,7 @@ bool Application::recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
         
         // 为服务器添加协议  暂时同步添加 体量大之后再考虑异步同时启动
         /* 操作Service层接口 */
-        std::vector<Protocol> pcs = protocol_svc->GetActiveByProject(nullptr, pj.m_id);
+        std::vector<Protocol> pcs = protocol_svc->GetAllActive(nullptr, pj.m_id);
         for(auto &pc : pcs)
         {
             auto protocol_item = ProtocolItemFactory::Create(std::make_shared<Protocol>(pc), project_server);
@@ -145,7 +145,7 @@ bool Application::recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
 
             project_server->AddProtocolItem(protocol_item);
             
-            APP_F_DEBUG("[%d][%s][%d] add success!\n", pc.m_id, pc.m_name.c_str(), pc.m_projectId);
+            APP_F_DEBUG("pjId[%d], pcId[%d], name[%s] add success!\n", pc.m_projectId, pc.m_id, pc.m_name.c_str());
         }
         uint16_t cur_listen_port = project_server->getBindAddr().toPort();
         // 现行端口号回写

@@ -18,6 +18,9 @@
 
 namespace kit_dao {
 
+class SqliteOrmPool;
+struct SqliteOrmPoolConfig;
+
 /// @brief  sqlite3 orm库的表头定义
 #define SQLITE_ORM_TABLE_INIT_DEF()  \
     sqlite_orm::make_storage("kit.sqlite", \
@@ -63,6 +66,7 @@ using SqliteOrmType = decltype(SQLITE_ORM_TABLE_INIT_DEF());
  * @return std::unique_ptr<SqliteOrmType> 
  */
 std::shared_ptr<SqliteOrmType> InitSqliteDb();
+std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(SqliteOrmPoolConfig config);
 
 } // namespace kit_domain
 #endif // __KIT_DAO_INIT_H__

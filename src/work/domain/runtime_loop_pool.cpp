@@ -59,7 +59,7 @@ void RuntimeLease::release() noexcept
 RuntimeLoopPool::RuntimeLoopPool(size_t capacity, const std::string& prefix_name)
     :slots_(capacity > 0 ? std::make_unique<Slot[]>(capacity) : nullptr)
     ,capacity_(capacity)
-    ,is_shutdowning_(false)
+    ,is_shutdown_(false)
     ,active_count_(0)
 {
     if(!slots_)
@@ -73,7 +73,7 @@ RuntimeLoopPool::RuntimeLoopPool(size_t capacity, const std::string& prefix_name
         slots_[i].loop = slots_[i].loop_thread_ptr->startLoop();
         if(!slots_[i].loop)
         {
-            is_shutdowning_ = true;
+            is_shutdown_ = true;
             throw std::runtime_error("runtime loop start error!");
         }
     }
@@ -89,7 +89,7 @@ RuntimeLoopPool::~RuntimeLoopPool()
 RuntimeResult<std::shared_ptr<RuntimeLease>> RuntimeLoopPool::acquire(ProjectRuntimeUid uid) noexcept
 {
     RuntimeResult<std::shared_ptr<RuntimeLease>> result;
-    if(0 == capacity_ || is_shutdowning_.load())
+    if(0 == capacity_ || is_shutdown_.load())
     {
         result.error.set(RuntimeError::kRuntimeLoopPoolStopped);
         return result;
@@ -148,7 +148,7 @@ void RuntimeLoopPool::shutdown() noexcept
     }
 
     bool expected = false;
-    if(!is_shutdowning_.compare_exchange_strong(expected, true) )
+    if(!is_shutdown_.compare_exchange_strong(expected, true) )
     {
         RUNTIME_F_ERROR("runtime loop pool shutdown error!\n");
         return;

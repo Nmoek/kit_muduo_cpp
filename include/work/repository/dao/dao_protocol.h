@@ -14,12 +14,13 @@
 #include "nlohmann/json.hpp"
 #include "base/time_stamp.h"
 #include "dao/dao_log.h"
+#include "dao/sqlite_orm_pool.h"
 
 #include <memory>
 #include <mutex>
 #include <vector>
 
-namespace kit_domain
+namespace kit_dao
 {
 
 
@@ -45,13 +46,14 @@ public:
 
     virtual kit_dao::Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) = 0;
 
-    virtual std::vector<kit_dao::Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t offset, int32_t limit) = 0;
+    virtual std::vector<kit_dao::Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<kit_dao::Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
-
-    virtual int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
+    virtual std::vector<kit_dao::Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) = 0;
 
 
+    virtual int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) = 0;
+
+    // 这个接口弃用
     virtual std::string GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
 
     virtual int32_t GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
@@ -67,8 +69,8 @@ public:
 class SqliteOrmProtocolDao : public ProtocolDaoInterface
 {
 public:
-    SqliteOrmProtocolDao(std::shared_ptr<kit_dao::SqliteOrmType> db)
-        :_db(db)
+    SqliteOrmProtocolDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool)
+        :_db_pool(db_pool)
     {
 
     }
@@ -90,11 +92,11 @@ public:
 
     kit_dao::Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) override;
 
-    std::vector<kit_dao::Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t offset, int32_t limit) override;
+    std::vector<kit_dao::Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) override;
 
-    std::vector<kit_dao::Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    std::vector<kit_dao::Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) override;
 
-    int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) override;
 
     std::string GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
 
@@ -111,14 +113,24 @@ private:
     bool UpdateJsonField(int64_t id, const std::string& json_path, Value&& new_value, Field T::* field_ptr)
     {
         auto now = kit_muduo::TimeStamp::Now().millSeconds();
+        auto lease_result = _db_pool->acquire();
+        if(!lease_result.ok())
+        {
+            DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+            return false;
+        }
 
         try {
-            std::lock_guard<std::mutex> lock(_writeMtx);
-            /* 事务 */
-            _db->begin_immediate_transaction();
 
+            /* 事务 */
+            auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+            if(!tx_result.ok())
+            {
+                DAOPC_F_ERROR("sqlite begin write transaction error: %d\n", tx_result.toInt());
+                return false;
+            }
             // UPDATE protocols SET `req_cfg`= JSON_REPALCE(`req_cfg`, ?, ?) WHERE id = ? 
-            _db->update_all(
+            tx_result.val->db().update_all(
                 sqlite_orm::set(
                     sqlite_orm::c(field_ptr) = sqlite_orm::json_replace(field_ptr, json_path, std::forward<Value>(new_value)),
                     // 更新修改时间
@@ -126,12 +138,11 @@ private:
                 ),
                 sqlite_orm::where(sqlite_orm::c(&T::m_id) == id)
             );
-            _db->commit();
+            tx_result.val->commit();
 
         } catch (const std::exception& e) {
 
             DAOPC_F_ERROR("%d, %s, %s, json字段更新失败! %s\n", id, typeid(field_ptr).name(), json_path, e.what());
-            _db->rollback();
 
             return false;
         }
@@ -177,8 +188,7 @@ private:
 #endif
 
 private:
-    std::shared_ptr<kit_dao::SqliteOrmType> _db;
-    std::mutex _writeMtx;
+    std::shared_ptr<kit_dao::SqliteOrmPool> _db_pool;
 };
 
 

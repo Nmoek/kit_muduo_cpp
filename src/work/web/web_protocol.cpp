@@ -287,7 +287,8 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
     server->Get("/protocols/:protocol_id/details/cfg", XX(GetCfg));
 
 
-    server->Post("/protocols/details/tcp/common_fields", XX(QueryCommonFields)); //TCP专属
+    // DEBUG: 这个接口弃用
+    // server->Post("/protocols/details/tcp/common_fields", XX(QueryCommonFields)); //TCP专属
     
     // 单独获取协议项请求体配置
     // 将body格式和body数据合并查询
@@ -584,7 +585,7 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
     // 查测试服务 信息
     try 
     {
-        protocols = _svc->GetByProject(ctx, request.project_id, request.offset, request.limit);
+        protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::ACTIVE, request.offset, request.limit);
     }
     catch(const std::exception& e)
     {
@@ -944,7 +945,7 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     int32_t protocol_cnt = -1;
     try 
     {
-        protocol_cnt = _svc->GetProtocolCnt(ctx, project_id);
+        protocol_cnt = _svc->GetProtocolCnt(ctx, project_id, ProtocolStatus::ACTIVE);
         if(protocol_cnt < 0)
             throw;
     }

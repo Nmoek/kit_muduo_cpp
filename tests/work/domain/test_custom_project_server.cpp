@@ -158,8 +158,10 @@ static int tcp_send(const std::vector<char>& input, CustomTcpContextPtr ctx, con
         return -1;
     }
     const auto& resp_data = buf.resetAllAsData();
+
+    TEST_DEBUG() << "recv: " << kit_muduo::BytesToHexString(std::vector<uint8_t>(resp_data.begin(), resp_data.end()), " ") << std::endl;
     
-    std::fstream f("/mnt/nfs/proxy_bin/resp.bin", std::ios::out |std::ios::trunc | std::ios::binary);
+    std::fstream f("resp.bin", std::ios::out |std::ios::trunc | std::ios::binary);
     if(f.is_open())
     {
         printf("write resp.bin ok!\n");
@@ -585,7 +587,7 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_reqCfg = nljson::parse(req_cfg1),
                 .m_respCfg = nljson::parse(resp_cfg1),
                 .m_reqBodyData = {},
-                .m_respBodyData = std::move(std::vector<char>(resp_body1.begin(), resp_body1.end())),
+                .m_respBodyData = std::vector<char>(resp_body1.begin(), resp_body1.end()),
                 .m_isEndian = true,
 
                 .m_ctime = TimeStamp::Now(),
@@ -624,7 +626,7 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_reqCfg = nljson::parse(req_cfg2_1),
                 .m_respCfg = nljson::parse(resp_cfg2_1),
                 .m_reqBodyData = {},
-                .m_respBodyData = std::move(std::vector<char>(resp_body2_1.begin(), resp_body2_1.end())),
+                .m_respBodyData = std::vector<char>(resp_body2_1.begin(), resp_body2_1.end()),
                 .m_isEndian = true,
  
                 .m_ctime = TimeStamp::Now(),

@@ -505,7 +505,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
             },
             []() -> std::shared_ptr<ProjectSvcInterface> {
                 auto mocksvc = std::make_shared<MockProjectSvc>();
-                EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, false))
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::OFF_STATUS))
                     .WillOnce(Return(true));
                 return mocksvc;
             },
@@ -564,7 +564,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
             },
             []() -> std::shared_ptr<ProjectSvcInterface> {
                 auto mocksvc = std::make_shared<MockProjectSvc>();
-                EXPECT_CALL(*mocksvc, UpdateStatus(_, service_fail_project_id, false))
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, service_fail_project_id, ProjectStatus::OFF_STATUS))
                     .WillOnce(Return(false));
                 return mocksvc;
             },
@@ -639,7 +639,7 @@ TEST_F(ProjectHandlerSuite, DelProjectStopsRuntimeServerBeforeSoftDelete)
     mock_svc_ = std::make_shared<MockProjectSvc>();
     auto mocksvc = std::dynamic_pointer_cast<MockProjectSvc>(mock_svc_);
     ASSERT_NE(mocksvc, nullptr);
-    EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, false))
+    EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::OFF_STATUS))
         .WillOnce(Return(true));
 
     handler_ = ProjectHandler::Instance(mock_svc_);
@@ -697,7 +697,7 @@ TEST_F(ProjectHandlerSuite, StartProjectCreatesRuntimeStartsItAndReturnsListenPo
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
-    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, true, Gt(0)))
+    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectStatus::ON_STATUS, Gt(0)))
         .WillOnce(Return(true));
 
     auto ctx = MakeProjectStatusContext(project_id, ProjectStatus::ON_STATUS);
@@ -756,7 +756,7 @@ TEST_F(ProjectHandlerSuite, StopProjectStopsRuntimeRemovesItAndReturnsSuccess)
     app.addServer(project_id, runtime_server);
 
     EXPECT_CALL(*mocksvc, GetById(_, _)).Times(0);
-    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, false, 0))
+    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectStatus::OFF_STATUS, 0))
         .WillOnce(Return(true));
 
     auto ctx = MakeProjectStatusContext(project_id, ProjectStatus::OFF_STATUS);

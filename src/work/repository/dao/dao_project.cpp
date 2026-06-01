@@ -9,11 +9,43 @@
 #include "dao/dao_project.h"
 #include "dao/dao_log.h"
 #include "base/time_stamp.h"
+#include "dao/project.h"
+#include "domain/type.h"
 #include "sqlite_orm/sqlite_orm.h"
+#include "dao/sqlite_orm_pool.h"
+#include "nlohmann/json.hpp"
 
 #include <thread>
 
-namespace kit_domain {
+using nljson = nlohmann::json;
+using namespace sqlite_orm;
+
+namespace kit_dao {
+
+namespace {
+
+inline static std::string MakeSqliteErrorMsg(const std::system_error &e)
+{
+    const std::error_code &ec = e.code();
+
+    char tmp[128] = {0};
+    snprintf(tmp, sizeof(tmp), "sqlite/system error: code[%d], category[%s], message[%s], what[%s]!",   ec.value(),
+        ec.category().name(),
+        ec.message().c_str(),
+        e.what());
+    return tmp;
+}
+
+
+}
+
+
+
+SqliteOrmProjectDao::SqliteOrmProjectDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool)
+    :_db_pool(db_pool)
+{
+
+}
 
 int64_t SqliteOrmProjectDao::Insert(std::shared_ptr<kit_muduo::http::HttpContext> ctx, kit_dao::Project daoPj)
 {
@@ -21,188 +53,298 @@ int64_t SqliteOrmProjectDao::Insert(std::shared_ptr<kit_muduo::http::HttpContext
     auto now = kit_muduo::TimeStamp::NowMs();
     daoPj.m_ctime = daoPj.m_utime = now;
 
-    int retry = 3;
-    int id = 0;
-    while(retry--)
+    int64_t project_id = -1;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
     {
-        try {
-            // 这个锁保护的是事务开启动作 + 写入动作
-            std::lock_guard<std::mutex> lock(_writeMtx);
-            // 系统设计问题 SQLite不支持高并发写 WAL模式仅支持 TPS:100 ~ 300 否则迁移Mysql/PostorgeSql
-            _db->begin_immediate_transaction();
-            id = _db->insert(daoPj);
-            _db->commit();
-
-            break;
-        } catch (const std::system_error& code) {
-            // 专门处理一下 忙状态
-            if(SQLITE_BUSY == code.code().value())
-            {
-                DAODB_WARN() << "sqlite3 busy, retry..." << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
-            else
-            {
-                throw;
-            }
-        } catch (...) {     //其他异常抛出
-            throw;
-        }
-
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return project_id;
     }
 
-    DAODB_INFO() << "qliteOrmProjectDao::Insert, id= " << id << std::endl;
-
-    return id;
-}
-
-bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool status)
-{
-    auto now = kit_muduo::TimeStamp::Now().millSeconds();
     try {
-        auto pj = _db->get_pointer<kit_dao::Project>(projectId);
-        if(!pj)
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
         {
-            DAOPC_F_WARN("project dont exist! id=%ld \n", projectId);
-            return false;
+            DAOPC_F_ERROR("sqlite begin write transaction error: %d\n", tx_result.toInt());
+            return project_id;
         }
 
-        pj->m_status = status;
-        pj->m_utime = now;
+        project_id = tx_result.val->db().insert(daoPj);
+        
+        tx_result.val->commit();
 
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        _db->update(*pj);
-        _db->commit();
+    } catch (const std::system_error& e) {
 
-    } catch(const std::exception& e) {
-   
-        DAOPC_ERROR() << "UpdateStatus faild! " << "id= " << projectId << ", " << e.what() << std::endl;
+        DAOPJ_F_ERROR(
+            "%s name[%s], protocol_type[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            daoPj.m_name.c_str(),
+            daoPj.m_protocolType);
 
-        _db->rollback();
+        project_id = -1;
+    }
+
+    DAODB_DEBUG() << "qliteOrmProjectDao::Insert, id= " << project_id << std::endl;
+
+    return project_id;
+}
+
+bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status)
+{
+    auto now = kit_muduo::TimeStamp::Now().millSeconds();
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
         return false;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateStatus "<< "id= " << projectId << std::endl;
+    try {
+        // SELECT COUNT(*) FROM `projects` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Project>(where(
+            project_id == c(&kit_dao::Project::m_id)
+        ));
+        if(0 == n)
+        {
+            DAOPC_F_WARN("project dont exist! pjId[%ld] \n", project_id);
+            return false;
+        }
+
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+
+        // UPDATE Protocols SET `status`= ? WHERE id = ? 
+
+        tx_result.val->db().update_all(
+            set(
+                    c(&kit_dao::Project::m_status) = status
+                    ,c(&kit_dao::Project::m_utime) = now
+            )
+            ,where(
+                c(&kit_dao::Project::m_id) == project_id
+            )
+        );
+
+        tx_result.val->commit();
+
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], status[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id,
+            status);
+
+        return false;
+    }
+
+    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateStatusById "<< "id= " << project_id << std::endl;
 
     return true;
 }
 
-bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, bool active, uint16_t listenPort)
+bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t active, uint16_t listenPort)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
     try {
-        auto pj = _db->get_pointer<kit_dao::Project>(projectId);
-        if(!pj)
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Project>(where(
+            c(&kit_dao::Project::m_id) == project_id
+            &&  c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS) 
+        ));
+        if(0 == n)
         {
-            DAOPC_F_WARN("project dont exist! id=%ld \n", projectId);
+            DAOPJ_F_WARN("project dont exist! pjId[%ld] \n", project_id);
             return false;
         }
 
-        pj->m_active = active;
-        pj->m_listenPort = listenPort;
-        pj->m_utime = now;
 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        _db->update(*pj);
-        _db->commit();
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+        
 
-    } catch(const std::exception& e) {
-   
-        DAOPC_ERROR() << "UpdateRuntimeStatus faild! " << "id= " << projectId << ", " << e.what() << std::endl;
+        tx_result.val->db().update_all(
+            set(
+                    c(&kit_dao::Project::m_active) = active
+                    ,c(&kit_dao::Project::m_listenPort) = listenPort
+                    ,c(&kit_dao::Project::m_utime) = now
+            )
+            ,where(
+                c(&kit_dao::Project::m_id) = project_id
+            )
+        );
 
-        _db->rollback();
+        tx_result.val->commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], active[%d], listenPort[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            active,
+            listenPort);
         return false;
     }
 
     DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateRuntimeStatus "
-                  << "id= " << projectId
-                  << ", listen_port= " << listenPort << std::endl;
+        << "id= " << project_id
+        << ", listen_port= " << listenPort << std::endl;
 
     return true;
 }
 
-bool SqliteOrmProjectDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name)
+bool SqliteOrmProjectDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::string& name)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
-    try {
-        auto pj = _db->get_pointer<kit_dao::Project>(projectId);
-        if(!pj)
-        {
-            DAOPC_F_WARN("project dont exist! id=%ld \n", projectId);
-            return false;
-        }
 
-        pj->m_name = name;
-        pj->m_utime = now;
-
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        _db->update(*pj);
-        _db->commit();
-
-    } catch(const std::exception& e) {
-   
-        DAOPC_ERROR() << "UpdateName faild! " << "id= " << projectId << ", " << e.what() << std::endl;
-
-        _db->rollback();
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
         return false;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateName "<< "id= " << projectId << std::endl;
+    try {
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Project>(where(
+            c(&kit_dao::Project::m_id) == project_id
+            && c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)
+        ));
+        if(0 == n)
+        {
+            DAOPC_F_WARN("project dont exist! pjId[%ld] \n", project_id);
+            return false;
+        }
+
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+
+        // UPDATE Protocols SET `name`= ?, `utime` = ? WHERE id = ? 
+
+        tx_result.val->db().update_all(
+            set(
+                c(&kit_dao::Project::m_name) = name,
+                c(&kit_dao::Project::m_utime) = now
+            ),
+            where(c(&kit_dao::Project::m_id) == project_id)
+        );
+
+        tx_result.val->commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], name[%d] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id,
+            name.c_str());
+        return false;
+    }
+
+    DAOPC_DEBUG() << "SqliteOrmProjectDao::UpdateName "<< "id= " << project_id << std::endl;
 
     return true;
 }
 
-kit_dao::Project SqliteOrmProjectDao::GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId)
+kit_dao::Project SqliteOrmProjectDao::GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
     kit_dao::Project pj;
     pj.m_id = -1;
-    try {
-        DAOPJ_DEBUG() << "projectId= " << projectId <<std::endl;
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // 等同于: SELCT * FROM [表名] WHERE id == projectId && status == 1;
-        auto pj_ptr = _db->get_pointer<kit_dao::Project>(projectId);
 
+    
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pj;
+    }
+
+    try {
+
+        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
+        // 等同于: SELCT * FROM [表名] WHERE id == project_id && status == 1;
+        auto pj_ptr = lease_result.val->db().get_pointer<kit_dao::Project>(project_id);
         if(!pj_ptr)
         {
-            DAOPJ_INFO() << "GetById project not exist! id= " << projectId << std::endl;
+            DAOPC_F_WARN("project dont exist! pjId[%ld] \n", project_id);
             return pj;
         }
 
         pj = std::move(*pj_ptr);
-        DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetById " << pj.m_id << std::endl;
 
-    } catch(const std::exception &e) {
-        DAOPJ_ERROR() << "GetById faild! " << e.what() << std::endl;
+    } catch (const std::system_error &e) {
 
-        pj.m_id = -1;
+        DAOPC_F_ERROR(
+            "%s pjId[%ld] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id);
+        return pj;
     }
+    DAOPC_DEBUG() << "SqliteOrmProjectDao::GetById "<< pj.m_id << ", " << project_id << std::endl;
 
     return pj;
 }
 
-std::vector<kit_dao::Project> SqliteOrmProjectDao::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t offset, int32_t limit)
+std::vector<kit_dao::Project> SqliteOrmProjectDao::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t status, int32_t offset, int32_t limit)
 {
     std::vector<kit_dao::Project> pjs;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pjs;
+    }
+
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT * FROM xxx WHERE m_userId 
-        pjs = _db->get_all<kit_dao::Project>(
-            sqlite_orm::where(
-                sqlite_orm::c(&kit_dao::Project::m_userId) == userId
-                && sqlite_orm::c(&kit_dao::Project::m_status) == 1
+        auto tmps = lease_result.val->db().get_all<kit_dao::Project>(
+            where(
+                c(&kit_dao::Project::m_userId) == userId
+                && c(&kit_dao::Project::m_status) == status
             ), 
-            sqlite_orm::order_by(&kit_dao::Project::m_ctime).desc(),
+            order_by(&kit_dao::Project::m_ctime).desc(),
             sqlite_orm::limit(offset, limit)
-            );
+        );
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("project dont exist! userId[%ld] \n", userId);
+            return pjs;
+        }
 
-    } catch(const std::exception &e) {
-        DAOPJ_ERROR() << "GetByUser faild! " << e.what() << std::endl;
+        pjs.swap(tmps);
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s userId[%ld], status[%d], offset[%d], limit[%d]\n",
+            MakeSqliteErrorMsg(e).c_str(),
+            userId,
+            status,
+            offset,
+            limit);
+        return pjs;
     }
 
     DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetByUser " << userId << ", " << offset << ", " << limit << ", size= " << pjs.size() << std::endl;
@@ -213,17 +355,37 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetByUser(kit_muduo::HttpCont
 std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status)
 {
     std::vector<kit_dao::Project> pjs;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pjs;
+    }
+
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT * FROM xxx WHERE m_userId 
-        pjs = _db->get_all<kit_dao::Project>(
-            sqlite_orm::where(
-                sqlite_orm::c(&kit_dao::Project::m_status) == status
+        auto tmps = lease_result.val->db().get_all<kit_dao::Project>(
+            where(
+                c(&kit_dao::Project::m_status) == status
             )
-            );
+        );
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("project dont exist!\n");
+            return pjs;
+        }
 
-    } catch(const std::exception &e) {
-        DAOPJ_ERROR() << "GetAllByStatus faild! " << e.what() << std::endl;
+        pjs.swap(tmps);
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s status[%ld]\n",
+            MakeSqliteErrorMsg(e).c_str(),
+            status);
+        return pjs;
     }
 
     DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetAllByStatus "<< ",size= " << pjs.size() << ", status: " << status << std::endl;
@@ -234,21 +396,41 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::Htt
 std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
     std::vector<char> pattern_info;
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pattern_info;
+    }
+
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
         // SELCT pattern_info FROM xxx WHERE project_id 
-        auto res = _db->select(
+        auto tmps = lease_result.val->db().select(
             &kit_dao::Project::m_patternInfo,
-            sqlite_orm::where(
-                sqlite_orm::c(&kit_dao::Project::m_id) == project_id
+            where(
+                c(&kit_dao::Project::m_id) == project_id
+                && c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)
             )
         );
+        if(tmps.empty())
+        {
+            DAOPC_F_WARN("project dont exist! pjId[%ld] \n", project_id);
+            return pattern_info;
+        }
+        if(tmps.size() > 1)
+        {
+            DAOPC_F_WARN("project not unique! pjId[%ld]: %ld \n", project_id, tmps.size());
+        }
+        pattern_info.swap(tmps.at(0));
 
-        pattern_info = std::move(res[0]);
+    } catch (const std::system_error &e) {
 
-    } catch(const std::exception &e) {
-
-        DAOPJ_ERROR() << "GetPatternInfoById faild! " << e.what() << std::endl;
+        DAOPC_F_ERROR(
+            "%s pjId[%ld]\n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id);
+        return pattern_info;
     }
 
     DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetPatternInfoById success! "<< "project_id= " << project_id << ", size=" << pattern_info.size() << std::endl;
@@ -259,26 +441,51 @@ std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContext
 bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return false;
+    }
+
     try {
-        // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT pattern_info FROM xxx WHERE project_id 
-        std::lock_guard<std::mutex> lock(_writeMtx);
-        _db->begin_immediate_transaction();
-        _db->update_all(
-            sqlite_orm::set(
-                sqlite_orm::c(&kit_dao::Project::m_patternInfo) = pattern_info,
-                sqlite_orm::c(&kit_dao::Project::m_utime) = now
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<kit_dao::Project>(where(
+            c(&kit_dao::Project::m_id) == project_id
+            &&
+            c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)
+        ));
+        if(0 == n)
+        {
+            DAOPC_F_WARN("project dont exist! pjId[%ld] \n", project_id);
+            return false;
+        }
+        auto tx_result = SqliteOrmWriteTransaction::Create(lease_result.val, 3000);
+        if(!tx_result.ok())
+        {
+            return false;
+        }
+
+        tx_result.val->db().update_all(
+            set(
+                c(&kit_dao::Project::m_patternInfo) = pattern_info,
+                c(&kit_dao::Project::m_utime) = now
             ),
-            sqlite_orm::where(
-                sqlite_orm::c(&kit_dao::Project::m_id) == project_id
+            where(
+                c(&kit_dao::Project::m_id) == project_id
             )
         );
-        _db->commit();
 
-    } catch(const std::exception &e) {
+        tx_result.val->commit();
 
-        DAOPJ_ERROR() << "GetPatternInfoById faild! " << e.what() << std::endl;
-        _db->rollback();
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR(
+            "%s pjId[%ld], pattern_info[%s] \n",
+            MakeSqliteErrorMsg(e).c_str(),
+            project_id,
+            nljson::parse(pattern_info).dump().c_str());
         return false;
     }
 

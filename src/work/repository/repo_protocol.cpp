@@ -9,54 +9,51 @@
 #include "repository/repo_protocol.h"
 #include "dao/dao_protocol.h"
 
+#include "domain/type.h"
 #include "repository/repo_log.h"
 #include "domain/protocol.h"
 #include "dao/protocol.h"
 #include "base/time_stamp.h"
 
 using nljson = nlohmann::json;
+using namespace kit_dao;
 
 namespace kit_domain {
-ProtocolRepository::ProtocolRepository(std::shared_ptr<ProtocolDaoInterface> dao)
-    :ProtocolRepoInterface(dao)
-{
-
-}
-
-ProtocolRepository::~ProtocolRepository() { }
-
 
 static kit_domain::Protocol CovertDomainProtocol(const kit_dao::Protocol &daoPj)
 {
     return kit_domain::Protocol{
-        daoPj.m_id,
-        daoPj.m_name,
-        static_cast<ProtocolType>(daoPj.m_type),
-        daoPj.m_projectId,
-        static_cast<ProtocolStatus>(daoPj.m_status),
-        static_cast<ProtocolBodyType>(daoPj.m_reqBodyType),
-        static_cast<ProtocolBodyType>(daoPj.m_respBodyType),
-        daoPj.m_reqBodyDataStatus,
-        daoPj.m_respBodyDataStatus,
-        nljson::parse(daoPj.m_reqCfg),
-        nljson::parse(daoPj.m_respCfg),
-        std::move(daoPj.m_reqBodyData),
-        std::move(daoPj.m_respBodyData),
-        static_cast<bool>(daoPj.m_isEndian),
+        .m_id = daoPj.m_id,
+        .m_name = daoPj.m_name,
+        .m_type = static_cast<ProtocolType>(daoPj.m_type),
+        .m_projectId = daoPj.m_projectId,
+        .m_status = static_cast<ProtocolStatus>(daoPj.m_status),
+        .m_reqBodyType= static_cast<ProtocolBodyType>(daoPj.m_reqBodyType),
+        .m_respBodyType = static_cast<ProtocolBodyType>(daoPj.m_respBodyType),
+        .m_reqBodyDataStatus = daoPj.m_reqBodyDataStatus,
+        .m_respBodyDataStatus = daoPj.m_respBodyDataStatus,
+        .m_reqCfg = nljson::parse(daoPj.m_reqCfg),
+        .m_respCfg = nljson::parse(daoPj.m_respCfg),
+        .m_reqBodyData = std::move(daoPj.m_reqBodyData),
+        .m_respBodyData = std::move(daoPj.m_respBodyData),
+        .m_isEndian = static_cast<bool>(daoPj.m_isEndian),
 
-        kit_muduo::TimeStamp(daoPj.m_ctime),
-        kit_muduo::TimeStamp(daoPj.m_utime)
+        .m_ctime = kit_muduo::TimeStamp(daoPj.m_ctime),
+        .m_utime = kit_muduo::TimeStamp(daoPj.m_utime)
     };
 }
+
+
 
 static std::vector<kit_domain::Protocol> CovertDomainProtocols(const std::vector<kit_dao::Protocol> &daoPjs)
 {
     std::vector<kit_domain::Protocol> ans;
     for(const auto &p : daoPjs)
+    {
         ans.emplace_back(CovertDomainProtocol(p));
+    }
     return ans;
 }
-
 
 static kit_dao::Protocol CovertDaoProtocol(const kit_domain::Protocol &domainPc)
 {
@@ -77,6 +74,15 @@ static kit_dao::Protocol CovertDaoProtocol(const kit_domain::Protocol &domainPc)
         static_cast<int32_t>(domainPc.m_isEndian),
     };
 }
+
+ProtocolRepository::ProtocolRepository(std::shared_ptr<ProtocolDaoInterface> dao)
+    :ProtocolRepoInterface(dao)
+{
+
+}
+
+ProtocolRepository::~ProtocolRepository() { }
+
 
 int64_t ProtocolRepository::Create(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
 {
@@ -119,19 +125,20 @@ Protocol ProtocolRepository::GetById(kit_muduo::HttpContextPtr ctx, int64_t prot
     return CovertDomainProtocol(_dao->GetById(ctx, protocolId));
 }
 
-std::vector<Protocol> ProtocolRepository::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t offset, int32_t limit)
+std::vector<Protocol> ProtocolRepository::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit)
 {
-    return CovertDomainProtocols(_dao->GetByProject(ctx, protocolId, offset, limit));
+    return CovertDomainProtocols(_dao->GetByProject(ctx, protocolId, static_cast<int32_t>(status), offset, limit));
 }
 
-std::vector<Protocol> ProtocolRepository::GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+std::vector<Protocol> ProtocolRepository::GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
 {
-    return CovertDomainProtocols(_dao->GetActiveByProject(ctx, project_id));
+    return CovertDomainProtocols(_dao->GetAllByProject(ctx, project_id, static_cast<int32_t>(status)));
 }
 
-int32_t ProtocolRepository::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+
+int32_t ProtocolRepository::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
 {
-    return _dao->CountByProject(ctx, project_id);
+    return _dao->CountByProject(ctx, project_id, static_cast<int32_t>(status));
 }
 
 nlohmann::json ProtocolRepository::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
