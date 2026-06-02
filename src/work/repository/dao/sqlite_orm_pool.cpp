@@ -260,6 +260,7 @@ void SqliteOrmPool::InitStorageParam(SqliteOrmType &db, bool sync_schema)
     if(sync_schema)
     {
         db.sync_schema(true);
+        EnsureSqliteIndexes();
     }
 }
 

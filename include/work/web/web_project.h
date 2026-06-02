@@ -26,10 +26,12 @@ class Application;
 namespace kit_domain
 {
 class ProjectSvcInterface;
+class ProtocolSvcInterface;
 
 class ProjectHandler
 {
 public:
+    ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc, std::shared_ptr<ProtocolSvcInterface> pc_svc);
     ~ProjectHandler();
 
     void RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> server);
@@ -38,19 +40,13 @@ public:
     kit_app::Application* GetApp() const { return _app; }
 
 public:
-    /**
-     * @brief 单例模式
-     * @param svc 
-     * @return ProjectHandler* 
-     */
-    static ProjectHandler* Instance(std::shared_ptr<ProjectSvcInterface> svc);
-
-public:
     void AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
 
     void StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
 
     void DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
+
+    void RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
 
     void SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
     
@@ -67,10 +63,8 @@ public:
     void EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
 
 private:
-    ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc);
-
-private:
     std::shared_ptr<ProjectSvcInterface> _svc;
+    std::shared_ptr<ProtocolSvcInterface> _pc_svc;
     kit_app::Application *_app;
     
 };

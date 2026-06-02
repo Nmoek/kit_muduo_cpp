@@ -65,6 +65,11 @@ std::vector<Project> ProjectService::GetByUser(kit_muduo::HttpContextPtr ctx, in
     return _repo->GetByUser(ctx, userId, status, offset, limit); 
 }
 
+std::vector<Project> ProjectService::GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit)
+{
+    return _repo->GetAll(ctx, offset, limit);
+}
+
 std::vector<char> ProjectService::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
     return _repo->GetPatternInfoById(ctx, project_id); 

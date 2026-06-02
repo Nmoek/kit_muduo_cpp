@@ -148,6 +148,7 @@ struct StateCode
         k302MoveTemporarily = 302,
         //4XX
         k400BadRequest = 400,
+        k401Unauthorized = 401,
         k403Forbidden = 403,
         k404NotFound = 404,
         k405MethodNotAllowed = 405,

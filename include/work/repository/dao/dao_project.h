@@ -38,6 +38,8 @@ public:
     
     virtual std::vector<kit_dao::Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t status, int32_t offset, int32_t limit) = 0;
 
+    virtual std::vector<kit_dao::Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) = 0;
+
     virtual std::vector<kit_dao::Project> GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status) = 0;
 
     virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
@@ -65,6 +67,8 @@ public:
     kit_dao::Project GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 
     std::vector<kit_dao::Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, int32_t status, int32_t offset, int32_t limit) override;
+
+    std::vector<kit_dao::Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) override;
 
     std::vector<kit_dao::Project> GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status) override;
 

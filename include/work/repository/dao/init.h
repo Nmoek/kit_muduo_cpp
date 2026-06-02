@@ -12,6 +12,8 @@
 
 #include "dao/project.h"
 #include "dao/protocol.h"
+#include "dao/session.h"
+#include "dao/user.h"
 #include "sqlite_orm/sqlite_orm.h"
 
 #include <memory>
@@ -55,6 +57,23 @@ struct SqliteOrmPoolConfig;
             sqlite_orm::make_column("req_body_data", &Protocol::m_reqBodyData, sqlite_orm::not_null()), \
             sqlite_orm::make_column("resp_body_data", &Protocol::m_respBodyData, sqlite_orm::not_null()), \
             sqlite_orm::make_column("is_endian", &Protocol::m_isEndian) \
+        ), \
+        sqlite_orm::make_table("users", \
+            sqlite_orm::make_column("id", &User::m_id, sqlite_orm::primary_key().autoincrement()), \
+            sqlite_orm::make_column("ctime", &User::m_ctime), \
+            sqlite_orm::make_column("utime", &User::m_utime), \
+            sqlite_orm::make_column("note_name", &User::m_noteName, sqlite_orm::unique(), sqlite_orm::not_null()), \
+            sqlite_orm::make_column("role", &User::m_role), \
+            sqlite_orm::make_column("password_hash", &User::m_passwordHash), \
+            sqlite_orm::make_column("status", &User::m_status) \
+        ), \
+        sqlite_orm::make_table("sessions", \
+            sqlite_orm::make_column("id", &UserSession::m_id, sqlite_orm::primary_key().autoincrement()), \
+            sqlite_orm::make_column("ctime", &UserSession::m_ctime), \
+            sqlite_orm::make_column("utime", &UserSession::m_utime), \
+            sqlite_orm::make_column("user_id", &UserSession::m_userId), \
+            sqlite_orm::make_column("secret_hash", &UserSession::m_secretHash, sqlite_orm::not_null()), \
+            sqlite_orm::make_column("expire_time", &UserSession::m_expireTime) \
         ))
 
 
@@ -67,6 +86,7 @@ using SqliteOrmType = decltype(SQLITE_ORM_TABLE_INIT_DEF());
  */
 std::shared_ptr<SqliteOrmType> InitSqliteDb();
 std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(SqliteOrmPoolConfig config);
+void EnsureSqliteIndexes();
 
 } // namespace kit_domain
 #endif // __KIT_DAO_INIT_H__

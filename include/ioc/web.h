@@ -22,14 +22,22 @@ class HttpServer;
 }; // namespace kit_muduo
 
 namespace kit_domain {
+class AuthHandler;
 class ProjectHandler;
 class ProtocolHandler;
+class UserHandler;
+class AuthService;
 }
 
 
 namespace kit_app {
 
-std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop *loop, kit_domain::ProjectHandler *projHdl, kit_domain::ProtocolHandler *protocHdl);
+std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
+    kit_domain::ProjectHandler *projHdl,
+    kit_domain::ProtocolHandler *protocHdl,
+    kit_domain::AuthHandler *authHdl,
+    kit_domain::UserHandler *userHdl,
+    std::shared_ptr<kit_domain::AuthService> authSvc);
     
 } // namespace kit_app
 #endif

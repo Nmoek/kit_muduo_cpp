@@ -28,6 +28,13 @@ class ClassInfo:
         self.extra_includes = []    # 额外依赖的头文件
 
 
+class NamespaceRange:
+    def __init__(self, name, start, end):
+        self.name = name
+        self.start = start
+        self.end = end
+
+
 def _remove_comments(content):
     """移除 C++ 注释，保留行结构"""
     # 先移除块注释
@@ -92,6 +99,29 @@ def _split_params(params_str):
     return [p for p in parts if p]
 
 
+def _find_namespace_ranges(content):
+    """提取命名空间作用域范围，供类匹配所在命名空间使用"""
+    ranges = []
+    pattern = re.compile(r'namespace\s+([\w:]+)\s*\{')
+    for m in pattern.finditer(content):
+        _, close_pos = _extract_class_body(content, m.end())
+        ranges.append(NamespaceRange(m.group(1), m.end(), close_pos))
+    return ranges
+
+
+def _namespace_for_pos(namespace_ranges, pos):
+    """返回 pos 所在的最内层命名空间"""
+    selected = ""
+    selected_size = None
+    for ns in namespace_ranges:
+        if ns.start <= pos < ns.end:
+            size = ns.end - ns.start
+            if selected_size is None or size < selected_size:
+                selected = ns.name
+                selected_size = size
+    return selected
+
+
 def _param_default(param_str):
     """为单个参数生成默认值"""
     # 去除参数名，保留类型
@@ -125,12 +155,7 @@ def parse_header(file_path):
     content = _remove_comments(content)
 
     classes = []
-    namespace = ""
-
-    # 提取命名空间
-    ns_match = re.search(r'namespace\s+(\w+)\s*\{', content)
-    if ns_match:
-        namespace = ns_match.group(1)
+    namespace_ranges = _find_namespace_ranges(content)
 
     # 查找所有类定义: class ClassName [: [public|private|protected] BaseClass] {
     class_pattern = re.compile(
@@ -141,7 +166,7 @@ def parse_header(file_path):
         class_info = ClassInfo()
         class_info.name = match.group(1)
         class_info.base_class = match.group(2) or ""
-        class_info.namespace = namespace
+        class_info.namespace = _namespace_for_pos(namespace_ranges, match.start())
 
         # 用大括号计数提取完整类体
         class_body, _ = _extract_class_body(content, match.end())

@@ -8,6 +8,7 @@
  */
 #include "dao/dao_project.h"
 #include "dao/dao_log.h"
+#include "dao/dao_util.h"
 #include "base/time_stamp.h"
 #include "dao/project.h"
 #include "domain/type.h"
@@ -21,25 +22,6 @@ using nljson = nlohmann::json;
 using namespace sqlite_orm;
 
 namespace kit_dao {
-
-namespace {
-
-inline static std::string MakeSqliteErrorMsg(const std::system_error &e)
-{
-    const std::error_code &ec = e.code();
-
-    char tmp[128] = {0};
-    snprintf(tmp, sizeof(tmp), "sqlite/system error: code[%d], category[%s], message[%s], what[%s]!",   ec.value(),
-        ec.category().name(),
-        ec.message().c_str(),
-        e.what());
-    return tmp;
-}
-
-
-}
-
-
 
 SqliteOrmProjectDao::SqliteOrmProjectDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool)
     :_db_pool(db_pool)
@@ -198,6 +180,7 @@ bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int
         DAOPC_F_ERROR(
             "%s pjId[%ld], active[%d], listenPort[%d] \n",
             MakeSqliteErrorMsg(e).c_str(),
+            project_id,
             active,
             listenPort);
         return false;
@@ -254,7 +237,7 @@ bool SqliteOrmProjectDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t proj
     } catch (const std::system_error &e) {
 
         DAOPC_F_ERROR(
-            "%s pjId[%ld], name[%d] \n",
+            "%s pjId[%ld], name[%s] \n",
             MakeSqliteErrorMsg(e).c_str(),
             project_id,
             name.c_str());
@@ -352,6 +335,30 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetByUser(kit_muduo::HttpCont
     return pjs;
 }
 
+std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit)
+{
+    std::vector<kit_dao::Project> pjs;
+
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return pjs;
+    }
+
+    try {
+        auto tmps = lease_result.val->db().get_all<kit_dao::Project>(
+            order_by(&kit_dao::Project::m_ctime).desc(),
+            sqlite_orm::limit(offset, limit)
+        );
+        pjs.swap(tmps);
+    } catch (const std::system_error &e) {
+        DAOPC_F_ERROR("%s offset[%d], limit[%d]\n", MakeSqliteErrorMsg(e).c_str(), offset, limit);
+    }
+
+    return pjs;
+}
+
 std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status)
 {
     std::vector<kit_dao::Project> pjs;
@@ -382,7 +389,7 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::Htt
     } catch (const std::system_error &e) {
 
         DAOPC_F_ERROR(
-            "%s status[%ld]\n",
+            "%s status[%d]\n",
             MakeSqliteErrorMsg(e).c_str(),
             status);
         return pjs;

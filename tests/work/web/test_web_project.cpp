@@ -21,7 +21,9 @@
 #include "domain/protocol_item.h"
 #include "domain/http_protocol_item.h"
 #include "domain/runtime_result.h"
+#include "domain/user.h"
 #include "service/mock/svc_project_mock.h"
+#include "service/mock/svc_protocol_mock.h"
 #include "../..//test_log.h"
 #include "base/thread.h"
 #include "base/event_loop_thread.h"
@@ -117,6 +119,10 @@ protected:
         server_ = std::make_shared<kit_muduo::http::HttpServer>(
             loop_, addr, "test_server", false, TcpServer::Option::KReusePort);
         server_->setThreadNum(0);
+        server_->setAuthCallback([](HttpContextPtr ctx) {
+            SetCurrentUserToContext(ctx, CurrentUser{1, "web_project_tester", UserRole::kNormal, UserStatus::kActive});
+            return kit_muduo::http::HttpServer::AuthCheckResult{};
+        });
 
         handler_->RegisterRoutes(server_);
         server_->start();
@@ -158,7 +164,7 @@ protected:
     }
 
     std::shared_ptr<ProjectSvcInterface> mock_svc_;
-    ProjectHandler* handler_;
+    std::unique_ptr<ProjectHandler> handler_;
     std::shared_ptr<HttpContext> ctx_;
     std::shared_ptr<kit_muduo::http::HttpServer> server_;
     std::unique_ptr<EventLoopThread> loop_thread_;
@@ -304,6 +310,7 @@ static HttpContextPtr MakeProjectStatusContext(int64_t project_id, ProjectStatus
     req->addRouteParam("project_id", std::to_string(project_id));
     req->addQureyParam("operation", std::to_string(static_cast<int32_t>(operation)));
     req->addHeader("Content-Type", "application/json");
+    SetCurrentUserToContext(ctx, CurrentUser{1, "web_project_tester", UserRole::kNormal, UserStatus::kActive});
     return ctx;
 }
 
@@ -448,7 +455,7 @@ TEST_F(ProjectHandlerSuite, AddProject)
         auto resp = ctx_->response();
     
         mock_svc_ = c.mock();
-        handler_ = ProjectHandler::Instance(mock_svc_);
+        handler_ = std::make_unique<ProjectHandler>(mock_svc_, nullptr);
     
         // 开启服务器
         server_start();
@@ -505,6 +512,8 @@ TEST_F(ProjectHandlerSuite, DelProject)
             },
             []() -> std::shared_ptr<ProjectSvcInterface> {
                 auto mocksvc = std::make_shared<MockProjectSvc>();
+                EXPECT_CALL(*mocksvc, GetById(_, project_id))
+                    .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
                 EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::OFF_STATUS))
                     .WillOnce(Return(true));
                 return mocksvc;
@@ -564,6 +573,8 @@ TEST_F(ProjectHandlerSuite, DelProject)
             },
             []() -> std::shared_ptr<ProjectSvcInterface> {
                 auto mocksvc = std::make_shared<MockProjectSvc>();
+                EXPECT_CALL(*mocksvc, GetById(_, service_fail_project_id))
+                    .WillOnce(Return(MakeHttpProjectForStatus(service_fail_project_id)));
                 EXPECT_CALL(*mocksvc, UpdateStatus(_, service_fail_project_id, ProjectStatus::OFF_STATUS))
                     .WillOnce(Return(false));
                 return mocksvc;
@@ -582,7 +593,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
         auto resp = ctx_->response();
 
         mock_svc_ = c.mock();
-        handler_ = ProjectHandler::Instance(mock_svc_);
+        handler_ = std::make_unique<ProjectHandler>(mock_svc_, nullptr);
         handler_->SetApp(&app);
     
         // 开启服务器
@@ -639,10 +650,12 @@ TEST_F(ProjectHandlerSuite, DelProjectStopsRuntimeServerBeforeSoftDelete)
     mock_svc_ = std::make_shared<MockProjectSvc>();
     auto mocksvc = std::dynamic_pointer_cast<MockProjectSvc>(mock_svc_);
     ASSERT_NE(mocksvc, nullptr);
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
     EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::OFF_STATUS))
         .WillOnce(Return(true));
 
-    handler_ = ProjectHandler::Instance(mock_svc_);
+    handler_ = std::make_unique<ProjectHandler>(mock_svc_, nullptr);
     handler_->SetApp(&app);
 
     ctx_ = std::make_shared<HttpContext>();
@@ -691,12 +704,16 @@ TEST_F(ProjectHandlerSuite, StartProjectCreatesRuntimeStartsItAndReturnsListenPo
 {
     constexpr int64_t project_id = 9401;
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
-    auto handler = ProjectHandler::Instance(mocksvc);
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto handler = std::make_unique<ProjectHandler>(mocksvc, mock_protocol_svc);
     kit_app::Application app(nullptr);
     handler->SetApp(&app);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeHttpProjectForStatus(project_id)))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
+    EXPECT_CALL(*mock_protocol_svc, GetAllActive(_, project_id))
+        .WillOnce(Return(std::vector<Protocol>{}));
     EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectStatus::ON_STATUS, Gt(0)))
         .WillOnce(Return(true));
 
@@ -742,7 +759,7 @@ TEST_F(ProjectHandlerSuite, StopProjectStopsRuntimeRemovesItAndReturnsSuccess)
 {
     constexpr int64_t project_id = 9402;
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
-    auto handler = ProjectHandler::Instance(mocksvc);
+    auto handler = std::make_unique<ProjectHandler>(mocksvc, nullptr);
     kit_app::Application app(nullptr);
     handler->SetApp(&app);
 
@@ -755,7 +772,8 @@ TEST_F(ProjectHandlerSuite, StopProjectStopsRuntimeRemovesItAndReturnsSuccess)
     ASSERT_TRUE(runtime_server->isActive());
     app.addServer(project_id, runtime_server);
 
-    EXPECT_CALL(*mocksvc, GetById(_, _)).Times(0);
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
     EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectStatus::OFF_STATUS, 0))
         .WillOnce(Return(true));
 

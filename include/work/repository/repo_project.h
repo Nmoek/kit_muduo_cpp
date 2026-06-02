@@ -54,6 +54,8 @@ public:
 
     virtual std::vector<Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit) = 0;
 
+    virtual std::vector<Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) = 0;
+
     virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
     virtual bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info) = 0;
@@ -85,6 +87,8 @@ public:
     Project GetById(kit_muduo::HttpContextPtr ctx, int64_t projectId) override;
     
     std::vector<Project> GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit) override;
+
+    std::vector<Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) override;
 
     std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 

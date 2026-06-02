@@ -8,6 +8,10 @@
  */
 #include "web/web_protocol.h"
 #include "domain/protocol.h"
+#include "domain/project.h"
+#include "domain/type.h"
+#include "domain/user.h"
+#include "service/svc_project.h"
 #include "service/svc_protocol.h"
 #include "web/protocol_vo.h"
 #include "web/web_log.h"
@@ -148,10 +152,12 @@ struct DelProtocolReq {
  */
 struct ProtocolListReq {
     int64_t                  project_id;      // 所属测试服务id
+    int32_t                  status{static_cast<int32_t>(ProtocolStatus::ACTIVE)};  // 状态
+    bool                     include_inactive{false}; // 管理员列表是否包含已删除协议项
     int32_t                  offset;          // 页码
     int32_t                  limit;           // 页大小
     
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProtocolListReq, project_id, offset, limit)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ProtocolListReq, project_id, status, include_inactive, offset, limit)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProtocolListReq &req)
     {
@@ -247,17 +253,12 @@ struct DetailReq {
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
 ProtocolHandler::ProtocolHandler(std::shared_ptr<ProtocolSvcInterface> svc)
-    :_svc(svc)
+    :_svc(std::move(svc)),
+     _app(nullptr)
 { }
 
 ProtocolHandler::~ProtocolHandler()
 { }
-
-ProtocolHandler* ProtocolHandler::Instance(std::shared_ptr<ProtocolSvcInterface> svc)
-{
-    static ProtocolHandler h(svc);
-    return &h;
-}
 
 void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> server)
 {
@@ -269,6 +270,8 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
 
     // 获取单个测试项协议
     server->Get("/protocols/:protocol_id", XX(SingleProtocol));
+    // 恢复软删协议项目
+    server->Post("/protocols/:protocol_id/restore", XX(RestoreProtocol));
 
     // 删除测试项协议
     server->Post("/protocols/del", XX(DelProtocol));
@@ -302,6 +305,51 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
 
 
 #undef XX
+}
+
+static bool CheckProjectAccess(HttpContextPtr ctx, ProjectSvcInterface *project_svc, int64_t project_id, bool require_active, bool admin_only)
+{
+    auto current_user = CurrentUserFromContext(ctx);
+    if(admin_only && !current_user.IsAdmin())
+    {
+        return false;
+    }
+    if(!project_svc || project_id <= 0)
+    {
+        return false;
+    }
+    auto project = project_svc->GetById(ctx, project_id);
+    if(project.m_id <= 0)
+    {
+        return false;
+    }
+    if(require_active && project.m_status != ProjectStatus::ON_STATUS)
+    {
+        return false;
+    }
+    return current_user.IsAdmin() || project.m_userId == current_user.user_id;
+}
+
+static bool CheckProtocolAccess(HttpContextPtr ctx, ProtocolSvcInterface *protocol_svc, ProjectSvcInterface *project_svc, int64_t protocol_id, bool admin_only)
+{
+    if(!protocol_svc)
+    {
+        return false;
+    }
+    auto protocol = protocol_svc->GetById(ctx, protocol_id);
+    if(protocol.m_id <= 0)
+    {
+        return false;
+    }
+    return CheckProjectAccess(ctx, project_svc, protocol.m_projectId, true, admin_only);
+}
+
+static void WriteForbidden(HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+    resp->setStateCode(StateCode::k403Forbidden);
+    resp->body().setContentType(ContentType::kJsonType);
+    resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
 }
 
 
@@ -343,6 +391,12 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     p->m_reqBodyData = std::move(request.protocol_req_body);
     p->m_respBodyData = std::move(request.protocol_resp_body);
     p->m_isEndian = request.header.is_endian;
+
+    if(!CheckProjectAccess(ctx, _projectSvc.get(), p->m_projectId, true, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
 
     //1. 先以http server进行调试 后续将tcp加入后再决定如何统一接口
     //2. TODO: 还要考虑客户端接口设计
@@ -459,6 +513,11 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
 
     int64_t protocol_id = request.id;
     int64_t project_id = request.project_id;
+    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
     try 
     {
         // 生成对应协议种类的报文
@@ -538,6 +597,11 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
         protocol = _svc->GetById(ctx, protocol_id);
         if(protocol.m_id < 0)
             throw std::runtime_error("protocol.id <= 0");
+        if(!CheckProjectAccess(ctx, _projectSvc.get(), protocol.m_projectId, true, false))
+        {
+            WriteForbidden(ctx);
+            return;
+        }
     }
     catch(const std::exception& e)
     {
@@ -582,10 +646,25 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
 
     // DTO转换 避免对外暴露领域模型Entity
     std::vector<Protocol> protocols;
+    if(!CheckProjectAccess(ctx, _projectSvc.get(), request.project_id, true, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
     // 查测试服务 信息
     try 
     {
-        protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::ACTIVE, request.offset, request.limit);
+        auto current_user = CurrentUserFromContext(ctx);
+        if(current_user.IsAdmin() && request.include_inactive)
+        {
+            protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::ACTIVE, request.offset, request.limit);
+            auto inactive_protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::INACTIVE, 0, request.limit);
+            protocols.insert(protocols.end(), inactive_protocols.begin(), inactive_protocols.end());
+        }
+        else
+        {
+            protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::ACTIVE, request.offset, request.limit);
+        }
     }
     catch(const std::exception& e)
     {
@@ -634,6 +713,11 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     root["message"] = "success";
     root["data"] = nljson::object();
     try {
+        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), request.id, false))
+        {
+            WriteForbidden(ctx);
+            return;
+        }
         if(HttpRequest::Method::kPost == req->method()())
         {
             bool ok = _svc->UpdateName(ctx, request.id, request.name);
@@ -719,6 +803,12 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     int64_t protocol_id = request.id;
     int64_t project_id = request.project_id;
     int32_t req_or_resp = request.req_or_resp;
+
+    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
 
     auto project_service = GetApp()->findServer(request.project_id);
     if(!project_service || !project_service->isActive())
@@ -870,6 +960,12 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     int64_t project_id = request.header.project_id;
     int32_t req_or_resp = request.header.req_or_resp;
 
+    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
+
     // 更新服务器上的Body信息
     auto project_service = GetApp()->findServer(request.header.project_id);
     if(!project_service)
@@ -943,6 +1039,11 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     }
 
     int32_t protocol_cnt = -1;
+    if(!CheckProjectAccess(ctx, _projectSvc.get(), project_id, true, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
     try 
     {
         protocol_cnt = _svc->GetProtocolCnt(ctx, project_id, ProtocolStatus::ACTIVE);
@@ -993,6 +1094,11 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
 
     nljson protocol_cfg;
     try {
+        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+        {
+            WriteForbidden(ctx);
+            return;
+        }
         protocol_cfg = _svc->GetCfgById(ctx, protocol_id);
 
     } catch(const std::exception& e){
@@ -1045,6 +1151,11 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     nljson common_fields_json;
     try 
     {
+        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), request.id, false))
+        {
+            WriteForbidden(ctx);
+            return;
+        }
         common_fields_json = _svc->GetTcpCommonFieldsById(ctx, request.id, request.req_or_resp);
 
     }
@@ -1100,6 +1211,11 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     int64_t protocol_id = request.id;
     // int64_t project_id = request.project_id;
     int32_t req_or_resp = request.req_or_resp;
+    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
 
     ProtocolBodyType body_type;
     try 
@@ -1157,6 +1273,11 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     int64_t protocol_id = request.id;
     // int64_t project_id = request.project_id;
     int32_t req_or_resp = request.req_or_resp;
+    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
 
     std::vector<char> body_data;
     try 
@@ -1222,6 +1343,11 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     ProtocolBodyType body_type;
     std::vector<char> body_data;
     try {
+        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), request.id, false))
+        {
+            WriteForbidden(ctx);
+            return;
+        }
         ok = _svc->GetBodyInfoById(ctx, request.id, request.req_or_resp, body_type, body_data);
         if(!ok)
             throw std::logic_error("GetBodyDataById failed");
@@ -1255,6 +1381,49 @@ Content-Type: application/octet-stream
 
     PC_DEBUG() << resp->toString() << std::endl;
 
+}
+
+void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
+{
+    auto resp = ctx->response();
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k200Ok);
+    resp->body().setContentType(ContentType::kJsonType);
+
+    int64_t protocol_id = 0;
+    try {
+        protocol_id = std::stol(ctx->routeParam("protocol_id"));
+    } catch(const std::exception &) {
+        resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
+        return;
+    }
+
+    auto current_user = CurrentUserFromContext(ctx);
+    if(!current_user.IsAdmin())
+    {
+        WriteForbidden(ctx);
+        return;
+    }
+
+    auto protocol = _svc->GetById(ctx, protocol_id);
+    auto project = _projectSvc->GetById(ctx, protocol.m_projectId);
+    if(protocol.m_id <= 0 || project.m_id <= 0 || project.m_status != ProjectStatus::ON_STATUS)
+    {
+        resp->body().appendData(R"({"code": -300, "message":"service failed","data":{}})");
+        return;
+    }
+    if(project.m_active == ProjectStatus::ON_STATUS)
+    {
+        resp->body().appendData(R"({"code": -300, "message":"请先停止测试服务后再恢复协议项","data":{}})");
+        return;
+    }
+
+    if(!_svc->ReCover(ctx, protocol_id))
+    {
+        resp->body().appendData(R"({"code": -300, "message":"service failed","data":{}})");
+        return;
+    }
+    resp->body().appendData(R"({"code": 0, "message":"success","data":{}})");
 }
 
 

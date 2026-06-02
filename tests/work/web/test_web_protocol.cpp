@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "application.h"
+#include "domain/project.h"
 #include "base/time_stamp.h"
 #include "domain/http_protocol_item.h"
 #include "domain/project_server.h"
@@ -14,11 +15,13 @@
 #include "domain/protocol_item.h"
 #include "domain/runtime_loop_pool.h"
 #include "domain/runtime_result.h"
+#include "domain/user.h"
 #include "net/call_backs.h"
 #include "net/http/http_context.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_util.h"
+#include "service/mock/svc_project_mock.h"
 #include "service/mock/svc_protocol_mock.h"
 #include "web/web_protocol.h"
 
@@ -81,9 +84,20 @@ std::shared_ptr<Protocol> MakeHttpProtocol(
     return protocol;
 }
 
+Project MakeActiveProject(int64_t project_id)
+{
+    Project project;
+    project.m_id = project_id;
+    project.m_name = "web_protocol_project_" + std::to_string(project_id);
+    project.m_status = ProjectStatus::ON_STATUS;
+    project.m_userId = 1;
+    return project;
+}
+
 HttpContextPtr MakeJsonContext(const nljson &body)
 {
     auto ctx = std::make_shared<HttpContext>();
+    SetCurrentUserToContext(ctx, CurrentUser{1, "web_protocol_tester", UserRole::kNormal, UserStatus::kActive});
     auto req = ctx->request();
     req->setVersion(Version::kHttp11);
     req->setMethod(HttpRequest::Method::kPost);
@@ -158,34 +172,26 @@ testing::Matcher<const std::string&> JsonStringEq(const nljson &expected)
     });
 }
 
-std::shared_ptr<testing::NiceMock<MockProtocolSvc>> SharedMockProtocolSvc()
-{
-    static auto mock = std::make_shared<testing::NiceMock<MockProtocolSvc>>();
-    return mock;
-}
-
-ProtocolHandler* SharedProtocolHandler()
-{
-    return ProtocolHandler::Instance(SharedMockProtocolSvc());
-}
-
 class ProtocolHandlerDetailCfgSuite : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
-        mock_ = SharedMockProtocolSvc();
-        testing::Mock::VerifyAndClearExpectations(mock_.get());
-        handler_ = SharedProtocolHandler();
+        mock_ = std::make_shared<testing::NiceMock<MockProtocolSvc>>();
+        project_mock_ = std::make_shared<testing::NiceMock<MockProjectSvc>>();
+        handler_ = std::make_unique<ProtocolHandler>(mock_);
+        handler_->SetProjectService(project_mock_);
     }
 
     void TearDown() override
     {
         testing::Mock::VerifyAndClearExpectations(mock_.get());
+        testing::Mock::VerifyAndClearExpectations(project_mock_.get());
     }
 
     std::shared_ptr<testing::NiceMock<MockProtocolSvc>> mock_;
-    ProtocolHandler *handler_{nullptr};
+    std::shared_ptr<testing::NiceMock<MockProjectSvc>> project_mock_;
+    std::unique_ptr<ProtocolHandler> handler_;
 };
 
 } // namespace
@@ -269,6 +275,10 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
                                   testing::A<const nljson&>())).Times(0);
     {
         testing::InSequence seq;
+        EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
+            .WillOnce(testing::Return(*MakeHttpProtocol(protocol_id, project_id, "/d9/web/success")));
+        EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
+            .WillOnce(testing::Return(MakeActiveProject(project_id)));
         EXPECT_CALL(*mock_, GetCfgById(testing::_, protocol_id))
             .WillOnce(testing::Return(nljson{
                 {"req_cfg", old_req_cfg},
@@ -343,6 +353,10 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
                                   testing::A<const nljson&>())).Times(0);
     {
         testing::InSequence seq;
+        EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
+            .WillOnce(testing::Return(*MakeHttpProtocol(protocol_id, project_id, "/d9/web/old")));
+        EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
+            .WillOnce(testing::Return(MakeActiveProject(project_id)));
         EXPECT_CALL(*mock_, GetCfgById(testing::_, protocol_id))
             .WillOnce(testing::Return(nljson{
                 {"req_cfg", old_req_cfg},

@@ -16,6 +16,7 @@
 #include <memory>
 #include <atomic>
 #include <string>
+#include <unordered_map>
 
 namespace kit_muduo {
 
@@ -65,6 +66,17 @@ public:
     std::string queryParam(const std::string& key) const
     {
        return _request->getQureyParam(key);
+    }
+
+    void setAttribute(const std::string &key, const std::string &value)
+    {
+        attributes_[key] = value;
+    }
+
+    std::string attribute(const std::string &key) const
+    {
+        auto it = attributes_.find(key);
+        return it == attributes_.end() ? "" : it->second;
     }
 
     /**
@@ -131,6 +143,7 @@ private:
     HttpResponsePtr _response;
     /// @brief HTTP报文解析器
     std::shared_ptr<HttpParser> _parser;
+    std::unordered_map<std::string, std::string> attributes_;
 };
 
 

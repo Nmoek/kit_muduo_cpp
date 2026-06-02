@@ -30,6 +30,15 @@ public:
     using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
     using StopCallBack = TcpServer::StopCb;
 
+    struct AuthCheckResult
+    {
+        bool ok{true};
+        int32_t http_status{200};
+        std::string message;
+        bool redirect_to_login{false};
+    };
+    using AuthCallback = std::function<AuthCheckResult(HttpContextPtr)>;
+
     struct BusinessThreadPoolConfig
     {
         int32_t threadMaxThreshold{0};
@@ -53,6 +62,8 @@ public:
     kit_muduo::EventLoop *getLoop() const { return _server.getLoop(); }
 
     void setHttpCallback(const HttpCallBack &cb) { _httpCallBack = std::move(cb); }
+
+    void setAuthCallback(AuthCallback cb) { _authCallBack = std::move(cb); }
 
     void setThreadNum(int32_t nums) { _server.setThreadNum(nums); }
 
@@ -101,6 +112,7 @@ private:
 private:
     TcpServer _server;
     HttpCallBack _httpCallBack;
+    AuthCallback _authCallBack;
     ThreadPool _businessThreadPool;// 注意: 这个是http业务额外的线程池，和处理网络连接evnet_loop的线程池侧重点不一样
     std::shared_ptr<HttpServletDispatch> _dispatch;
     bool _isPool;   // 是否使用线程池

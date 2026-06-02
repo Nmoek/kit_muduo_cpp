@@ -17,6 +17,7 @@ std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
     {k301MovedPermanently,           "Moved Permanently"},
     {k302MoveTemporarily,            "Move temporarily"},
     {k400BadRequest,                 "Bad Request"},
+    {k401Unauthorized,               "Unauthorized"},
     {k403Forbidden,                  "Forbidden"},
     {k404NotFound,                   "Not Found"},
     {k405MethodNotAllowed,           "Method Not Allowed"},

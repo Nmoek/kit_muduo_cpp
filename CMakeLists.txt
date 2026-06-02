@@ -75,6 +75,7 @@ option(WORK_TEST.RUNTIME "build test_runtime" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
+option(WORK_TEST.USER "build test_user_auth" OFF)
 
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
@@ -193,22 +194,30 @@ set(WORK_DAO_SRC
 
     src/work/repository/dao/dao_project.cpp
     src/work/repository/dao/dao_protocol.cpp
+    src/work/repository/dao/dao_session.cpp
+    src/work/repository/dao/dao_user.cpp
 )
 
 
 set(WORK_REPO_SRC
     src/work/repository/repo_project.cpp
     src/work/repository/repo_protocol.cpp
+    src/work/repository/repo_session.cpp
+    src/work/repository/repo_user.cpp
 
 )
 
 set(WORK_SVC_SRC
     src/work/service/svc_project.cpp
     src/work/service/svc_protocol.cpp
+    src/work/service/password_hasher.cpp
+    src/work/service/svc_auth.cpp
+    src/work/service/svc_user.cpp
 )
 
 set(WORK_DOMAIN_SRC
     src/work/domain/type.cpp
+    src/work/domain/user.cpp
     src/work/domain/runtime_result.cpp
     src/work/domain/runtime_loop_pool.cpp
     
@@ -236,6 +245,8 @@ set(WORK_WEB_SRC
     src/work/web/web_test.cpp
     src/work/web/web_project.cpp
     src/work/web/web_protocol.cpp
+    src/work/web/web_auth.cpp
+    src/work/web/web_user.cpp
     src/work/web/project_vo.cpp
     src/work/web/protocol_vo.cpp
 )
@@ -273,6 +284,7 @@ set(LIB_LIB
     GTest::gmock 
     GTest::gmock_main
     llhttp
+    crypt
 )
 
 set(DEPENDS
@@ -410,6 +422,9 @@ add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/wo
 
 # 运行态测试 test_runtime
 add_kit_test(WORK_TEST WORK_TEST.RUNTIME test_runtime tests/work/domain/test_runtime.cpp ${WORK_SRC})
+
+# 用户登录、会话和用户管理服务测试 test_user_auth
+add_kit_test(WORK_TEST WORK_TEST.USER test_user_auth tests/work/service/test_user_auth.cpp ${WORK_SRC})
 
 
 

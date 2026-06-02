@@ -23,6 +23,9 @@
 #include "domain/project_server.h"
 #include "domain/project_server_factory.h"
 #include "domain/custom_tcp_pattern.h"
+#include "domain/user.h"
+#include "domain/protocol.h"
+#include "service/svc_protocol.h"
 
 #include <memory>
 #include <cstring>
@@ -142,23 +145,14 @@ struct ProjectEditPatternInfoReq {
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
 
-ProjectHandler::ProjectHandler(std::shared_ptr<kit_domain::ProjectSvcInterface> svc)
-    :_svc(svc)
+ProjectHandler::ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc, std::shared_ptr<ProtocolSvcInterface> pc_svc)
+    :_svc(std::move(svc)),
+     _pc_svc(std::move(pc_svc)),
+     _app(nullptr)
 {  }
 
 
 ProjectHandler::~ProjectHandler() { }
-
-ProjectHandler* ProjectHandler::Instance(std::shared_ptr<ProjectSvcInterface> svc)
-{
-    static ProjectHandler h(nullptr);
-    if(svc)
-    {
-        h._svc = std::move(svc);
-    }
-    return &h;
-}
-
 
 void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> server)
 {
@@ -179,6 +173,7 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
     // TODO 接口需要重新考虑 有点丑陋
     server->Get("/projects/:project_id", XX(SingleProject));
     server->Delete("/projects/:project_id", XX(DelProject));
+    server->Post("/projects/:project_id/restore", XX(RestoreProject));
 
     // 获取/修改某个服务的title名称
     // TODO 动态路由 
@@ -273,7 +268,14 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     p.m_protocolType = static_cast<ProtocolType>(request.protocol_type);
     p.m_listenPort = 0;
     p.m_targetIp =  std::move(request.target_ip);
-    p.m_userId = 1/*request.user_id 暂时写死*/;
+    auto current_user = CurrentUserFromContext(ctx);
+    if(current_user.user_id <= 0)
+    {
+        resp->setStateCode(StateCode::k403Forbidden);
+        resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+        return;
+    }
+    p.m_userId = current_user.user_id;
     p.m_status = ProjectStatus::ON_STATUS; // 新增一定是有效的 TODO后期根据实际保活探测决定
     p.m_active = ProjectStatus::OFF_STATUS;
     p.m_patternInfo = std::move(request.pattern_info);
@@ -329,7 +331,17 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
         return;
     }
     int64_t project_id = atoi(project_id_str.c_str());
+
     ProjectStatus will_status = static_cast<ProjectStatus>(atoi(operation_str.c_str()));
+    auto current_user = CurrentUserFromContext(ctx);
+
+    auto auth_project = _svc->GetById(ctx, project_id);
+    if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
+    {
+        resp->setStateCode(StateCode::k403Forbidden);
+        resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+        return;
+    }
 
 
     bool ok = false;
@@ -358,6 +370,23 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
                 resp->body().appendData(R"({"code": -300, "message":"failed to create server"})");
                 return;
             }
+
+            // 把所有未删的协议都加到服务器上
+            std::vector<Protocol> pcs = _pc_svc->GetAllActive(nullptr, project_id);
+            for(auto &pc : pcs)
+            {
+                auto protocol_item = ProtocolItemFactory::Create(std::make_shared<Protocol>(pc), project_server);
+                if(!protocol_item)
+                {
+                    PJ_F_ERROR("create ProtocolItem faild!  protocol_id[%d] protocol_type[%d] project_id[%d] \n",  pc.m_id, static_cast<int32_t>(pc.m_type), pc.m_projectId);
+                    continue;
+                }
+
+                project_server->AddProtocolItem(protocol_item);
+                
+                PJ_F_DEBUG("pjId[%d], pcId[%d], name[%s] add success!\n", pc.m_projectId, pc.m_id, pc.m_name.c_str());
+            }
+
             cur_listen_port = project_server->getBindAddr().toPort();
             // 主键id更新
             project_server->setProjectId(project_id);
@@ -436,6 +465,14 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     try 
     {
         int64_t project_id = std::stol(val1);
+        auto current_user = CurrentUserFromContext(ctx);
+        auto auth_project = _svc->GetById(ctx, project_id);
+        if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
+        {
+            resp->setStateCode(StateCode::k403Forbidden);
+            resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+            return;
+        }
 
         auto pj_server = _app->findServer(project_id);
         if(!pj_server)
@@ -503,6 +540,13 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     try 
     {
         project = _svc->GetById(ctx, project_id);
+        auto current_user = CurrentUserFromContext(ctx);
+        if(project.m_id > 0 && !current_user.IsAdmin() && project.m_userId != current_user.user_id)
+        {
+            resp->setStateCode(StateCode::k403Forbidden);
+            resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+            return;
+        }
     }
     catch(const std::exception& e)
     {
@@ -554,8 +598,15 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
     // 查测试服务 信息
     try 
     {
-        // DEBUG: 给一个默认admin用户 写死为1 所有访问都共用一个账户
-        projects = _svc->GetByUser(ctx, 1/*request.user_id*/, ProjectStatus::ON_STATUS, request.offset, request.limit);
+        auto current_user = CurrentUserFromContext(ctx);
+        if(current_user.IsAdmin())
+        {
+            projects = _svc->GetAll(ctx, request.offset, request.limit);
+        }
+        else
+        {
+            projects = _svc->GetByUser(ctx, current_user.user_id, ProjectStatus::ON_STATUS, request.offset, request.limit);
+        }
     }
     catch(const std::exception& e)
     {
@@ -595,7 +646,15 @@ void ProjectHandler::GetAllValid(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     std::vector<Project> projects;
     try 
     {
-        projects = _svc->GetAllValid(ctx);
+        auto current_user = CurrentUserFromContext(ctx);
+        if(current_user.IsAdmin())
+        {
+            projects = _svc->GetAllValid(ctx);
+        }
+        else
+        {
+            projects = _svc->GetByUser(ctx, current_user.user_id, ProjectStatus::ON_STATUS, 0, 1000);
+        }
     }
     catch(const std::exception& e)
     {
@@ -642,6 +701,15 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         PJ_F_ERROR("query param transform fail! project_id=%d , %s\n", project_id, e.what());
         
         resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
+        return;
+    }
+
+    auto current_user = CurrentUserFromContext(ctx);
+    auto auth_project = _svc->GetById(ctx, project_id);
+    if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
+    {
+        resp->setStateCode(StateCode::k403Forbidden);
+        resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
         return;
     }
 
@@ -702,6 +770,14 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
     resp->body().setContentType(ContentType::kJsonType);
 
     int64_t project_id = stoi(ctx->routeParam("project_id"));
+    auto current_user = CurrentUserFromContext(ctx);
+    auto auth_project = _svc->GetById(ctx, project_id);
+    if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
+    {
+        resp->setStateCode(StateCode::k403Forbidden);
+        resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+        return;
+    }
 
     std::vector<char> pattern_info;
     try {
@@ -749,6 +825,14 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
     }
 
     const std::string& json_str = request.pattern_info.dump();
+    auto current_user = CurrentUserFromContext(ctx);
+    auto auth_project = _svc->GetById(ctx, request.id);
+    if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
+    {
+        resp->setStateCode(StateCode::k403Forbidden);
+        resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+        return;
+    }
     const std::vector<char> pattern_info(json_str.begin(), json_str.end());
     ok = false;
     try {
@@ -785,6 +869,39 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
 
     return;
 
+}
+
+void ProjectHandler::RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
+{
+    auto resp = ctx->response();
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k200Ok);
+    resp->body().setContentType(ContentType::kJsonType);
+
+    auto current_user = CurrentUserFromContext(ctx);
+    if(!current_user.IsAdmin())
+    {
+        resp->setStateCode(StateCode::k403Forbidden);
+        resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+        return;
+    }
+
+    int64_t project_id = 0;
+    try {
+        project_id = std::stol(ctx->routeParam("project_id"));
+    } catch(const std::exception &) {
+        resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
+        return;
+    }
+
+    bool ok = _svc->UpdateStatus(ctx, project_id, ProjectStatus::ON_STATUS)
+        && _svc->UpdateRuntimeStatus(ctx, project_id, ProjectStatus::OFF_STATUS, 0);
+    if(!ok)
+    {
+        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        return;
+    }
+    resp->body().appendData(R"({"code": 0, "message":"success","data":{}})");
 }
 
 

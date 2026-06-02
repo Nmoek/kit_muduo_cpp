@@ -107,11 +107,7 @@ std::string HttpResponse::toString()
         headers_["Content-Type"] = content_type_str;
     }
 
-
-    if(body_.data().size())
-    {
-        headers_["Content-Length"] = std::to_string(body_.data().size());
-    }
+    headers_["Content-Length"] = std::to_string(body_.data().size());
 
     for(auto &it : headers_)
     {

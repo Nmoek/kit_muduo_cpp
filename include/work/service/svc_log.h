@@ -7,32 +7,31 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "base/log.h"
-static auto g_svc_logger = KIT_LOGGER("service");
 
 
 /*********流式输出**********/
 #define SVC_DEBUG(module) \
-    KIT_DEBUG(g_svc_logger, module)
+    KIT_DEBUG(KIT_LOGGER("service"), module)
 #define SVC_INFO(module) \
-    KIT_INFO(g_svc_logger, module)
+    KIT_INFO(KIT_LOGGER("service"), module)
 #define SVC_WARN(module) \
-    KIT_WARN(g_svc_logger, module)
+    KIT_WARN(KIT_LOGGER("service"), module)
 #define SVC_ERROR(module) \
-    KIT_ERROR(g_svc_logger, module)
+    KIT_ERROR(KIT_LOGGER("service"), module)
 #define SVC_FATAL(module) \
-    KIT_FATAL(g_svc_logger, module)
+    KIT_FATAL(KIT_LOGGER("service"), module)
 
 /**********变参输出***********/
 #define SVC_F_DEBUG(module, fmt, ...) \
-    KIT_FMT_DEBUG(g_svc_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_DEBUG(KIT_LOGGER("service"), module, fmt, ##__VA_ARGS__)
 #define SVC_F_INFO(module, fmt, ...) \
-    KIT_FMT_INFO(g_svc_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_INFO(KIT_LOGGER("service"), module, fmt, ##__VA_ARGS__)
 #define SVC_F_WARN(module, fmt, ...) \
-    KIT_FMT_WARN(g_svc_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_WARN(KIT_LOGGER("service"), module, fmt, ##__VA_ARGS__)
 #define SVC_F_ERROR(module, fmt, ...) \
-    KIT_FMT_ERROR(g_svc_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_ERROR(KIT_LOGGER("service"), module, fmt, ##__VA_ARGS__)
 #define SVC_F_FATAL(module, fmt, ...) \
-    KIT_FMT_FATAL(g_svc_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_FATAL(KIT_LOGGER("service"), module, fmt, ##__VA_ARGS__)
 
 /*******project模块*********/
 #define SVCPJ_DEBUG()     SVC_DEBUG("project")
@@ -61,3 +60,17 @@ static auto g_svc_logger = KIT_LOGGER("service");
 #define SVCPC_F_ERROR(fmt, ...)     SVC_F_ERROR("protocol", fmt, ##__VA_ARGS__)
 #define SVCPC_F_FATAL(fmt, ...)     SVC_F_FATAL("protocol", fmt, ##__VA_ARGS__)
 /*******protocol模块*********/
+
+/*******auth鉴权模块*********/
+#define SVCAUTH_DEBUG()     SVC_DEBUG("protocol")
+#define SVCAUTH_INFO()      SVC_INFO("auth")
+#define SVCAUTH_WARN()      SVC_WARN("auth")
+#define SVCAUTH_ERROR()     SVC_ERROR("auth")
+#define SVCAUTH_FATAL()     SVC_FATAL("auth")
+
+#define SVCAUTH_F_DEBUG(fmt, ...)     SVC_F_DEBUG("auth", fmt, ##__VA_ARGS__)
+#define SVCAUTH_F_INFO(fmt, ...)      SVC_F_INFO("auth", fmt, ##__VA_ARGS__)
+#define SVCAUTH_F_WARN(fmt, ...)      SVC_F_WARN("auth", fmt, ##__VA_ARGS__)
+#define SVCAUTH_F_ERROR(fmt, ...)     SVC_F_ERROR("auth", fmt, ##__VA_ARGS__)
+#define SVCAUTH_F_FATAL(fmt, ...)     SVC_F_FATAL("auth", fmt, ##__VA_ARGS__)
+/*******auth鉴权模块*********/

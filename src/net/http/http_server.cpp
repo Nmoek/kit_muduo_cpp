@@ -22,6 +22,7 @@ namespace http {
 HttpServer::HttpServer(EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool, TcpServer::Option option)
     :_server(loop, addr, name, option)
     ,_httpCallBack(nullptr)
+    ,_authCallBack(nullptr)
     ,_dispatch(std::make_shared<HttpServletDispatch>())
     ,_isPool(isPool)
     ,_businessThreadPoolConfig{
@@ -280,14 +281,7 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
                 || (Version::kHttp10 == req_ptr->version()() && connection != "keep-alive");
         resp_ptr->setConnectionClosed(closed);
 
-        // TODO 中间层检验
-        // 1. 身份鉴权
-        // if(身份鉴权 == 1)
-        // {
-            // 实际业务分发
-            dispatch->handle(conn, ctx);
-
-        // }
+        dispatch->handle(conn, ctx);
 
         // TODO 这里都要改 send 接口不应该是string
         conn->send(resp_ptr->toString());
@@ -300,7 +294,31 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     if(_isPool)
     {
-        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, work_func, conn, ctx, _dispatch);
+        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, [this, work_func](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) {
+            auto resp_ptr = ctx->response();
+            if(_authCallBack)
+            {
+                auto auth_result = _authCallBack(ctx);
+                if(!auth_result.ok)
+                {
+                    resp_ptr->setVersion(Version::kHttp11);
+                    resp_ptr->setStateCode(auth_result.redirect_to_login ? StateCode::k302MoveTemporarily : auth_result.http_status);
+                    if(auth_result.redirect_to_login)
+                    {
+                        resp_ptr->addHeader("Location", "/html/login.html");
+                        resp_ptr->setConnectionClosed(true);
+                    }
+                    else
+                    {
+                        resp_ptr->body().setContentType(ContentType::kJsonType);
+                        resp_ptr->body().appendData(auth_result.message);
+                    }
+                    conn->send(resp_ptr->toString());
+                    return;
+                }
+            }
+            work_func(conn, ctx, dispatch);
+        }, conn, ctx, _dispatch);
 
         if(!submit_result.ok())
         {
@@ -315,6 +333,28 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
     }
     else
     {
+        if(_authCallBack)
+        {
+            auto auth_result = _authCallBack(ctx);
+            if(!auth_result.ok)
+            {
+                auto resp_ptr = ctx->response();
+                resp_ptr->setVersion(Version::kHttp11);
+                resp_ptr->setStateCode(auth_result.redirect_to_login ? StateCode::k302MoveTemporarily : auth_result.http_status);
+                if(auth_result.redirect_to_login)
+                {
+                    resp_ptr->addHeader("Location", "/html/login.html");
+                    resp_ptr->setConnectionClosed(true);
+                }
+                else
+                {
+                    resp_ptr->body().setContentType(ContentType::kJsonType);
+                    resp_ptr->body().appendData(auth_result.message);
+                }
+                conn->send(resp_ptr->toString());
+                return;
+            }
+        }
         work_func(conn, ctx, _dispatch);
     }
 

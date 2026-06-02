@@ -11,13 +11,12 @@
 #include "dao/protocol.h"
 #include "domain/protocol.h"
 #include "dao/dao_log.h"
+#include "dao/dao_util.h"
 #include "base/time_stamp.h"
 #include "dao/sqlite_orm_pool.h"
 #include "domain/type.h"
 
-#include <cstdio>
 #include <exception>
-#include <sstream>
 #include <system_error>
 #include <thread>
 
@@ -25,23 +24,6 @@ using nljson = nlohmann::json;
 using namespace sqlite_orm;
 
 namespace kit_dao {
-
-namespace {
-
-inline static std::string MakeSqliteErrorMsg(const std::system_error &e)
-{
-    const std::error_code &ec = e.code();
-
-    char tmp[128] = {0};
-    snprintf(tmp, sizeof(tmp), "sqlite/system error: code[%d], category[%s], message[%s], what[%s]!",   ec.value(),
-        ec.category().name(),
-        ec.message().c_str(),
-        e.what());
-    return tmp;
-}
-
-
-}
 
 int64_t SqliteOrmProtocolDao::Insert(std::shared_ptr<kit_muduo::http::HttpContext> ctx, kit_dao::Protocol daoPc)
 {
@@ -132,7 +114,7 @@ bool SqliteOrmProtocolDao::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64
     } catch (const std::system_error &e) {
 
         DAOPC_F_ERROR(
-            "%s pcId[%ld], status[%d], type[%d] \n",
+            "%s pcId[%ld], status[%d] \n",
             MakeSqliteErrorMsg(e).c_str(),
             protocol_id,
             status);
@@ -246,7 +228,7 @@ bool SqliteOrmProtocolDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t pro
     } catch (const std::system_error &e) {
 
         DAOPC_F_ERROR(
-            "%s pcId[%ld], name[%d] \n",
+            "%s pcId[%ld], name[%s] \n",
             MakeSqliteErrorMsg(e).c_str(),
             protocol_id,
             name.c_str());
@@ -543,6 +525,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::Htt
             &kit_dao::Protocol::m_name,
             &kit_dao::Protocol::m_type,
             &kit_dao::Protocol::m_projectId,
+            &kit_dao::Protocol::m_status,
             &kit_dao::Protocol::m_reqBodyType,
             &kit_dao::Protocol::m_respBodyType,
             &kit_dao::Protocol::m_reqBodyDataStatus,
@@ -555,7 +538,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::Htt
         where(
             c(&kit_dao::Protocol::m_projectId) ==  project_id
             &&
-            c(&kit_dao::Protocol::m_status) ==  static_cast<int32_t>(kit_domain::ProtocolStatus::ACTIVE)
+            c(&kit_dao::Protocol::m_status) == status
         ), 
         order_by(&kit_dao::Protocol::m_ctime).desc(),
         sqlite_orm::limit(offset, limit)
@@ -576,17 +559,18 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetByProject(kit_muduo::Htt
             p.m_name = std::move(std::get<1>(item));
             p.m_type = std::move(std::get<2>(item));
             p.m_projectId = std::move(std::get<3>(item));
-            p.m_reqBodyType = std::move(std::get<4>(item));
-            p.m_respBodyType = std::move(std::get<5>(item));
+            p.m_status = std::move(std::get<4>(item));
+            p.m_reqBodyType = std::move(std::get<5>(item));
+            p.m_respBodyType = std::move(std::get<6>(item));
 
-            p.m_reqBodyDataStatus= std::move(std::get<6>(item));
-            p.m_respBodyDataStatus = std::move(std::get<7>(item));
+            p.m_reqBodyDataStatus= std::move(std::get<7>(item));
+            p.m_respBodyDataStatus = std::move(std::get<8>(item));
 
 
-            p.m_reqCfg = std::move(std::get<8>(item));
-            p.m_respCfg = std::move(std::get<9>(item));
-            p.m_ctime = std::move(std::get<10>(item));
-            p.m_utime = std::move(std::get<11>(item));
+            p.m_reqCfg = std::move(std::get<9>(item));
+            p.m_respCfg = std::move(std::get<10>(item));
+            p.m_ctime = std::move(std::get<11>(item));
+            p.m_utime = std::move(std::get<12>(item));
 
             return p;
         });

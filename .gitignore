@@ -27,3 +27,4 @@
 .gitattributes
 *.bin
 *.exe
+*.openapi*

@@ -117,6 +117,11 @@ std::vector<Project> ProjectRepository::GetByUser(kit_muduo::HttpContextPtr ctx,
     return CovertDomainProjects(_dao->GetByUser(ctx, userId, static_cast<int32_t>(status), offset, limit));
 }
 
+std::vector<Project> ProjectRepository::GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit)
+{
+    return CovertDomainProjects(_dao->GetAll(ctx, offset, limit));
+}
+
 std::vector<char> ProjectRepository::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
 {
     return _dao->GetPatternInfoById(ctx, project_id);

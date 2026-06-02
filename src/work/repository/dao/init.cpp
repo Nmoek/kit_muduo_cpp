@@ -9,13 +9,52 @@
 #include "dao/init.h"
 #include "dao/dao_log.h"
 #include "dao/sqlite_orm_pool.h"
+#include "sqlite3.h"
 
 #include <memory>
 #include <vector>
 #include <string>
+#include <stdexcept>
 
 namespace kit_dao {
 
+void EnsureSqliteIndexes()
+{
+    sqlite3 *raw_db = nullptr;
+    const int open_rc = sqlite3_open("kit.sqlite", &raw_db);
+    if(open_rc != SQLITE_OK)
+    {
+        std::string msg = raw_db ? sqlite3_errmsg(raw_db) : "unknown sqlite open error";
+        if(raw_db)
+        {
+            sqlite3_close(raw_db);
+        }
+        throw std::runtime_error("open sqlite for index failed: " + msg);
+    }
+
+    const char *sqls[] = {
+        "CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time)",
+        "CREATE INDEX IF NOT EXISTS idx_projects_user_status ON projects(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_protocols_project_status ON protocols(project_id, status)",
+    };
+    for(const char *sql : sqls)
+    {
+        char *err_msg = nullptr;
+        const int rc = sqlite3_exec(raw_db, sql, nullptr, nullptr, &err_msg);
+        if(rc != SQLITE_OK)
+        {
+            std::string msg = err_msg ? err_msg : "unknown sqlite error";
+            sqlite3_free(err_msg);
+            sqlite3_close(raw_db);
+            throw std::runtime_error("create sqlite index failed: " + msg);
+        }
+    }
+    sqlite3_close(raw_db);
+}
+
+// 注意: 该接口暂时弃用
 std::shared_ptr<SqliteOrmType> InitSqliteDb()
 {
     // TODO 配置数据库路径
@@ -33,6 +72,7 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
     {
         DAODB_INFO() << "table[" << t.first << "]:" << t.second << std::endl;
     }
+    EnsureSqliteIndexes();
 
     DAODB_INFO() << "sqlite3 version: " << db->libversion() << std::endl;;
     

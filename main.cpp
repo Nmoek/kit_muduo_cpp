@@ -14,6 +14,15 @@
 #include "repository/repo_project.h"
 #include "dao/dao_project.h"
 
+#include "web/web_auth.h"
+#include "web/web_user.h"
+#include "service/svc_auth.h"
+#include "service/svc_user.h"
+#include "repository/repo_session.h"
+#include "repository/repo_user.h"
+#include "dao/dao_session.h"
+#include "dao/dao_user.h"
+
 #include "web/web_protocol.h"
 #include "service/svc_protocol.h"
 #include "repository/repo_protocol.h"
@@ -78,16 +87,30 @@ static std::shared_ptr<Application> InitApp()
     std::shared_ptr<ProjectRepoInterface> projRepo = std::make_shared<ProjectRepository>(projDao);
     std::shared_ptr<ProjectSvcInterface> projSvc = std::make_shared<ProjectService>(projRepo);
 
+    std::shared_ptr<UserDaoInterface> userDao = std::make_shared<SqliteOrmUserDao>(sqliteDbPool);
+    std::shared_ptr<UserRepoInterface> userRepo = std::make_shared<UserRepository>(userDao);
+    std::shared_ptr<SessionDaoInterface> sessionDao = std::make_shared<SqliteOrmSessionDao>(sqliteDbPool);
+    std::shared_ptr<SessionRepoInterface> sessionRepo = std::make_shared<SessionRepository>(sessionDao);
+    auto authSvc = std::make_shared<AuthService>(userRepo, sessionRepo);
+    auto userSvc = std::make_shared<UserService>(userRepo, sessionRepo);
+    authSvc->BootstrapAdmin();
 
     // 需要将app句柄放到Handler中
-    auto protocHdl = ProtocolHandler::Instance(protocSvc);
-    auto projHdl = ProjectHandler::Instance(projSvc);
-    auto server = InitWebServer(&loop, projHdl, protocHdl);
+    static std::shared_ptr<ProtocolHandler> protocHdl;
+    static std::shared_ptr<ProjectHandler> projHdl;
+    static std::shared_ptr<AuthHandler> authHdl;
+    static std::shared_ptr<UserHandler> userHdl;
+    protocHdl = std::make_shared<ProtocolHandler>(protocSvc);
+    projHdl = std::make_shared<ProjectHandler>(projSvc, protocSvc);
+    authHdl = std::make_shared<AuthHandler>(authSvc);
+    userHdl = std::make_shared<UserHandler>(userSvc);
+    auto server = InitWebServer(&loop, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), authSvc);
 
     auto app = std::make_shared<Application>(server);
     
     projHdl->SetApp(app.get()); // 避免循环依赖 app生命周期更长
     protocHdl->SetApp(app.get()); // 避免循环依赖 app生命周期更长
+    protocHdl->SetProjectService(projSvc);
 
 
     // 先恢复当前库上正在运行的服务器, 恢复服务器的同时需要重新添加协议
