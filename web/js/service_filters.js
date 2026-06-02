@@ -8,6 +8,7 @@
                 endDate: '',
                 status: 'all',
                 protocolType: 'all',
+                ownerNote: '',
             },
             active: false,
         };
@@ -21,6 +22,7 @@
             endDate: scope.querySelector('#filter-create-end')?.value || '',
             status: scope.querySelector('#filter-status')?.value || 'all',
             protocolType: scope.querySelector('#filter-protocol-type')?.value || 'all',
+            ownerNote: scope.querySelector('#filter-owner-note')?.value.trim() || '',
         };
     }
 
@@ -46,7 +48,8 @@
             filters.startDate ||
             filters.endDate ||
             (filters.status && filters.status !== 'all') ||
-            (filters.protocolType && filters.protocolType !== 'all')
+            (filters.protocolType && filters.protocolType !== 'all') ||
+            filters.ownerNote
         );
     }
 
@@ -58,16 +61,29 @@
 
     function matchStatus(project, statusFilter) {
         if (!statusFilter || statusFilter === 'all') return true;
+        const isDeleted = Number(project && project.status) === 0;
         const isActive = Number(project && project.active) === 1;
 
-        if (statusFilter === 'active') return isActive;
-        if (statusFilter === 'inactive') return !isActive;
+        if (statusFilter === 'deleted') return isDeleted;
+        if (statusFilter === 'active') return !isDeleted && isActive;
+        if (statusFilter === 'inactive') return !isDeleted && !isActive;
         return true;
     }
 
     function matchProtocolType(project, protocolTypeFilter) {
         if (!protocolTypeFilter || protocolTypeFilter === 'all') return true;
         return Number(project.protocol_type) === Number(protocolTypeFilter);
+    }
+
+    function projectOwnerNote(project) {
+        return String(project && (project.owner_note || project.note_name || project.note || project.user_note) || '');
+    }
+
+    function matchOwnerNote(project, ownerNoteFilter) {
+        const keyword = String(ownerNoteFilter || '').trim().toLowerCase();
+        if (!keyword) return true;
+
+        return projectOwnerNote(project).toLowerCase().includes(keyword);
     }
 
     function matchDate(project, filters) {
@@ -89,6 +105,7 @@
         return list.filter(project => {
             return matchStatus(project, safeFilters.status) &&
                 matchProtocolType(project, safeFilters.protocolType) &&
+                matchOwnerNote(project, safeFilters.ownerNote) &&
                 matchDate(project, safeFilters);
         });
     }
@@ -104,6 +121,8 @@
             activeParts.push('状态：开启');
         } else if (filters.status === 'inactive') {
             activeParts.push('状态：未开启');
+        } else if (filters.status === 'deleted') {
+            activeParts.push('状态：已删除');
         }
 
         if (filters.protocolType && filters.protocolType !== 'all') {
@@ -111,6 +130,10 @@
                 ? global.ProtocolTypeStr[Number(filters.protocolType)]
                 : filters.protocolType;
             activeParts.push(`协议：${label || filters.protocolType}`);
+        }
+
+        if (filters.ownerNote) {
+            activeParts.push(`所有者：${filters.ownerNote}`);
         }
 
         return activeParts.length ? activeParts.join('，') : '未启用筛选';

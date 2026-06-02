@@ -1,11 +1,15 @@
 const servicePageState = KitProxy.pagination.createState(10);
 const serviceFilterState = KitProxy.serviceFilters
     ? KitProxy.serviceFilters.createState()
-    : { filters: { startDate: '', endDate: '', status: 'all', protocolType: 'all' }, active: false };
+    : { filters: { startDate: '', endDate: '', status: 'all', protocolType: 'all', ownerNote: '' }, active: false };
 let currentPageProjects = [];
 
 function isProjectActive(project) {
     return Number(project && project.active) === 1;
+}
+
+function isProjectDeleted(project) {
+    return Number(project && project.status) === 0;
 }
 
 function showErrorPopup(message, options) {
@@ -15,16 +19,73 @@ function showErrorPopup(message, options) {
 }
 
 function getProjectRuntimeStatusText(project) {
+    if (isProjectDeleted(project)) return '已删除';
     return isProjectActive(project) ? '开启' : '未开启';
 }
 
 function getProjectEndpointDisplay(project) {
-    if (!project) return '未开启';
+    if (!project) return '未设置';
+    if (isProjectDeleted(project)) {
+        if (Number(project.mode) === ProjectMode.SERVER) {
+            return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+        }
+        return project.target_ip || '未设置';
+    }
     if (!isProjectActive(project)) return '未开启';
     if (Number(project.mode) === ProjectMode.SERVER) {
         return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
     }
     return project.target_ip || '未设置';
+}
+
+function getProjectOwnerNote(project) {
+    return String(project && (project.owner_note || project.note_name || project.note || project.user_note) || '');
+}
+
+async function buildUserNoteMap() {
+    if (!KitProxy.auth || !KitProxy.auth.isCurrentUserAdmin()) return {};
+
+    try {
+        const users = await KitProxy.api.listUsers(0, 1000, 'all');
+        return (Array.isArray(users) ? users : []).reduce(function(noteMap, user) {
+            const userId = Number(user && (user.id != null ? user.id : user.user_id));
+            const note = String(user && (user.note || user.note_name) || '');
+            if (Number.isInteger(userId) && userId > 0 && note) {
+                noteMap[userId] = note;
+            }
+            return noteMap;
+        }, {});
+    } catch (error) {
+        console.warn('获取用户列表失败，所有者 note 将使用接口已有字段:', error);
+        return {};
+    }
+}
+
+function attachOwnerNotes(projects, userNoteMap) {
+    const list = Array.isArray(projects) ? projects : [];
+    const noteMap = userNoteMap || {};
+    return list.map(function(project) {
+        const ownerNote = getProjectOwnerNote(project);
+        if (ownerNote) return project;
+
+        const userId = Number(project && project.user_id);
+        if (!Number.isInteger(userId) || !noteMap[userId]) return project;
+
+        return Object.assign({}, project, {
+            owner_note: noteMap[userId],
+            note_name: noteMap[userId],
+        });
+    });
+}
+
+function isProtocolInactive(protocol) {
+    const status = protocol && protocol.status;
+    const value = String(status == null ? '' : status).toLowerCase();
+    return status === 2 || value === '2' || value === 'inactive' || value === 'disabled';
+}
+
+function getProtocolStatusText(protocol) {
+    return isProtocolInactive(protocol) ? '已删除' : '正常';
 }
 
 // 更新协议项显示
@@ -480,6 +541,51 @@ function bindProtocolDeleteAction(protocolItem) {
             } else {
                 showErrorPopup('删除协议项失败!');
             }
+        }
+    });
+}
+
+async function restoreProtocolItem(id_str) {
+    const protocolItemId = ExtractId(id_str);
+
+    return KitProxy.utils.runMutationOnce(
+        `restore-protocol-${protocolItemId}`,
+        async function() {
+        if(!Number.isInteger(protocolItemId) || protocolItemId <= 0) {
+            throw new Error("无效的协议项ID");
+        }
+
+        await KitProxy.api.restoreProtocol(protocolItemId);
+        return true;
+        },
+        {
+            message: '正在恢复协议项...',
+            successMessage: '协议项恢复成功',
+        },
+    ).catch(function(error) {
+        console.error('恢复协议项失败:', error);
+        return false;
+    });
+}
+
+function bindProtocolRestoreAction(protocolItem) {
+    const restoreBtn = protocolItem.querySelector('.restore-protocol-btn');
+    if (!restoreBtn) return;
+
+    restoreBtn.addEventListener('click', async function(e) {
+        e.stopPropagation();
+        if (!confirm('确定要恢复这个协议项吗？')) return;
+
+        const ok = await restoreProtocolItem(protocolItem.id);
+        if (!ok) {
+            showErrorPopup('恢复协议项失败!');
+            return;
+        }
+
+        if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.loadProtocolItems === 'function') {
+            await KitProxy.protocolItemsPage.loadProtocolItems();
+        } else {
+            protocolItem.remove();
         }
     });
 }
@@ -1020,29 +1126,35 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
     if (!protocolList) return null;
 
     const protocolItem = document.createElement('div');
-    protocolItem.className = `protocol-item ${protocol.type.toLowerCase()}`;
+    const protocolInactive = isProtocolInactive(protocol);
+    protocolItem.className = `protocol-item ${protocol.type.toLowerCase()}${protocolInactive ? ' is-inactive' : ''}`;
     protocolItem.id = `protocol-item-${protocol.id}`;
     protocolItem.dataset.projectId = serviceCard.id; //使用dataset存储
     protocolItem.dataset.protocolType = protocol.type;
+    protocolItem.dataset.status = protocolInactive ? 'inactive' : 'active';
 
     // 注意: 这里只需改变卡片内部子项的呈现，不需要更改整个布局
     const escape = KitProxy.utils.escapeHTML;
+    const actionHTML = protocolInactive
+        ? '<button type="button" class="restore-protocol-btn">恢复协议项</button>'
+        : `<button type="button" class="protocol-toggle-btn" aria-label="展开协议项详情" aria-expanded="false">
+                    <span class="protocol-toggle-icon" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="edit-protocol-btn">修改协议项</button>
+                <button type="button" class="delete-protocol-btn">删除协议</button>`;
     protocolItem.innerHTML =`
         <div class="protocol-header">
             <div class="protocol-primary-row">
                 <span class="protocol-tag ${escape(protocol.type.toLowerCase())}">${escape(protocol.type)}</span>
-                <span class="protocol-name editable" data-default="Undef默认测试协议项">${escape(protocol.name)}</span>
+                <span class="protocol-name ${protocolInactive ? '' : 'editable'}" data-default="Undef默认测试协议项">${escape(protocol.name)}</span>
+                ${protocolInactive ? `<span class="protocol-status-badge is-inactive">${escape(getProtocolStatusText(protocol))}</span>` : ''}
                 <div class="protocol-time">
                     <span class="last-update-time">修改: ${escape(protocol.utime || '未知')}</span>
                     <span class="create-time">创建: ${escape(protocol.ctime || '未知')}</span>
                 </div>
             </div>
             <div class="protocol-header-actions">
-                <button type="button" class="protocol-toggle-btn" aria-label="展开协议项详情" aria-expanded="false">
-                    <span class="protocol-toggle-icon" aria-hidden="true"></span>
-                </button>
-                <button type="button" class="edit-protocol-btn">修改协议项</button>
-                <button type="button" class="delete-protocol-btn">删除协议</button>
+                ${actionHTML}
             </div>
         </div>
         <div class="protocol-details">
@@ -1054,12 +1166,16 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
     const oldDetailsGrid = protocolItem.querySelector('.details-grid');
     oldDetailsGrid.replaceWith(ProtocolTypeRegistry.createProtocolItemGrid(protocol));
 
-    bindProtocolTitleEdit(protocolItem);
-    bindProtocolDeleteAction(protocolItem);
     bindProtocolToggle(protocolItem);
-    bindProtocolEditAction(protocolItem);
-    bindProtocolFieldEditors(protocolItem);
-    bindProtocolBodyEditor(protocolItem);
+    if (protocolInactive) {
+        bindProtocolRestoreAction(protocolItem);
+    } else {
+        bindProtocolTitleEdit(protocolItem);
+        bindProtocolDeleteAction(protocolItem);
+        bindProtocolEditAction(protocolItem);
+        bindProtocolFieldEditors(protocolItem);
+        bindProtocolBodyEditor(protocolItem);
+    }
 
     // 将协议项卡片插入到列表中
     if(-1 === pos) {
@@ -1081,7 +1197,10 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
 async function getProtocolList(project_id, offset = 0, limit = 10) {
 
     try {
-        const protocols = await KitProxy.api.getProtocolList(project_id, offset, limit);
+        const options = KitProxy.auth && KitProxy.auth.isCurrentUserAdmin()
+            ? { include_inactive: true }
+            : {};
+        const protocols = await KitProxy.api.getProtocolList(project_id, offset, limit, options);
         console.log('获取协议项列表请求成功:', protocols);
         return protocols;
     } catch (error) {
@@ -1511,6 +1630,7 @@ function addNewServiceCardModalHTML() {
                                 <option value="">请选择协议类型</option>
                                 <option value=1>HTTP</option>
                                 <option value=2>TCP</option>
+                                <!-- HTTPS 测试服务暂未支持，添加入口先隐藏。 -->
                                 <!-- <option value=3>HTTPS</option> -->
                             </select>
                         </div>
@@ -1775,7 +1895,10 @@ async function addProjectReq(project) {
 // 获取项目列表
 async function getProjectList(offset, limit) {
     try {
-        const projects = await KitProxy.api.getProjectList(offset, limit);
+        const options = KitProxy.auth && KitProxy.auth.isCurrentUserAdmin()
+            ? { include_deleted: true }
+            : {};
+        const projects = await KitProxy.api.getProjectList(offset, limit, options);
         return projects;
     } catch (error) {
         console.error('获取项目列表出错:', error);
@@ -1884,6 +2007,29 @@ async function delProject(id_str) {
     });
 }
 
+async function restoreProject(id_str) {
+    const serviceCardId = ExtractId(id_str);
+
+    return KitProxy.utils.runMutationOnce(
+        `restore-project-${serviceCardId}`,
+        async function() {
+        if(!Number.isInteger(serviceCardId) || serviceCardId <= 0) {
+            throw new Error("无效的测试服务ID");
+        }
+
+        await KitProxy.api.restoreProject(serviceCardId);
+        return true;
+        },
+        {
+            message: '正在恢复测试服务...',
+            successMessage: '测试服务恢复成功',
+        },
+    ).catch(function(error) {
+        console.error('恢复测试服务失败:', error);
+        return false;
+    });
+}
+
 async function addProject(project) {
 
     return KitProxy.utils.runMutationOnce(
@@ -1913,21 +2059,16 @@ async function addProject(project) {
 
 // 组装卡片页面
 /**
- * @param {any} id
- * @param {any} name
- * @param {number} protocol
- * @param {any} port
- * @param {number} mode
+ * @param {any} project
+ * @returns {string}
  */
-function serviceCardHTML(id, name, protocol, port, mode, active = false, ctime = '', targetIp = '') {
-    const project = {
-        id,
-        protocol_type: protocol,
-        mode,
-        listen_port: port,
-        target_ip: targetIp,
-        active: active ? 1 : 0,
-    };
+function serviceCardHTML(project) {
+    project = project || {};
+    const id = project.id;
+    const name = project.name;
+    const protocol = project.protocol_type;
+    const mode = Number(project.mode);
+    const active = isProjectActive(project);
     const escape = KitProxy.utils.escapeHTML;
     const displayName = name || `默认测试服务${id}`;
     const endpointLabel = mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
@@ -1935,13 +2076,33 @@ function serviceCardHTML(id, name, protocol, port, mode, active = false, ctime =
     const protocolText = ProtocolTypeStr[protocol] || '未知协议';
     const modeText = ProjectModeStr[mode] || '未知模式';
     const statusText = getProjectRuntimeStatusText(project);
-    const createTime = ctime || '未知';
+    const createTime = project.ctime || '未知';
+    const ownerNote = getProjectOwnerNote(project);
+    const ownerHTML = ownerNote && KitProxy.auth && KitProxy.auth.isCurrentUserAdmin()
+        ? `<span class="service-sub-pill project-owner-note">
+                <span class="meta-label">所有者</span>
+                <span class="meta-value field-value">${escape(ownerNote)}</span>
+            </span>`
+        : '';
+    const deleted = isProjectDeleted(project);
+    const statusControlHTML = deleted
+        ? `<span class="service-meta-item service-detail-chip project-status project-deleted" aria-label="测试服务已删除">
+                <span class="meta-label">状态</span>
+                <span class="meta-value field-value status status-deleted">${escape(statusText)}</span>
+            </span>`
+        : `<button type="button" class="service-meta-item service-detail-chip project-status service-active-toggle" data-next-active="${active ? '0' : '1'}" aria-label="${active ? '停止测试服务' : '启动测试服务'}">
+                <span class="meta-label">状态</span>
+                <span class="meta-value field-value status ${active ? 'status-active' : 'status-inactive'}">${escape(statusText)}</span>
+            </button>`;
+    const actionsHTML = deleted
+        ? '<button type="button" class="restore-service-btn">恢复</button>'
+        : '<button type="button" class="view-protocols-btn">查看协议项</button><button type="button" class="delete-service-btn">删除</button>';
 
     return `
         <div class="service-list-row">
             <div class="service-main-cell">
                 <div class="service-primary-row">
-                    <h3 class="service-title editable" data-default="Undef默认测试服务">${escape(displayName)}</h3>
+                    <h3 class="service-title ${deleted ? '' : 'editable'}" data-default="Undef默认测试服务">${escape(displayName)}</h3>
                     <div class="service-sub-meta">
                         <span class="service-sub-pill project-id">
                             <span class="meta-label">服务ID</span>
@@ -1951,6 +2112,7 @@ function serviceCardHTML(id, name, protocol, port, mode, active = false, ctime =
                             <span class="meta-label">创建时间</span>
                             <span class="meta-value field-value">${escape(createTime)}</span>
                         </span>
+                        ${ownerHTML}
                     </div>
                 </div>
                 <div class="service-meta-strip service-info-strip">
@@ -1966,16 +2128,12 @@ function serviceCardHTML(id, name, protocol, port, mode, active = false, ctime =
                         <span class="meta-label">${escape(endpointLabel)}</span>
                         <span class="meta-value field-value">${escape(endpointValue)}</span>
                     </span>
-                    <button type="button" class="service-meta-item service-detail-chip project-status service-active-toggle" data-next-active="${active ? '0' : '1'}" aria-label="${active ? '停止测试服务' : '启动测试服务'}">
-                        <span class="meta-label">状态</span>
-                        <span class="meta-value field-value status ${active ? 'status-active' : 'status-inactive'}">${escape(statusText)}</span>
-                    </button>
-                    ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
+                    ${statusControlHTML}
+                    ${deleted ? '' : ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
                 </div>
             </div>
             <div class="service-action-cell service-actions-container">
-                <button type="button" class="view-protocols-btn">查看协议项</button>
-                <button type="button" class="delete-service-btn">删除</button>
+                ${actionsHTML}
             </div>
         </div>
     `;
@@ -2008,6 +2166,8 @@ function updateServiceCard(id_str, project) {
     // TODO: 待考虑 是否能修改
 
     serviceCard.dataset.active = String(isProjectActive(project) ? 1 : 0);
+    serviceCard.dataset.status = String(project.status == null ? 1 : project.status);
+    serviceCard.classList.toggle('is-deleted', isProjectDeleted(project));
 
     const endpointValue = serviceCard.querySelector(project.mode === ProjectMode.SERVER
         ? '.project-listen-port .field-value'
@@ -2027,7 +2187,7 @@ function updateServiceCard(id_str, project) {
     const statusValue = serviceCard.querySelector(".project-status .field-value");
     if (statusValue) {
         statusValue.textContent = getProjectRuntimeStatusText(project);
-        statusValue.className = `meta-value field-value status ${isProjectActive(project) ? 'status-active' : 'status-inactive'}`;
+        statusValue.className = `meta-value field-value status ${isProjectDeleted(project) ? 'status-deleted' : (isProjectActive(project) ? 'status-active' : 'status-inactive')}`;
     }
     
 }
@@ -2129,6 +2289,23 @@ function bindServiceDeleteAction(serviceCard) {
     });
 }
 
+function bindServiceRestoreAction(serviceCard) {
+    const restoreBtn = serviceCard.querySelector('.restore-service-btn');
+    if (!restoreBtn) return;
+
+    restoreBtn.addEventListener('click', async function(e) {
+        e.stopPropagation();
+        if (!confirm('确定要恢复这个测试服务吗？')) return;
+
+        const ok = await restoreProject(serviceCard.id);
+        if (ok) {
+            await loadAllProjects(servicePageState.currentPage);
+        } else {
+            showErrorPopup('恢复测试服务失败!');
+        }
+    });
+}
+
 function bindAddProtocolAction(serviceCard, project) {
     const addProtocolBtn = serviceCard.querySelector('.add-protocol-btn');
     if (!addProtocolBtn) return;
@@ -2165,11 +2342,13 @@ function addServiceCard(project, pos = -1) {
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
     serviceCard.dataset.active = String(isProjectActive(project) ? 1 : 0);
+    serviceCard.dataset.status = String(project.status == null ? 1 : project.status);
+    serviceCard.classList.toggle('is-deleted', isProjectDeleted(project));
 
-    serviceCard.innerHTML = serviceCardHTML(project.id, project.name, project.protocol_type, project.listen_port, project.mode, isProjectActive(project), project.ctime, project.target_ip);
+    serviceCard.innerHTML = serviceCardHTML(project);
 
     const titleElement = serviceCard.querySelector('.service-title');
-    if (titleElement && KitProxy.utils.bindInlineTitleEditor) {
+    if (!isProjectDeleted(project) && titleElement && KitProxy.utils.bindInlineTitleEditor) {
         KitProxy.utils.bindInlineTitleEditor({
             titleElement,
             onSave: function(newTitle) {
@@ -2179,10 +2358,14 @@ function addServiceCard(project, pos = -1) {
         });
     }
 
-    ProtocolTypeRegistry.bindServiceExtraActions(serviceCard, project);
-    bindServiceActiveToggle(serviceCard, project);
-    bindOpenProtocolItemsAction(serviceCard, project);
-    bindServiceDeleteAction(serviceCard);
+    if (!isProjectDeleted(project)) {
+        ProtocolTypeRegistry.bindServiceExtraActions(serviceCard, project);
+        bindServiceActiveToggle(serviceCard, project);
+        bindOpenProtocolItemsAction(serviceCard, project);
+        bindServiceDeleteAction(serviceCard);
+    } else {
+        bindServiceRestoreAction(serviceCard);
+    }
     insertServiceCard(serviceCard, pos);
 
     return serviceCard;
@@ -2262,22 +2445,47 @@ function applyServiceFiltersFromDOM() {
     renderCurrentPageServices();
 }
 
+/**
+ * 管理员才需要查看软删数据和跨用户搜索；普通用户筛选栏保持只筛自己的服务。
+ */
+function syncAdminOnlyServiceFilters() {
+    const isAdmin = Boolean(KitProxy.auth && KitProxy.auth.isCurrentUserAdmin());
+    const deletedStatusOption = document.querySelector('#filter-status option[value="deleted"]');
+    const ownerNoteField = document.querySelector('[data-admin-only] #filter-owner-note')?.closest('[data-admin-only]');
+
+    if (deletedStatusOption) {
+        deletedStatusOption.hidden = !isAdmin;
+        deletedStatusOption.disabled = !isAdmin;
+    }
+
+    if (ownerNoteField) {
+        ownerNoteField.hidden = !isAdmin;
+        if (!isAdmin) {
+            const ownerInput = ownerNoteField.querySelector('#filter-owner-note');
+            if (ownerInput) ownerInput.value = '';
+        }
+    }
+}
+
 function resetServiceFilters() {
     const startInput = document.getElementById('filter-create-start');
     const endInput = document.getElementById('filter-create-end');
     const statusSelect = document.getElementById('filter-status');
     const protocolTypeSelect = document.getElementById('filter-protocol-type');
+    const ownerNoteInput = document.getElementById('filter-owner-note');
 
     if (startInput) startInput.value = '';
     if (endInput) endInput.value = '';
     if (statusSelect) statusSelect.value = 'all';
     if (protocolTypeSelect) protocolTypeSelect.value = 'all';
+    if (ownerNoteInput) ownerNoteInput.value = '';
 
     serviceFilterState.filters = {
         startDate: '',
         endDate: '',
         status: 'all',
         protocolType: 'all',
+        ownerNote: '',
     };
     serviceFilterState.active = false;
     setServiceFilterError('');
@@ -2328,13 +2536,14 @@ async function loadAllProjects(page = servicePageState.currentPage) {
         servicePageState.currentPage = Math.max(1, Number(page) || 1);
 
         // 获取测试服务列表
-        const projects = await getProjectList(
+        let projects = await getProjectList(
             KitProxy.pagination.getOffset(servicePageState),
             KitProxy.pagination.getRequestLimit(servicePageState),
         );
         if(!Array.isArray(projects)) {
             throw new Error("数据格式错误");
         }
+        projects = attachOwnerNotes(projects, await buildUserNoteMap());
 
         currentPageProjects = KitProxy.pagination.takeVisibleItems(projects, servicePageState);
 
@@ -2355,11 +2564,21 @@ async function loadAllProjects(page = servicePageState.currentPage) {
 
 
 // 页面加载入口
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     const serviceCards = document.querySelector('.service-cards');
     if (!serviceCards) return;
     if (window.KitProxy && window.KitProxy.__disableAutoInitMain) return;
 
+    try {
+        await KitProxy.auth.requireCurrentUser();
+    } catch (error) {
+        if (Number(error && error.status) !== 401) {
+            showErrorPopup(error && error.message ? error.message : '登录态校验失败');
+        }
+        return;
+    }
+
+    syncAdminOnlyServiceFilters();
     bindServiceFilterActions();
 
     // 监听添加服务按钮点击

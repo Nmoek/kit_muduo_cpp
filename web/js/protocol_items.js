@@ -57,7 +57,18 @@
         return Number(project && project.active) === 1;
     }
 
+    function isProjectDeleted(project) {
+        return Number(project && project.status) === 0;
+    }
+
     function getProjectEndpointDisplay(project) {
+        if (!project) return '未设置';
+        if (isProjectDeleted(project)) {
+            if (Number(project.mode) === ProjectMode.SERVER) {
+                return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+            }
+            return project.target_ip || '未设置';
+        }
         if (!isProjectActive(project)) return '未开启';
         if (Number(project.mode) === ProjectMode.SERVER) {
             return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
@@ -68,8 +79,8 @@
     function setAddButtonState(project) {
         const addBtn = document.getElementById('add-protocol-item');
         if (!addBtn) return;
-        addBtn.disabled = !project;
-        addBtn.title = project ? '' : '请先选择测试服务';
+        addBtn.disabled = !project || isProjectDeleted(project);
+        addBtn.title = !project ? '请先选择测试服务' : (isProjectDeleted(project) ? '已删除的测试服务不能新增协议项' : '');
     }
 
     /**
@@ -123,7 +134,7 @@
         setAddButtonState(project);
 
         if (meta) {
-            const statusText = isProjectActive(project) ? '开启' : '未开启';
+            const statusText = isProjectDeleted(project) ? '已删除' : (isProjectActive(project) ? '开启' : '未开启');
             meta.innerHTML = `
                 <div class="service-field project-protocol-type">
                     <span class="field-label">协议种类</span>
@@ -137,21 +148,23 @@
                     <span class="field-label">${project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口'}</span>
                     <span class="field-value">${escape(getProjectEndpointDisplay(project))}</span>
                 </div>
-                <button type="button" class="service-field project-status service-active-toggle" data-next-active="${isProjectActive(project) ? '0' : '1'}" aria-label="${isProjectActive(project) ? '停止测试服务' : '启动测试服务'}">
+                <button type="button" class="service-field project-status service-active-toggle" data-next-active="${isProjectActive(project) ? '0' : '1'}" aria-label="${isProjectActive(project) ? '停止测试服务' : '启动测试服务'}" ${isProjectDeleted(project) ? 'disabled' : ''}>
                     <span class="field-label">服务状态</span>
-                    <span class="field-value status ${isProjectActive(project) ? 'status-active' : 'status-inactive'}">
+                    <span class="field-value status ${isProjectDeleted(project) ? 'status-deleted' : (isProjectActive(project) ? 'status-active' : 'status-inactive')}">
                         ${escape(statusText)}
                     </span>
                 </button>
-                ${ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
+                ${isProjectDeleted(project) ? '' : ProtocolTypeRegistry.serviceExtraFieldsHTML(project)}
             `;
         }
 
-        if (root) {
+        if (root && !isProjectDeleted(project)) {
             ProtocolTypeRegistry.bindServiceExtraActions(root, project);
         }
 
-        bindProjectActiveToggle();
+        if (!isProjectDeleted(project)) {
+            bindProjectActiveToggle();
+        }
     }
 
     function bindProjectActiveToggle() {
@@ -307,6 +320,15 @@
      * 初始化协议项页。
      */
     async function initPage() {
+        try {
+            await KitProxy.auth.requireCurrentUser();
+        } catch (error) {
+            if (Number(error && error.status) !== 401) {
+                renderPageError(error && error.message ? error.message : '登录态校验失败');
+            }
+            return;
+        }
+
         const projectId = readProjectId();
         const backLink = document.getElementById('back-service-list');
         if (backLink) backLink.href = buildMainPageUrl();
@@ -323,6 +345,11 @@
             pageContext.project = projects[0];
             renderProjectContext(pageContext.project);
             bindAddProtocolButton();
+            if (isProjectDeleted(pageContext.project)) {
+                checkProtocolEmptyState();
+                renderProtocolPagination();
+                return;
+            }
             await loadProtocolItems(1);
         } catch(error) {
             console.error('加载测试服务信息失败:', error);

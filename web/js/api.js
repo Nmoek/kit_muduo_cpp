@@ -12,6 +12,13 @@
         return `${baseUrl}${path}`;
     }
 
+    function buildApiError(message, response, data) {
+        const error = new Error(message);
+        error.status = response ? response.status : 0;
+        error.data = data;
+        return error;
+    }
+
     async function parseJsonResponse(response, fallbackMessage) {
         // 后端业务协议统一为 { code, message, data }，这里把 HTTP 错误和业务错误收敛成异常。
         let result;
@@ -20,17 +27,19 @@
             result = await response.json();
         } catch (error) {
             if (!response.ok) {
-                throw new Error(`${fallbackMessage || '请求失败'}: HTTP ${response.status}`);
+                throw buildApiError(`${fallbackMessage || '请求失败'}: HTTP ${response.status}`, response);
             }
-            throw new Error(`${fallbackMessage || '响应解析失败'}: ${error.message}`);
+            throw buildApiError(`${fallbackMessage || '响应解析失败'}: ${error.message}`, response);
         }
 
         if (!response.ok) {
-            throw new Error(result.message || `${fallbackMessage || '请求失败'}: HTTP ${response.status}`);
+            throw buildApiError(result.message || `${fallbackMessage || '请求失败'}: HTTP ${response.status}`, response, result);
         }
 
         if (Number(result.code) !== 0) {
-            throw new Error(result.message || `业务错误: code=${result.code}`);
+            const error = buildApiError(result.message || `业务错误: code=${result.code}`, response, result);
+            error.code = result.code;
+            throw error;
         }
 
         return result.data;
@@ -38,8 +47,18 @@
 
     async function requestJson(path, options, fallbackMessage) {
         // 普通 JSON 接口走这个入口；multipart 或二进制响应保留专门处理。
-        const response = await fetch(apiUrl(path), options);
+        const response = await fetch(apiUrl(path), Object.assign({ credentials: 'same-origin' }, options || {}));
         return parseJsonResponse(response, fallbackMessage);
+    }
+
+    function requestJsonBody(path, body, fallbackMessage, options = {}) {
+        return requestJson(path, Object.assign({
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body || {}),
+        }, options), fallbackMessage);
     }
 
     function normalizePatternInfoForBackend(patternInfo) {
@@ -60,6 +79,94 @@
         return normalized;
     }
 
+    /**
+     * 后端用户字段使用 user_id/note_name/status 字符串，页面统一使用 id/note/status 字符串。
+     * @param {any} status
+     * @returns {'active' | 'disabled' | 'unknown'}
+     */
+    function normalizeUserStatus(status) {
+        const value = String(status == null ? '' : status).toLowerCase();
+        if (status === 1 || value === '1' || value === 'active') return 'active';
+        if (status === 0 || status === 2 || value === '0' || value === '2' || value === 'disabled' || value === 'inactive') {
+            return 'disabled';
+        }
+        return 'unknown';
+    }
+
+    /**
+     * 抹平 mock 和真实后端的用户字段差异，避免页面层到处判断 note/note_name。
+     * @param {any} user
+     * @returns {any}
+     */
+    function normalizeUser(user) {
+        if (!user) return null;
+        const id = user.id != null ? user.id : user.user_id;
+        const note = user.note != null ? user.note : user.note_name;
+        const normalized = Object.assign({}, user, {
+            id,
+            user_id: id,
+            note: note || '',
+            note_name: note || '',
+            role: user.role === 'admin' ? 'admin' : 'normal',
+            status: normalizeUserStatus(user.status),
+        });
+        return normalized;
+    }
+
+    /**
+     * @param {any} users
+     * @returns {Array<any>}
+     */
+    function normalizeUsers(users) {
+        return Array.isArray(users) ? users.map(normalizeUser).filter(Boolean) : [];
+    }
+
+    /**
+     * @param {any} data
+     * @returns {any}
+     */
+    function normalizeUserDetail(data) {
+        if (Array.isArray(data)) return normalizeUser(data[0]);
+        return normalizeUser(data);
+    }
+
+    /**
+     * 管理员用户接口入参转换为真实后端字段。
+     * @param {any} user
+     * @returns {any}
+     */
+    function userPayloadForBackend(user) {
+        const source = user || {};
+        const payload = {
+            note_name: String(source.note_name != null ? source.note_name : source.note || '').trim(),
+            role: source.role === 'admin' ? 'admin' : 'normal',
+        };
+        if (Object.prototype.hasOwnProperty.call(source, 'status')) {
+            payload.status = normalizeUserStatus(source.status);
+        }
+        if (Object.prototype.hasOwnProperty.call(source, 'password')) {
+            payload.password = String(source.password || '');
+        }
+        return payload;
+    }
+
+    /**
+     * Mock 数据源仍使用 note 和数值状态，这里做一次兼容转换。
+     * @param {any} user
+     * @returns {any}
+     */
+    function userPayloadForMock(user) {
+        const source = user || {};
+        const payload = Object.assign({}, source);
+        if (payload.note == null && payload.note_name != null) {
+            payload.note = payload.note_name;
+        }
+        if (Object.prototype.hasOwnProperty.call(payload, 'status')) {
+            payload.status = normalizeUserStatus(payload.status) === 'active' ? 1 : 0;
+        }
+        return payload;
+    }
+
     function runMutation(key, action, message) {
         if (KitProxy.utils && typeof KitProxy.utils.runMutationOnce === 'function') {
             return KitProxy.utils.runMutationOnce(key, action, {
@@ -74,16 +181,90 @@
     const api = {
         isMockMode,
         apiUrl,
-        async getProjectList(offset = 0, limit = 10) {
-            if (isMockMode()) return KitProxy.mocks.getProjectList(offset, limit);
+        async login(note, loginType = 'normal', password = '') {
+            if (isMockMode()) return normalizeUser(KitProxy.mocks.login(note, loginType, password));
 
-            return requestJson('/projects/list', {
+            return normalizeUser(await requestJsonBody('/auth/login', {
+                note,
+                login_type: loginType,
+                password,
+            }, '登录失败'));
+        },
+        async logout() {
+            if (isMockMode()) return KitProxy.mocks.logout();
+
+            await requestJson('/auth/logout', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ offset, limit }),
-            }, '获取测试服务列表失败');
+            }, '退出登录失败');
+
+            return true;
+        },
+        async getCurrentUser() {
+            if (isMockMode()) return normalizeUser(KitProxy.mocks.getCurrentUser());
+
+            return normalizeUser(await requestJson('/auth/me', {
+                method: 'GET',
+            }, '获取当前用户失败'));
+        },
+        async listUsers(offset = 0, limit = 10, status = 'all') {
+            const normalizedStatus = status === 'inactive' ? 'disabled' : (status || 'all');
+            if (isMockMode()) return normalizeUsers(KitProxy.mocks.listUsers(offset, limit, normalizedStatus));
+
+            return requestJsonBody('/users/list', {
+                offset,
+                limit,
+                status: normalizedStatus,
+            }, '获取用户列表失败').then(normalizeUsers);
+        },
+        async addUser(user) {
+            return runMutation('api-add-user', async function() {
+                if (isMockMode()) return KitProxy.mocks.addUser(userPayloadForMock(user));
+
+                return requestJsonBody('/users/add', userPayloadForBackend(user), '新增用户失败');
+            }, '正在新增用户...');
+        },
+        async getUser(userId) {
+            if (isMockMode()) return normalizeUserDetail(KitProxy.mocks.getUser(userId));
+
+            return normalizeUserDetail(await requestJson('/users/' + String(userId), {
+                method: 'GET',
+            }, '获取用户详情失败'));
+        },
+        async updateUser(userId, patch) {
+            return runMutation(`api-update-user-${userId}`, async function() {
+                if (isMockMode()) return normalizeUser(KitProxy.mocks.updateUser(userId, userPayloadForMock(patch)));
+
+                const result = await requestJsonBody('/users/' + String(userId), userPayloadForBackend(patch), '修改用户失败');
+                return result && (result.id || result.user_id) ? normalizeUser(result) : true;
+            }, '正在保存用户...');
+        },
+        async deleteUser(userId) {
+            return runMutation(`api-delete-user-${userId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.deleteUser(userId);
+
+                await requestJson('/users/' + String(userId), {
+                    method: 'DELETE',
+                }, '停用用户失败');
+
+                return true;
+            }, '正在停用用户...');
+        },
+        async restoreUser(userId) {
+            return runMutation(`api-restore-user-${userId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.restoreUser(userId);
+
+                await requestJson('/users/' + String(userId) + '/restore', {
+                    method: 'POST',
+                }, '恢复用户失败');
+
+                return true;
+            }, '正在恢复用户...');
+        },
+        async getProjectList(offset = 0, limit = 10) {
+            const options = arguments.length >= 3 && arguments[2] ? arguments[2] : {};
+            if (isMockMode()) return KitProxy.mocks.getProjectList(offset, limit, options);
+
+            return requestJsonBody('/projects/list', Object.assign({ offset, limit }, options), '获取测试服务列表失败');
         },
         async getProject(projectId) {
             if (isMockMode()) return KitProxy.mocks.getProject(projectId);
@@ -139,6 +320,17 @@
                 return true;
             }, '正在删除测试服务...');
         },
+        async restoreProject(projectId) {
+            return runMutation(`api-restore-project-${projectId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.restoreProject(projectId);
+
+                await requestJson('/projects/' + String(projectId) + '/restore', {
+                    method: 'POST',
+                }, '恢复测试服务失败');
+
+                return true;
+            }, '正在恢复测试服务...');
+        },
         async getProjectPatternInfo(projectId) {
             if (isMockMode()) return KitProxy.mocks.getProjectPatternInfo(projectId);
 
@@ -163,19 +355,14 @@
             }, '正在保存 TCP 格式信息...');
         },
         async getProtocolList(projectId, offset = 0, limit = 10) {
-            if (isMockMode()) return KitProxy.mocks.getProtocolList(projectId, offset, limit);
+            const options = arguments.length >= 4 && arguments[3] ? arguments[3] : {};
+            if (isMockMode()) return KitProxy.mocks.getProtocolList(projectId, offset, limit, options);
 
-            return requestJson('/protocols/list', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    project_id: projectId,
-                    offset,
-                    limit,
-                }),
-            }, '获取协议项列表失败');
+            return requestJsonBody('/protocols/list', Object.assign({
+                project_id: projectId,
+                offset,
+                limit,
+            }, options), '获取协议项列表失败');
         },
         async getProtocol(protocolId) {
             if (isMockMode()) return KitProxy.mocks.getProtocol(protocolId);
@@ -233,6 +420,17 @@
                 return true;
             }, '正在删除协议项...');
         },
+        async restoreProtocol(protocolId) {
+            return runMutation(`api-restore-protocol-${protocolId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.restoreProtocol(protocolId);
+
+                await requestJson('/protocols/' + String(protocolId) + '/restore', {
+                    method: 'POST',
+                }, '恢复协议项失败');
+
+                return true;
+            }, '正在恢复协议项...');
+        },
         async updateProtocolCfg(protocolId, projectId, reqOrResp, cfgJson) {
             return runMutation(`api-update-protocol-cfg-${protocolId}-${reqOrResp}-${JSON.stringify(cfgJson || {})}`, async function() {
                 if (isMockMode()) return KitProxy.mocks.updateProtocolCfg(protocolId, reqOrResp, cfgJson);
@@ -288,6 +486,7 @@
             const [typeResponse, dataResponse] = await Promise.all([
                 fetch(apiUrl('/protocols/details/body_type'), {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: {
                         'Content-Type': 'application/json',
                     },
@@ -298,6 +497,7 @@
                 }),
                 fetch(apiUrl('/protocols/details/body_data'), {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: {
                         'Content-Type': 'application/json',
                     },
@@ -349,4 +549,134 @@
     };
 
     KitProxy.api = api;
+
+    if (!KitProxy.auth) {
+        // 兼容旧 HTML 或本地静态服务漏加载 auth.js 的场景；auth.js 正常加载时会覆盖这里的轻量实现。
+        const authState = {
+            currentUser: null,
+            loadingPromise: null,
+        };
+
+        /**
+         * @param {string} path
+         * @returns {string}
+         */
+        function buildFallbackPageUrl(path) {
+            const params = new URLSearchParams(global.location.search);
+            const keepKeys = ['apiMode', 'apiBaseUrl', 'enableDebugLog'];
+            const nextParams = new URLSearchParams();
+            keepKeys.forEach(key => {
+                if (params.has(key)) nextParams.set(key, params.get(key));
+            });
+            const query = nextParams.toString();
+            try {
+                const url = new URL(path, global.location.href);
+                url.search = query;
+                return url.pathname + (url.search ? `?${url.searchParams.toString()}` : '') + url.hash;
+            } catch (error) {
+                return query ? `${path}?${query}` : path;
+            }
+        }
+
+        function fallbackIsAdmin(user) {
+            return String(user && user.role || '').toLowerCase() === 'admin';
+        }
+
+        function fallbackRoleText(user) {
+            return fallbackIsAdmin(user) ? '管理员' : '普通用户';
+        }
+
+        function fallbackNoteText(user) {
+            return String(user && (user.note || user.note_name) || '');
+        }
+
+        function fallbackLoginUrl() {
+            return buildFallbackPageUrl('/html/login.html');
+        }
+
+        function fallbackMainUrl() {
+            return buildFallbackPageUrl('/html/main.html');
+        }
+
+        function fallbackRedirectToLogin() {
+            if (global.location) global.location.href = fallbackLoginUrl();
+        }
+
+        function fallbackRedirectToMain() {
+            if (global.location) global.location.href = fallbackMainUrl();
+        }
+
+        /**
+         * @param {any} user
+         * @returns {any}
+         */
+        function fallbackApplyCurrentUser(user) {
+            authState.currentUser = user;
+            if (typeof document !== 'undefined' && document.body) {
+                document.body.dataset.userRole = fallbackIsAdmin(user) ? 'admin' : 'normal';
+            }
+            return user;
+        }
+
+        /**
+         * @param {{redirectOnUnauthorized?: boolean}=} options
+         * @returns {Promise<any>}
+         */
+        async function fallbackLoadCurrentUser(options = {}) {
+            const redirectOnUnauthorized = options.redirectOnUnauthorized !== false;
+
+            if (authState.currentUser) return authState.currentUser;
+            if (authState.loadingPromise) return authState.loadingPromise;
+
+            authState.loadingPromise = api.getCurrentUser()
+                .then(fallbackApplyCurrentUser)
+                .catch(function(error) {
+                    authState.currentUser = null;
+                    if (Number(error && error.status) === 401 && redirectOnUnauthorized) {
+                        fallbackRedirectToLogin();
+                    }
+                    throw error;
+                })
+                .finally(function() {
+                    authState.loadingPromise = null;
+                });
+
+            return authState.loadingPromise;
+        }
+
+        /**
+         * @param {{requireAdmin?: boolean, redirectOnUnauthorized?: boolean}=} options
+         * @returns {Promise<any>}
+         */
+        async function fallbackRequireCurrentUser(options = {}) {
+            const user = await fallbackLoadCurrentUser(options);
+            if (options.requireAdmin && !fallbackIsAdmin(user)) {
+                const error = new Error('无权限访问用户管理');
+                error.status = 403;
+                throw error;
+            }
+            return user;
+        }
+
+        KitProxy.auth = {
+            state: authState,
+            buildPageUrl: buildFallbackPageUrl,
+            buildLoginUrl: fallbackLoginUrl,
+            buildMainUrl: fallbackMainUrl,
+            loadCurrentUser: fallbackLoadCurrentUser,
+            requireCurrentUser: fallbackRequireCurrentUser,
+            applyCurrentUser: fallbackApplyCurrentUser,
+            redirectToLogin: fallbackRedirectToLogin,
+            redirectToMain: fallbackRedirectToMain,
+            isAdmin: fallbackIsAdmin,
+            roleText: fallbackRoleText,
+            noteText: fallbackNoteText,
+            getCurrentUser: function() {
+                return authState.currentUser;
+            },
+            isCurrentUserAdmin: function() {
+                return fallbackIsAdmin(authState.currentUser);
+            },
+        };
+    }
 })(typeof window !== 'undefined' ? window : globalThis);

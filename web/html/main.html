@@ -14,7 +14,8 @@
             <nav>
                 <ul>
                     <li><a href="main.html" class="active">协议测试</a></li>
-                    <li><a href="dashboard.html">控制面板</a></li>
+                    <li data-admin-dashboard-nav hidden><a href="dashboard.html">控制面板</a></li>
+                    <li data-admin-users-nav hidden><a href="admin_users.html">用户管理</a></li>
                 </ul>
             </nav>
         </aside>
@@ -38,11 +39,13 @@
                             <input type="date" id="filter-create-end">
                         </div>
                         <div class="filter-field">
-                            <label for="filter-status">运行状态</label>
+                            <label for="filter-status">状态</label>
                             <select id="filter-status">
                                 <option value="all">全部状态</option>
                                 <option value="active">开启</option>
                                 <option value="inactive">未开启</option>
+                                <!-- 管理员可以查看软删数据，普通用户隐藏“已删除”筛选项。 -->
+                                <option value="deleted" data-admin-only hidden disabled>已删除</option>
                             </select>
                         </div>
                         <div class="filter-field">
@@ -51,8 +54,14 @@
                                 <option value="all">全部协议</option>
                                 <option value="1">HTTP</option>
                                 <option value="2">自定义TCP</option>
-                                <option value="3">HTTPS</option>
+                                <!-- HTTPS 测试服务暂未接入，主页面先隐藏该筛选项。 -->
+                                <!-- <option value="3">HTTPS</option> -->
                             </select>
+                        </div>
+                        <!-- 管理员可按测试服务所有者 note 搜索；普通用户只看自己的服务，默认隐藏。 -->
+                        <div class="filter-field" data-admin-only hidden>
+                            <label for="filter-owner-note">note名</label>
+                            <input type="search" id="filter-owner-note" placeholder="按所有者note搜索" autocomplete="off">
                         </div>
                         <div class="filter-actions">
                             <button type="button" id="apply-service-filter" class="filter-apply-btn">应用筛选</button>
@@ -79,6 +88,7 @@
     <script src="../js/service_filters.js"></script>
     <script src="../js/mock_data.js"></script>
     <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
     <script src="../js/pagination.js"></script>
     <script src="../js/tcp_pattern_modal.js"></script>
     <script src="../js/add_protocol_modal.js"></script>

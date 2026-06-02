@@ -1066,6 +1066,15 @@
     }
 
     async function initPage() {
+        try {
+            await KitProxy.auth.requireCurrentUser();
+        } catch (error) {
+            if (Number(error && error.status) !== 401) {
+                showPageError(error && error.message ? error.message : '登录态校验失败');
+            }
+            return;
+        }
+
         const params = readURLParams();
         pageState.projectId = params.projectId;
         pageState.protocolId = params.protocolId;
@@ -1086,6 +1095,9 @@
             }
 
             pageState.project = projects[0];
+            if (Number(pageState.project && pageState.project.status) === 0) {
+                throw new Error('已删除的测试服务不能编辑协议项');
+            }
             pageState.protocolType = pageState.project.protocol_type;
             if (Number(pageState.protocolType) === ProtocolType.CUSTOM_TCP) {
                 pageState.projectPatternInfo = await KitProxy.api.getProjectPatternInfo(pageState.projectId);

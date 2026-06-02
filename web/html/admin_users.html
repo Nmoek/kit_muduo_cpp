@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户管理</title>
+    <link rel="stylesheet" href="../css/main.css">
+    <link rel="stylesheet" href="../css/modal_styles.css">
+</head>
+<body>
+    <div class="admin-container">
+        <aside class="sidebar">
+            <h2>通用安检机协议半自动测试平台</h2>
+            <nav>
+                <ul>
+                    <li><a href="main.html">协议测试</a></li>
+                    <li data-admin-users-nav><a href="admin_users.html" class="active">用户管理</a></li>
+                    <li data-admin-dashboard-nav hidden><a href="dashboard.html">控制面板</a></li>
+                </ul>
+            </nav>
+        </aside>
+        <main class="content">
+            <div class="service-manager-header admin-users-header">
+                <div class="page-title-block">
+                    <h2>用户管理</h2>
+                    <p>管理普通用户和管理员账号</p>
+                </div>
+                <button id="add-user-btn" class="add-btn" type="button">+ 新增用户</button>
+            </div>
+
+            <section class="admin-users-page" aria-label="用户管理">
+                <div class="admin-users-toolbar">
+                    <label class="admin-users-status-filter" for="user-status-filter">
+                        <span>状态筛选</span>
+                        <select id="user-status-filter">
+                            <option value="all">全部用户</option>
+                            <option value="active">正常</option>
+                            <option value="disabled">已停用</option>
+                        </select>
+                    </label>
+                    <button id="refresh-users-btn" class="filter-reset-btn" type="button">刷新</button>
+                </div>
+
+                <div id="admin-users-message" class="admin-users-message" aria-live="polite"></div>
+
+                <div class="admin-users-table-shell">
+                    <table class="admin-users-table">
+                        <thead>
+                            <tr>
+                                <th>用户 ID</th>
+                                <th>note</th>
+                                <th>角色</th>
+                                <th>状态</th>
+                                <th>创建时间</th>
+                                <th>更新时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-users-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="admin-users-pagination">
+                    <button id="users-prev-page" type="button" class="filter-reset-btn">上一页</button>
+                    <span id="users-page-info">第 1 页</span>
+                    <button id="users-next-page" type="button" class="filter-apply-btn">下一页</button>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="../js/namespace.js"></script>
+    <script src="../js/config.js"></script>
+    <script src="../js/utils.js"></script>
+    <script src="../js/mock_data.js"></script>
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/admin_users.js"></script>
+</body>
+</html>
