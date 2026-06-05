@@ -55,8 +55,8 @@ std::shared_ptr<ProtocolItem> ProtocolItemFactory::Create(std::shared_ptr<Protoc
     {
         // 创建HTTP协议项
         // TODO 后续HTTPS可以单独分出去
-        case ProtocolType::HTTP_PROTOCOL:
-        case ProtocolType::HTTPS_PROTOCOL: 
+        case ProtocolType::kHttp:
+        case ProtocolType::kHttps: 
         {
             auto p = std::make_shared<HttpProtocolItem>();
             if(!p || !p->init(ori_protocol))
@@ -66,7 +66,7 @@ std::shared_ptr<ProtocolItem> ProtocolItemFactory::Create(std::shared_ptr<Protoc
             return p;
         }
         // 创建自定义TCP协议项
-        case ProtocolType::CUSTOM_TCP_PROTOCOL: 
+        case ProtocolType::kCustomTcp: 
         {
             // 自定义TCP需要额外传入格式信息
             auto tcp_server = std::dynamic_pointer_cast<CustomTcpProjectServer>(pj_server);
@@ -79,7 +79,7 @@ std::shared_ptr<ProtocolItem> ProtocolItemFactory::Create(std::shared_ptr<Protoc
             return p;
         }
         
-        case ProtocolType::UNKNOWN_PROTOCOL:
+        case ProtocolType::kUnknown:
         default: 
         {
             return nullptr;

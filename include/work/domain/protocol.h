@@ -32,7 +32,9 @@ struct Protocol
     std::string             m_name;         // 测试协议名称
     ProtocolType            m_type;         // 测试协议类型
     int64_t                 m_projectId;    // 所属测试服务Id
+    std::string             m_runtimeKey;
     ProtocolStatus          m_status;       // 协议项是否有效
+    ProtocolRuntimeEnabled                 m_runtimeEnabled; // 协议项是否上线状态  0未上线 1已上线   
     ProtocolBodyType        m_reqBodyType;  // 请求协议数据类型
     ProtocolBodyType        m_respBodyType; // 响应协议数据类型
     int32_t                 m_reqBodyDataStatus; // body是否存在

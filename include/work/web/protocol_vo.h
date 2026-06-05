@@ -89,11 +89,8 @@ struct ProtocolVo
     std::string             type;          // 测试协议类型
     int64_t                 project_id;    // 所属测试服务Id
     int32_t                 status;        // 协议项状态：1 active，2 inactive
+    int32_t                 runtime_enabled; // 协议项是否上线状态 0未上线  1已上线
 
-    // 思考: 这里需要抽象并解析出数据吗? 唯一需要解析的地方是生成ProtocolItem的地方
-
-    // ProtocolCfgVoPtr        req_cfg;  // 请求配置项
-    // ProtocolCfgVoPtr        resp_cfg;  // 请求配置项
     nlohmann::json          req_cfg;  // 请求配置项
     nlohmann::json          resp_cfg;  // 请求配置项
 
@@ -106,9 +103,7 @@ struct ProtocolVo
     std::string             ctime;        // 创建时间
     std::string             utime;        // 更新时间
 
-    //TODO: 统计数据 交互次数 成功/错误比例等
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ProtocolVo, id, name, type, project_id, status, req_cfg, resp_cfg, req_body_type, req_body_status, resp_body_type, resp_body_status, ctime, utime)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ProtocolVo, id, name, type, project_id, status, runtime_enabled, req_cfg, resp_cfg, req_body_type, req_body_status, resp_body_type, resp_body_status, ctime, utime)
 };
 
 

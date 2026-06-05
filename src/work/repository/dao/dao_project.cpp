@@ -131,7 +131,7 @@ bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t pr
     return true;
 }
 
-bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t active, uint16_t listenPort)
+bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t runtime_state, uint16_t listenPort)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
@@ -146,7 +146,7 @@ bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int
         // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
         auto n = lease_result.val->db().count<kit_dao::Project>(where(
             c(&kit_dao::Project::m_id) == project_id
-            &&  c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS) 
+            &&  c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::kValid) 
         ));
         if(0 == n)
         {
@@ -164,7 +164,7 @@ bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int
 
         tx_result.val->db().update_all(
             set(
-                    c(&kit_dao::Project::m_active) = active
+                    c(&kit_dao::Project::m_runtimeState) = runtime_state
                     ,c(&kit_dao::Project::m_listenPort) = listenPort
                     ,c(&kit_dao::Project::m_utime) = now
             )
@@ -178,10 +178,10 @@ bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int
     } catch (const std::system_error &e) {
 
         DAOPC_F_ERROR(
-            "%s pjId[%ld], active[%d], listenPort[%d] \n",
+            "%s pjId[%ld], runtime_state[%d], listenPort[%d] \n",
             MakeSqliteErrorMsg(e).c_str(),
             project_id,
-            active,
+            runtime_state,
             listenPort);
         return false;
     }
@@ -208,7 +208,7 @@ bool SqliteOrmProjectDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t proj
         // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
         auto n = lease_result.val->db().count<kit_dao::Project>(where(
             c(&kit_dao::Project::m_id) == project_id
-            && c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)
+            && c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::kValid)
         ));
         if(0 == n)
         {
@@ -359,7 +359,8 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAll(kit_muduo::HttpContext
     return pjs;
 }
 
-std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status)
+
+std::vector<kit_dao::Project>  SqliteOrmProjectDao::GetAllByStatusAndRuntimeState(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t runtime_state)
 {
     std::vector<kit_dao::Project> pjs;
 
@@ -372,19 +373,33 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::Htt
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT * FROM xxx WHERE m_userId 
-        auto tmps = lease_result.val->db().get_all<kit_dao::Project>(
-            where(
-                c(&kit_dao::Project::m_status) == status
-            )
-        );
-        if(tmps.empty())
+        // SELCT * FROM xxx WHERE `status` = ? && `runtime_state` = ?
+        if(-1 == runtime_state)
+        {
+            pjs = lease_result.val->db().get_all<kit_dao::Project>(
+                where(
+                    c(&kit_dao::Project::m_status) == status
+                )
+            ); 
+        }
+        else
+        {
+            pjs = lease_result.val->db().get_all<kit_dao::Project>(
+                where(
+                    c(&kit_dao::Project::m_status) == status
+                    &&  c(&kit_dao::Project::m_runtimeState) == runtime_state
+                )
+            ); 
+        }
+
+
+
+        if(pjs.empty())
         {
             DAOPC_F_WARN("project dont exist!\n");
             return pjs;
         }
 
-        pjs.swap(tmps);
 
     } catch (const std::system_error &e) {
 
@@ -395,10 +410,11 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAllByStatus(kit_muduo::Htt
         return pjs;
     }
 
-    DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetAllByStatus "<< ",size= " << pjs.size() << ", status: " << status << std::endl;
+    DAOPJ_DEBUG() << "SqliteOrmProjectDao::GetAllByStatusAndRuntimeState "<< ",size= " << pjs.size() << ", status: " << status << ", runtime_state: " << runtime_state << std::endl;
 
     return pjs;
 }
+
 
 std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
@@ -417,7 +433,7 @@ std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContext
             &kit_dao::Project::m_patternInfo,
             where(
                 c(&kit_dao::Project::m_id) == project_id
-                && c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)
+                && c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::kValid)
             )
         );
         if(tmps.empty())
@@ -461,7 +477,7 @@ bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64
         auto n = lease_result.val->db().count<kit_dao::Project>(where(
             c(&kit_dao::Project::m_id) == project_id
             &&
-            c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)
+            c(&kit_dao::Project::m_status) == static_cast<int32_t>(kit_domain::ProjectStatus::kValid)
         ));
         if(0 == n)
         {

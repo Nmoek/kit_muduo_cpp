@@ -57,11 +57,11 @@ static std::shared_ptr<Protocol> MakeHttpProtocol(
     auto protocol = std::make_shared<Protocol>();
     protocol->m_id = protocol_id;
     protocol->m_name = "http_runtime_pc_" + std::to_string(protocol_id);
-    protocol->m_type = ProtocolType::HTTP_PROTOCOL;
+    protocol->m_type = ProtocolType::kHttp;
     protocol->m_projectId = project_id;
-    protocol->m_status = ProtocolStatus::ACTIVE;
-    protocol->m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE;
-    protocol->m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE;
+    protocol->m_status = ProtocolStatus::kValid;
+    protocol->m_reqBodyType = ProtocolBodyType::kJson;
+    protocol->m_respBodyType = ProtocolBodyType::kJson;
     protocol->m_reqBodyDataStatus = req_body.empty() ? 0 : 1;
     protocol->m_respBodyDataStatus = resp_body.empty() ? 0 : 1;
     protocol->m_reqCfg = HttpReqCfg("GET", path, nljson{{"X-Old", "1"}});
@@ -642,7 +642,7 @@ TEST(HttpProjectRuntimeSuite, UpdateReqBodyOnlyReplacesReqBodyView)
     const std::vector<char> new_body{'n', 'e', 'w', '-', 'b', 'o', 'd', 'y'};
     auto update_result = server->UpdateReqBodyProtocolItem(
         401,
-        ProtocolBodyType::JSON_BODY_TYPE,
+        ProtocolBodyType::kJson,
         new_body);
 
     ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();

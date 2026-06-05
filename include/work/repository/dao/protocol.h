@@ -21,8 +21,10 @@ struct Protocol
     std::string             m_name;         // 测试协议名称
     int32_t                 m_type;         // 测试协议类型
     int64_t                 m_projectId;    // 所属测试服务Id
-    int32_t                 m_status;       // 测试协议状态 0位置 1有效 2失效
-    int32_t                 m_reqBodyType;  // 请求协议数据类型 TODO 可以用这个字段来指示是否配置了Body
+    std::string             m_runtimeKey;   // 运行态唯一键值, 用于判断当前加入的协议是否有重复
+    int32_t                 m_status;       // 测试协议状态 0失效 1有效
+    int32_t                 m_runtimeEnabled; // 协议项是否上线状态  0未上线 1已上线
+    int32_t                 m_reqBodyType;  // 请求协议数据类型 
     int32_t                 m_respBodyType; // 响应协议数据类型
     int32_t                 m_reqBodyDataStatus; // body是否存在 目的不去对真正的Body数据进行查询
     int32_t                 m_respBodyDataStatus; // body是否存在

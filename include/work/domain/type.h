@@ -34,33 +34,82 @@ enum ProjectMode {
 };
 
 enum class ProjectStatus {
-    OFF_STATUS = 0,  //关闭
-    ON_STATUS = 1,  //开启
+    kInvalid = 0,  //无效
+    kValid = 1,  //有效
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(ProjectStatus,{
+    {ProjectStatus::kInvalid, 0},
+    {ProjectStatus::kValid,   1},
+})
+
+enum class ProjectRuntimeState {
+    kStopped = 0,  // 服务未启动
+    kRunning = 1,  // 服务已启动
+};
+NLOHMANN_JSON_SERIALIZE_ENUM(ProjectRuntimeState, {
+    {ProjectRuntimeState::kStopped, 0},
+    {ProjectRuntimeState::kRunning, 1},
+})
 
 enum class ProtocolType {
-    UNKNOWN_PROTOCOL    = 0,    //未知协议
-    HTTP_PROTOCOL       = 1,    //HTTP 协议
-    CUSTOM_TCP_PROTOCOL = 2,    //自定义TCP协议
-    HTTPS_PROTOCOL      = 3,    //HTTPs 协议
-    MAX,
+    kUnknown    = 0,    //未知协议
+    kHttp       = 1,    //HTTP 协议
+    kCustomTcp  = 2,    //自定义TCP协议
+    kHttps      = 3,    //HTTPs 协议
+    kMax,
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolType, {
+    {ProtocolType::kUnknown,    0},
+    {ProtocolType::kHttp,       1},
+    {ProtocolType::kCustomTcp,  2},
+    {ProtocolType::kHttps,      3},
+})
+
+
+enum class ProtocolSide {
+    kRequest     = 1,
+    kResponse    = 2,
+};
+NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolSide, {
+    {ProtocolSide::kRequest,  1},
+    {ProtocolSide::kResponse, 2},
+})
 
 ///  @brief 业务上Body类型
 enum class ProtocolBodyType {
-    UNKNOWN_BODY_TYPE   = 0,     //未知格式(没有设置)
-    JSON_BODY_TYPE      = 1,    // json格式
-    XML_BODY_TYPE       = 2,    // xml格式
-    TEXT_BODY_TYPE      = 3,    // 纯文本
-    BINARY_BODY_TYPE    = 4,    // TCP 二进制数据流
-    MAX,
+    kUnknown   = 0,     //未知格式(没有设置)
+    kJson      = 1,    // json格式
+    kXml       = 2,    // xml格式
+    kText      = 3,    // 纯文本
+    kBinary    = 4,    // TCP 二进制数据流
+    kMax,
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolBodyType, {
+    {ProtocolBodyType::kUnknown, "unknown"},
+    {ProtocolBodyType::kJson,    "json"},
+    {ProtocolBodyType::kXml,     "xml"},
+    {ProtocolBodyType::kText,    "text"},
+    {ProtocolBodyType::kBinary,  "binart"},
+})
 
 enum class ProtocolStatus {
-    UNKNOWN     = 0,
-    ACTIVE      = 1,
-    INACTIVE    = 2,
+    kInvalid     = 0,
+    kValid       = 1,
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolStatus,{
+    {ProtocolStatus::kInvalid, 0},
+    {ProtocolStatus::kValid,   1},
+})
+
+///  @brief 协议项是否上线到runtime
+enum class ProtocolRuntimeEnabled {
+    kOff = 0,
+    kOn  = 1,
+};
+NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolRuntimeEnabled,{
+    {ProtocolRuntimeEnabled::kOff, 0},
+    {ProtocolRuntimeEnabled::kOn,  1},
+})
 
 /**
  * @brief 协议校验模式

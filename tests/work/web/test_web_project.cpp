@@ -289,18 +289,18 @@ static Project MakeHttpProjectForStatus(int64_t project_id)
     p.m_id = project_id;
     p.m_name = "status_http_project_" + std::to_string(project_id);
     p.m_mode = ProjectMode::ServerMode;
-    p.m_protocolType = ProtocolType::HTTP_PROTOCOL;
+    p.m_protocolType = ProtocolType::kHttp;
     p.m_listenPort = 0;
     p.m_targetIp = "";
     p.m_userId = 1;
-    p.m_status = ProjectStatus::ON_STATUS;
-    p.m_active = ProjectStatus::OFF_STATUS;
+    p.m_status = ProjectStatus::kValid;
+    p.m_runtimeState = ProjectRuntimeState::kStopped;
     p.m_patternInfo = nljson::object();
     p.m_ctime = TimeStamp::Now();
     return p;
 }
 
-static HttpContextPtr MakeProjectStatusContext(int64_t project_id, ProjectStatus operation)
+static HttpContextPtr MakeProjectStatusContext(int64_t project_id, ProjectRuntimeState operation)
 {
     auto ctx = std::make_shared<HttpContext>();
     auto req = ctx->request();
@@ -344,7 +344,7 @@ TEST_F(ProjectHandlerSuite, AddProject)
                     AddProjectReq{
                         "test1",
                         ProjectMode::ServerMode,
-                        static_cast<int32_t>(ProtocolType::HTTP_PROTOCOL),
+                        static_cast<int32_t>(ProtocolType::kHttp),
                         "",
                         nljson::object()
                     }
@@ -404,7 +404,7 @@ TEST_F(ProjectHandlerSuite, AddProject)
                     AddProjectReq{
                         "test1",
                         ProjectMode::ServerMode,
-                        static_cast<int32_t>(ProtocolType::HTTP_PROTOCOL),
+                        static_cast<int32_t>(ProtocolType::kHttp),
                         "",
                         nljson::object()
                     }
@@ -491,7 +491,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
         /*
         测试思路：
         1. 发送 DELETE /projects/{project_id}，Application 中没有运行态 server。
-        2. handler 应跳过 runtime stop，只调用 service UpdateStatus(project_id, OFF_STATUS) 软删除项目。
+        2. handler 应跳过 runtime stop，只调用 service UpdateStatus(project_id, kInvalid) 软删除项目。
         3. 断言响应 success，且不会额外创建运行态 server。
 
         示例：
@@ -499,7 +499,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
           Application: {}
               |
               v
-          UpdateStatus(9501, OFF_STATUS) -> true
+          UpdateStatus(9501, kInvalid) -> true
         */
         {
             "1. 正常删除未运行项目",
@@ -514,7 +514,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
                 auto mocksvc = std::make_shared<MockProjectSvc>();
                 EXPECT_CALL(*mocksvc, GetById(_, project_id))
                     .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
-                EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::OFF_STATUS))
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::kInvalid))
                     .WillOnce(Return(true));
                 return mocksvc;
             },
@@ -560,7 +560,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
           DELETE /projects/9502
               |
               v
-          UpdateStatus(9502, OFF_STATUS) -> false -> service failed
+          UpdateStatus(9502, kInvalid) -> false -> service failed
         */
         {
             "3. service update failed",
@@ -575,7 +575,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
                 auto mocksvc = std::make_shared<MockProjectSvc>();
                 EXPECT_CALL(*mocksvc, GetById(_, service_fail_project_id))
                     .WillOnce(Return(MakeHttpProjectForStatus(service_fail_project_id)));
-                EXPECT_CALL(*mocksvc, UpdateStatus(_, service_fail_project_id, ProjectStatus::OFF_STATUS))
+                EXPECT_CALL(*mocksvc, UpdateStatus(_, service_fail_project_id, ProjectStatus::kInvalid))
                     .WillOnce(Return(false));
                 return mocksvc;
             },
@@ -631,7 +631,7 @@ TEST_F(ProjectHandlerSuite, DelProject)
         |
         | DELETE /projects/9503
         v
-  runtime.stop() -> delServer(9503) -> UpdateStatus(9503, OFF_STATUS)
+  runtime.stop() -> delServer(9503) -> UpdateStatus(9503, kInvalid)
 */
 TEST_F(ProjectHandlerSuite, DelProjectStopsRuntimeServerBeforeSoftDelete)
 {
@@ -652,7 +652,7 @@ TEST_F(ProjectHandlerSuite, DelProjectStopsRuntimeServerBeforeSoftDelete)
     ASSERT_NE(mocksvc, nullptr);
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
-    EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::OFF_STATUS))
+    EXPECT_CALL(*mocksvc, UpdateStatus(_, project_id, ProjectStatus::kInvalid))
         .WillOnce(Return(true));
 
     handler_ = std::make_unique<ProjectHandler>(mock_svc_, nullptr);
@@ -712,12 +712,12 @@ TEST_F(ProjectHandlerSuite, StartProjectCreatesRuntimeStartsItAndReturnsListenPo
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
-    EXPECT_CALL(*mock_protocol_svc, GetAllActive(_, project_id))
+    EXPECT_CALL(*mock_protocol_svc, GetActiveByProject(_, project_id))
         .WillOnce(Return(std::vector<Protocol>{}));
-    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectStatus::ON_STATUS, Gt(0)))
+    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectRuntimeState::kRunning, Gt(0)))
         .WillOnce(Return(true));
 
-    auto ctx = MakeProjectStatusContext(project_id, ProjectStatus::ON_STATUS);
+    auto ctx = MakeProjectStatusContext(project_id, ProjectRuntimeState::kRunning);
 
     handler->StartAndStopProject(nullptr, ctx);
 
@@ -774,10 +774,10 @@ TEST_F(ProjectHandlerSuite, StopProjectStopsRuntimeRemovesItAndReturnsSuccess)
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
-    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectStatus::OFF_STATUS, 0))
+    EXPECT_CALL(*mocksvc, UpdateRuntimeStatus(_, project_id, ProjectRuntimeState::kStopped, 0))
         .WillOnce(Return(true));
 
-    auto ctx = MakeProjectStatusContext(project_id, ProjectStatus::OFF_STATUS);
+    auto ctx = MakeProjectStatusContext(project_id, ProjectRuntimeState::kStopped);
 
     handler->StartAndStopProject(nullptr, ctx);
 

@@ -20,6 +20,55 @@ using namespace kit_dao;
 
 namespace kit_domain {
 
+namespace {
+
+/**
+ * @brief 生成协议项唯一运行键值
+ * @param type 
+ * @param req_cfg 
+ * @return std::string 
+ */
+std::string GenerateRuntimeKey(ProtocolType type, nlohmann::json req_cfg)
+{
+    std::string key;
+    if(ProtocolType::kHttp == type)
+    {
+        key += "|";
+        key += "HTTP";
+        key += "|";
+        auto it = req_cfg.find("method");
+        if(it == req_cfg.end())
+        {
+            return "";
+        }
+        key += it.value().get<std::string>();
+        key += "|";
+        it = req_cfg.find("path");
+        if(it == req_cfg.end())
+        {
+            return "";
+        }
+        key += it.value().get<std::string>();
+        key += "|";
+    }
+    else if(ProtocolType::kCustomTcp == type)
+    {
+        key += "|";
+        key += "CUTOM_TCP";
+        key += "|";
+        auto it = req_cfg.find("function_code");
+        if(it == req_cfg.end())
+        {
+            return "";
+        }
+        key += it.value().get<std::string>();
+        key += "|";
+    }
+    return key;
+}
+
+}
+
 static kit_domain::Protocol CovertDomainProtocol(const kit_dao::Protocol &daoPj)
 {
     return kit_domain::Protocol{
@@ -27,7 +76,9 @@ static kit_domain::Protocol CovertDomainProtocol(const kit_dao::Protocol &daoPj)
         .m_name = daoPj.m_name,
         .m_type = static_cast<ProtocolType>(daoPj.m_type),
         .m_projectId = daoPj.m_projectId,
+        .m_runtimeKey = daoPj.m_runtimeKey,
         .m_status = static_cast<ProtocolStatus>(daoPj.m_status),
+        .m_runtimeEnabled = static_cast<ProtocolRuntimeEnabled>(daoPj.m_runtimeEnabled),
         .m_reqBodyType= static_cast<ProtocolBodyType>(daoPj.m_reqBodyType),
         .m_respBodyType = static_cast<ProtocolBodyType>(daoPj.m_respBodyType),
         .m_reqBodyDataStatus = daoPj.m_reqBodyDataStatus,
@@ -55,14 +106,16 @@ static std::vector<kit_domain::Protocol> CovertDomainProtocols(const std::vector
     return ans;
 }
 
-static kit_dao::Protocol CovertDaoProtocol(const kit_domain::Protocol &domainPc)
+static kit_dao::Protocol CovertDaoProtocol(const std::string& runtime_key, const kit_domain::Protocol &domainPc)
 {
     return kit_dao::Protocol {
         domainPc.m_id,
         domainPc.m_name,
         static_cast<int32_t>(domainPc.m_type),
         domainPc.m_projectId,
+        runtime_key,
         static_cast<int32_t>(domainPc.m_status),
+        static_cast<int32_t>(domainPc.m_runtimeEnabled),
         static_cast<int32_t>(domainPc.m_reqBodyType),
         static_cast<int32_t>(domainPc.m_respBodyType),
         domainPc.m_reqBodyDataStatus,
@@ -86,7 +139,13 @@ ProtocolRepository::~ProtocolRepository() { }
 
 int64_t ProtocolRepository::Create(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
 {
-    return _dao->Insert(ctx, CovertDaoProtocol(domainPc));
+    const std::string& runtime_key = GenerateRuntimeKey(domainPc.m_type, domainPc.m_reqCfg);
+    if(runtime_key.empty())
+    {
+        REPOPC_F_ERROR("rutime key generate error! type[%d]: %s\n", static_cast<int32_t>(domainPc.m_type), domainPc.m_reqCfg.dump().c_str());
+        return -1;
+    }
+    return _dao->Insert(ctx, CovertDaoProtocol(runtime_key, domainPc));
 }
 
 
@@ -97,7 +156,13 @@ bool ProtocolRepository::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64_t
 
 bool ProtocolRepository::UpdateById(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
 {
-    return _dao->UpdateById(ctx, CovertDaoProtocol(domainPc));
+    const std::string& runtime_key = GenerateRuntimeKey(domainPc.m_type, domainPc.m_reqCfg);
+    if(runtime_key.empty())
+    {
+        REPOPC_F_ERROR("rutime key generate error! type[%d]: %s\n", static_cast<int32_t>(domainPc.m_type), domainPc.m_reqCfg.dump().c_str());
+        return false;
+    }
+    return _dao->UpdateById(ctx, CovertDaoProtocol(runtime_key, domainPc));
 }
 
 bool ProtocolRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocolId, const std::string &name)
@@ -105,19 +170,26 @@ bool ProtocolRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t proto
     return _dao->UpdateName(ctx, protocolId, name);
 }
 
-bool ProtocolRepository::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, const std::string& cfg_data)
+bool ProtocolRepository::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
 {
-    return _dao->UpdateCfg(ctx, protocolId, req_or_resp, cfg_data);
+    const std::string &runtime_key = GenerateRuntimeKey(type, cfg_json);
+    if(runtime_key.empty())
+    {
+        REPOPC_F_ERROR("runtime key generate error! type[%d]: %s\n", static_cast<int32_t>(type), cfg_json.dump().c_str());
+        return false;
+    }
+
+    return _dao->UpdateReqCfg(ctx, protocol_id, runtime_key, cfg_json);
 }
 
-bool ProtocolRepository::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json)
+bool ProtocolRepository::UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
 {
-    return _dao->UpdateCfg(ctx, protocol_id, req_or_resp, cfg_json);
+    return _dao->UpdateRespCfg(ctx, protocol_id, cfg_json);
 }
 
-bool ProtocolRepository::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data)
+bool ProtocolRepository::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char>& cfg_data)
 {
-    return _dao->UpdateBody(ctx, protocolId, req_or_resp, body_type, cfg_data);
+    return _dao->UpdateBody(ctx, protocolId, static_cast<int32_t>(side), static_cast<int32_t>(body_type), cfg_data);
 }
 
 Protocol ProtocolRepository::GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId)
@@ -127,42 +199,46 @@ Protocol ProtocolRepository::GetById(kit_muduo::HttpContextPtr ctx, int64_t prot
 
 std::vector<Protocol> ProtocolRepository::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit)
 {
-    return CovertDomainProtocols(_dao->GetByProject(ctx, protocolId, static_cast<int32_t>(status), offset, limit));
+    return CovertDomainProtocols(_dao->ListByProject(ctx, protocolId, static_cast<int32_t>(status), offset, limit));
 }
 
-std::vector<Protocol> ProtocolRepository::GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
+std::vector<Protocol> ProtocolRepository::GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
 {
-    return CovertDomainProtocols(_dao->GetAllByProject(ctx, project_id, static_cast<int32_t>(status)));
+    return CovertDomainProtocols(_dao->GetAll(ctx, project_id, static_cast<int32_t>(ProtocolStatus::kValid), -1));
 }
 
+std::vector<Protocol> ProtocolRepository::GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+{
+    return CovertDomainProtocols(_dao->GetAll(ctx, project_id, static_cast<int32_t>(ProtocolStatus::kValid), static_cast<int32_t>(ProtocolRuntimeEnabled::kOn)));
+}
 
 int32_t ProtocolRepository::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
 {
     return _dao->CountByProject(ctx, project_id, static_cast<int32_t>(status));
 }
 
-nlohmann::json ProtocolRepository::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
+nlohmann::json ProtocolRepository::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side)
 {
-    return nljson::parse(_dao->GetTcpCommonFieldsById(ctx, protocol_id, req_or_resp));
+    return nljson::parse(_dao->GetTcpCommonFieldsById(ctx, protocol_id, static_cast<int32_t>(side)));
 }
 
 
-kit_domain::ProtocolBodyType ProtocolRepository::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
+kit_domain::ProtocolBodyType ProtocolRepository::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side)
 {
-    return static_cast<ProtocolBodyType>(_dao->GetBodyTypeById(ctx, protocol_id, req_or_resp));
+    return static_cast<ProtocolBodyType>(_dao->GetBodyTypeById(ctx, protocol_id, static_cast<int32_t>(side)));
 }
 
-bool ProtocolRepository::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data)
+bool ProtocolRepository::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, std::vector<char> &body_data)
 {
-    return _dao->GetBodyDataById(ctx, protocol_id, req_or_resp, body_data);
+    return _dao->GetBodyDataById(ctx, protocol_id, static_cast<int32_t>(side), body_data);
 }
 
-bool ProtocolRepository::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, ProtocolBodyType &body_type, std::vector<char> &body_data)
+bool ProtocolRepository::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType &body_type, std::vector<char> &body_data)
 {
     // 查询两次 组装
     // 查一次 两个字段一起
     int32_t dao_body_type;
-    bool ok = _dao->GetBodyInfoById(ctx, protocol_id, req_or_resp, dao_body_type, body_data);
+    bool ok = _dao->GetBodyInfoById(ctx, protocol_id, static_cast<int32_t>(side), dao_body_type, body_data);
 
     if(!ok) {
         return false;
@@ -177,6 +253,17 @@ bool ProtocolRepository::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t 
 nlohmann::json ProtocolRepository::GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
 {
     return _dao->GetCfgById(ctx, protocol_id);
+}
+
+ProtocolRuntimeEnabled ProtocolRepository::IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
+{
+    return static_cast<ProtocolRuntimeEnabled>(_dao->IsRuntimeEnabled(ctx, protocol_id));
+}
+
+    
+bool ProtocolRepository::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled)
+{
+    return _dao->UpdateRuntimeEnabled(ctx, protocol_id, static_cast<int32_t>(runtime_enabled));
 }
 
 } // kit_domain

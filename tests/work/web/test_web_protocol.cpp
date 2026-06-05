@@ -36,8 +36,7 @@ using namespace kit_muduo::http;
 
 namespace {
 
-constexpr int32_t kReqCfg = 1;
-constexpr int32_t kRespCfg = 2;
+constexpr ProtocolSide kReqSide = ProtocolSide::kRequest;
 
 nljson HttpReqCfg(const std::string &method,
                   const std::string &path,
@@ -67,11 +66,11 @@ std::shared_ptr<Protocol> MakeHttpProtocol(
     auto protocol = std::make_shared<Protocol>();
     protocol->m_id = protocol_id;
     protocol->m_name = "web_protocol_pc_" + std::to_string(protocol_id);
-    protocol->m_type = ProtocolType::HTTP_PROTOCOL;
+    protocol->m_type = ProtocolType::kHttp;
     protocol->m_projectId = project_id;
-    protocol->m_status = ProtocolStatus::ACTIVE;
-    protocol->m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE;
-    protocol->m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE;
+    protocol->m_status = ProtocolStatus::kValid;
+    protocol->m_reqBodyType = ProtocolBodyType::kJson;
+    protocol->m_respBodyType = ProtocolBodyType::kJson;
     protocol->m_reqBodyDataStatus = 0;
     protocol->m_respBodyDataStatus = 1;
     protocol->m_reqCfg = HttpReqCfg("GET", path, nljson{{"X-Old", "1"}});
@@ -89,7 +88,7 @@ Project MakeActiveProject(int64_t project_id)
     Project project;
     project.m_id = project_id;
     project.m_name = "web_protocol_project_" + std::to_string(project_id);
-    project.m_status = ProjectStatus::ON_STATUS;
+    project.m_status = ProjectStatus::kValid;
     project.m_userId = 1;
     return project;
 }
@@ -158,17 +157,10 @@ std::shared_ptr<HttpProjectServer> MakeHttpRuntimeServer(
     return server;
 }
 
-testing::Matcher<const std::string&> JsonStringEq(const nljson &expected)
+testing::Matcher<const nljson&> JsonEq(const nljson &expected)
 {
-    return testing::Truly([expected](const std::string &actual) {
-        try
-        {
-            return nljson::parse(actual) == expected;
-        }
-        catch(const std::exception&)
-        {
-            return false;
-        }
+    return testing::Truly([expected](const nljson &actual) {
+        return actual == expected;
     });
 }
 
@@ -217,15 +209,14 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
     handler_->SetApp(&app);
 
     EXPECT_CALL(*mock_, GetCfgById(testing::_, testing::_)).Times(0);
-    EXPECT_CALL(*mock_, UpdateCfg(testing::_, testing::_, testing::_,
-                                  testing::A<const std::string&>())).Times(0);
-    EXPECT_CALL(*mock_, UpdateCfg(testing::_, testing::_, testing::_,
-                                  testing::A<const nljson&>())).Times(0);
+    EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
 
     auto ctx = MakeJsonContext(nljson{
         {"id", 1001},
         {"project_id", 9101},
-        {"req_or_resp", kReqCfg},
+        {"type", ProtocolType::kHttp},
+        {"side", kReqSide},
         {"cfg_data", nljson::array({"bad"})},
     });
 
@@ -271,8 +262,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
     app.addServer(project_id, server);
     handler_->SetApp(&app);
 
-    EXPECT_CALL(*mock_, UpdateCfg(testing::_, testing::_, testing::_,
-                                  testing::A<const nljson&>())).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
     {
         testing::InSequence seq;
         EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
@@ -284,14 +274,15 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
                 {"req_cfg", old_req_cfg},
                 {"resp_cfg", old_resp_cfg},
             }));
-        EXPECT_CALL(*mock_, UpdateCfg(testing::_, protocol_id, kReqCfg, JsonStringEq(new_req_cfg)))
+        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, ProtocolType::kHttp, JsonEq(new_req_cfg)))
             .WillOnce(testing::Return(true));
     }
 
     auto ctx = MakeJsonContext(nljson{
         {"id", protocol_id},
         {"project_id", project_id},
-        {"req_or_resp", kReqCfg},
+        {"type", ProtocolType::kHttp},
+        {"side", kReqSide},
         {"cfg_data", nljson{{"headers", nljson{{"X-New", "2"}}}}},
     });
 
@@ -349,8 +340,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
     app.addServer(project_id, server);
     handler_->SetApp(&app);
 
-    EXPECT_CALL(*mock_, UpdateCfg(testing::_, testing::_, testing::_,
-                                  testing::A<const nljson&>())).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
     {
         testing::InSequence seq;
         EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
@@ -362,16 +352,17 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
                 {"req_cfg", old_req_cfg},
                 {"resp_cfg", old_resp_cfg},
             }));
-        EXPECT_CALL(*mock_, UpdateCfg(testing::_, protocol_id, kReqCfg, JsonStringEq(new_req_cfg)))
+        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, ProtocolType::kHttp, JsonEq(new_req_cfg)))
             .WillOnce(testing::Return(true));
-        EXPECT_CALL(*mock_, UpdateCfg(testing::_, protocol_id, kReqCfg, JsonStringEq(old_req_cfg)))
+        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, ProtocolType::kHttp, JsonEq(old_req_cfg)))
             .WillOnce(testing::Return(true));
     }
 
     auto ctx = MakeJsonContext(nljson{
         {"id", protocol_id},
         {"project_id", project_id},
-        {"req_or_resp", kReqCfg},
+        {"type", ProtocolType::kHttp},
+        {"side", kReqSide},
         {"cfg_data", nljson{{"path", "/d9/web/conflict"}}},
     });
 

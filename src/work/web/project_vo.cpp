@@ -13,7 +13,7 @@ namespace kit_domain {
 
 static std::string CovertLengthPolicy(const Project &p)
 {
-    if(p.m_protocolType != ProtocolType::CUSTOM_TCP_PROTOCOL || !p.m_patternInfo.is_object())
+    if(p.m_protocolType != ProtocolType::kCustomTcp || !p.m_patternInfo.is_object())
     {
         return "";
     }
@@ -39,7 +39,7 @@ ProjectVo CovertProjectVo(const Project &p)
         p.m_targetIp,
         p.m_userId,
         static_cast<int32_t>(p.m_status),
-        static_cast<int32_t>(p.m_active),
+        static_cast<int32_t>(p.m_runtimeState),
         p.m_ctime.toString()
     };
 }

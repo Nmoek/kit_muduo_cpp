@@ -24,6 +24,7 @@
 #include "domain/project_server.h"
 #include "domain/protocol_item.h"
 #include "net/event_loop.h"
+#include "web/write_response.h"
 #include "work/domain/runtime_result.h"
 
 
@@ -41,15 +42,16 @@ namespace kit_domain {
 
 struct AddProtocolReqHeader {
     std::string name;                          // 测试协议名称
-    std::string type;                           // 测试协议类型 HTTP/TCP
+    ProtocolType type;                           // 测试协议类型 HTTP/TCP
     int64_t project_id;                        // 所属测试服务Id
-    std::string req_body_type;                 // 请求协议体类型 json/xml/plain
-    std::string resp_body_type;                 // 响应协议体类型 json/xml/plain
+    ProtocolBodyType req_body_type;                 // 请求协议体类型 json/xml/plain
+    ProtocolBodyType resp_body_type;                 // 响应协议体类型 json/xml/plain
+    ProtocolRuntimeEnabled runtime_enabled;         // 协议项是否同步上线
     
     // TCP特有
     int32_t is_endian;                          // 是否进行大小端转换 1进行 0不进行 频繁查询更新字段
     
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProtocolReqHeader, name, type, project_id, req_body_type, resp_body_type, is_endian)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProtocolReqHeader, name, type, project_id, req_body_type, resp_body_type, runtime_enabled, is_endian)
 };
 
 /**
@@ -152,7 +154,7 @@ struct DelProtocolReq {
  */
 struct ProtocolListReq {
     int64_t                  project_id;      // 所属测试服务id
-    int32_t                  status{static_cast<int32_t>(ProtocolStatus::ACTIVE)};  // 状态
+    int32_t                  status{static_cast<int32_t>(ProtocolStatus::kValid)};  // 状态
     bool                     include_inactive{false}; // 管理员列表是否包含已删除协议项
     int32_t                  offset;          // 页码
     int32_t                  limit;           // 页大小
@@ -186,10 +188,11 @@ struct ProtocolDetailNameReq {
 struct DetailCfgReq {
     int64_t                 id;             // 协议项id
     int64_t                 project_id;     // 协议项所属测试服务id
-    int32_t                 req_or_resp;    // 校验到底是请求配置还是响应配置
+    ProtocolType            type;    // 协议类型
+    ProtocolSide            side;    // 校验到底是请求配置还是响应配置
     nljson                  cfg_data{nljson::object()};       // 协议配置数据 必须是json
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailCfgReq, id, project_id, req_or_resp, cfg_data)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailCfgReq, id, project_id, type, side, cfg_data)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailCfgReq &req)
     {
@@ -202,12 +205,12 @@ struct DetailCfgReq {
 struct DetailReqHeader {
     int64_t id;             // 协议项id
     int64_t project_id;     // 协议项所属测试服务id
-    int32_t req_or_resp;    // 校验到底是请求配置还是响应配置
-    std::string type;       // 协议项种类
-    std::string body_type;  // body数据格式类型
+    ProtocolSide side;    // 校验到底是请求配置还是响应配置
+    ProtocolType type;       // 协议项种类
+    ProtocolBodyType body_type;  // body数据格式类型
 
     // 带默认值 = 未解析到的字段也不会抛异常
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailReqHeader, id, project_id, req_or_resp, type, body_type)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailReqHeader, id, project_id, side, type, body_type)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailReqHeader &req)
     {
@@ -219,11 +222,6 @@ struct DetailReqHeader {
 struct DetailReq {
     DetailReqHeader header;
     std::vector<char> cfg_data;
-
-    enum {
-        kRequest     = 1,
-        kResponse    = 2,
-    };
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(DetailReq, header, cfg_data)
 
@@ -282,7 +280,7 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
     server->Post("/protocols/list", XX(List));
 
     // 单独修改协议项某个细节
-    server->Post("/protocols/details/name", XX(DetailName)); // TODO 增加[?key1=value2&key2=val2]参数风格
+    server->Post("/protocols/details/name", XX(DetailName)); 
     server->Post("/protocols/details/cfg", XX(DetailCfg));
     server->Post("/protocols/details/body", XX(DetailBody));
 
@@ -298,7 +296,8 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
     server->Post("/protocols/details/body_type", XX(GetProtocolBodyType));
     server->Post("/protocols/details/body_data", XX(GetProtocolBodyData));
     
-    server->Post("/protocols/details/body_info", XX(GetProtocolBodyInfo));
+    // DEBUG: 这个接口弃用
+    // server->Post("/protocols/details/body_info", XX(GetProtocolBodyInfo));
 
     // server->Get("/protocols/:project_id/cnt", XX(ProtocolCnt));
 
@@ -323,7 +322,7 @@ static bool CheckProjectAccess(HttpContextPtr ctx, ProjectSvcInterface *project_
     {
         return false;
     }
-    if(require_active && project.m_status != ProjectStatus::ON_STATUS)
+    if(require_active && project.m_status != ProjectStatus::kValid)
     {
         return false;
     }
@@ -349,7 +348,7 @@ static void WriteForbidden(HttpContextPtr ctx)
     auto resp = ctx->response();
     resp->setStateCode(StateCode::k403Forbidden);
     resp->body().setContentType(ContentType::kJsonType);
-    resp->body().appendData(R"({"code": -403, "message":"forbidden","data":{}})");
+    resp->body().appendData(R"({"code": -403, "message": "forbidden", "data":{}})");
 }
 
 
@@ -361,29 +360,29 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
+    WriteOpResult write_result;
     AddProtocolReq request; // 表单
-
-    // PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
     // 自动根据req中的 content-type类型去解析对象
     bool ok = ctx->Bind(&request);
     if(!ok)
     {
         PJ_F_ERROR("body bind error! \n");
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "body parse error"));
         return;
     }
 
-    // TODO: 协议添加去重？？
     // DTO转换 避免对外暴露领域模型Entity
     auto p = std::make_shared<kit_domain::Protocol>();
     p->m_id = -1;
     p->m_name = std::move(request.header.name);
-    p->m_type = ProtocolTypeFromString(request.header.type);
+    p->m_type = request.header.type;
     p->m_projectId = request.header.project_id;
-    p->m_status = ProtocolStatus::ACTIVE;
-    p->m_reqBodyType = ProtocolBodyTypeFromString(request.header.req_body_type);
-    p->m_respBodyType = ProtocolBodyTypeFromString(request.header.resp_body_type);
+    p->m_status = ProtocolStatus::kValid;
+    p->m_runtimeEnabled = request.header.runtime_enabled;
+    p->m_reqBodyType = request.header.req_body_type;
+    p->m_respBodyType = request.header.resp_body_type;
     p->m_reqBodyDataStatus = request.protocol_req_body.empty() ? 0 : 1;
     p->m_respBodyDataStatus = request.protocol_resp_body.empty() ? 0 : 1;
     p->m_reqCfg = std::move(request.protocol_req_cfg);
@@ -392,21 +391,9 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     p->m_respBodyData = std::move(request.protocol_resp_body);
     p->m_isEndian = request.header.is_endian;
 
-    if(!CheckProjectAccess(ctx, _projectSvc.get(), p->m_projectId, true, false))
+    if(!CheckProjectAccess(ctx, _pjSvc.get(), p->m_projectId, true, false))
     {
         WriteForbidden(ctx);
-        return;
-    }
-
-    //1. 先以http server进行调试 后续将tcp加入后再决定如何统一接口
-    //2. TODO: 还要考虑客户端接口设计
-    //3. TODO 接口重写 获取测试服务信息 要么从库中获取，要么从缓存获取
-    auto project_service = GetApp()->findServer(p->m_projectId);
-    if(!project_service)
-    {
-        //TODO: 兜底措施 没创建需要重新创建对应的测试服务
-        PC_F_WARN("project not found! %d \n",p->m_projectId);
-        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
         return;
     }
 
@@ -423,19 +410,34 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     catch(const std::exception& e)
     {
         PC_F_ERROR("protoctol add exception: %s \n", e.what());
-        // TODO: 自定义业务错误码统一处理
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-300, "service failed"));
         return;
     }
     // 更新一下主键id
     p->m_id = protocol_id;
 
+    if(ProtocolRuntimeEnabled::kOff == p->m_runtimeEnabled)
+    {
+        WriteOpResponseHelper(ctx, write_result.persistedOk().success());
+        return;
+    }
+    
+    // TODO 同步上线时上线失败 上线状态要回滚
+    auto project_server = GetApp()->findServer(p->m_projectId);
+    if(!project_server)
+    {
+        PC_F_ERROR("project not found! %d \n",p->m_projectId);
 
+        WriteOpResponseHelper(ctx, write_result.persistedOk().failed(-300, "project not found"));
+        return;
+    }
+    
     // 工厂模式生成协议项对象ProtocolItem
     std::shared_ptr<ProtocolItem> protocol_item = nullptr;
     try {
 
-        protocol_item = ProtocolItemFactory::Create(p, project_service);
+        protocol_item = ProtocolItemFactory::Create(p, project_server);
         if(!protocol_item)
         {
             throw std::runtime_error("ProtocolItem create error");
@@ -445,47 +447,42 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
         //删除该协议项
         if(!_svc->Del(ctx, protocol_id))
         {
-            PC_F_ERROR("rollback del ProtocolItem faild! protocol_type[%d] protocol_id[%d] project_id[%d] \n",static_cast<int32_t>(p->m_type), protocol_id, p->m_projectId);
+            PC_F_ERROR("rollback del ProtocolItem faild! pcId[%ld], pjId[%ld], type[%d] \n",protocol_id, p->m_projectId, static_cast<int32_t>(p->m_type));
+            write_result.persistedOk();
         }
 
-        PC_F_ERROR("create ProtocolItem faild, %s! protocol_type[%d] protocol_id[%d] project_id[%d] \n", e.what(), static_cast<int32_t>(p->m_type), protocol_id, p->m_projectId);
+        PC_F_ERROR("create ProtocolItem faild, %s! pcId[%ld], pjId[%ld], type[%d] \n", e.what(), protocol_id, p->m_projectId, static_cast<int32_t>(p->m_type));
 
-        // TODO: 自定义业务错误码统一处理
-        resp->body().appendData(R"({"code": -300, "message":"protocolitem create failed"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "protocolitem create failed"));
         return;
     }
 
-
     // 需要向对应的测试服务器上注册协议
-    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, [project_service, protocol_item]() {
+    auto result = InvokeOnLoopSync(project_server->getLoop(), 1000, [project_server, protocol_item]() {
         PC_F_DEBUG("AddProtocolItem: [%d][%s][%d] \n", protocol_item->getId(), protocol_item->getName().c_str(), protocol_item->getProjectId());
 
-        return project_service->AddProtocolItem(protocol_item);
+        return project_server->AddProtocolItem(protocol_item);
     });
     if(!result.ok())
     {
-
         //删除该协议项
         if(!_svc->Del(ctx, protocol_id))
         {
-            PC_F_ERROR("rollback del ProtocolItem faild! protocol_type[%d] protocol_id[%d] project_id[%d] \n",static_cast<int32_t>(p->m_type), protocol_id, p->m_projectId);
+            PC_F_ERROR("rollback del ProtocolItem faild! pcId[%ld], pjId[%ld], type[%d] \n",protocol_id, p->m_projectId, static_cast<int32_t>(p->m_type));
+            // 回滚失败再把状态补回ok
+            write_result.persistedOk();
+
         }
 
+        PC_F_ERROR("InvokeOnLoopSync::AddProtocolItem error[%d]: %s! pjId[%d], pcId[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_server->getProjectId(), protocol_item->getId());
 
-        PC_F_ERROR("InvokeOnLoopSync::AddProtocolItem error: %d : %s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_item->getId());
-
-        resp->body().appendData(R"({"code": -300, "message":"protocolitem add failed"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "protocolitem runtime failed"));
         return;
     }
 
-    nljson root;
-    root["code"] = 0;
-    root["message"] = "success";
-    root["data"]["protocol_id"] = protocol_id;
-
-    resp->body().appendData(root.dump());
-    PC_DEBUG() << std::endl << root.dump(4) << std::endl;
-
+    WriteOpResponseHelper(ctx, write_result.allOk().success(), [protocol_id](auto& root){
+        root["data"]["protocol_id"] = protocol_id;
+    });
 }
 
 void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
@@ -496,6 +493,7 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
+    WriteOpResult write_result;
     DelProtocolReq request; //json
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
@@ -505,63 +503,81 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     if(!ok)
     {
         PJ_F_ERROR("body bind error! \n");
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
     }
 
     // DTO转换 避免对外暴露领域模型Entity
-
     int64_t protocol_id = request.id;
     int64_t project_id = request.project_id;
-    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), protocol_id, false))
     {
         WriteForbidden(ctx);
         return;
     }
+
+    kit_domain::Protocol old_pc;
     try 
     {
+        // 查旧协议项
+        old_pc = _svc->GetById(ctx, protocol_id);
+        if(old_pc.m_id <= 0)
+        {
+            throw std::runtime_error("pcId <= 0");
+        }
+
         // 生成对应协议种类的报文
         ok = _svc->Del(ctx, protocol_id);
+        if(!ok)
+        {
+            throw std::runtime_error("del error");
+        }
     }
     catch(const std::exception& e)
     {
-        PJ_F_ERROR("service add exception: %s \n", e.what());
-    }
+        PJ_F_ERROR("service del exception: %s \n", e.what());
 
-    if(!ok)
-    {
-        PJ_F_ERROR("service add failed \n");
-
-        // TODO: 自定义业务错误码统一处理
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "service del failed"));
         return;
     }
 
-    // 向测试服务器通信 传递协议配置信息
-    auto project_service = GetApp()->findServer(request.project_id);
-    if(!project_service)
+    if(ProtocolRuntimeEnabled::kOn != old_pc.m_runtimeEnabled)
     {
-        PC_F_WARN("project not found! %d \n", project_id);
-        // 数据库可以操作 但是服务器可能操作不了 应该可以降级处理
-        // 服务器重新拉起的过程需要去读一次数据库 保证数据一致性
-        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        WriteOpResponseHelper(ctx, write_result.persistedOk().success());
         return;
     }
+  
+    auto project_server = _app->findServer(request.project_id);
+    if(!project_server)
+    {
+        PC_F_ERROR("project not found! %d \n", project_id);
 
-    // 需要向对应的测试服务器上添加信息
-    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, [project_service, project_id, protocol_id]()  {
+        WriteOpResponseHelper(ctx, write_result.persistedOk().failed(-300, "project not found"));
+        return;
+    }
+        
+    // 删除测试服务器上协议项
+    auto result = InvokeOnLoopSync(project_server->getLoop(), 1000, [project_server, project_id, protocol_id]()  {
         PC_F_DEBUG("DelProtocolItem: pjId[%d], pcId[%d] \n", project_id, protocol_id);
-        return project_service->DelProtocolItem(protocol_id);
+        return project_server->DelProtocolItem(protocol_id);
     });
     if(!result.ok())
     {
-        PC_F_ERROR("InvokeOnLoopSync::DelProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
+        PC_F_ERROR("InvokeOnLoopSync::DelProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_server->getProjectId(), protocol_id);
 
-        resp->body().appendData(R"({"code": -300, "message":"protocolitem del failed"})");
+        // 回滚删除动作
+        if(_svc->Add(ctx, old_pc) <= 0)
+        {
+            PC_F_ERROR("protocol re-Add error! %d \n", old_pc.m_id);
+            write_result.persistedOk();
+        }
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "protocolitem del failed"));
         return;
     }
 
-    resp->body().appendData(R"({"code": 0, "message":"success"})");
+    WriteOpResponseHelper(ctx, write_result.allOk().success());
 }
 
 void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
@@ -597,7 +613,7 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
         protocol = _svc->GetById(ctx, protocol_id);
         if(protocol.m_id < 0)
             throw std::runtime_error("protocol.id <= 0");
-        if(!CheckProjectAccess(ctx, _projectSvc.get(), protocol.m_projectId, true, false))
+        if(!CheckProjectAccess(ctx, _pjSvc.get(), protocol.m_projectId, true, false))
         {
             WriteForbidden(ctx);
             return;
@@ -646,7 +662,7 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
 
     // DTO转换 避免对外暴露领域模型Entity
     std::vector<Protocol> protocols;
-    if(!CheckProjectAccess(ctx, _projectSvc.get(), request.project_id, true, false))
+    if(!CheckProjectAccess(ctx, _pjSvc.get(), request.project_id, true, false))
     {
         WriteForbidden(ctx);
         return;
@@ -657,13 +673,13 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
         auto current_user = CurrentUserFromContext(ctx);
         if(current_user.IsAdmin() && request.include_inactive)
         {
-            protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::ACTIVE, request.offset, request.limit);
-            auto inactive_protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::INACTIVE, 0, request.limit);
+            protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::kValid, request.offset, request.limit);
+            auto inactive_protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::kInvalid, 0, request.limit);
             protocols.insert(protocols.end(), inactive_protocols.begin(), inactive_protocols.end());
         }
         else
         {
-            protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::ACTIVE, request.offset, request.limit);
+            protocols = _svc->GetByProject(ctx, request.project_id, ProtocolStatus::kValid, request.offset, request.limit);
         }
     }
     catch(const std::exception& e)
@@ -675,7 +691,7 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
 
 
     nljson root;
-    root["code"] = 0; // TODO domain错误码统一化
+    root["code"] = 0;
     root["message"] = "success";
     root["data"] = CovertProtocolVos(protocols);
 
@@ -693,61 +709,43 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
-    ProtocolDetailNameReq request; //json
+    WriteOpResult write_result;
+    ProtocolDetailNameReq request;
 
     PC_DEBUG()  << std::endl << req->body().toString() << std::endl;
-
 
     // 自动根据req中的 content-type类型去解析对象
     bool ok = ctx->Bind(&request);
     if(!ok)
     {
         PC_F_ERROR("body bind error! \n");
-
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
     }
 
-    nljson root;
-    root["code"] = 0;
-    root["message"] = "success";
-    root["data"] = nljson::object();
+    if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), request.id, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
+
     try {
-        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), request.id, false))
-        {
-            WriteForbidden(ctx);
-            return;
-        }
-        if(HttpRequest::Method::kPost == req->method()())
-        {
-            bool ok = _svc->UpdateName(ctx, request.id, request.name);
 
-            if(!ok)
-            {
-                PJ_F_ERROR("service UpdateName failed \n");
-        
-                root["code"] = -300;
-                root["message"] = "service failed";
-            }
-
-        }
-        else if(HttpRequest::Method::kGet == req->method()()) // BUG 这样写是有问题的
+        bool ok = _svc->UpdateName(ctx, request.id, request.name);
+        if(!ok)
         {
-            auto pc = _svc->GetById(ctx, request.id);
-            root["data"]["id"] = pc.m_id;
-            root["data"]["name"] = pc.m_name;
-            root["data"]["project_id"] = pc.m_projectId;
+            throw std::runtime_error(" UpdateName error");
         }
 
     } catch(const std::exception& e) {
 
         PC_F_ERROR("service UpdateName exception: %s \n", e.what());
-        root["code"] = -300;
-        root["message"] = "service failed";
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "service failed"));
+        return;
     }
 
-    resp->body().appendData(root.dump());
-
+    WriteOpResponseHelper(ctx, write_result.persistedOk().success());
     return;
 }
 
@@ -761,17 +759,8 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
-    DetailCfgReq request; //json
-    /*
-    {
-        id: 
-        project_id: 
-        req_or_resp: 
-        cfg_data: {
-            
-        }
-    }
-    */
+    WriteOpResult write_result;
+    DetailCfgReq request;
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
@@ -781,14 +770,26 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     {
         PC_F_ERROR("body bind error! \n");
 
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
     }
 
-    if(DetailReq::kRequest != request.req_or_resp
-        && DetailReq::kResponse !=  request.req_or_resp)
+    int64_t protocol_id = request.id;
+    int64_t project_id = request.project_id;
+    const ProtocolSide side = request.side;
+    const ProtocolType type = request.type;
+
+    if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), protocol_id, false))
     {
-        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+        WriteForbidden(ctx);
+        return;
+    }
+
+
+    if(ProtocolSide::kRequest != side
+        && ProtocolSide::kResponse != side)
+    {
+        WriteOpResponseHelper(ctx, write_result.failed(-100, "request param error"));
         return;
     }
     
@@ -796,117 +797,131 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     if(!request.cfg_data.is_object())
     {
         PC_F_ERROR("cfg json is not object! %s \n", request.cfg_data.type_name());
-        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+
+        WriteOpResponseHelper(ctx, write_result.failed(-100, "request param error"));
         return;
     }
 
-    int64_t protocol_id = request.id;
-    int64_t project_id = request.project_id;
-    int32_t req_or_resp = request.req_or_resp;
-
-    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
-    {
-        WriteForbidden(ctx);
-        return;
-    }
-
-    auto project_service = GetApp()->findServer(request.project_id);
-    if(!project_service || !project_service->isActive())
-    {
-        PC_F_WARN("project not found! %d \n", project_id);
-        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
-        return;
-    } 
+    // 查询当前协议是否是上线状态
+    const ProtocolRuntimeEnabled runtime_enabeld = _svc->IsRuntimeEnabled(ctx, protocol_id);
 
     ok = false;
     std::shared_ptr<ProtocolItem> protocol_item = nullptr;
+
+    nljson old_all_cfg_json;
+    nljson old_cfg_json;
+    nljson new_cfg_json;
+
+    using SvcUpdateFunc = decltype(&ProtocolSvcInterface::UpdateReqCfg);
+    SvcUpdateFunc svc_func = nullptr;
+    using RuntimeUpdateFunc = decltype(&ProjectServer::UpdateReqCfgProtocolItem);
+    RuntimeUpdateFunc runtime_func = nullptr;
+    const char* cfg_key = nullptr;
+
     try {
 
         // 1. 查出旧配置
-        nljson old_all_cfg_json = _svc->GetCfgById(ctx, request.id);
-        nljson old_cfg_json;
-        nljson new_cfg_json;
+        old_all_cfg_json = _svc->GetCfgById(ctx, request.id);
 
-        if(DetailReq::kRequest == req_or_resp)
+        if(ProtocolSide::kRequest == side)
         {
-            old_cfg_json = new_cfg_json = old_all_cfg_json.at("req_cfg");
-
+            cfg_key = "req_cfg";
+            svc_func = &ProtocolSvcInterface::UpdateReqCfg;
+            runtime_func = &ProjectServer::UpdateReqCfgProtocolItem;
         }
-        else if(DetailReq::kResponse == req_or_resp)
+        else if(ProtocolSide::kResponse == side)
         {
-            old_cfg_json = new_cfg_json = old_all_cfg_json.at("resp_cfg");
+            cfg_key = "resp_cfg";
+            svc_func = &ProtocolSvcInterface::UpdateRespCfg;
+            runtime_func = &ProjectServer::UpdateRespCfgProtocolItem;
         }
 
         // 2. 把局部新配置/全新配置和旧配置"并集"合并
+        old_cfg_json = new_cfg_json = old_all_cfg_json.at(cfg_key);
         new_cfg_json.merge_patch(request.cfg_data);
-        PJ_F_DEBUG("cfg json merge: pjId[%d], req_or_resp[%d]: %s\n",request.id, req_or_resp, new_cfg_json.dump(4).c_str());
+
+        PJ_F_DEBUG("cfg json merge: pjId[%d], side[%d]: %s\n",request.id, static_cast<int32_t>(request.side), new_cfg_json.dump(4).c_str());
 
         if(new_cfg_json.empty())
         {
-            resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+            WriteOpResponseHelper(ctx, write_result.failed(-100, "request param error"));
             return;
         }
+
+        // TODO 从新考虑 对配置项进行校验 下面runtime添加已经存在校验逻辑
 
         // 3. 写数据库
-        ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, new_cfg_json.dump());
+        ok = std::invoke(svc_func, _svc.get(), ctx, protocol_id, type, new_cfg_json);
         if(!ok)
         {
-            PC_F_ERROR("protocolitem UpdateCfg error\n");
-
-            resp->body().appendData(R"({"code": -300, "message":"protocolitem update cfg failed"})");
-            return;
-        }
-
-        // 4. runtime 设置
-        // 更新服务器上的协议配置信息
-        // 简单起见 不要做局部更新 直接整体替换
-        auto result = InvokeOnLoopSync(project_service->getLoop(), 1000,
-        [project_service,
-            protocol_id,
-            project_id,
-            req_or_resp,
-            new_cfg_json](){
-
-            PC_F_DEBUG("UpdateCfgProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d]\n", protocol_id, project_id, req_or_resp);
-
-            if(DetailReq::kRequest == req_or_resp)
-            {
-                return project_service->UpdateReqCfgProtocolItem(protocol_id, new_cfg_json);
-            }
-            else if(DetailReq::kResponse == req_or_resp)
-            {
-                return project_service->UpdateRespCfgProtocolItem(protocol_id, new_cfg_json);
-            }
-
-            return RuntimeResult<void>{
-                RuntimeError(RuntimeError::kProtocolTypeMismatch)
-            };
-        });
-        if(!result.ok())
-        {
-            // 数据库回滚
-            ok = _svc->UpdateCfg(ctx,  request.id, request.req_or_resp, old_cfg_json.dump());
-            if(!ok)
-            {
-                PC_F_ERROR("protocolitem rollback UpdateCfg error\n");
-            }
-
-            PC_F_ERROR("InvokeOnLoopSync::UpdateCfgProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
-
-            resp->body().appendData(R"({"code": -300, "message":"protocolitem update cfg failed"})");
-            return;
+            PC_F_ERROR("protocolitem UpdateProtocolCfg error\n");
+            throw std::runtime_error("update cfg error");
         }
 
     } catch(const std::exception& e) {
 
-        PC_F_ERROR("service UpdateCfg exception: %s \n", e.what());
-        // TODO: 自定义业务错误码统一处理
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        PC_F_ERROR("service UpdateProtocolCfg exception: %s \n", e.what());
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "service failed"));
         return;
     }
 
-    resp->body().appendData(R"({"code": 0, "message":"success"})");
+    if(ProtocolRuntimeEnabled::kOn != runtime_enabeld)
+    {
+        WriteOpResponseHelper(ctx, write_result.persistedOk().success());
+        return;
+    }
 
+    // 4. runtime 设置
+    // 更新服务器上的协议配置信息
+    // 简单起见 不要做局部更新 直接整体替换
+    auto project_server = GetApp()->findServer(request.project_id);
+    if(!project_server || !project_server->isActive())
+    {
+        PC_F_WARN("project not found! %d \n", project_id);
+
+        // 数据库回滚
+        ok = std::invoke(svc_func, _svc.get(), ctx, protocol_id, type, old_cfg_json);
+        if(!ok)
+        {
+            PC_F_ERROR("protocolitem rollback UpdateProtocolCfg error\n");
+            write_result.persistedOk();
+        }
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "project not found"));
+        return;
+    } 
+    
+    auto result = InvokeOnLoopSync(project_server->getLoop(), 1000,
+    [project_server,
+        runtime_func,
+        protocol_id,
+        project_id,
+        side,
+        new_cfg_json](){
+
+        PC_F_DEBUG("UpdateProtocolCfgItem: pcId[%ld], pjId[%ld], side[%d] \n", protocol_id, project_id, static_cast<int32_t>(side));
+
+        return std::invoke(runtime_func, project_server.get(), protocol_id, new_cfg_json);
+
+    });
+    if(!result.ok())
+    {
+        // 数据库回滚
+        ok = std::invoke(svc_func, _svc.get(), ctx, protocol_id, type, old_cfg_json);
+        if(!ok)
+        {
+            PC_F_ERROR("protocolitem rollback UpdateProtocolCfg error\n");
+            write_result.persistedOk();
+        }
+
+        PC_F_ERROR("InvokeOnLoopSync::UpdateProtocolCfgItem error: %d:%s! project_id[%d], protocol_id[%d] side[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_server->getProjectId(), protocol_id, static_cast<int32_t>(side));
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "protocolitem update cfg failed"));
+        return;
+    }
+
+    WriteOpResponseHelper(ctx, write_result.allOk().success());
 }
 
 void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
@@ -917,7 +932,8 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
-    DetailReq request; //json
+    WriteOpResult write_result;
+    DetailReq request;
     // 注意 请求/响应 走同一个服务处理 url不同
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
@@ -928,72 +944,97 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     {
         PC_F_ERROR("body bind error! \n");
 
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
-        return;
-    }
-
-    // ProtocolType type = ProtocolTypeFromString(request.header.type);
-    ProtocolBodyType body_type = ProtocolBodyTypeFromString(request.header.body_type);
-
-    if((DetailReq::kRequest != request.header.req_or_resp
-        && DetailReq::kResponse !=  request.header.req_or_resp) || (body_type <= ProtocolBodyType::UNKNOWN_BODY_TYPE || body_type > ProtocolBodyType::BINARY_BODY_TYPE))
-    {
-        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
-        return;
-    }
-
-    ok = false;
-    try 
-    {
-        ok = _svc->UpdateBody(ctx, request.header.id, request.header.req_or_resp, static_cast<int32_t>(body_type), request.cfg_data);
-        if(!ok)
-            throw std::logic_error("UpdateBody failed");
-    }
-    catch(const std::exception& e)
-    {
-        PC_F_ERROR("service UpdateBody exception: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
     }
 
     int64_t protocol_id = request.header.id;
     int64_t project_id = request.header.project_id;
-    int32_t req_or_resp = request.header.req_or_resp;
+    const ProtocolSide side = request.header.side;
+    const ProtocolBodyType body_type = request.header.body_type;
 
-    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    // 用户权限校验
+    if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), protocol_id, false))
     {
         WriteForbidden(ctx);
         return;
     }
 
-    // 更新服务器上的Body信息
-    auto project_service = GetApp()->findServer(request.header.project_id);
-    if(!project_service)
+    if((ProtocolSide::kRequest != side
+        && ProtocolSide::kResponse !=  side) 
+        || (body_type <= ProtocolBodyType::kUnknown || body_type >= ProtocolBodyType::kMax))
     {
-        PC_F_WARN("project not found! %d \n", project_id);
-        
-        //TODO 需要去重启服务
-        resp->body().appendData(R"({"code": -300, "message":"project not found"})");
+        WriteOpResponseHelper(ctx, write_result.failed(-100, "request param error"));
         return;
     }
 
-    auto result = InvokeOnLoopSync(project_service->getLoop(), 1000, 
+
+
+    const ProtocolRuntimeEnabled runtime_enabled = _svc->IsRuntimeEnabled(ctx, protocol_id);
+
+    ok = false;
+    ProtocolBodyType old_body_type;std::vector<char> old_body_data;
+    try  {
+
+        ok = _svc->GetBodyInfoById(ctx,request.header.id, request.header.side, old_body_type, old_body_data);
+        if(!ok)
+        {
+            throw std::runtime_error("GetBodyInfoById error");
+        }
+
+        ok = _svc->UpdateBody(ctx, request.header.id, request.header.side, body_type, request.cfg_data);
+        if(!ok)
+        {
+            throw std::runtime_error("UpdateBody error");
+        }
+
+    } catch(const std::exception& e) {
+        PC_F_ERROR("service UpdateBody exception: %s \n", e.what());
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "service failed"));
+        return;
+    }
+
+    if(ProtocolRuntimeEnabled::kOn != runtime_enabled)
+    {
+        WriteOpResponseHelper(ctx, write_result.persistedOk(). success());
+        return;
+    }
+
+    auto project_server = GetApp()->findServer(request.header.project_id);
+    if(!project_server)
+    {
+        PC_F_WARN("project not found! %d \n", project_id);
+
+        // 回滚
+        ok = _svc->UpdateBody(ctx, request.header.id, request.header.side, old_body_type, old_body_data);
+        if(!ok)
+        {
+            PC_F_ERROR("protocolitem rollback UpdateBody error\n");
+            write_result.persistedOk();
+        }
+
+        WriteOpResponseHelper(ctx, write_result.failed(-300, "project not found"));
+        return;
+    }
+
+    auto result = InvokeOnLoopSync(project_server->getLoop(), 1000, 
     [protocol_id,
         project_id,
-        req_or_resp,
-        project_service,
+        side,
+        project_server,
         body_type,
         data = std::move(request.cfg_data)](){
 
-        PC_F_DEBUG("UpdateBodyProtocolItem: protocol_id[%d] project_id[%d] req_or_resp[%d] body_type[%d]\n", protocol_id, project_id, req_or_resp, body_type);
+        PC_F_DEBUG("UpdateBodyProtocolItem: protocol_id[%d] project_id[%d] side[%d] body_type[%d]\n", protocol_id, project_id, static_cast<int32_t>(side), body_type);
 
-        if(DetailReq::kRequest == req_or_resp)
+        if(ProtocolSide::kRequest == side)
         {
-            return project_service->UpdateReqBodyProtocolItem(protocol_id, body_type, data);
+            return project_server->UpdateReqBodyProtocolItem(protocol_id, body_type, data);
         }
-        else if(DetailReq::kResponse == req_or_resp)
+        else if(ProtocolSide::kResponse == side)
         {
-            return project_service->UpdateRespBodyProtocolItem(protocol_id, body_type, data);
+            return project_server->UpdateRespBodyProtocolItem(protocol_id, body_type, data);
         }
         return RuntimeResult<void>{
             RuntimeError(RuntimeError::kProtocolTypeMismatch)
@@ -1001,13 +1042,21 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     });
     if(!result.ok())
     {
-        PC_F_ERROR("InvokeOnLoopSync::UpdateBodyProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_service->getProjectId(), protocol_id);
+        PC_F_ERROR("InvokeOnLoopSync::UpdateBodyProtocolItem error: %d:%s! project_id[%d], protocol_id[%d] \n", result.error.toInt(), result.error.toMsg().c_str(), project_server->getProjectId(), protocol_id);
 
-        resp->body().appendData(R"({"code": -300, "message":"protocolitem update body failed"})");
+        // 回滚
+        ok = _svc->UpdateBody(ctx, request.header.id, request.header.side, old_body_type, old_body_data);
+        if(!ok)
+        {
+            PC_F_ERROR("protocolitem rollback UpdateBody error\n");
+            write_result.persistedOk();
+        }
+
+        WriteOpResponseHelper(ctx, write_result. failed(-300, "protocolitem update body failed"));
         return;
     }
 
-    resp->body().appendData(R"({"code": 0, "message":"success"})");
+    WriteOpResponseHelper(ctx, write_result.allOk(). success());
 }
 
 
@@ -1039,14 +1088,14 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     }
 
     int32_t protocol_cnt = -1;
-    if(!CheckProjectAccess(ctx, _projectSvc.get(), project_id, true, false))
+    if(!CheckProjectAccess(ctx, _pjSvc.get(), project_id, true, false))
     {
         WriteForbidden(ctx);
         return;
     }
     try 
     {
-        protocol_cnt = _svc->GetProtocolCnt(ctx, project_id, ProtocolStatus::ACTIVE);
+        protocol_cnt = _svc->GetProtocolCnt(ctx, project_id, ProtocolStatus::kValid);
         if(protocol_cnt < 0)
             throw;
     }
@@ -1094,7 +1143,7 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
 
     nljson protocol_cfg;
     try {
-        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+        if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), protocol_id, false))
         {
             WriteForbidden(ctx);
             return;
@@ -1140,8 +1189,8 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
         return;
     }
 
-    if(DetailReq::kRequest != request.req_or_resp
-        && DetailReq::kResponse !=  request.req_or_resp)
+    if(ProtocolSide::kRequest != request.side
+        && ProtocolSide::kResponse !=  request.side)
     {
         resp->body().appendData(R"({"code": -200, "message":"request param error"})");
         return;
@@ -1151,12 +1200,12 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     nljson common_fields_json;
     try 
     {
-        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), request.id, false))
+        if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), request.id, false))
         {
             WriteForbidden(ctx);
             return;
         }
-        common_fields_json = _svc->GetTcpCommonFieldsById(ctx, request.id, request.req_or_resp);
+        common_fields_json = _svc->GetTcpCommonFieldsById(ctx, request.id, request.side);
 
     }
     catch(const std::exception& e)
@@ -1202,16 +1251,16 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
 
     // ProtocolType type = ProtocolTypeFromString(request.type);
 
-    if(DetailReq::kRequest != request.req_or_resp
-        && DetailReq::kResponse !=  request.req_or_resp)
+    if(ProtocolSide::kRequest != request.side
+        && ProtocolSide::kResponse !=  request.side)
     {
         resp->body().appendData(R"({"code": -100, "message":"request param error"})");
         return;
     }
     int64_t protocol_id = request.id;
-    // int64_t project_id = request.project_id;
-    int32_t req_or_resp = request.req_or_resp;
-    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+    const ProtocolSide side = request.side;
+
+    if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), protocol_id, false))
     {
         WriteForbidden(ctx);
         return;
@@ -1221,8 +1270,8 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     try 
     {
 
-        body_type =  _svc->GetBodyTypeById(ctx, protocol_id, req_or_resp);
-        if(body_type <= ProtocolBodyType::UNKNOWN_BODY_TYPE || body_type > ProtocolBodyType::BINARY_BODY_TYPE)
+        body_type =  _svc->GetBodyTypeById(ctx, protocol_id, side);
+        if(body_type <= ProtocolBodyType::kUnknown || body_type > ProtocolBodyType::kBinary)
             throw std::logic_error("GetBodyTypeById failed");
     }
     catch(const std::exception& e)
@@ -1262,18 +1311,17 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
         return;
     }
 
-    // ProtocolType type = ProtocolTypeFromString(request.type);
+    int64_t protocol_id = request.id;
+    const ProtocolSide side = request.side;
 
-    if(DetailReq::kRequest != request.req_or_resp
-        && DetailReq::kResponse !=  request.req_or_resp)
+    if(ProtocolSide::kRequest != side
+        && ProtocolSide::kResponse != side)
     {
         resp->body().appendData(R"({"code": -100, "message":"request param error"})");
         return;
     }
-    int64_t protocol_id = request.id;
-    // int64_t project_id = request.project_id;
-    int32_t req_or_resp = request.req_or_resp;
-    if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), protocol_id, false))
+
+    if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), protocol_id, false))
     {
         WriteForbidden(ctx);
         return;
@@ -1282,7 +1330,7 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     std::vector<char> body_data;
     try 
     {
-        ok = _svc->GetBodyDataById(ctx, protocol_id, req_or_resp, body_data);
+        ok = _svc->GetBodyDataById(ctx, protocol_id, side, body_data);
         if(!ok)
             throw std::logic_error("GetBodyDataById failed");
     }
@@ -1333,8 +1381,8 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
 
     // ProtocolType type = ProtocolTypeFromString(request.type);
 
-    if(DetailReq::kRequest != request.req_or_resp
-        && DetailReq::kResponse !=  request.req_or_resp)
+    if(ProtocolSide::kRequest != request.side
+        && ProtocolSide::kResponse !=  request.side)
     {
         resp->body().appendData(R"({"code": -100, "message":"request param error"})");
         return;
@@ -1343,12 +1391,12 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     ProtocolBodyType body_type;
     std::vector<char> body_data;
     try {
-        if(!CheckProtocolAccess(ctx, _svc.get(), _projectSvc.get(), request.id, false))
+        if(!CheckProtocolAccess(ctx, _svc.get(), _pjSvc.get(), request.id, false))
         {
-            WriteForbidden(ctx);
+        WriteForbidden(ctx);
             return;
         }
-        ok = _svc->GetBodyInfoById(ctx, request.id, request.req_or_resp, body_type, body_data);
+        ok = _svc->GetBodyInfoById(ctx, request.id, request.side, body_type, body_data);
         if(!ok)
             throw std::logic_error("GetBodyDataById failed");
     } catch(const std::exception& e) {
@@ -1390,11 +1438,14 @@ void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_mudu
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
+    WriteOpResult write_result;
+
     int64_t protocol_id = 0;
     try {
         protocol_id = std::stol(ctx->routeParam("protocol_id"));
     } catch(const std::exception &) {
-        resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
+
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
     }
 
@@ -1406,24 +1457,25 @@ void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_mudu
     }
 
     auto protocol = _svc->GetById(ctx, protocol_id);
-    auto project = _projectSvc->GetById(ctx, protocol.m_projectId);
-    if(protocol.m_id <= 0 || project.m_id <= 0 || project.m_status != ProjectStatus::ON_STATUS)
+    auto project = _pjSvc->GetById(ctx, protocol.m_projectId);
+    if(protocol.m_id <= 0 || project.m_id <= 0 || project.m_status != ProjectStatus::kValid)
     {
-        resp->body().appendData(R"({"code": -300, "message":"service failed","data":{}})");
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-300, "service failed"));
         return;
     }
-    if(project.m_active == ProjectStatus::ON_STATUS)
+    if(ProjectRuntimeState::kRunning == project.m_runtimeState)
     {
-        resp->body().appendData(R"({"code": -300, "message":"请先停止测试服务后再恢复协议项","data":{}})");
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-300, "请先停止测试服务后再恢复协议项"));
         return;
     }
 
     if(!_svc->ReCover(ctx, protocol_id))
     {
-        resp->body().appendData(R"({"code": -300, "message":"service failed","data":{}})");
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-300, "service failed"));
         return;
     }
-    resp->body().appendData(R"({"code": 0, "message":"success","data":{}})");
+
+    WriteOpResponseHelper(ctx, write_result.persistedOk().success());
 }
 
 

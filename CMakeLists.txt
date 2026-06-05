@@ -249,6 +249,7 @@ set(WORK_WEB_SRC
     src/work/web/web_user.cpp
     src/work/web/project_vo.cpp
     src/work/web/protocol_vo.cpp
+    src/work/web/write_response.cpp
 )
 
 set(IOC_SRC

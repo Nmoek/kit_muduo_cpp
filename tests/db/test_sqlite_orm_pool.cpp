@@ -123,7 +123,7 @@ kit_dao::Project MakeProject(const std::string &name)
     project.m_targetIp = "127.0.0.1:0";
     project.m_userId = 1;
     project.m_status = 1;
-    project.m_active = 0;
+    project.m_runtimeState = 0;
     project.m_patternInfo = {'p', 'o', 'o', 'l'};
     project.m_ctime = 1;
     project.m_utime = 1;

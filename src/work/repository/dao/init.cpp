@@ -11,12 +11,46 @@
 #include "dao/sqlite_orm_pool.h"
 #include "sqlite3.h"
 
+#include <exception>
 #include <memory>
 #include <vector>
 #include <string>
 #include <stdexcept>
 
 namespace kit_dao {
+
+namespace {
+
+static std::vector<std::vector<const char*>> index_sqls{
+    // 0 projects
+    {
+        "CREATE INDEX IF NOT EXISTS idx_projects_userid_status ON projects(user_id, status);",
+        "CREATE INDEX IF NOT EXISTS idx_projects_userid_runstate ON projects(user_id, runtime_state);",
+        "CREATE INDEX IF NOT EXISTS idx_projects_runstate ON projects(runtime_state);",
+        "CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);",    
+    },
+    // 1 protocols
+    {
+        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status ON protocols(project_id, status);",
+        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_runenabled ON protocols(project_id, runtime_enabled);",
+        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status_runenabled ON protocols(project_id, status, runtime_enabled);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_protocols_pjid_runkey ON protocols(project_id, runtime_key) WHERE status = 1;",
+    },
+    // 2 users
+    {
+        "CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);",
+
+    },
+    // 3 sessions
+    {
+        "CREATE INDEX IF NOT EXISTS idx_sessions_userid ON sessions(user_id);",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_extime ON sessions(expire_time);",
+
+    }
+
+};
+
+}
 
 void EnsureSqliteIndexes()
 {
@@ -32,25 +66,23 @@ void EnsureSqliteIndexes()
         throw std::runtime_error("open sqlite for index failed: " + msg);
     }
 
-    const char *sqls[] = {
-        "CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status)",
-        "CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)",
-        "CREATE INDEX IF NOT EXISTS idx_sessions_expire_time ON sessions(expire_time)",
-        "CREATE INDEX IF NOT EXISTS idx_projects_user_status ON projects(user_id, status)",
-        "CREATE INDEX IF NOT EXISTS idx_protocols_project_status ON protocols(project_id, status)",
-    };
-    for(const char *sql : sqls)
+    for(auto &t : index_sqls)
     {
-        char *err_msg = nullptr;
-        const int rc = sqlite3_exec(raw_db, sql, nullptr, nullptr, &err_msg);
-        if(rc != SQLITE_OK)
+        for(const char *sql : t)
         {
-            std::string msg = err_msg ? err_msg : "unknown sqlite error";
-            sqlite3_free(err_msg);
-            sqlite3_close(raw_db);
-            throw std::runtime_error("create sqlite index failed: " + msg);
+            char *err_msg = nullptr;
+            const int rc = sqlite3_exec(raw_db, sql, nullptr, nullptr, &err_msg);
+            if(rc != SQLITE_OK)
+            {
+                std::string msg = err_msg ? err_msg : "unknown sqlite error";
+                sqlite3_free(err_msg);
+                sqlite3_close(raw_db);
+                throw std::runtime_error("create sqlite index failed: " + msg);
+            }
         }
+
     }
+
     sqlite3_close(raw_db);
 }
 

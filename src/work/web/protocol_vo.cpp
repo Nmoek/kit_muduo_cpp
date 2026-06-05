@@ -18,14 +18,14 @@ namespace kit_domain {
 
 static ProtocolCfgVoPtr CreateProtocolReqCfgVo(const ProtocolType type, const std::vector<char> &cfg_data)
 {
-    if(ProtocolType::HTTP_PROTOCOL == type ||
-        ProtocolType::HTTPS_PROTOCOL == type)
+    if(ProtocolType::kHttp == type ||
+        ProtocolType::kHttps == type)
     {
         auto p = std::make_shared<HttpProtocolReqCfgVo>();
         nljson::parse(cfg_data).get_to(*p);
         return p;
     }
-    else if(ProtocolType::CUSTOM_TCP_PROTOCOL == type)
+    else if(ProtocolType::kCustomTcp == type)
     {
         auto p = std::make_shared<TcpProtocolReqCfgVo>();
         nljson::parse(cfg_data).get_to(*p);
@@ -37,14 +37,14 @@ static ProtocolCfgVoPtr CreateProtocolReqCfgVo(const ProtocolType type, const st
 
 static ProtocolCfgVoPtr CreateProtocolRespCfgVo(const ProtocolType type, const std::vector<char> &cfg_data)
 {
-    if(ProtocolType::HTTP_PROTOCOL == type ||
-        ProtocolType::HTTPS_PROTOCOL == type)
+    if(ProtocolType::kHttp == type ||
+        ProtocolType::kHttps == type)
     {
         auto p = std::make_shared<HttpProtocolRespCfgVo>();
         nljson::parse(cfg_data).get_to(*p);
         return p;
     }
-    else if(ProtocolType::CUSTOM_TCP_PROTOCOL == type)
+    else if(ProtocolType::kCustomTcp == type)
     {
         auto p = std::make_shared<TcpProtocolRespCfgVo>();
         nljson::parse(cfg_data).get_to(*p);
@@ -63,6 +63,7 @@ ProtocolVo CovertProtocolVo(const Protocol &p)
             ProtocolTypeToString(p.m_type),
             p.m_projectId,
             static_cast<int32_t>(p.m_status),
+            static_cast<int32_t>(p.m_runtimeEnabled),
             std::move(p.m_reqCfg),
             std::move(p.m_respCfg),
             ProtocolBodyTypeToString(p.m_reqBodyType),

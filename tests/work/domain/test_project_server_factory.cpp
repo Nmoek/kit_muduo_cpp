@@ -49,7 +49,7 @@ Project MakeBaseProject(int64_t project_id, ProtocolType protocol_type)
         .m_listenPort = 0,
         .m_targetIp = "",
         .m_userId = 1,
-        .m_status = ProjectStatus::ON_STATUS,
+        .m_status = ProjectStatus::kValid,
         .m_patternInfo = std::vector<char>(kNoLengthPatternInfo.begin(), kNoLengthPatternInfo.end()),
         .m_ctime = TimeStamp::Now()
     };
@@ -97,7 +97,7 @@ static RuntimeLoopPool pool(10);
  */
 TEST(TestProjectServerFactory, CreateHttpServerKeepsLoopAliveAfterFactoryReturns)
 {
-    Project p = MakeBaseProject(101, ProtocolType::HTTP_PROTOCOL);
+    Project p = MakeBaseProject(101, ProtocolType::kHttp);
 
     auto result = pool.acquire(time(nullptr));
     ASSERT_EQ(result.ok(), true);
@@ -124,7 +124,7 @@ TEST(TestProjectServerFactory, CreateHttpServerKeepsLoopAliveAfterFactoryReturns
  */
 TEST(TestProjectServerFactory, CreateCustomTcpServerKeepsLoopAliveAfterFactoryReturns)
 {
-    Project p = MakeBaseProject(102, ProtocolType::CUSTOM_TCP_PROTOCOL);
+    Project p = MakeBaseProject(102, ProtocolType::kCustomTcp);
 
     auto result = pool.acquire(time(nullptr));
     ASSERT_EQ(result.ok(), true);

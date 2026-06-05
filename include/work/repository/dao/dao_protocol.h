@@ -29,6 +29,7 @@ class ProtocolDaoInterface
 public:
     virtual ~ProtocolDaoInterface() = default;
 
+
     virtual int64_t Insert(kit_muduo::HttpContextPtr ctx, kit_dao::Protocol daoPc) = 0;
 
     virtual bool UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t status) = 0;
@@ -37,43 +38,42 @@ public:
 
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocolId, const std::string &name) = 0;
 
-    virtual bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, const std::string& cfg_data) = 0;
+    virtual bool UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const std::string& runtime_key, const nlohmann::json& cfg_json) = 0;
 
+    virtual bool UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const nlohmann::json& cfg_json) = 0;
 
-    virtual bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json) = 0;
-
-    virtual bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data) = 0;
+    virtual bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t side, int32_t body_type, const std::vector<char>& cfg_data) = 0;
 
     virtual kit_dao::Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) = 0;
 
-    virtual std::vector<kit_dao::Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) = 0;
+    virtual std::vector<kit_dao::Protocol> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<kit_dao::Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) = 0;
+    virtual std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t runtime_enabled) = 0;
 
 
     virtual int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) = 0;
 
     // 这个接口弃用
-    virtual std::string GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
+    virtual std::string GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side) = 0;
 
-    virtual int32_t GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
+    virtual int32_t GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side) = 0;
 
-    virtual bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data) = 0;
+    virtual bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side, std::vector<char> &body_data) = 0;
 
-    virtual bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, int32_t &body_type, std::vector<char> &body_data) = 0;
+    virtual bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side, int32_t &body_type, std::vector<char> &body_data) = 0;
 
     virtual nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)  = 0;
+
+    virtual int32_t IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
+
+    virtual bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) = 0;
 
 };
 
 class SqliteOrmProtocolDao : public ProtocolDaoInterface
 {
 public:
-    SqliteOrmProtocolDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool)
-        :_db_pool(db_pool)
-    {
-
-    }
+    explicit SqliteOrmProtocolDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool);
     ~SqliteOrmProtocolDao() = default;
 
     int64_t Insert(std::shared_ptr<kit_muduo::http::HttpContext> ctx, kit_dao::Protocol daoPc) override;
@@ -84,29 +84,33 @@ public:
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocolId, const std::string &name) override;
 
-    bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, const std::string& cfg_data) override;
+    bool UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const std::string& runtime_key, const nlohmann::json& cfg_json) override;
 
-    bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json) override;
+    bool UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const nlohmann::json& cfg_json) override;
 
-    bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data) override;
+    bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t side, int32_t body_type, const std::vector<char>& cfg_data) override;
 
     kit_dao::Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) override;
 
-    std::vector<kit_dao::Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) override;
+    std::vector<kit_dao::Protocol> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) override;
 
-    std::vector<kit_dao::Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) override;
+    std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t runtime_enabled) override;
 
     int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) override;
 
-    std::string GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
+    std::string GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side) override;
 
-    int32_t GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
+    int32_t GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side) override;
 
-    bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data) override;
+    bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side, std::vector<char> &body_data) override;
 
-    bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, int32_t &body_type, std::vector<char> &body_data) override;
+    bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t side, int32_t &body_type, std::vector<char> &body_data) override;
 
     nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+
+    int32_t IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+
+    bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) override;
 
 private:
     template<typename T, typename Field, typename Value>

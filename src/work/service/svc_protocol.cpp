@@ -12,6 +12,7 @@
 #include "service/svc_log.h"
 
 namespace kit_domain {
+
 ProtocolService::ProtocolService(std::shared_ptr<ProtocolRepoInterface> repo)
     :ProtocolSvcInterface(repo)
 {
@@ -29,12 +30,12 @@ int64_t ProtocolService::Add(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
 }
 bool ProtocolService::Del(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
 {
-    return _repo->UpdateStatusById(ctx, protocol_id, static_cast<int32_t>(ProtocolStatus::INACTIVE));
+    return _repo->UpdateStatusById(ctx, protocol_id, static_cast<int32_t>(ProtocolStatus::kInvalid));
 }
 
 bool ProtocolService::ReCover(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
 {
-    return _repo->UpdateStatusById(ctx, protocol_id, static_cast<int32_t>(ProtocolStatus::ACTIVE));
+    return _repo->UpdateStatusById(ctx, protocol_id, static_cast<int32_t>(ProtocolStatus::kValid));
 }
 
 bool ProtocolService::UpdateById(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
@@ -48,19 +49,20 @@ bool ProtocolService::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocol
 }
 
 
-bool ProtocolService::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const std::string& cfg_data)
+bool ProtocolService::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
 {
-    return _repo->UpdateCfg(ctx, protocol_id, req_or_resp, cfg_data);
+    return _repo->UpdateReqCfg(ctx, protocol_id, type, cfg_json);
 }
 
-bool ProtocolService::UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json)
+bool ProtocolService::UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
 {
-    return _repo->UpdateCfg(ctx, protocol_id, req_or_resp, cfg_json);
+    return _repo->UpdateRespCfg(ctx, protocol_id, type, cfg_json);
+
 }
 
-bool ProtocolService::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data)
+bool ProtocolService::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char>& cfg_data)
 {
-    return _repo->UpdateBody(ctx, protocol_id, req_or_resp, body_type, cfg_data);
+    return _repo->UpdateBody(ctx, protocol_id, side, body_type, cfg_data);
 }
 
 Protocol ProtocolService::GetById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
@@ -73,9 +75,13 @@ std::vector<Protocol> ProtocolService::GetByProject(kit_muduo::HttpContextPtr ct
     return _repo->GetByProject(ctx, projectId, status, offset, limit);
 }
 
-std::vector<Protocol> ProtocolService::GetAllActive(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
+std::vector<Protocol> ProtocolService::GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return _repo->GetAllByProject(ctx, project_id, ProtocolStatus::ACTIVE);
+    return _repo->GetValidByProject(ctx, project_id);}
+
+std::vector<Protocol> ProtocolService::GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+{
+    return _repo->GetActiveByProject(ctx, project_id);
 }
 
 int32_t ProtocolService::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
@@ -83,25 +89,25 @@ int32_t ProtocolService::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t p
     return _repo->GetProtocolCnt(ctx, project_id, status);
 }
 
-nlohmann::json ProtocolService::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
+nlohmann::json ProtocolService::GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side)
 {
-    return _repo->GetTcpCommonFieldsById(ctx, protocol_id, req_or_resp);
+    return _repo->GetTcpCommonFieldsById(ctx, protocol_id, side);
 }
 
 
-ProtocolBodyType ProtocolService::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp)
+ProtocolBodyType ProtocolService::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side)
 {
-    return _repo->GetBodyTypeById(ctx, protocol_id, req_or_resp);
+    return _repo->GetBodyTypeById(ctx, protocol_id, side);
 }
 
-bool ProtocolService::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data)
+bool ProtocolService::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, std::vector<char> &body_data)
 {
-    return _repo->GetBodyDataById(ctx, protocol_id, req_or_resp, body_data);
+    return _repo->GetBodyDataById(ctx, protocol_id, side, body_data);
 }
 
-bool ProtocolService::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, ProtocolBodyType &body_type, std::vector<char> &body_data)
+bool ProtocolService::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType &body_type, std::vector<char> &body_data)
 {
-    return _repo->GetBodyInfoById(ctx, protocol_id, req_or_resp, body_type, body_data);
+    return _repo->GetBodyInfoById(ctx, protocol_id, side, body_type, body_data);
 
 }
 
@@ -109,6 +115,16 @@ bool ProtocolService::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t pro
 nlohmann::json ProtocolService::GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
 {
     return _repo->GetCfgById(ctx, protocol_id);
+}
+
+ProtocolRuntimeEnabled ProtocolService::IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
+{
+    return _repo->IsRuntimeEnabled(ctx, protocol_id);
+}
+
+bool ProtocolService::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled)
+{
+    return _repo->UpdateRuntimeEnabled(ctx, protocol_id, runtime_enabled);
 }
 
 }   // namespace kit_domain 

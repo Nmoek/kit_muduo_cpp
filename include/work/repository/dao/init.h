@@ -36,8 +36,8 @@ struct SqliteOrmPoolConfig;
             sqlite_orm::make_column("listen_port", &Project::m_listenPort), \
             sqlite_orm::make_column("target_ip", &Project::m_targetIp), \
             sqlite_orm::make_column("user_id", &Project::m_userId), \
-            sqlite_orm::make_column("status", &Project::m_status), \
-            sqlite_orm::make_column("active", &Project::m_active), \
+            sqlite_orm::make_column("status", &Project::m_status, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
+            sqlite_orm::make_column("runtime_state", &Project::m_runtimeState, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
             sqlite_orm::make_column("pattern_info", &Project::m_patternInfo, sqlite_orm::not_null()) \
         ), \
         sqlite_orm::make_table("protocols", \
@@ -47,13 +47,15 @@ struct SqliteOrmPoolConfig;
             sqlite_orm::make_column("name", &Protocol::m_name, sqlite_orm::not_null()), \
             sqlite_orm::make_column("type", &Protocol::m_type), \
             sqlite_orm::make_column("project_id", &Protocol::m_projectId), \
-            sqlite_orm::make_column("status", &Protocol::m_status), \
+            sqlite_orm::make_column("runtime_key", &Protocol::m_runtimeKey, sqlite_orm::not_null(), sqlite_orm::default_value("")), \
+            sqlite_orm::make_column("status", &Protocol::m_status, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
+            sqlite_orm::make_column("runtime_enabled", &Protocol::m_runtimeEnabled, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
             sqlite_orm::make_column("req_body_type", &Protocol::m_reqBodyType), \
             sqlite_orm::make_column("resp_body_type", &Protocol::m_respBodyType), \
             sqlite_orm::make_column("req_body_status", &Protocol::m_reqBodyDataStatus), \
             sqlite_orm::make_column("resp_body_status", &Protocol::m_respBodyDataStatus), \
-            sqlite_orm::make_column("req_cfg", &Protocol::m_reqCfg, sqlite_orm::not_null()), \
-            sqlite_orm::make_column("resp_cfg", &Protocol::m_respCfg, sqlite_orm::not_null()), \
+            sqlite_orm::make_column("req_cfg", &Protocol::m_reqCfg, sqlite_orm::not_null(), sqlite_orm::default_value("{}")), \
+            sqlite_orm::make_column("resp_cfg", &Protocol::m_respCfg, sqlite_orm::not_null(), sqlite_orm::default_value("{}")), \
             sqlite_orm::make_column("req_body_data", &Protocol::m_reqBodyData, sqlite_orm::not_null()), \
             sqlite_orm::make_column("resp_body_data", &Protocol::m_respBodyData, sqlite_orm::not_null()), \
             sqlite_orm::make_column("is_endian", &Protocol::m_isEndian) \

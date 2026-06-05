@@ -46,31 +46,36 @@ public:
     virtual bool UpdateById(kit_muduo::HttpContextPtr ctx, Protocol &domainPc) = 0;
 
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocolId, const std::string &name) = 0;
-
-    virtual bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, const std::string& cfg_data) = 0;
     
-    virtual bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json) = 0;
+    virtual bool UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json) = 0;
 
-    virtual bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data) = 0;
+    virtual bool UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json) = 0;
+
+    virtual bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char>& cfg_data) = 0;
 
     virtual Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) = 0;
 
     virtual std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId,ProtocolStatus status, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) = 0;
+    virtual std::vector<Protocol> GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
+    virtual std::vector<Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
     virtual int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) = 0;
 
-    virtual nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
+    virtual nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side) = 0;
 
-    virtual ProtocolBodyType GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) = 0;
+    virtual ProtocolBodyType GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side) = 0;
 
-    virtual bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data) = 0;
+    virtual bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, std::vector<char> &body_data) = 0;
 
-    virtual bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, ProtocolBodyType &body_type, std::vector<char> &body_data) = 0;
+    virtual bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType &body_type, std::vector<char> &body_data) = 0;
 
     virtual nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
+
+    virtual ProtocolRuntimeEnabled IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
+
+    virtual bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled) = 0;
 
 protected:
     std::shared_ptr<kit_dao::ProtocolDaoInterface> _dao;
@@ -91,29 +96,35 @@ public:
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocolId, const std::string &name) override;
 
-    bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, const std::string& cfg_data) override;
+    bool UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json) override;
 
-    bool UpdateCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, const nlohmann::json& cfg_json) override;
+    bool UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json) override;
 
-    bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, int32_t req_or_resp, int32_t body_type, const std::vector<char>& cfg_data) override;
+    bool UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char>& cfg_data) override;
 
     Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) override;
     
     std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit) override;
 
-    std::vector<Protocol> GetAllByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) override;
+    std::vector<Protocol> GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+
+    std::vector<Protocol> GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 
     int32_t GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status) override;
 
-    nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
+    nlohmann::json GetTcpCommonFieldsById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side) override;
 
-    ProtocolBodyType GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp) override;
+    ProtocolBodyType GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side) override;
 
-    bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, std::vector<char> &body_data) override;
+    bool GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, std::vector<char> &body_data) override;
 
-    bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t req_or_resp, ProtocolBodyType &body_type, std::vector<char> &body_data) override;
+    bool GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType &body_type, std::vector<char> &body_data) override;
 
     nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+
+    ProtocolRuntimeEnabled IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+
+    bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled) override;
 };
 
 

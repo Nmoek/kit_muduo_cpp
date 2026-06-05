@@ -55,7 +55,7 @@ class HttpProjectServerCreator : public ProjectServerCreator {
 public:
     std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
-    ProtocolType getProtocolType() const override { return ProtocolType::HTTP_PROTOCOL; }
+    ProtocolType getProtocolType() const override { return ProtocolType::kHttp; }
 };
 
 /**
@@ -65,7 +65,7 @@ class HttpsProjectServerCreator : public ProjectServerCreator {
 public:
     std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
-    ProtocolType getProtocolType() const override { return ProtocolType::HTTPS_PROTOCOL; }
+    ProtocolType getProtocolType() const override { return ProtocolType::kHttps; }
 };
 
 /**
@@ -75,7 +75,7 @@ class TcpProjectServerCreator : public ProjectServerCreator {
 public:
     std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
-    ProtocolType getProtocolType() const override { return ProtocolType::CUSTOM_TCP_PROTOCOL; }
+    ProtocolType getProtocolType() const override { return ProtocolType::kCustomTcp; }
 };
 
 /**

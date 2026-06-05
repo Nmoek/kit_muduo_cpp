@@ -30,7 +30,7 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) = 0;
 
-    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t active, uint16_t listenPort) = 0;
+    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t runtime_state, uint16_t listenPort) = 0;
 
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::string& name) = 0;
 
@@ -40,7 +40,7 @@ public:
 
     virtual std::vector<kit_dao::Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<kit_dao::Project> GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status) = 0;
+    virtual std::vector<kit_dao::Project>  GetAllByStatusAndRuntimeState(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t runtime_state) = 0;
 
     virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
@@ -60,7 +60,7 @@ public:
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) override;
 
-    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t active, uint16_t listenPort) override;
+    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t runtime_state, uint16_t listenPort) override;
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::string& name) override;
 
@@ -70,7 +70,7 @@ public:
 
     std::vector<kit_dao::Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) override;
 
-    std::vector<kit_dao::Project> GetAllByStatus(kit_muduo::HttpContextPtr ctx, int32_t status) override;
+    std::vector<kit_dao::Project>  GetAllByStatusAndRuntimeState(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t runtime_state) override;
 
     std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 

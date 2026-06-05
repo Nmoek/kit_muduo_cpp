@@ -16,45 +16,45 @@ namespace kit_domain {
 
 ProtocolType ProtocolTypeFromString(const std::string &type)
 {
-    if("HTTP" == type) return ProtocolType::HTTP_PROTOCOL;
-    else if("TCP" == type) return ProtocolType::CUSTOM_TCP_PROTOCOL;
-    else if("HTTPS" == type) return ProtocolType::HTTPS_PROTOCOL;
+    if("HTTP" == type) return ProtocolType::kHttp;
+    else if("TCP" == type) return ProtocolType::kCustomTcp;
+    else if("HTTPS" == type) return ProtocolType::kHttps;
     
-    return ProtocolType::UNKNOWN_PROTOCOL;
+    return ProtocolType::kUnknown;
 }
 
 std::string ProtocolTypeToString(ProtocolType type)
 {
-    if(ProtocolType::HTTP_PROTOCOL == type) return "HTTP";
-    else if(ProtocolType::CUSTOM_TCP_PROTOCOL == type) return "TCP";
-    else if(ProtocolType::HTTPS_PROTOCOL == type) return "HTTPS";
+    if(ProtocolType::kHttp == type) return "HTTP";
+    else if(ProtocolType::kCustomTcp == type) return "TCP";
+    else if(ProtocolType::kHttps == type) return "HTTPS";
     
     return "";
 }
 
 ProtocolBodyType ProtocolBodyTypeFromString(const std::string &type)
 {
-    if("json" == type) return ProtocolBodyType::JSON_BODY_TYPE;
-    else if("xml" == type) return ProtocolBodyType::XML_BODY_TYPE;
-    else if("text" == type) return ProtocolBodyType::TEXT_BODY_TYPE;
-    else if("binary" == type) return ProtocolBodyType::BINARY_BODY_TYPE;
-    return ProtocolBodyType::UNKNOWN_BODY_TYPE;
+    if("json" == type) return ProtocolBodyType::kJson;
+    else if("xml" == type) return ProtocolBodyType::kXml;
+    else if("text" == type) return ProtocolBodyType::kText;
+    else if("binary" == type) return ProtocolBodyType::kBinary;
+    return ProtocolBodyType::kUnknown;
 }
 
 std::string ProtocolBodyTypeToString(ProtocolBodyType type)
 {
-    if(ProtocolBodyType::JSON_BODY_TYPE == type) return "json";
-    else if(ProtocolBodyType::XML_BODY_TYPE == type) return "xml";
-    else if(ProtocolBodyType::TEXT_BODY_TYPE == type) return "text";
-    else if(ProtocolBodyType::BINARY_BODY_TYPE == type) return "binary";
+    if(ProtocolBodyType::kJson == type) return "json";
+    else if(ProtocolBodyType::kXml == type) return "xml";
+    else if(ProtocolBodyType::kText == type) return "text";
+    else if(ProtocolBodyType::kBinary == type) return "binary";
 
     return "";
 }
 
 ContentType ProtocolBodyTypeToContentType(ProtocolBodyType type)
 {
-    if(ProtocolBodyType::JSON_BODY_TYPE == type) return ContentType(ContentType::kJsonType);
-    if(ProtocolBodyType::XML_BODY_TYPE == type) return ContentType(ContentType::kXmlType);
+    if(ProtocolBodyType::kJson == type) return ContentType(ContentType::kJsonType);
+    if(ProtocolBodyType::kXml == type) return ContentType(ContentType::kXmlType);
 
     // 默认给个文本类型
     return ContentType(ContentType::kPlainType);

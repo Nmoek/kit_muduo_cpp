@@ -432,12 +432,12 @@ static kit_domain::Project MakeBodyLengthProject(int64_t project_id)
     project.m_id = project_id;
     project.m_name = "d9_tcp_project";
     project.m_mode = ProjectMode::ServerMode;
-    project.m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL;
+    project.m_protocolType = ProtocolType::kCustomTcp;
     project.m_listenPort = 8888;
     project.m_targetIp = "";
     project.m_userId = 0;
-    project.m_status = ProjectStatus::ON_STATUS;
-    project.m_active = ProjectStatus::ON_STATUS;
+    project.m_status = ProjectStatus::kValid;
+    project.m_runtimeState = ProjectRuntimeState::kRunning;
     project.m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end());
     project.m_ctime = TimeStamp::Now();
     return project;
@@ -459,11 +459,11 @@ static kit_domain::Protocol MakeBodyLengthProtocol(
     kit_domain::Protocol protocol;
     protocol.m_id = protocol_id;
     protocol.m_name = "d9_tcp_pc_" + std::to_string(protocol_id);
-    protocol.m_type = ProtocolType::CUSTOM_TCP_PROTOCOL;
+    protocol.m_type = ProtocolType::kCustomTcp;
     protocol.m_projectId = project_id;
-    protocol.m_status = ProtocolStatus::ACTIVE;
-    protocol.m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE;
-    protocol.m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE;
+    protocol.m_status = ProtocolStatus::kValid;
+    protocol.m_reqBodyType = ProtocolBodyType::kJson;
+    protocol.m_respBodyType = ProtocolBodyType::kJson;
     protocol.m_reqBodyDataStatus = req_body.empty() ? 0 : 1;
     protocol.m_respBodyDataStatus = resp_body.empty() ? 0 : 1;
     protocol.m_reqCfg = req_cfg;
@@ -566,22 +566,22 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_id = 1,
                 .m_name = "test",
                 .m_mode = ProjectMode::ServerMode,
-                .m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_protocolType = ProtocolType::kCustomTcp,
                 .m_listenPort = 8888,
                 .m_targetIp = "",
                 .m_userId = 0,
-                .m_status = ProjectStatus::ON_STATUS,
+                .m_status = ProjectStatus::kValid,
                 .m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end()),
                 .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
                 .m_name = "test_pc",
-                .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_type = ProtocolType::kCustomTcp,
                 .m_projectId = 1,
-                .m_status = ProtocolStatus::ACTIVE,
-                .m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE,
-                .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+                .m_status = ProtocolStatus::kValid,
+                .m_reqBodyType = ProtocolBodyType::kJson,
+                .m_respBodyType = ProtocolBodyType::kJson,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
                 .m_reqCfg = nljson::parse(req_cfg1),
@@ -603,22 +603,22 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_id = 1,
                 .m_name = "test",
                 .m_mode = ProjectMode::ServerMode,
-                .m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_protocolType = ProtocolType::kCustomTcp,
                 .m_listenPort = 8888,
                 .m_targetIp = "",
                 .m_userId = 0,
-                .m_status = ProjectStatus::ON_STATUS,
+                .m_status = ProjectStatus::kValid,
                 .m_patternInfo = std::vector<char>(pattern_json_str2_1.begin(), pattern_json_str2_1.end()),
                 .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
                 .m_name = "test_pc",
-                .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_type = ProtocolType::kCustomTcp,
                 .m_projectId = 1,
-                .m_status = ProtocolStatus::ACTIVE,
-                .m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE,
-                .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+                .m_status = ProtocolStatus::kValid,
+                .m_reqBodyType = ProtocolBodyType::kJson,
+                .m_respBodyType = ProtocolBodyType::kJson,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
                 // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
@@ -642,22 +642,22 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_id = 1,
                 .m_name = "test",
                 .m_mode = ProjectMode::ServerMode,
-                .m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_protocolType = ProtocolType::kCustomTcp,
                 .m_listenPort = 8888,
                 .m_targetIp = "",
                 .m_userId = 0,
-                .m_status = ProjectStatus::ON_STATUS,
+                .m_status = ProjectStatus::kValid,
                 .m_patternInfo = std::vector<char>(pattern_json_str2_2.begin(), pattern_json_str2_2.end()),
                 .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
                 .m_name = "test_pc",
-                .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_type = ProtocolType::kCustomTcp,
                 .m_projectId = 1,
-                .m_status = ProtocolStatus::ACTIVE,
-                .m_reqBodyType = ProtocolBodyType::BINARY_BODY_TYPE,
-                .m_respBodyType = ProtocolBodyType::BINARY_BODY_TYPE,
+                .m_status = ProtocolStatus::kValid,
+                .m_reqBodyType = ProtocolBodyType::kBinary,
+                .m_respBodyType = ProtocolBodyType::kBinary,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
                 // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
@@ -680,22 +680,22 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 .m_id = 1,
                 .m_name = "test",
                 .m_mode = ProjectMode::ServerMode,
-                .m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_protocolType = ProtocolType::kCustomTcp,
                 .m_listenPort = 8888,
                 .m_targetIp = "",
                 .m_userId = 0,
-                .m_status = ProjectStatus::ON_STATUS,
+                .m_status = ProjectStatus::kValid,
                 .m_patternInfo = std::vector<char>(pattern_json_str3.begin(), pattern_json_str3.end()),
                 .m_ctime = TimeStamp::Now(),
             },
             kit_domain::Protocol{
                 .m_id = 1,
                 .m_name = "test_pc",
-                .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+                .m_type = ProtocolType::kCustomTcp,
                 .m_projectId = 1,
-                .m_status = ProtocolStatus::ACTIVE,
-                .m_reqBodyType = ProtocolBodyType::BINARY_BODY_TYPE,
-                .m_respBodyType = ProtocolBodyType::BINARY_BODY_TYPE,
+                .m_status = ProtocolStatus::kValid,
+                .m_reqBodyType = ProtocolBodyType::kBinary,
+                .m_respBodyType = ProtocolBodyType::kBinary,
                 .m_reqBodyDataStatus = 0,
                 .m_respBodyDataStatus = 0,
                 // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
@@ -786,11 +786,11 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
     auto pc = std::make_shared<kit_domain::Protocol>(kit_domain::Protocol{
         .m_id = 1001,
         .m_name = "partial_body_test_pc",
-        .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+        .m_type = ProtocolType::kCustomTcp,
         .m_projectId = 1001,
-        .m_status = ProtocolStatus::ACTIVE,
-        .m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE,
-        .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+        .m_status = ProtocolStatus::kValid,
+        .m_reqBodyType = ProtocolBodyType::kJson,
+        .m_respBodyType = ProtocolBodyType::kJson,
         .m_reqBodyDataStatus = 0,
         .m_respBodyDataStatus = 0,
         .m_reqCfg = nljson::parse(req_cfg_partial_body),
@@ -970,7 +970,7 @@ TEST_F(CustomTcpServerSuite, ReqBodyUpdateKeepsFunctionCodeIndexAndCfg)
     const std::vector<char> new_body{'n', 'e', 'w', '-', 't', 'c', 'p', '-', 'b', 'o', 'd', 'y'};
     auto update_result = server->UpdateReqBodyProtocolItem(
         3201,
-        ProtocolBodyType::JSON_BODY_TYPE,
+        ProtocolBodyType::kJson,
         new_body);
     ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
 
@@ -1010,22 +1010,22 @@ TEST_F(CustomTcpServerSuite, ClientSend)
             .m_id = 1,
             .m_name = "test",
             .m_mode = ProjectMode::ServerMode,
-            .m_protocolType = ProtocolType::CUSTOM_TCP_PROTOCOL,
+            .m_protocolType = ProtocolType::kCustomTcp,
             .m_listenPort = 8888,
             .m_targetIp = "",
             .m_userId = 0,
-            .m_status = ProjectStatus::ON_STATUS,
+            .m_status = ProjectStatus::kValid,
             .m_patternInfo = std::vector<char>(pattern_json_str1.begin(), pattern_json_str1.end()),
             .m_ctime = TimeStamp::Now(),
         };
         kit_domain::Protocol pc{
             .m_id = 1,
             .m_name = "test_pc",
-            .m_type = ProtocolType::CUSTOM_TCP_PROTOCOL,
+            .m_type = ProtocolType::kCustomTcp,
             .m_projectId = 1,
-            .m_status = ProtocolStatus::ACTIVE,
-            .m_reqBodyType = ProtocolBodyType::JSON_BODY_TYPE,
-            .m_respBodyType = ProtocolBodyType::JSON_BODY_TYPE,
+            .m_status = ProtocolStatus::kValid,
+            .m_reqBodyType = ProtocolBodyType::kJson,
+            .m_respBodyType = ProtocolBodyType::kJson,
             .m_reqBodyDataStatus = 0,
             .m_respBodyDataStatus = 0,
             .m_reqCfg = nljson::parse(req_cfg1),

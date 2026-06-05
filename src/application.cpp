@@ -126,9 +126,8 @@ bool Application::recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
 
         this->addServer(pj.m_id, project_server);
         
-        // 为服务器添加协议  暂时同步添加 体量大之后再考虑异步同时启动
-        /* 操作Service层接口 */
-        std::vector<Protocol> pcs = protocol_svc->GetAllActive(nullptr, pj.m_id);
+        // 服务器重启时 需要把所有有效且已上线的协议加回来
+        std::vector<Protocol> pcs = protocol_svc->GetActiveByProject(nullptr, pj.m_id);
         for(auto &pc : pcs)
         {
             auto protocol_item = ProtocolItemFactory::Create(std::make_shared<Protocol>(pc), project_server);
@@ -149,7 +148,7 @@ bool Application::recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
         }
         uint16_t cur_listen_port = project_server->getBindAddr().toPort();
         // 现行端口号回写
-        ok = project_svc->UpdateRuntimeStatus(nullptr, pj.m_id, ProjectStatus::ON_STATUS, cur_listen_port);
+        ok = project_svc->UpdateRuntimeStatus(nullptr, pj.m_id, ProjectRuntimeState::kRunning, cur_listen_port);
         if(!ok)
         {
             APP_F_WARN("service update status failed! pjId[%d] name[%s] listen_port[%u]\n", pj.m_id, pj.m_name.c_str(), cur_listen_port);
@@ -161,7 +160,7 @@ bool Application::recover(std::shared_ptr<ProjectSvcInterface> project_svc, std:
     // 处理失败的测试服务
     for(auto &pj_id : faild_ids)
     {
-        ok = project_svc->UpdateRuntimeStatus(nullptr, pj_id, ProjectStatus::OFF_STATUS, 0);
+        ok = project_svc->UpdateRuntimeStatus(nullptr, pj_id, ProjectRuntimeState::kStopped, 0);
         if(!ok)
         {
             APP_F_WARN("service update status failed! pjId[%ld] \n", pj_id);

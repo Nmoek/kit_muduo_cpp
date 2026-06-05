@@ -9,6 +9,7 @@
 
 #include "repository/repo_project.h"
 #include "dao/dao_project.h"
+#include "domain/type.h"
 #include "repository/repo_log.h"
 #include "domain/project.h"
 #include "base/time_stamp.h"
@@ -54,7 +55,7 @@ static kit_domain::Project CovertDomainProject(const kit_dao::Project &daoPj)
         daoPj.m_targetIp,
         daoPj.m_userId,
         static_cast<ProjectStatus>(daoPj.m_status),
-        static_cast<ProjectStatus>(daoPj.m_active),
+        static_cast<ProjectRuntimeState>(daoPj.m_runtimeState),
         CovertPatternInfoJson(daoPj.m_patternInfo),
         kit_muduo::TimeStamp(daoPj.m_ctime),
     };
@@ -80,7 +81,7 @@ static kit_dao::Project  CovertDaoProject(const kit_domain::Project &domainPj)
         domainPj.m_targetIp,
         domainPj.m_userId,
         static_cast<int32_t>(domainPj.m_status),
-        static_cast<int32_t>(domainPj.m_active),
+        static_cast<int32_t>(domainPj.m_runtimeState),
         CovertPatternInfoBytes(domainPj.m_patternInfo),
 
     };
@@ -96,9 +97,9 @@ bool ProjectRepository::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t proj
     return _dao->UpdateStatus(ctx, projectId, static_cast<int32_t>(status));
 }
 
-bool ProjectRepository::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus active, uint16_t listenPort)
+bool ProjectRepository::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectRuntimeState runtime_state, uint16_t listenPort)
 {
-    return _dao->UpdateRuntimeStatus(ctx, projectId, static_cast<int32_t>(active), listenPort);
+    return _dao->UpdateRuntimeStatus(ctx, projectId, static_cast<int32_t>(runtime_state), listenPort);
 }
 
 bool ProjectRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name)
@@ -134,22 +135,16 @@ bool ProjectRepository::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t
 
 std::vector<Project> ProjectRepository::GetAllValid(kit_muduo::HttpContextPtr ctx)
 {
-    return CovertDomainProjects(_dao->GetAllByStatus(ctx, static_cast<int32_t>(kit_domain::ProjectStatus::ON_STATUS)));
+    // 查出所有未软删的测试服务
+    return CovertDomainProjects(_dao->GetAllByStatusAndRuntimeState(ctx, static_cast<int32_t>(ProjectStatus::kValid), -1));
 }
 
 std::vector<Project> ProjectRepository::GetAllActive(kit_muduo::HttpContextPtr ctx) 
 {
-    std::vector<kit_domain::Project> valid_pjs = GetAllValid(ctx);
-    std::vector<kit_domain::Project> active_pjs;
-    for(const auto &pj : valid_pjs)
-    {
-        if(pj.m_active == ProjectStatus::ON_STATUS)
-        {
-            active_pjs.emplace_back(pj);
-        }
-    }
-
-    return active_pjs;
+    // 查出所有未软删且正在运行的测试服务
+    return CovertDomainProjects(_dao->GetAllByStatusAndRuntimeState(ctx, 
+        static_cast<int32_t>(ProjectStatus::kValid)
+        ,static_cast<int32_t>(ProjectRuntimeState::kRunning)));
 }
 
 } // kit_domain

@@ -87,6 +87,7 @@ void UserHandler::RegisterRoutes(std::shared_ptr<HttpServer> server)
 {
 #define XX(WORK_FUNC) \
     std::bind(&UserHandler::WORK_FUNC, this, std::placeholders::_1, std::placeholders::_2)
+    
     server->Post("/users/list", XX(List));
     server->Post("/users/add", XX(Add));
     server->Get("/users/:user_id", XX(Get));

@@ -25,7 +25,7 @@ struct Project
     std::string              m_targetIp;        // 目标ip + 端口 x.x.x.x:8888
     int64_t                  m_userId;          // 所属用户id
     int32_t m_status;  // 当前测试服务有效性(软删除使用)
-    int32_t                  m_active;          // 测试服务当前运行状态
+    int32_t                  m_runtimeState;          // 测试服务当前运行状态
     std::vector<char>        m_patternInfo;     // 格式解析信息
 
     int64_t                  m_ctime;            // 创建时间

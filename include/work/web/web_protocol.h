@@ -39,7 +39,7 @@ public:
     
     void SetApp(kit_app::Application *app) { _app = app; }
     kit_app::Application* GetApp() const { return _app; }
-    void SetProjectService(std::shared_ptr<ProjectSvcInterface> svc) { _projectSvc = std::move(svc); }
+    void SetProjectService(std::shared_ptr<ProjectSvcInterface> svc) { _pjSvc = std::move(svc); }
 
 public:
     void AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
@@ -74,7 +74,7 @@ public:
 
 private:
     std::shared_ptr<ProtocolSvcInterface> _svc;
-    std::shared_ptr<ProjectSvcInterface> _projectSvc;
+    std::shared_ptr<ProjectSvcInterface> _pjSvc;
     kit_app::Application *_app;
 };
 
