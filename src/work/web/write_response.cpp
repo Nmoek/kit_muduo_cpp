@@ -14,6 +14,32 @@
 namespace kit_domain {
 
 
+namespace {
+inline static int32_t RuntimeControlCodeToWriteCode(RuntimeControlCode code)
+{
+    switch (code) 
+    {
+        case RuntimeControlCode::kOk:
+        {
+            return 0;
+        }
+        case RuntimeControlCode::kInvalidArgument:
+        case RuntimeControlCode::kProjectTypeInvalid:
+        {
+            return -200;
+        }
+
+        default:
+        {
+            return -300;
+        }
+    
+    }
+}
+
+}
+
+
 WriteOpResult& WriteOpResult::allOk()
 {
     this->persisted = this->runtime_applied = 1;
@@ -51,6 +77,23 @@ WriteOpResult& WriteOpResult::failed(int32_t code, const std::string &msg)
     this->message = msg.empty() ? "write operation failed" : msg;
 
     return *this;
+}
+
+
+WriteOpResult WriteOpResult::FromPjRuntimeResult(ProjectRuntimeResult pj_result)
+{
+    WriteOpResult write_result;
+
+    write_result.persisted = pj_result.receipt.persisted;
+    write_result.runtime_applied = pj_result.receipt.runtime_applied;
+
+    if(!pj_result.ok())
+    {
+        return write_result.failed(RuntimeControlCodeToWriteCode(pj_result.status.code), pj_result.status.message);
+    }
+
+    return write_result.success(pj_result.status.message);
+
 }
 
 

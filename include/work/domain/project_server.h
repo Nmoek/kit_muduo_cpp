@@ -62,7 +62,7 @@ public:
 
 
     virtual void start() = 0;
-    virtual void stop() = 0;
+    virtual bool stop() = 0;
 
 
     virtual const kit_muduo::InetAddress& getBindAddr() const = 0;
@@ -111,7 +111,7 @@ public:
 
     void start() override;
 
-    void stop() override;
+    bool stop() override;
 
     const kit_muduo::InetAddress& getBindAddr() const override;
 
@@ -170,7 +170,7 @@ public:
 
     void start() override;
 
-    void stop() override;
+    bool stop() override;
 
     const kit_muduo::InetAddress& getBindAddr() const override;
 

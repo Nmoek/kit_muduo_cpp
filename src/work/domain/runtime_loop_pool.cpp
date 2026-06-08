@@ -141,16 +141,16 @@ RuntimeResult<std::shared_ptr<RuntimeLease>> RuntimeLoopPool::acquire(ProjectRun
 
 void RuntimeLoopPool::shutdown() noexcept
 {
-    if(0 != active_count_.load())
-    {
-        RUNTIME_F_ERROR("runtime loop still active: %ld\n", active_count_.load());
-        return;
-    }
-
     bool expected = false;
     if(!is_shutdown_.compare_exchange_strong(expected, true) )
     {
-        RUNTIME_F_ERROR("runtime loop pool shutdown error!\n");
+        return;
+    }
+
+    if(0 != active_count_.load())
+    {
+        RUNTIME_F_ERROR("runtime loop still active: %ld\n", active_count_.load());
+        is_shutdown_.store(false);
         return;
     }
 

@@ -72,6 +72,7 @@ option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
 option(WORK_TEST.RUNTIME "build test_runtime" OFF)
+option(WORK_TEST.PROJECT_RUNTIME_MANAGER "build test_project_runtime_manager" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
@@ -241,6 +242,10 @@ set(WORK_DOMAIN_SRC
 
 )
 
+set(WORK_RUNTIME_SRC
+    src/work/runtime/runtime_controller.cpp
+)
+
 set(WORK_WEB_SRC
     src/work/web/web_test.cpp
     src/work/web/web_project.cpp
@@ -261,6 +266,7 @@ set(WORK_SRC
     ${WORK_REPO_SRC}
     ${WORK_SVC_SRC}
     ${WORK_DOMAIN_SRC}
+    ${WORK_RUNTIME_SRC}
     ${WORK_WEB_SRC}
     ${IOC_SRC}
     src/application.cpp
@@ -423,6 +429,9 @@ add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/wo
 
 # 运行态测试 test_runtime
 add_kit_test(WORK_TEST WORK_TEST.RUNTIME test_runtime tests/work/domain/test_runtime.cpp ${WORK_SRC})
+
+# 项目运行态管理器测试 test_project_runtime_manager
+add_kit_test(WORK_TEST WORK_TEST.PROJECT_RUNTIME_MANAGER test_project_runtime_manager tests/work/runtime/test_project_runtime_manager.cpp ${WORK_SRC})
 
 # 用户登录、会话和用户管理服务测试 test_user_auth
 add_kit_test(WORK_TEST WORK_TEST.USER test_user_auth tests/work/service/test_user_auth.cpp ${WORK_SRC})

@@ -44,9 +44,9 @@ bool ProjectService::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project
     return _repo->UpdateStatus(ctx, project_id, status);
 }
 
-bool ProjectService::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectRuntimeState runtime_state, uint16_t listen_port)
+bool ProjectService::UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectRuntimeState runtime_state, uint16_t listen_port)
 {
-    return _repo->UpdateRuntimeStatus(ctx, project_id, runtime_state, listen_port);
+    return _repo->UpdateRuntimeState(ctx, project_id, runtime_state, listen_port);
 }
 
 

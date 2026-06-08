@@ -82,18 +82,18 @@ void CustomTcpProjectServer::start()
     tcp_server_->start();
 }
 
-void CustomTcpProjectServer::stop()
+bool CustomTcpProjectServer::stop()
 {
     bool expected = false;
     if(!stopped_.compare_exchange_strong(expected, true))
     {
-        return;
+        return true;
     }
 
     if(!tcp_server_)
     {
         lease_loop_->release();
-        return;
+        return true;
     }
 
     bool ok = WaitRuntimeStopDone("CustomTcpProjectServer", project_id_, [this](std::function<void()> done){
@@ -102,10 +102,11 @@ void CustomTcpProjectServer::stop()
 
     if(!ok)
     {
-        return;
+        return false;
     }
 
     lease_loop_->release();
+    return true;
 }
 
 

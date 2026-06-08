@@ -131,7 +131,7 @@ bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t pr
     return true;
 }
 
-bool SqliteOrmProjectDao::UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t runtime_state, uint16_t listenPort)
+bool SqliteOrmProjectDao::UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t runtime_state, uint16_t listenPort)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 

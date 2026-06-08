@@ -309,6 +309,28 @@ TEST(TestRuntimeLoopPool, ShutdownRejectsAcquire)
     ASSERT_EQ(r.error.toInt(), RuntimeError::kRuntimeLoopPoolStopped);
 }
 
+/*
+测试思路：
+构造 pool 后连续调用两次 shutdown。
+第二次 shutdown 应是幂等 no-op，不应打印错误语义或破坏内部状态。
+随后 acquire 仍然稳定返回 kRuntimeLoopPoolStopped。
+
+示例：
+  pool.shutdown()
+  pool.shutdown()
+  pool.acquire(1) -> kRuntimeLoopPoolStopped
+*/
+TEST(TestRuntimeLoopPool, ShutdownIsIdempotent)
+{
+    RuntimeLoopPool pool(1);
+    pool.shutdown();
+    pool.shutdown();
+
+    auto r = pool.acquire(1);
+    ASSERT_FALSE(r.ok());
+    ASSERT_EQ(r.error.toInt(), RuntimeError::kRuntimeLoopPoolStopped);
+}
+
 
 /*
 测试思路：

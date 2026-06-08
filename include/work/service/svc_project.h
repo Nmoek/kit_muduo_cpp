@@ -34,8 +34,7 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectStatus status) = 0;
 
-    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectRuntimeState runtime_state, uint16_t listen_port) = 0;
-
+    virtual bool UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectRuntimeState runtime_state, uint16_t listen_port) = 0;
 
     virtual Project GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
@@ -70,7 +69,7 @@ public:
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectStatus status) override;
 
-    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectRuntimeState runtime_state, uint16_t listen_port) override;
+    bool UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProjectRuntimeState runtime_state, uint16_t listen_port) override;
 
     Project GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 

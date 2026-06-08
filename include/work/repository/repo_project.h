@@ -46,7 +46,7 @@ public:
 
     virtual bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus status) = 0;
 
-    virtual bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectRuntimeState runtime_state, uint16_t listenPort) = 0;
+    virtual bool UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectRuntimeState runtime_state, uint16_t listenPort) = 0;
 
     virtual bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) = 0;
 
@@ -80,7 +80,7 @@ public:
 
     bool UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectStatus status) override;
 
-    bool UpdateRuntimeStatus(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectRuntimeState runtime_state, uint16_t listenPort) override;
+    bool UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProjectRuntimeState runtime_state, uint16_t listenPort) override;
 
     bool UpdateName(kit_muduo::HttpContextPtr ctx, int64_t projectId, const std::string& name) override;
 

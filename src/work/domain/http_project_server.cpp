@@ -84,18 +84,18 @@ void HttpProjectServer::start()
     http_server_->start();
 }
 
-void HttpProjectServer::stop()
+bool HttpProjectServer::stop()
 {
     bool expected = false;
     if(!stopped_.compare_exchange_strong(expected, true))
     {
-        return;
+        return true;
     }
 
     if(!http_server_)
     {
         lease_loop_->release();
-        return;
+        return true;
     }
 
     bool ok = WaitRuntimeStopDone("HttpProjectServer", project_id_, [this](std::function<void()> done){
@@ -104,10 +104,11 @@ void HttpProjectServer::stop()
 
     if(!ok)
     {
-        return;
+        return false;
     }
 
     lease_loop_->release();
+    return true;
 }
 
 

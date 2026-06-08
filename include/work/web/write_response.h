@@ -11,6 +11,7 @@
 
 #include "net/call_backs.h"
 #include "nlohmann/json.hpp"
+#include "runtime/runtime_controller.h"
 
 #include <cstdint>
 #include <string>
@@ -36,6 +37,8 @@ struct WriteOpResult
     WriteOpResult& success(const std::string &msg = "success");
 
     WriteOpResult& failed(int32_t code,  const std::string &msg = "write operation failed");
+
+    static WriteOpResult FromPjRuntimeResult(ProjectRuntimeResult pj_result);
 
 };
 

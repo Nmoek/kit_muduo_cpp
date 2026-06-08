@@ -27,6 +27,7 @@
 #include "domain/user.h"
 #include "domain/protocol.h"
 #include "service/svc_protocol.h"
+#include "runtime/runtime_controller.h"
 
 #include <memory>
 #include <cstring>
@@ -145,11 +146,12 @@ struct ProjectEditPatternInfoReq {
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
 
-ProjectHandler::ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc, std::shared_ptr<ProtocolSvcInterface> pc_svc)
-    :_svc(std::move(svc)),
-     _pc_svc(std::move(pc_svc)),
-     _app(nullptr)
-{  }
+ProjectHandler::ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc, std::shared_ptr<RuntimeControllerInterface> project_runtime_manager)
+    :svc_(std::move(svc))
+    ,project_runtime_manager_(std::move(project_runtime_manager))
+{
+
+}
 
 
 ProjectHandler::~ProjectHandler() { }
@@ -163,7 +165,7 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
     server->Post("/projects/add", XX(AddProject));
 
     // 开启/停止测试服务监听端口
-    server->Post("/projects/:project_id/status", XX(StartAndStopProject));
+    server->Post("/projects/:project_id/runtime_state", XX(StartAndStopProject));
 
     // 获取所有未软删除的测试服务
     server->Get("/projects/valid", XX(GetAllValid));
@@ -177,12 +179,6 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
 
     // 获取/修改某个服务的title名称
     server->Post("/projects/:project_id/name", XX(DetailName));
-
-    // TODO 删除测试服务 动态路由
-        // 1. 关监听端口
-        // 2. 删协议项
-        // 2. 删服务项
-    // server->Post("/projects/del/:id", XX(DelProject));
     
     // 获取整个测试服务列表
     server->Post("/projects/list", XX(List));
@@ -284,7 +280,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
     int project_id = -1;
     try {
-        project_id = _svc->Add(ctx, p);
+        project_id = svc_->Add(ctx, p);
         if(project_id <= 0)
         {
             throw std::runtime_error("project add error");
@@ -335,7 +331,7 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
 
     auto current_user = CurrentUserFromContext(ctx);
 
-    auto auth_project = _svc->GetById(ctx, project_id);
+    auto auth_project = svc_->GetById(ctx, project_id);
     if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
     {
         resp->setStateCode(StateCode::k403Forbidden);
@@ -343,93 +339,19 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
         return;
     }
 
-    bool ok = false;
-    uint16_t cur_listen_port = 0;
+    ProjectRuntimeResult pj_runtime_result;
     try {
 
         if(ProjectRuntimeState::kRunning == will_state)
         {
-            auto project_server = _app->findServer(project_id);
-            if(!project_server)
-            {
-                // 获取loop租约
-                auto lease_loop = _app->leaseLoop(project_id);
-                if(!lease_loop)
-                {
-                    WriteOpResponseHelper(ctx, write_result.failed(-300, "loop lease faild"));
-                    return;
-                }
+            pj_runtime_result = project_runtime_manager_->startProject(ctx, project_id);
 
-                auto p = _svc->GetById(ctx, project_id);
-                if(p.m_id <= 0)
-                {
-                    throw std::runtime_error("GetById error");
-                }
-
-                // 工厂模式创建测试服务
-                project_server = ProjectServerFactory::Create(p, lease_loop);
-                if (!project_server) 
-                {
-                    PJ_F_ERROR("create ProjectServer faild! protocol_type[%d] project_id[%d] \n", static_cast<int32_t>(p.m_protocolType), project_id);
-
-                    WriteOpResponseHelper(ctx, write_result.failed(-300, "failed to create server"));
-                    return;
-                }
-
-                // 把所有未删且已上线的协议都加到服务器上
-                std::vector<Protocol> pcs = _pc_svc->GetActiveByProject(nullptr, project_id);
-                for(auto &pc : pcs)
-                {
-                    auto protocol_item = ProtocolItemFactory::Create(std::make_shared<Protocol>(pc), project_server);
-                    if(!protocol_item)
-                    {
-                        PJ_F_ERROR("create ProtocolItem faild!  protocol_id[%d] protocol_type[%d] project_id[%d] \n",  pc.m_id, static_cast<int32_t>(pc.m_type), pc.m_projectId);
-
-                        WriteOpResponseHelper(ctx, write_result.failed(-300, "failed to create server"));
-                        return;
-                    }
-
-                    project_server->AddProtocolItem(protocol_item);
-                    
-                    PJ_F_DEBUG("pjId[%d], pcId[%d], name[%s] add success!\n", pc.m_projectId, pc.m_id, pc.m_name.c_str());
-                }
-
-                cur_listen_port = project_server->getBindAddr().toPort();
-                // 主键id更新
-                project_server->setProjectId(project_id);
-                _app->addServer(project_id, project_server);
-
-                project_server->start();
-            }
-            else
-            {
-                PJ_F_WARN("project server has stared! pjId[%ld] \n", project_id);
-                cur_listen_port = project_server->getBindAddr().toPort();
-            }
         }
         else if(ProjectRuntimeState::kStopped == will_state)
         {
-            auto project_server = _app->findServer(project_id);
-            if (project_server) 
-            {
-                project_server->stop(); // 注意: 这里会阻塞执行
-                _app->delServer(project_id);
-            }
-            else
-            {
-                PJ_F_WARN("ProjectServer not found or stopped! project_id[%d] \n", project_id);
-            }
+            pj_runtime_result = project_runtime_manager_->stopProject(ctx, project_id);
         }
 
-        // 更新数据库
-        ok = _svc->UpdateRuntimeStatus(ctx, project_id, will_state, cur_listen_port);
-        if(!ok)
-        {
-            PJ_F_ERROR("UpdateRuntimeStatus error! pjId[%ld] will_status[%d], cur_listen_port[%u]\n", project_id, static_cast<int32_t>(will_state), cur_listen_port);
-
-            WriteOpResponseHelper(ctx, write_result.runOk().failed(-300, "service failed"));
-            return;
-        }
     } catch(const std::exception& e) {
 
         PJ_F_ERROR("project server runtime exception: %s \n", e.what());
@@ -444,9 +366,9 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
     // 2.2 RPC通信
     // 2.3 注册Web API
 
-    WriteOpResponseHelper(ctx, write_result.allOk().success(), [cur_listen_port, will_state](auto &root){
-        root["data"]["listen_port"] = cur_listen_port;
-        root["data"]["runtime_state"] = will_state;
+    WriteOpResponseHelper(ctx, WriteOpResult::FromPjRuntimeResult(pj_runtime_result), [&pj_runtime_result](auto &root){
+        root["data"]["listen_port"] = pj_runtime_result.snapshot.listen_port;
+        root["data"]["runtime_state"] = pj_runtime_result.snapshot.runtime_state;
     });
 }
 
@@ -471,36 +393,22 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    bool ok = false;
+
     // 查测试服务 信息
+    ProjectRuntimeResult pj_runtime_result;
     try 
     {
         int64_t project_id = std::stol(val1);
         auto current_user = CurrentUserFromContext(ctx);
-        auto auth_project = _svc->GetById(ctx, project_id);
+        auto auth_project = svc_->GetById(ctx, project_id);
         if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
         {
             resp->setStateCode(StateCode::k403Forbidden);
             resp->body().appendData(R"({"code": -403, "message":"forbidden", "data":{}})");
             return;
         }
-
-        auto pj_server = _app->findServer(project_id);
-        if(!pj_server)
-        {
-            PJ_F_WARN("runtime project server not exist! pjId[%ld] \n", project_id);
-        }
-        else
-        {
-            pj_server->stop();
-            _app->delServer(project_id);
-        }
-
-        ok = _svc->UpdateStatus(ctx, project_id, ProjectStatus::kInvalid) && _svc->UpdateRuntimeStatus(ctx, project_id, ProjectRuntimeState::kStopped, 0);
-        if(!ok)
-        {
-            throw std::runtime_error("UpdateStatus error!");
-        }
+        
+        pj_runtime_result = project_runtime_manager_->delProject(ctx, project_id);
 
     }
     catch(const std::exception& e)
@@ -511,7 +419,7 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    WriteOpResponseHelper(ctx, write_result.allOk().success());
+    WriteOpResponseHelper(ctx, WriteOpResult::FromPjRuntimeResult(pj_runtime_result));
 }
 
 void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
@@ -545,7 +453,7 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     // 查测试服务 信息
     try 
     {
-        project = _svc->GetById(ctx, project_id);
+        project = svc_->GetById(ctx, project_id);
         auto current_user = CurrentUserFromContext(ctx);
         if(project.m_id > 0 && !current_user.IsAdmin() && project.m_userId != current_user.user_id)
         {
@@ -607,11 +515,11 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
         auto current_user = CurrentUserFromContext(ctx);
         if(current_user.IsAdmin())
         {
-            projects = _svc->GetAll(ctx, request.offset, request.limit);
+            projects = svc_->GetAll(ctx, request.offset, request.limit);
         }
         else
         {
-            projects = _svc->GetByUser(ctx, current_user.user_id, ProjectStatus::kValid, request.offset, request.limit);
+            projects = svc_->GetByUser(ctx, current_user.user_id, ProjectStatus::kValid, request.offset, request.limit);
         }
     }
     catch(const std::exception& e)
@@ -654,11 +562,11 @@ void ProjectHandler::GetAllValid(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         auto current_user = CurrentUserFromContext(ctx);
         if(current_user.IsAdmin())
         {
-            projects = _svc->GetAllValid(ctx);
+            projects = svc_->GetAllValid(ctx);
         }
         else
         {
-            projects = _svc->GetByUser(ctx, current_user.user_id, ProjectStatus::kValid, 0, 1000);
+            projects = svc_->GetByUser(ctx, current_user.user_id, ProjectStatus::kValid, 0, 1000);
         }
     }
     catch(const std::exception& e)
@@ -714,7 +622,7 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     }
 
     auto current_user = CurrentUserFromContext(ctx);
-    auto auth_project = _svc->GetById(ctx, project_id);
+    auto auth_project = svc_->GetById(ctx, project_id);
     if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
     {
         resp->setStateCode(StateCode::k403Forbidden);
@@ -734,7 +642,7 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
     try {
 
-        bool ok = _svc->UpdateName(ctx, project_id, request.name);
+        bool ok = svc_->UpdateName(ctx, project_id, request.name);
         if(!ok)
         {
             throw std::runtime_error("UpdateName error");
@@ -762,7 +670,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
 
     int64_t project_id = stoi(ctx->routeParam("project_id"));
     auto current_user = CurrentUserFromContext(ctx);
-    auto auth_project = _svc->GetById(ctx, project_id);
+    auto auth_project = svc_->GetById(ctx, project_id);
     if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
     {
         resp->setStateCode(StateCode::k403Forbidden);
@@ -773,7 +681,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
     std::vector<char> pattern_info;
     try {
 
-        pattern_info = _svc->GetPatternInfoById(ctx, project_id);
+        pattern_info = svc_->GetPatternInfoById(ctx, project_id);
 
 
     } catch(const std::exception& e) {
@@ -818,7 +726,7 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
 
     const std::string& json_str = request.pattern_info.dump();
     auto current_user = CurrentUserFromContext(ctx);
-    auto auth_project = _svc->GetById(ctx, request.id);
+    auto auth_project = svc_->GetById(ctx, request.id);
     if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
     {
         resp->setStateCode(StateCode::k403Forbidden);
@@ -833,7 +741,7 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
         return;
     }
 
-    if(ProjectRuntimeState::kRunning == auth_project.m_runtimeState || nullptr != _app->findServer(request.id))
+    if(ProjectRuntimeState::kRunning == auth_project.m_runtimeState || nullptr != project_runtime_manager_->findServer(request.id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "project is running"));
         return;
@@ -844,7 +752,7 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
     ok = false;
     try {
 
-        ok = _svc->UpdatePatternInfo(ctx, request.id, pattern_info);
+        ok = svc_->UpdatePatternInfo(ctx, request.id, pattern_info);
         if(!ok)
         {
             throw std::runtime_error("UpdatePatternInfo failed");
@@ -886,8 +794,8 @@ void ProjectHandler::RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo:
         return;
     }
     
-    bool ok = _svc->UpdateStatus(ctx, project_id, ProjectStatus::kValid)
-        && _svc->UpdateRuntimeStatus(ctx, project_id, ProjectRuntimeState::kStopped, 0);
+    bool ok = svc_->UpdateStatus(ctx, project_id, ProjectStatus::kValid)
+        && svc_->UpdateRuntimeState(ctx, project_id, ProjectRuntimeState::kStopped, 0);
     if(!ok)
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-300, "service failed"));

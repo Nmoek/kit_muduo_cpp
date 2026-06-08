@@ -33,6 +33,12 @@ enum ProjectMode {
     ClientMode = 2,  //客户端模式
 };
 
+inline bool CheckProjectMode(ProjectMode mode)
+{
+    return mode >= ProjectMode::ServerMode && mode <= ProjectMode::ClientMode;
+}
+
+
 enum class ProjectStatus {
     kInvalid = 0,  //无效
     kValid = 1,  //有效
@@ -64,6 +70,10 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolType, {
     {ProtocolType::kCustomTcp,  2},
     {ProtocolType::kHttps,      3},
 })
+inline bool CheckProtocolType(ProtocolType type)
+{
+    return type > ProtocolType::kUnknown && type < ProtocolType::kMax;
+}
 
 
 enum class ProtocolSide {

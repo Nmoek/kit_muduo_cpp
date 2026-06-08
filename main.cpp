@@ -29,6 +29,8 @@
 #include "dao/dao_protocol.h"
 #include "dao/sqlite_orm_pool.h"
 
+#include "runtime/runtime_controller.h"
+
 #include "dao/init.h"
 #include "ioc/web.h"
 
@@ -95,29 +97,26 @@ static std::shared_ptr<Application> InitApp()
     auto userSvc = std::make_shared<UserService>(userRepo, sessionRepo);
     authSvc->BootstrapAdmin();
 
+    std::shared_ptr<RuntimeControllerInterface> project_runtime_manager = std::make_shared<ProjectRuntimeManager>(projSvc, protocSvc);
+
     // 需要将app句柄放到Handler中
     static std::shared_ptr<ProtocolHandler> protocHdl;
     static std::shared_ptr<ProjectHandler> projHdl;
     static std::shared_ptr<AuthHandler> authHdl;
     static std::shared_ptr<UserHandler> userHdl;
-    protocHdl = std::make_shared<ProtocolHandler>(protocSvc);
-    projHdl = std::make_shared<ProjectHandler>(projSvc, protocSvc);
+    protocHdl = std::make_shared<ProtocolHandler>(protocSvc, projSvc, project_runtime_manager);
+    projHdl = std::make_shared<ProjectHandler>(projSvc, project_runtime_manager);
     authHdl = std::make_shared<AuthHandler>(authSvc);
     userHdl = std::make_shared<UserHandler>(userSvc);
     auto server = InitWebServer(&loop, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), authSvc);
 
-    auto app = std::make_shared<Application>(server);
-    
-    projHdl->SetApp(app.get()); // 避免循环依赖 app生命周期更长
-    protocHdl->SetApp(app.get()); // 避免循环依赖 app生命周期更长
-    protocHdl->SetProjectService(projSvc);
+    auto app = std::make_shared<Application>(server, project_runtime_manager);
 
 
     // 先恢复当前库上正在运行的服务器, 恢复服务器的同时需要重新添加协议
-    if(!app->recover(projSvc, protocSvc))
+    if(!app->recover())
     {
         std::cerr << "application recover error!" << std::endl;
-        abort();
     }
 
 
