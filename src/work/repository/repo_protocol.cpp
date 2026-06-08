@@ -67,7 +67,7 @@ std::string GenerateRuntimeKey(ProtocolType type, nlohmann::json req_cfg)
     return key;
 }
 
-}
+
 
 static kit_domain::Protocol CovertDomainProtocol(const kit_dao::Protocol &daoPj)
 {
@@ -126,6 +126,24 @@ static kit_dao::Protocol CovertDaoProtocol(const std::string& runtime_key, const
         std::move(domainPc.m_respBodyData),
         static_cast<int32_t>(domainPc.m_isEndian),
     };
+}
+
+static kit_domain::ProtocolAccessInfo CovertDomainProtocolAccessInfo(const kit_dao::ProtocolAccessInfo &p)
+{
+    return kit_domain::ProtocolAccessInfo{
+        .protocol_id = p.protocol_id,
+        .project_id = p.project_id,
+        .runtime_key = std::move(p.runtime_key),
+        .protocol_type = static_cast<ProtocolType>(p.protocol_type),
+        .protocol_status = static_cast<ProtocolStatus>(p.protocol_status),
+        .protocol_runtime_enabled = static_cast<ProtocolRuntimeEnabled>(p.protocol_runtime_enabled),    
+        .project_user_id = p.project_user_id,
+        .project_runtime_state = static_cast<ProjectRuntimeState>(p.project_runtime_state),
+        .project_status = static_cast<ProjectStatus>(p.project_status)
+
+    };
+}
+
 }
 
 ProtocolRepository::ProtocolRepository(std::shared_ptr<ProtocolDaoInterface> dao)
@@ -255,12 +273,17 @@ nlohmann::json ProtocolRepository::GetCfgById(kit_muduo::HttpContextPtr ctx, int
     return _dao->GetCfgById(ctx, protocol_id);
 }
 
-ProtocolRuntimeEnabled ProtocolRepository::IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
+bool ProtocolRepository::GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info)
 {
-    return static_cast<ProtocolRuntimeEnabled>(_dao->IsRuntimeEnabled(ctx, protocol_id));
+    auto access_opt = _dao->AccessProtocolAndProjectByJoin(ctx, protocol_id);
+    if(!access_opt.has_value())
+    {
+        return false;
+    }
+    access_info = CovertDomainProtocolAccessInfo(access_opt.value());
+    return true;
 }
 
-    
 bool ProtocolRepository::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled)
 {
     return _dao->UpdateRuntimeEnabled(ctx, protocol_id, static_cast<int32_t>(runtime_enabled));

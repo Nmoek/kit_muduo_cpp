@@ -3,6 +3,7 @@
  * @brief 协议项 web 接口单元测试
  */
 
+#include "gmock/gmock.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
@@ -14,6 +15,7 @@
 #include "domain/protocol_item.h"
 #include "domain/runtime_loop_pool.h"
 #include "domain/runtime_result.h"
+#include "domain/type.h"
 #include "domain/user.h"
 #include "net/call_backs.h"
 #include "net/http/http_context.h"
@@ -209,12 +211,22 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
     constexpr int64_t project_id = 9101;
     constexpr int64_t protocol_id = 1001;
 
-    EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
-        .WillOnce(testing::Return(*MakeHttpProtocol(protocol_id, project_id, "/d9/web/invalid-cfg")));
-    EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
-        .WillOnce(testing::Return(MakeActiveProject(project_id)));
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                project_id,
+                "|HTTP|GET|/d9/web/invalid-cfg",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolRuntimeEnabled::kOn,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}
+            )
+            ,testing::Return(true)
+        ));
     EXPECT_CALL(*mock_, GetCfgById(testing::_, testing::_)).Times(0);
-    EXPECT_CALL(*mock_, IsRuntimeEnabled(testing::_, testing::_)).Times(0);
     EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
     EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
 
@@ -258,11 +270,23 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime
     constexpr int64_t request_project_id = 9152;
     constexpr int64_t protocol_id = 1051;
 
-    EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
-        .WillOnce(testing::Return(*MakeHttpProtocol(protocol_id, actual_project_id, "/d9/web/project-mismatch")));
-    EXPECT_CALL(*project_mock_, GetById(testing::_, actual_project_id))
-        .WillOnce(testing::Return(MakeActiveProject(actual_project_id)));
-    EXPECT_CALL(*mock_, IsRuntimeEnabled(testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+    .WillOnce(
+        testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                actual_project_id,
+                "|HTTP|GET|/d9/web/project-mismatch",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolRuntimeEnabled::kOn,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}
+            )
+            ,testing::Return(true)
+        )
+    );
     EXPECT_CALL(*mock_, GetCfgById(testing::_, testing::_)).Times(0);
     EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
     EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
@@ -318,12 +342,21 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
     EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
     {
         testing::InSequence seq;
-        EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
-            .WillOnce(testing::Return(*MakeHttpProtocol(protocol_id, project_id, "/d9/web/success")));
-        EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
-            .WillOnce(testing::Return(MakeActiveProject(project_id)));
-        EXPECT_CALL(*mock_, IsRuntimeEnabled(testing::_, protocol_id))
-            .WillOnce(testing::Return(ProtocolRuntimeEnabled::kOn));
+        EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                project_id,
+                "|HTTP|GET|/d9/web/success",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolRuntimeEnabled::kOn,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}
+            )
+            ,testing::Return(true)
+        ));
         EXPECT_CALL(*mock_, GetCfgById(testing::_, protocol_id))
             .WillOnce(testing::Return(nljson{
                 {"req_cfg", old_req_cfg},
@@ -396,12 +429,22 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
     EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
     {
         testing::InSequence seq;
-        EXPECT_CALL(*mock_, GetById(testing::_, protocol_id))
-            .WillOnce(testing::Return(*MakeHttpProtocol(protocol_id, project_id, "/d9/web/old")));
-        EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
-            .WillOnce(testing::Return(MakeActiveProject(project_id)));
-        EXPECT_CALL(*mock_, IsRuntimeEnabled(testing::_, protocol_id))
-            .WillOnce(testing::Return(ProtocolRuntimeEnabled::kOn));
+
+        EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                project_id,
+                "|HTTP|GET|/d9/web/old",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolRuntimeEnabled::kOn,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}
+            )
+            ,testing::Return(true)
+        ));
         EXPECT_CALL(*mock_, GetCfgById(testing::_, protocol_id))
             .WillOnce(testing::Return(nljson{
                 {"req_cfg", old_req_cfg},

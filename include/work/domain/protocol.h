@@ -49,7 +49,21 @@ struct Protocol
     kit_muduo::TimeStamp    m_utime;        // 更新时间
 };
 
-
+/**
+ * @brief 协议项权限信息
+ */
+struct ProtocolAccessInfo
+{
+    int64_t                 protocol_id;              // 协议项Id
+    int64_t                 project_id;               // 测试服务Id
+    std::string             runtime_key;              // 协议项运行唯一键
+    ProtocolType            protocol_type;            // 测试协议类型
+    ProtocolStatus          protocol_status;          // 协议项是否有效
+    ProtocolRuntimeEnabled  protocol_runtime_enabled; // 协议项是否上线状态
+    int64_t                 project_user_id;          // 所属用户Id
+    ProjectRuntimeState     project_runtime_state;    // 测试服务是否正在运行
+    ProjectStatus           project_status;           // 测试服务是否有效
+};
 
 
 } // namespace kit_domain

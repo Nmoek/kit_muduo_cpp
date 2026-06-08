@@ -117,9 +117,9 @@ nlohmann::json ProtocolService::GetCfgById(kit_muduo::HttpContextPtr ctx, int64_
     return _repo->GetCfgById(ctx, protocol_id);
 }
 
-ProtocolRuntimeEnabled ProtocolService::IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
+bool ProtocolService::GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info)
 {
-    return _repo->IsRuntimeEnabled(ctx, protocol_id);
+    return _repo->GetAccessInfo(ctx, protocol_id, access_info);
 }
 
 bool ProtocolService::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled)

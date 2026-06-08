@@ -17,7 +17,8 @@
 
 namespace kit_domain {
 
-class Protocol;
+struct Protocol;
+struct ProtocolAccessInfo;
 class ProtocolRepoInterface;
 
 class ProtocolSvcInterface
@@ -64,7 +65,7 @@ public:
 
     virtual nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
 
-    virtual ProtocolRuntimeEnabled IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
+    virtual bool GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info) = 0;
 
     virtual bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled) = 0;
 
@@ -119,7 +120,8 @@ public:
 
     nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
 
-    ProtocolRuntimeEnabled IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+    bool GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info) override;
+
 
     bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled) override;
 };

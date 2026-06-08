@@ -9,6 +9,7 @@
 #ifndef __KIT_DAO_PROTOOL_H__
 #define __KIT_DAO_PROTOOL_H__
 
+#include "dao/protocol.h"
 #include "net/call_backs.h"
 #include "dao/init.h"
 #include "nlohmann/json.hpp"
@@ -64,7 +65,7 @@ public:
 
     virtual nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)  = 0;
 
-    virtual int32_t IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
+    virtual std::optional<kit_dao::ProtocolAccessInfo> AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
 
     virtual bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) = 0;
 
@@ -108,7 +109,7 @@ public:
 
     nlohmann::json GetCfgById(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
 
-    int32_t IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
+    std::optional<kit_dao::ProtocolAccessInfo> AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
 
     bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) override;
 

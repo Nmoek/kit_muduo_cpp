@@ -29,7 +29,7 @@ public:
     MOCK_METHOD(bool, GetBodyDataById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, std::vector<char> &body_data), (override));
     MOCK_METHOD(bool, GetBodyInfoById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType &body_type, std::vector<char> &body_data), (override));
     MOCK_METHOD(nlohmann::json, GetCfgById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id), (override));
-    MOCK_METHOD(ProtocolRuntimeEnabled, IsRuntimeEnabled, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id), (override));
+    MOCK_METHOD(bool, GetAccessInfo, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info), (override));
     MOCK_METHOD(bool, UpdateRuntimeEnabled, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled), (override));
 };
 

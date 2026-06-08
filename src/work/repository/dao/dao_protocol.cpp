@@ -928,40 +928,65 @@ nlohmann::json SqliteOrmProtocolDao::GetCfgById(kit_muduo::HttpContextPtr ctx, i
     return root;
 }
 
-
-int32_t SqliteOrmProtocolDao::IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
+std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) 
 {
-    int32_t res = 0;
+    ProtocolAccessInfo access_info;
     auto lease_result = _db_pool->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
-        return 0;
+        return std::nullopt;
     }
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_cfg, resp_cfg FROM xxx WHERE protocol_id 
+        /* 
+            SELECT ... 
+            FROM `protocols` as pc
+            LEFT_JOIN `projects` as pj
+            ON pj.id = pc.project_id
+            WHERE pc.id = ? 
+        */
 
         auto tmps = lease_result.val->db().select(
             columns(
-                &kit_dao::Protocol::m_runtimeEnabled
-            ),
-            where(
-                c(&kit_dao::Protocol::m_id) == protocol_id
-                && c(&kit_dao::Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::kValid)
+                &Protocol::m_id,
+                &Protocol::m_projectId,
+                &Protocol::m_runtimeKey,
+                &Protocol::m_type,
+                &Protocol::m_status,
+                &Protocol::m_runtimeEnabled,
+                &Project::m_userId,
+                &Project::m_runtimeState,
+                &Project::m_status
+            )
+            ,from<Protocol>()
+            ,inner_join<Project>(
+                on(c(&Protocol::m_projectId) == &Project::m_id)
+            )
+            ,where(
+                c(&Protocol::m_id) == protocol_id
             )
         );
         if(tmps.empty())
         {
-            DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", protocol_id);
-            return 0;
+            DAOPC_F_ERROR("protocol dont exist! pcId[%ld] \n", protocol_id);
+            return std::nullopt;
         }
         if(tmps.size() > 1)
         {
-            DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
+            DAOPC_F_WARN("protocol not unique! pcId[%ld] \n", protocol_id);
         }
 
-        res = std::get<0>(tmps.at(0));
+        const auto& t = tmps.at(0);
+        access_info.protocol_id = std::get<0>(t);
+        access_info.project_id = std::get<1>(t);
+        access_info.runtime_key = std::get<2>(t);
+        access_info.protocol_type = std::get<3>(t);
+        access_info.protocol_status = std::get<4>(t);
+        access_info.protocol_runtime_enabled = std::get<5>(t);
+        access_info.project_user_id = std::get<6>(t);
+        access_info.project_runtime_state = std::get<7>(t);
+        access_info.project_status = std::get<8>(t);
 
     } catch (const std::system_error &e) {
 
@@ -970,13 +995,14 @@ int32_t SqliteOrmProtocolDao::IsRuntimeEnabled(kit_muduo::HttpContextPtr ctx, in
             MakeSqliteErrorMsg(e).c_str(),
             protocol_id);
 
-        return res;
+        return std::nullopt;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetRuntimeEnabled "<< protocol_id << std::endl;
+    DAOPC_DEBUG() << "SqliteOrmProtocolDao::AccessProctolAndProjectByJoin "<< protocol_id << std::endl;
 
-    return res;
+    return access_info;
 }
+
 
 bool SqliteOrmProtocolDao::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) 
 {

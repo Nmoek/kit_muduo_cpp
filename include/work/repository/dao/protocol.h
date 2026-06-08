@@ -37,5 +37,20 @@ struct Protocol
     int64_t                  m_ctime;            // 创建时间
     int64_t                  m_utime;            // 修改时间
 };
+
+struct ProtocolAccessInfo
+{
+    int64_t                 protocol_id;              // 协议项Id
+    int64_t                 project_id;               // 测试服务Id
+    std::string             runtime_key;              // 协议项运行唯一键
+    int32_t                 protocol_type;            // 测试协议类型
+    int32_t                 protocol_status;          // 协议项是否有效
+    int32_t                 protocol_runtime_enabled; // 协议项是否上线状态
+    int64_t                 project_user_id;                  // 所属用户Id
+    int32_t                 project_runtime_state;
+    int32_t                 project_status;           // 测试服务是否有效
+};
+
+
 } // namespace kit_dao
 #endif  //__KIT_DAOS_PROTOCOL_H__
