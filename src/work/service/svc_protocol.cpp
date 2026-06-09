@@ -122,9 +122,9 @@ bool ProtocolService::GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t proto
     return _repo->GetAccessInfo(ctx, protocol_id, access_info);
 }
 
-bool ProtocolService::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled)
+bool ProtocolService::UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolConfigState config_state)
 {
-    return _repo->UpdateRuntimeEnabled(ctx, protocol_id, runtime_enabled);
+    return _repo->UpdateConfigState(ctx, protocol_id, config_state);
 }
 
 }   // namespace kit_domain 

@@ -11,6 +11,7 @@
 
 #include "net/call_backs.h"
 #include "dao/init.h"
+#include "nlohmann/json.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -42,9 +43,9 @@ public:
 
     virtual std::vector<kit_dao::Project>  GetAllByStatusAndRuntimeState(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t runtime_state) = 0;
 
-    virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
+    virtual std::string GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
-    virtual bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info) = 0;
+    virtual bool UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info) = 0;
 
 };
 
@@ -72,10 +73,10 @@ public:
 
     std::vector<kit_dao::Project>  GetAllByStatusAndRuntimeState(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t runtime_state) override;
 
-    std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    std::string GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 
     
-    bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info) override;
+    bool UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info) override;
 
 
 private:

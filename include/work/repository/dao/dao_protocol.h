@@ -49,7 +49,7 @@ public:
 
     virtual std::vector<kit_dao::Protocol> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t runtime_enabled) = 0;
+    virtual std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t config_state) = 0;
 
 
     virtual int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) = 0;
@@ -67,7 +67,7 @@ public:
 
     virtual std::optional<kit_dao::ProtocolAccessInfo> AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) = 0;
 
-    virtual bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) = 0;
+    virtual bool UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t config_state) = 0;
 
 };
 
@@ -95,7 +95,7 @@ public:
 
     std::vector<kit_dao::Protocol> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) override;
 
-    std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t runtime_enabled) override;
+    std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t config_state) override;
 
     int32_t CountByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status) override;
 
@@ -111,7 +111,7 @@ public:
 
     std::optional<kit_dao::ProtocolAccessInfo> AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) override;
 
-    bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) override;
+    bool UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t config_state) override;
 
 private:
     template<typename T, typename Field, typename Value>

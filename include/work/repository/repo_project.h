@@ -56,9 +56,9 @@ public:
 
     virtual std::vector<Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) = 0;
 
-    virtual std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
+    virtual nlohmann::json GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
-    virtual bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info) = 0;
+    virtual bool UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info) = 0;
 
     virtual std::vector<Project> GetAllValid(kit_muduo::HttpContextPtr ctx) = 0;
 
@@ -74,7 +74,7 @@ class ProjectRepository : public ProjectRepoInterface
 public:
     ProjectRepository(std::shared_ptr<kit_dao::ProjectDaoInterface> dao);
 
-    ~ProjectRepository();
+    ~ProjectRepository() = default;
 
     int64_t Create(kit_muduo::HttpContextPtr ctx, Project &pjdm) override;
 
@@ -90,9 +90,9 @@ public:
 
     std::vector<Project> GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit) override;
 
-    std::vector<char> GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
+    nlohmann::json GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 
-    bool UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info) override;
+    bool UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info) override;
 
     std::vector<Project> GetAllValid(kit_muduo::HttpContextPtr ctx) override;
 

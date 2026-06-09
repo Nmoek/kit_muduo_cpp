@@ -34,7 +34,7 @@ class ProjectSvcInterface;
 class ProtocolSvcInterface;
 
 /// @brief 运行态操作类型
-enum class RuntimeOperationKind 
+enum class RuntimeOperationKind
 {
     // project类操作
     kStartProject,
@@ -42,6 +42,7 @@ enum class RuntimeOperationKind
     kRecoverProject,
     kReloadProject,
     kDeleteProject,
+    kEditPatternInfo,
 
     // protocol类操作
     kAddProtocol,
@@ -53,7 +54,7 @@ enum class RuntimeOperationKind
 };
 
 /// @brief 运行态操作后状态码
-enum class RuntimeControlCode 
+enum class RuntimeControlCode
 {
     kOk = 0,
 
@@ -120,7 +121,7 @@ struct RuntimeCommandStatus
 /**
  * @brief 写操作回执：回答“本次写操作目标在 DB/runtime 中是否真实生效”。
  */
-struct RuntimeMutationReceipt 
+struct RuntimeMutationReceipt
 {
     int32_t persisted{0};
     int32_t runtime_applied{0};
@@ -135,7 +136,7 @@ struct RuntimeMutationReceipt
 /**
  * @brief 测试服务运行态快照
  */
-struct ProjectRuntimeSnapshot 
+struct ProjectRuntimeSnapshot
 {
     int64_t project_id{0};
     ProjectRuntimeState runtime_state{ProjectRuntimeState::kStopped};
@@ -177,7 +178,7 @@ struct ProjectRuntimeResult
 };
 
 /************ recover流程 批处理使用 ***********/
-struct ProjectRecoverItemResult 
+struct ProjectRecoverItemResult
 {
     RuntimeCommandStatus status;
     ProjectRuntimeSnapshot snapshot;
@@ -185,7 +186,7 @@ struct ProjectRecoverItemResult
     bool ok() const { return status.ok(); }
 };
 
-struct RuntimeRecoverResult 
+struct RuntimeRecoverResult
 {
     RuntimeCommandStatus status;
     int32_t recovered_count{0};
@@ -196,8 +197,7 @@ struct RuntimeRecoverResult
 };
 /************ recover流程 批处理使用 ***********/
 
-
-struct RuntimeOperationOptions 
+struct RuntimeOperationOptions
 {
     int32_t timeout_ms{3000};
     bool record_trace{true};
@@ -214,6 +214,8 @@ public:
     virtual ProjectRuntimeResult stopProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
     virtual ProjectRuntimeResult delProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
     virtual RuntimeRecoverResult recover(kit_muduo::HttpContextPtr ctx = nullptr) = 0;
+    virtual ProjectRuntimeResult editPatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info) = 0;
+
     virtual std::shared_ptr<ProjectServer> findServer(int64_t project_id) = 0;
     virtual void addServer(int64_t project_id, std::shared_ptr<ProjectServer> server) = 0;
     virtual void removeServer(int64_t project_id) = 0;
@@ -227,7 +229,7 @@ class ProjectRuntimeManager
     ,public RuntimeControllerInterface
 {
 public:
-    struct ProjectRuntimeRecord 
+    struct ProjectRuntimeRecord
     {
         int64_t project_id{0};
         ProjectRuntimeState runtime_state{ProjectRuntimeState::kStopped};
@@ -235,10 +237,10 @@ public:
         std::shared_ptr<ProjectServer> server;
     };
 
-    ProjectRuntimeManager(std::shared_ptr<ProjectSvcInterface> project_svc, 
+    ProjectRuntimeManager(std::shared_ptr<ProjectSvcInterface> project_svc,
         std::shared_ptr<ProtocolSvcInterface> protocol_svc,
         size_t runtime_loop_capacity = 100);
-    
+
     ~ProjectRuntimeManager() override = default;
 
     void shutdown() override;
@@ -247,6 +249,7 @@ public:
     ProjectRuntimeResult stopProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
     ProjectRuntimeResult delProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
     RuntimeRecoverResult recover(kit_muduo::HttpContextPtr ctx = nullptr) override;
+    ProjectRuntimeResult editPatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info) override;
 
     std::shared_ptr<ProjectServer> findServer(int64_t project_id) override;
     void addServer(int64_t project_id, std::shared_ptr<ProjectServer> server) override;
@@ -282,6 +285,7 @@ private:
     ProjectRuntimeResult stopProjectImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id);
     ProjectRuntimeResult delProjectImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id);
     ProjectRecoverItemResult  recoverProjectImpl(kit_muduo::HttpContextPtr ctx, const Project& p);
+    ProjectRuntimeResult  editPatternInfoImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info);
 
     ProjectRuntimeResult createAndStartProjectServerImpl(kit_muduo::HttpContextPtr ctx, const Project& p);
 

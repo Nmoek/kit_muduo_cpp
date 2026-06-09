@@ -77,7 +77,7 @@ public:
     
     virtual bool GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info) = 0;
 
-    virtual bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled) = 0;
+    virtual bool UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolConfigState config_state) = 0;
 
 protected:
     std::shared_ptr<kit_dao::ProtocolDaoInterface> _dao;
@@ -127,7 +127,7 @@ public:
     bool GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolAccessInfo& access_info) override;
 
 
-    bool UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled) override;
+    bool UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolConfigState config_state) override;
 };
 
 

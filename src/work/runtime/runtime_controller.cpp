@@ -17,6 +17,7 @@
 #include "domain/project_server_factory.h"
 #include "domain/protocol_item.h"
 #include "domain/protocol.h"
+#include "domain/custom_tcp_pattern_spec.h"
 
 #include <mutex>
 #include <utility>
@@ -26,7 +27,7 @@ using namespace kit_muduo;
 
 namespace kit_domain {
 
-    ProjectRuntimeManager::ProjectRuntimeManager(std::shared_ptr<ProjectSvcInterface> project_svc, 
+    ProjectRuntimeManager::ProjectRuntimeManager(std::shared_ptr<ProjectSvcInterface> project_svc,
         std::shared_ptr<ProtocolSvcInterface> protocol_svc,
         size_t runtime_loop_capacity)
     :project_svc_(std::move(project_svc))
@@ -42,10 +43,10 @@ namespace kit_domain {
 
 ProjectRuntimeResult ProjectRuntimeManager::startProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return submitProjectOperation(project_id, 
-        RuntimeOperationKind::kStartProject, 
-        "startProject", 
-        RuntimeOperationOptions{3000, true}, 
+    return submitProjectOperation(project_id,
+        RuntimeOperationKind::kStartProject,
+        "startProject",
+        RuntimeOperationOptions{3000, true},
         [this, ctx, project_id](){
             return startProjectImpl(ctx, project_id);
         });
@@ -53,10 +54,10 @@ ProjectRuntimeResult ProjectRuntimeManager::startProject(kit_muduo::HttpContextP
 
 ProjectRuntimeResult ProjectRuntimeManager::stopProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return submitProjectOperation(project_id, 
-        RuntimeOperationKind::kStopProject, 
-        "stopProject", 
-        RuntimeOperationOptions{3000, true}, 
+    return submitProjectOperation(project_id,
+        RuntimeOperationKind::kStopProject,
+        "stopProject",
+        RuntimeOperationOptions{3000, true},
         [this, ctx, project_id](){
             return stopProjectImpl(ctx, project_id);
         });
@@ -64,10 +65,10 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProject(kit_muduo::HttpContextPt
 
 ProjectRuntimeResult ProjectRuntimeManager::delProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return submitProjectOperation(project_id, 
-        RuntimeOperationKind::kDeleteProject, 
-        "delProject", 
-        RuntimeOperationOptions{3000, true}, 
+    return submitProjectOperation(project_id,
+        RuntimeOperationKind::kDeleteProject,
+        "delProject",
+        RuntimeOperationOptions{3000, true},
         [this, ctx, project_id](){
             return delProjectImpl(ctx, project_id);
         });
@@ -82,10 +83,10 @@ RuntimeRecoverResult ProjectRuntimeManager::recover(kit_muduo::HttpContextPtr ct
     for(auto &p : active_pjs)
     {
         const int64_t project_id = p.m_id;
-        auto item_result = submitProjectOperation(project_id, 
-            RuntimeOperationKind::kRecoverProject, 
-            "recoverProject", 
-            RuntimeOperationOptions{3000, true}, 
+        auto item_result = submitProjectOperation(project_id,
+            RuntimeOperationKind::kRecoverProject,
+            "recoverProject",
+            RuntimeOperationOptions{3000, true},
             [this, ctx, project = std::move(p)](){
                 return recoverProjectImpl(ctx, project);
             });
@@ -100,7 +101,7 @@ RuntimeRecoverResult ProjectRuntimeManager::recover(kit_muduo::HttpContextPtr ct
         }
         result.runtime_projects.push_back(std::move(item_result));
     }
-    
+
     if(result.failed_count > 0)
     {
         // rcover失败的project都进行回滚
@@ -110,6 +111,17 @@ RuntimeRecoverResult ProjectRuntimeManager::recover(kit_muduo::HttpContextPtr ct
 
     return result;
 }
+
+
+ProjectRuntimeResult ProjectRuntimeManager::editPatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info)
+{
+    return submitProjectOperation(project_id,
+        RuntimeOperationKind::kEditPatternInfo,
+        "editPatternInfo", RuntimeOperationOptions{3000, true}, [this, ctx, project_id, pattern_info](){
+            return editPatternInfoImpl(ctx, project_id,pattern_info);
+        });
+}
+
 
 void ProjectRuntimeManager::shutdown()
 {
@@ -154,7 +166,7 @@ void ProjectRuntimeManager::addServer(int64_t project_id, std::shared_ptr<Projec
         return;
     }
 
-    runtime_projects_.emplace(project_id, 
+    runtime_projects_.emplace(project_id,
         ProjectRuntimeRecord{
         .project_id = project_id,
         .runtime_state = ProjectRuntimeState::kRunning,
@@ -222,7 +234,7 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
             RUNPJMA_F_ERROR("UpdateRuntimeState error! pjId[%ld]\n", project_id);
             return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
         }
-        return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(), 
+        return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
             ProjectRuntimeSnapshot{
                 .project_id = project_id,
                 .runtime_state = ProjectRuntimeState::kStopped,
@@ -248,7 +260,7 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
     }
 
-    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(), 
+    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
     ProjectRuntimeSnapshot{
         .project_id = project_id,
         .runtime_state = ProjectRuntimeState::kStopped,
@@ -272,7 +284,7 @@ ProjectRuntimeResult ProjectRuntimeManager::delProjectImpl(kit_muduo::HttpContex
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
     }
 
-    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(), 
+    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
     ProjectRuntimeSnapshot{
         .project_id = project_id,
         .runtime_state = ProjectRuntimeState::kStopped,
@@ -288,23 +300,87 @@ ProjectRecoverItemResult  ProjectRuntimeManager::recoverProjectImpl(kit_muduo::H
     {
         snapshot.project_id = p.m_id;
     }
-    
+
     return ProjectRecoverItemResult{
         .status = std::move(presult.status),
         .snapshot = std::move(snapshot),
     };
 }
 
+ProjectRuntimeResult ProjectRuntimeManager::editPatternInfoImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info)
+{
+    if(project_id <= 0)
+    {
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kInvalidArgument,
+            RuntimeError(RuntimeError::kInvalidArgument),
+            "request param invalid");
+    }
+
+    const auto &p = project_svc_->GetById(ctx, project_id);
+    if(p.m_id <= 0)
+    {
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kProjectNotFound,
+            RuntimeError(RuntimeError::kInvalidArgument),
+            "project not found");
+    }
+    if(ProjectStatus::kInvalid == p.m_status)
+    {
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kProjectDeleted,
+            RuntimeError(RuntimeError::kInvalidArgument),
+            "project deleted");
+    }
+    if(ProtocolType::kCustomTcp != p.m_protocolType)
+    {
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kProjectTypeInvalid,
+            RuntimeError(RuntimeError::kInvalidArgument),
+            "project type invalid");
+    }
+    if(ProjectRuntimeState::kRunning == p.m_runtimeState || nullptr != findServer(project_id))
+    {
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kInvalidArgument,
+            RuntimeError(RuntimeError::kInvalidArgument),
+            "请先停止测试服务后再修改格式信息");
+    }
+
+    if(!CustomTcpPatternSpec::FromJson(pattern_info).has_value())
+    {
+        RUNPJMA_F_ERROR(" pattern_info invalid\n");
+
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kInvalidArgument,
+            RuntimeError(RuntimeError::kInvalidArgument),
+            "pattern info invalid");
+    }
+
+    if(!project_svc_->UpdatePatternInfoWithProtocolWithdraw(ctx, project_id, pattern_info))
+    {
+        return ProjectRuntimeResult::Failed(
+            RuntimeControlCode::kPersistFailed,
+            RuntimeError(RuntimeError::kInternalError),
+            "service failed");
+    }
+    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::PersistedOk(), ProjectRuntimeSnapshot{
+        .project_id = project_id,
+        .runtime_state = ProjectRuntimeState::kStopped,
+        .listen_port = 0,
+    });
+}
+
 ProjectRuntimeResult ProjectRuntimeManager::createAndStartProjectServerImpl(kit_muduo::HttpContextPtr ctx, const Project& p)
 {
     int64_t project_id = p.m_id;
     std::unique_lock<std::mutex> lock(register_mtx_);
-    
+
     auto it = runtime_projects_.find(p.m_id);
     if(it != runtime_projects_.end()
         && ProjectRuntimeState::kRunning == it->second.runtime_state)
     {
-        return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(), 
+        return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
             ProjectRuntimeSnapshot{
                 .project_id = p.m_id,
                 .runtime_state = ProjectRuntimeState::kRunning,
@@ -313,10 +389,10 @@ ProjectRuntimeResult ProjectRuntimeManager::createAndStartProjectServerImpl(kit_
     }
     lock.unlock();
 
-    if(!CheckProjectMode(p.m_mode) 
+    if(!CheckProjectMode(p.m_mode)
         || !CheckProtocolType(p.m_protocolType))
     {
-        return ProjectRuntimeResult::Failed(RuntimeControlCode::kProjectTypeInvalid); 
+        return ProjectRuntimeResult::Failed(RuntimeControlCode::kProjectTypeInvalid);
     }
 
     // 如果当前数据库时已开启状态 置为未开启
@@ -340,7 +416,7 @@ ProjectRuntimeResult ProjectRuntimeManager::createAndStartProjectServerImpl(kit_
 
     // 工厂模式创建测试服务
     auto project_server = ProjectServerFactory::Create(p, lease_loop);
-    if (!project_server) 
+    if (!project_server)
     {
         RUNPJMA_F_ERROR("create ProjectServer faild! pjId[%ld], type[%d] \n", project_id, static_cast<int32_t>(p.m_protocolType));
 
@@ -371,7 +447,7 @@ ProjectRuntimeResult ProjectRuntimeManager::createAndStartProjectServerImpl(kit_
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
     }
 
-    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(), 
+    return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
     ProjectRuntimeSnapshot{
         .project_id = project_id,
         .runtime_state = ProjectRuntimeState::kRunning,
@@ -391,11 +467,11 @@ RuntimeResult<void> ProjectRuntimeManager::registerRuntimeEnabledProtocolsLocked
     for(auto &pc : active_pcs)
     {
         auto protocol_item = ProtocolItemFactory::Create(std::make_shared<Protocol>(pc), project_server);
-        
-        result = InvokeOnLoopSync(project_server->getLoop(), 3000, [project_server, 
+
+        result = InvokeOnLoopSync(project_server->getLoop(), 3000, [project_server,
             protocol_item](){
             return project_server->AddProtocolItem(protocol_item);
-        }); 
+        });
         if(!result.ok())
         {
             RUNPJMA_F_ERROR(" ProtocolItem add faild!  pjId[%ld], pcId[%ld], type[%d]\n", pc.m_projectId, pc.m_id, static_cast<int32_t>(pc.m_type));

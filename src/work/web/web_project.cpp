@@ -89,7 +89,7 @@ struct AddProjectReq {
 };
 
 
-struct StartAndStopProjectReq 
+struct StartAndStopProjectReq
 {
     int64_t id;
     int32_t operation; // 1 start 0 stop
@@ -106,10 +106,10 @@ struct StartAndStopProjectReq
 /**
  * @brief List 用于Body解析
  */
-struct ProjectListReq { 
+struct ProjectListReq {
     int32_t                  offset;          // 页码
     int32_t                  limit;           // 页大小
-    
+
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectListReq, offset, limit)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProjectListReq &req)
@@ -120,7 +120,7 @@ struct ProjectListReq {
 };
 
 struct ProjectDetailNameReq {
-    
+
     std::string name;
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectDetailNameReq, name)
 
@@ -146,15 +146,16 @@ struct ProjectEditPatternInfoReq {
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
 
-ProjectHandler::ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc, std::shared_ptr<RuntimeControllerInterface> project_runtime_manager)
+ProjectHandler::ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc,
+    std::shared_ptr<ProtocolSvcInterface> pc_svc,
+    std::shared_ptr<RuntimeControllerInterface> project_runtime_manager)
     :svc_(std::move(svc))
+    ,pc_svc_(std::move(pc_svc))
     ,project_runtime_manager_(std::move(project_runtime_manager))
 {
 
 }
 
-
-ProjectHandler::~ProjectHandler() { }
 
 void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> server)
 {
@@ -179,7 +180,7 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
 
     // 获取/修改某个服务的title名称
     server->Post("/projects/:project_id/name", XX(DetailName));
-    
+
     // 获取整个测试服务列表
     server->Post("/projects/list", XX(List));
 
@@ -355,7 +356,7 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
     } catch(const std::exception& e) {
 
         PJ_F_ERROR("project server runtime exception: %s \n", e.what());
-        
+
         WriteOpResponseHelper(ctx, write_result.failed(-300, "service failed"));
         return;
     }
@@ -396,7 +397,7 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
     // 查测试服务 信息
     ProjectRuntimeResult pj_runtime_result;
-    try 
+    try
     {
         int64_t project_id = std::stol(val1);
         auto current_user = CurrentUserFromContext(ctx);
@@ -407,7 +408,7 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
             resp->body().appendData(R"({"code": -403, "message":"forbidden", "data":{}})");
             return;
         }
-        
+
         pj_runtime_result = project_runtime_manager_->delProject(ctx, project_id);
 
     }
@@ -443,7 +444,7 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     } catch(const std::exception& e) {
 
         PJ_F_ERROR("query param transform fail! project_id=%d , %s\n", project_id, e.what());
-        
+
         resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
         return;
     }
@@ -451,7 +452,7 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
 
     Project project;
     // 查测试服务 信息
-    try 
+    try
     {
         project = svc_->GetById(ctx, project_id);
         auto current_user = CurrentUserFromContext(ctx);
@@ -510,7 +511,7 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
 
     std::vector<Project> projects;
     // 查测试服务 信息
-    try 
+    try
     {
         auto current_user = CurrentUserFromContext(ctx);
         if(current_user.IsAdmin())
@@ -532,7 +533,7 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
 
 
     nljson root;
-    root["code"] = 0; 
+    root["code"] = 0;
     root["message"] = "success";
     root["data"] = nljson::array();
     for(const auto& p : projects)
@@ -557,7 +558,7 @@ void ProjectHandler::GetAllValid(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     PJ_DEBUG() << std::endl << req->body().toString() << std::endl;
 
     std::vector<Project> projects;
-    try 
+    try
     {
         auto current_user = CurrentUserFromContext(ctx);
         if(current_user.IsAdmin())
@@ -577,7 +578,7 @@ void ProjectHandler::GetAllValid(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     }
 
     nljson root;
-    root["code"] = 0; 
+    root["code"] = 0;
     root["message"] = "success";
     root["data"] = nljson::array();
     for(const auto& p : projects)
@@ -615,7 +616,7 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     } catch(const std::exception& e) {
 
         PJ_F_ERROR("query param fail: %s! pjId[%d] \n", e.what(), project_id);
-        
+
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param  fail"));
         return;
@@ -678,7 +679,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
         return;
     }
 
-    std::vector<char> pattern_info;
+    nljson pattern_info;
     try {
 
         pattern_info = svc_->GetPatternInfoById(ctx, project_id);
@@ -686,7 +687,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
 
     } catch(const std::exception& e) {
         PJ_F_ERROR("service GetPatternInfoById exception: %s \n", e.what());
-        
+
         resp->body().appendData(R"({"code": -300, "message":"service failed"})");
 
         return;
@@ -695,7 +696,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
     nljson root;
     root["code"] = 0;
     root["message"] = "success";
-    root["data"] = nljson::parse(pattern_info);
+    root["data"] = pattern_info;
     resp->body().appendData(root.dump());
 
     PJ_DEBUG() << std::endl << root.dump(4) << std::endl;
@@ -724,39 +725,21 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
         return;
     }
 
-    const std::string& json_str = request.pattern_info.dump();
     auto current_user = CurrentUserFromContext(ctx);
+
     auto auth_project = svc_->GetById(ctx, request.id);
-    if(auth_project.m_id <= 0 || (!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
+
+    if((!current_user.IsAdmin() && auth_project.m_userId != current_user.user_id))
     {
         resp->setStateCode(StateCode::k403Forbidden);
         resp->body().appendData(R"({"code": -403, "message":"forbidden", "data":{}})");
         return;
     }
-    if(!CustomTcpPatternSpec::FromJson(request.pattern_info).has_value())
-    {
-        PC_F_ERROR("custom tcp pattern_info invalid\n");
 
-        WriteOpResponseHelper(ctx, write_result.failed(-200, "pattern info invalid"));
-        return;
-    }
-
-    if(ProjectRuntimeState::kRunning == auth_project.m_runtimeState || nullptr != project_runtime_manager_->findServer(request.id))
-    {
-        WriteOpResponseHelper(ctx, write_result.failed(-200, "project is running"));
-        return;
-    }
-
-
-    const std::vector<char> pattern_info(json_str.begin(), json_str.end());
-    ok = false;
+    ProjectRuntimeResult pj_runtime_result;
     try {
 
-        ok = svc_->UpdatePatternInfo(ctx, request.id, pattern_info);
-        if(!ok)
-        {
-            throw std::runtime_error("UpdatePatternInfo failed");
-        }
+        pj_runtime_result = project_runtime_manager_->editPatternInfo(ctx, request.id, request.pattern_info);
 
     } catch(const std::exception& e) {
         PJ_F_ERROR("service UpdatePatternInfo exception: %s \n", e.what());
@@ -765,7 +748,7 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
         return;
     }
 
-    WriteOpResponseHelper(ctx, write_result.persistedOk().success());
+    WriteOpResponseHelper(ctx, WriteOpResult::FromPjRuntimeResult(pj_runtime_result));
 }
 
 void ProjectHandler::RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
@@ -793,7 +776,7 @@ void ProjectHandler::RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo:
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
     }
-    
+
     bool ok = svc_->UpdateStatus(ctx, project_id, ProjectStatus::kValid)
         && svc_->UpdateRuntimeState(ctx, project_id, ProjectRuntimeState::kStopped, 0);
     if(!ok)

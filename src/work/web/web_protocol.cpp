@@ -46,7 +46,7 @@ struct AddProtocolReqHeader {
     int64_t project_id;                        // 所属测试服务Id
     ProtocolBodyType req_body_type;                 // 请求协议体类型 json/xml/plain
     ProtocolBodyType resp_body_type;                 // 响应协议体类型 json/xml/plain
-    ProtocolRuntimeEnabled runtime_enabled;         // 协议项是否同步上线
+    ProtocolConfigState runtime_enabled;         // 协议项是否同步上线
     
     // TCP特有
     int32_t is_endian;                          // 是否进行大小端转换 1进行 0不进行 频繁查询更新字段
@@ -135,7 +135,7 @@ struct AddProtocolReq {
 struct LaunchAndWithdrawsProtocolReq {
     int64_t id;
     int64_t project_id;
-    ProtocolRuntimeEnabled runtime_enabled;
+    ProtocolConfigState runtime_enabled;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(LaunchAndWithdrawsProtocolReq, id, project_id, runtime_enabled)
 
@@ -422,7 +422,7 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     p->m_type = request.header.type;
     p->m_projectId = request.header.project_id;
     p->m_status = ProtocolStatus::kValid;
-    p->m_runtimeEnabled = request.header.runtime_enabled;
+    p->m_configState = request.header.runtime_enabled;
     p->m_reqBodyType = request.header.req_body_type;
     p->m_respBodyType = request.header.resp_body_type;
     p->m_reqBodyDataStatus = request.protocol_req_body.empty() ? 0 : 1;
@@ -459,7 +459,7 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     // 更新一下主键id
     p->m_id = protocol_id;
 
-    if(ProtocolRuntimeEnabled::kOff == p->m_runtimeEnabled)
+    if(ProtocolConfigState::kOff == p->m_configState)
     {
         WriteOpResponseHelper(ctx, write_result.persistedOk().success());
         return;
@@ -549,11 +549,11 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
 
     int64_t protocol_id = request.id;
     int64_t project_id = request.project_id;
-    const ProtocolRuntimeEnabled will_enabled = request.runtime_enabled;
+    const ProtocolConfigState will_config_state = request.runtime_enabled;
 
     if(protocol_id <= 0
         || project_id <= 0
-        || (ProtocolRuntimeEnabled::kOn != will_enabled && ProtocolRuntimeEnabled::kOff != will_enabled))
+        || (ProtocolConfigState::kOn != will_config_state && ProtocolConfigState::kOff != will_config_state))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "request param invalid"));
         return;
@@ -577,9 +577,9 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
     try {
 
 
-        if(ProtocolRuntimeEnabled::kOn == will_enabled)
+        if(ProtocolConfigState::kOn == will_config_state)
         {
-            if(ProtocolRuntimeEnabled::kOn != access_info.protocol_runtime_enabled)
+            if(ProtocolConfigState::kOn != access_info.protocol_config_state)
             {
                 auto p = std::make_shared<Protocol>(svc_->GetById(ctx,  protocol_id));
                 if(!p || p->m_id <= 0)
@@ -618,9 +618,9 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
             }
            
         }
-        else if(ProtocolRuntimeEnabled::kOff == will_enabled)
+        else if(ProtocolConfigState::kOff == will_config_state)
         {
-            if(ProtocolRuntimeEnabled::kOff != access_info.protocol_runtime_enabled)
+            if(ProtocolConfigState::kOff != access_info.protocol_config_state)
             {
                 project_server = project_runtime_manager_->findServer(access_info.project_id);
                 if(!project_server)
@@ -668,10 +668,10 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
         return;
     }
     // 更新数据库
-    ok = svc_->UpdateRuntimeEnabled(ctx, protocol_id, will_enabled);
+    ok = svc_->UpdateConfigState(ctx, protocol_id, will_config_state);
     if(!ok)
     {
-        PJ_F_ERROR("UpdateRuntimeEnabled error! pjId[%ld] pcId[%ld] will_enabled[%d]\n", project_id, protocol_id,static_cast<int32_t>(will_enabled));
+        PJ_F_ERROR("UpdateRuntimeEnabled error! pjId[%ld] pcId[%ld] will_enabled[%d]\n", project_id, protocol_id,static_cast<int32_t>(will_config_state));
 
         WriteOpResponseHelper(ctx, write_result.runOk().failed(-300, "service failed"));
         return;
@@ -727,7 +727,6 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
 
     try 
     {
-        // 生成对应协议种类的报文
         ok = svc_->Del(ctx, protocol_id);
         if(!ok)
         {
@@ -742,7 +741,7 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
         return;
     }
 
-    if(ProtocolRuntimeEnabled::kOn != access_info.protocol_runtime_enabled)
+    if(ProtocolConfigState::kOn != access_info.protocol_config_state)
     {
         WriteOpResponseHelper(ctx, write_result.persistedOk().success());
         return;
@@ -1012,7 +1011,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     }
 
     // 查询当前协议是否是上线状态
-    const ProtocolRuntimeEnabled runtime_enabeld = access_info.protocol_runtime_enabled;
+    const ProtocolConfigState runtime_enabeld = access_info.protocol_config_state;
     
     ok = false;
     std::shared_ptr<ProtocolItem> protocol_item = nullptr;
@@ -1075,7 +1074,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    if(ProtocolRuntimeEnabled::kOn != runtime_enabeld)
+    if(ProtocolConfigState::kOn != runtime_enabeld)
     {
         WriteOpResponseHelper(ctx, write_result.persistedOk().success());
         return;
@@ -1185,7 +1184,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         return;
     }
 
-    const ProtocolRuntimeEnabled runtime_enabled = access_info.protocol_runtime_enabled;
+    const ProtocolConfigState config_state = access_info.protocol_config_state;
 
     ok = false;
     ProtocolBodyType old_body_type;
@@ -1211,7 +1210,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         return;
     }
 
-    if(ProtocolRuntimeEnabled::kOn != runtime_enabled)
+    if(ProtocolConfigState::kOn != config_state)
     {
         WriteOpResponseHelper(ctx, write_result.persistedOk(). success());
         return;
@@ -1687,15 +1686,8 @@ void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_mudu
         return;
     }
 
-    auto current_user = CurrentUserFromContext(ctx);
-    if(!current_user.IsAdmin())
-    {
-        WriteForbidden(ctx);
-        return;
-    }
-
     ProtocolAccessInfo access_info;
-    if(!svc_->GetAccessInfo(ctx, protocol_id, access_info))
+    if(CheckProtocolAccess(ctx, svc_.get(), protocol_id, false, true, access_info))
     {
         WriteForbidden(ctx);
         return;
@@ -1715,7 +1707,8 @@ void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_mudu
         return;
     }
 
-    if(!svc_->ReCover(ctx, protocol_id))
+    if(!svc_->ReCover(ctx, protocol_id)
+        || !svc_->UpdateConfigState(ctx, protocol_id, ProtocolConfigState::kOff))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-300, "service failed"));
         return;

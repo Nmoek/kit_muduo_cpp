@@ -24,9 +24,9 @@ namespace {
 
 /**
  * @brief 生成协议项唯一运行键值
- * @param type 
- * @param req_cfg 
- * @return std::string 
+ * @param type
+ * @param req_cfg
+ * @return std::string
  */
 std::string GenerateRuntimeKey(ProtocolType type, nlohmann::json req_cfg)
 {
@@ -78,7 +78,7 @@ static kit_domain::Protocol CovertDomainProtocol(const kit_dao::Protocol &daoPj)
         .m_projectId = daoPj.m_projectId,
         .m_runtimeKey = daoPj.m_runtimeKey,
         .m_status = static_cast<ProtocolStatus>(daoPj.m_status),
-        .m_runtimeEnabled = static_cast<ProtocolRuntimeEnabled>(daoPj.m_runtimeEnabled),
+        .m_configState = static_cast<ProtocolConfigState>(daoPj.m_configState),
         .m_reqBodyType= static_cast<ProtocolBodyType>(daoPj.m_reqBodyType),
         .m_respBodyType = static_cast<ProtocolBodyType>(daoPj.m_respBodyType),
         .m_reqBodyDataStatus = daoPj.m_reqBodyDataStatus,
@@ -115,7 +115,7 @@ static kit_dao::Protocol CovertDaoProtocol(const std::string& runtime_key, const
         domainPc.m_projectId,
         runtime_key,
         static_cast<int32_t>(domainPc.m_status),
-        static_cast<int32_t>(domainPc.m_runtimeEnabled),
+        static_cast<int32_t>(domainPc.m_configState),
         static_cast<int32_t>(domainPc.m_reqBodyType),
         static_cast<int32_t>(domainPc.m_respBodyType),
         domainPc.m_reqBodyDataStatus,
@@ -136,7 +136,7 @@ static kit_domain::ProtocolAccessInfo CovertDomainProtocolAccessInfo(const kit_d
         .runtime_key = std::move(p.runtime_key),
         .protocol_type = static_cast<ProtocolType>(p.protocol_type),
         .protocol_status = static_cast<ProtocolStatus>(p.protocol_status),
-        .protocol_runtime_enabled = static_cast<ProtocolRuntimeEnabled>(p.protocol_runtime_enabled),    
+        .protocol_config_state = static_cast<ProtocolConfigState>(p.protocol_config_state),
         .project_user_id = p.project_user_id,
         .project_runtime_state = static_cast<ProjectRuntimeState>(p.project_runtime_state),
         .project_status = static_cast<ProjectStatus>(p.project_status)
@@ -220,14 +220,14 @@ std::vector<Protocol> ProtocolRepository::GetByProject(kit_muduo::HttpContextPtr
     return CovertDomainProtocols(_dao->ListByProject(ctx, protocolId, static_cast<int32_t>(status), offset, limit));
 }
 
-std::vector<Protocol> ProtocolRepository::GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
+std::vector<Protocol> ProtocolRepository::GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
     return CovertDomainProtocols(_dao->GetAll(ctx, project_id, static_cast<int32_t>(ProtocolStatus::kValid), -1));
 }
 
 std::vector<Protocol> ProtocolRepository::GetActiveByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return CovertDomainProtocols(_dao->GetAll(ctx, project_id, static_cast<int32_t>(ProtocolStatus::kValid), static_cast<int32_t>(ProtocolRuntimeEnabled::kOn)));
+    return CovertDomainProtocols(_dao->GetAll(ctx, project_id, static_cast<int32_t>(ProtocolStatus::kValid), static_cast<int32_t>(ProtocolConfigState::kOn)));
 }
 
 int32_t ProtocolRepository::GetProtocolCnt(kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status)
@@ -263,7 +263,7 @@ bool ProtocolRepository::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_t 
     }
 
     body_type = static_cast<ProtocolBodyType>(dao_body_type);
-    
+
     return true;
 }
 
@@ -284,9 +284,9 @@ bool ProtocolRepository::GetAccessInfo(kit_muduo::HttpContextPtr ctx, int64_t pr
     return true;
 }
 
-bool ProtocolRepository::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolRuntimeEnabled runtime_enabled)
+bool ProtocolRepository::UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolConfigState config_state)
 {
-    return _dao->UpdateRuntimeEnabled(ctx, protocol_id, static_cast<int32_t>(runtime_enabled));
+    return _dao->UpdateConfigState(ctx, protocol_id, static_cast<int32_t>(config_state));
 }
 
 } // kit_domain

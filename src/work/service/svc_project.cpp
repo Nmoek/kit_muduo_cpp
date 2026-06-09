@@ -1,6 +1,6 @@
 /**
  * @file svc_project.cpp
- * @brief 
+ * @brief
  * @author ljk5
  * @version 1.0
  * @date 2025-07-19 03:34:57
@@ -33,9 +33,9 @@ int64_t ProjectService::Add(kit_muduo::HttpContextPtr ctx, Project &domainPj)
     return _repo->Create(ctx, domainPj);
 }
 
-bool ProjectService::Del(kit_muduo::HttpContextPtr ctx, int64_t pjId)  
-{ 
-    return false; 
+bool ProjectService::Del(kit_muduo::HttpContextPtr ctx, int64_t pjId)
+{
+    return false;
 }
 
 
@@ -55,14 +55,14 @@ bool ProjectService::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t project_i
     return _repo->UpdateName(ctx, project_id, name);
 }
 
-Project ProjectService::GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id)  
-{ 
-    return _repo->GetById(ctx, project_id); 
+Project ProjectService::GetById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+{
+    return _repo->GetById(ctx, project_id);
 }
 
-std::vector<Project> ProjectService::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit)  
-{ 
-    return _repo->GetByUser(ctx, userId, status, offset, limit); 
+std::vector<Project> ProjectService::GetByUser(kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit)
+{
+    return _repo->GetByUser(ctx, userId, status, offset, limit);
 }
 
 std::vector<Project> ProjectService::GetAll(kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit)
@@ -70,14 +70,14 @@ std::vector<Project> ProjectService::GetAll(kit_muduo::HttpContextPtr ctx, int32
     return _repo->GetAll(ctx, offset, limit);
 }
 
-std::vector<char> ProjectService::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+nlohmann::json ProjectService::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return _repo->GetPatternInfoById(ctx, project_id); 
+    return _repo->GetPatternInfoById(ctx, project_id);
 }
 
-bool ProjectService::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
+bool ProjectService::UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info)
 {
-    return _repo->UpdatePatternInfo(ctx, project_id, pattern_info); 
+    return _repo->UpdatePatternInfoWithProtocolWithdraw(ctx, project_id, pattern_info);
 
 }
 

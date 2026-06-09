@@ -111,14 +111,16 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolStatus,{
     {ProtocolStatus::kValid,   1},
 })
 
-///  @brief 协议项是否上线到runtime
-enum class ProtocolRuntimeEnabled {
-    kOff = 0,
-    kOn  = 1,
+///  @brief 协议项状态：上/下线到runtime、配置重更新
+enum class ProtocolConfigState {
+    kOff        = 0,
+    kOn         = 1,
+    kReConfig   = 2,
 };
-NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolRuntimeEnabled,{
-    {ProtocolRuntimeEnabled::kOff, 0},
-    {ProtocolRuntimeEnabled::kOn,  1},
+NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolConfigState,{
+    {ProtocolConfigState::kOff,      0},
+    {ProtocolConfigState::kOn,       1},
+    {ProtocolConfigState::kReConfig, 2},
 })
 
 /**

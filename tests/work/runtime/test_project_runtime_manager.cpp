@@ -67,7 +67,7 @@ static Protocol MakeRuntimeHttpProtocol(int64_t protocol_id, int64_t project_id,
     protocol.m_type = ProtocolType::kHttp;
     protocol.m_projectId = project_id;
     protocol.m_status = ProtocolStatus::kValid;
-    protocol.m_runtimeEnabled = ProtocolRuntimeEnabled::kOn;
+    protocol.m_configState = ProtocolConfigState::kOn;
     protocol.m_reqBodyType = ProtocolBodyType::kJson;
     protocol.m_respBodyType = ProtocolBodyType::kJson;
     protocol.m_reqBodyDataStatus = 0;
@@ -79,6 +79,38 @@ static Protocol MakeRuntimeHttpProtocol(int64_t protocol_id, int64_t project_id,
     protocol.m_ctime = kit_muduo::TimeStamp::Now();
     protocol.m_utime = kit_muduo::TimeStamp::Now();
     return protocol;
+}
+
+static Project MakeCustomTcpProjectForPattern(int64_t project_id,
+                                              ProjectRuntimeState runtime_state = ProjectRuntimeState::kStopped)
+{
+    Project p;
+    p.m_id = project_id;
+    p.m_name = "pattern_custom_tcp_project_" + std::to_string(project_id);
+    p.m_mode = ProjectMode::ServerMode;
+    p.m_protocolType = ProtocolType::kCustomTcp;
+    p.m_listenPort = 0;
+    p.m_targetIp = "";
+    p.m_userId = 1;
+    p.m_status = ProjectStatus::kValid;
+    p.m_runtimeState = runtime_state;
+    p.m_patternInfo = nlohmann::json::object();
+    p.m_ctime = kit_muduo::TimeStamp::Now();
+    return p;
+}
+
+static nlohmann::json MinimalCustomTcpPatternInfo()
+{
+    return nlohmann::json::parse(R"({
+        "version": 2,
+        "header_bytes": 4,
+        "default_order": "big",
+        "length_policy": "no_length",
+        "fields": [
+            {"name":"start","byte_pos":0,"byte_len":2,"type":"STR","role":"start_magic","match":"HCAFE"},
+            {"name":"func","byte_pos":2,"byte_len":2,"type":"STR","role":"function_code"}
+        ]
+    })");
 }
 
 } // namespace
@@ -324,4 +356,182 @@ TEST(ProjectRuntimeManagerSuite, RecoverKeepsFailedProjectIdAndContinuesOtherPro
 
     success_server->stop();
     runtime_manager->removeServer(success_project_id);
+}
+
+/*
+测试思路：
+1. 模拟一个已停止的 Custom TCP project，pattern_info 是合法 schema。
+2. 调用 manager.editPatternInfo，运行态层应串行化该 project 的编辑命令，并委托 service 执行
+   UpdatePatternInfoWithProtocolWithdraw。
+3. 断言返回 persistedOk/runtime_applied=0，表示 DB 中 pattern_info 更新和协议项撤回已生效，
+   但没有运行态 server 需要热更新。
+
+示例：
+  CustomTcp Project 9801(stopped)
+      |
+      v
+  editPatternInfo(valid schema)
+      |
+      v
+  UpdatePatternInfoWithProtocolWithdraw -> success
+*/
+TEST(ProjectRuntimeManagerSuite, EditPatternInfoStoppedCustomTcpPersistsAndWithdrawsProtocols)
+{
+    constexpr int64_t project_id = 9801;
+    const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id)));
+    EXPECT_CALL(*mocksvc, UpdatePatternInfoWithProtocolWithdraw(_, project_id, Eq(pattern_info)))
+        .WillOnce(Return(true));
+    EXPECT_CALL(*mock_protocol_svc, GetActiveByProject(_, _)).Times(0);
+
+    auto result = runtime_manager->editPatternInfo(nullptr, project_id, pattern_info);
+
+    ASSERT_TRUE(result.ok()) << result.status.message;
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kOk);
+    EXPECT_EQ(result.receipt.persisted, 1);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+    EXPECT_EQ(result.snapshot.project_id, project_id);
+    EXPECT_EQ(result.snapshot.runtime_state, ProjectRuntimeState::kStopped);
+    EXPECT_EQ(result.snapshot.listen_port, 0);
+    EXPECT_EQ(runtime_manager->findServer(project_id), nullptr);
+}
+
+/*
+测试思路：
+1. 模拟 Custom TCP project 在 DB 中处于 running 状态。
+2. 调用 editPatternInfo 时，运行态测试项未停止，manager 应在 service 持久化前拒绝。
+3. 断言不会调用 UpdatePatternInfoWithProtocolWithdraw，避免运行中 schema 被换掉导致已上线协议项
+   和当前 parser 语义不一致。
+
+示例：
+  CustomTcp Project 9802(running)
+      |
+      v
+  editPatternInfo(valid schema) -> reject before DB write
+*/
+TEST(ProjectRuntimeManagerSuite, EditPatternInfoRejectsRunningProject)
+{
+    constexpr int64_t project_id = 9802;
+    const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id, ProjectRuntimeState::kRunning)));
+    EXPECT_CALL(*mocksvc, UpdatePatternInfoWithProtocolWithdraw(_, _, _)).Times(0);
+
+    auto result = runtime_manager->editPatternInfo(nullptr, project_id, pattern_info);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. 模拟一个已停止的 HTTP project。
+2. 即使传入合法 Custom TCP pattern_info，manager 也应拒绝非 Custom TCP 项目修改 schema。
+3. 断言不会触发协议项撤回，因为 MQTT/HTTP/ONVIF 等项目不使用 Custom TCP pattern_info 作为
+   协议项配置 schema。
+
+示例：
+  HTTP Project 9803(stopped)
+      |
+      v
+  editPatternInfo(valid tcp schema) -> project type invalid
+*/
+TEST(ProjectRuntimeManagerSuite, EditPatternInfoRejectsNonCustomTcpProject)
+{
+    constexpr int64_t project_id = 9803;
+    const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
+    EXPECT_CALL(*mocksvc, UpdatePatternInfoWithProtocolWithdraw(_, _, _)).Times(0);
+
+    auto result = runtime_manager->editPatternInfo(nullptr, project_id, pattern_info);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kProjectTypeInvalid);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. 模拟一个已停止的 Custom TCP project。
+2. 传入空对象作为 pattern_info，CustomTcpPatternSpec::FromJson 应校验失败。
+3. 断言 manager 在进入 DB 写入前返回 pattern info invalid，旧协议项不会被误撤回。
+
+示例：
+  CustomTcp Project 9804(stopped)
+      |
+      v
+  editPatternInfo({}) -> schema invalid -> no DB write
+*/
+TEST(ProjectRuntimeManagerSuite, EditPatternInfoRejectsInvalidPatternInfo)
+{
+    constexpr int64_t project_id = 9804;
+    const nlohmann::json invalid_pattern_info = nlohmann::json::object();
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id)));
+    EXPECT_CALL(*mocksvc, UpdatePatternInfoWithProtocolWithdraw(_, _, _)).Times(0);
+
+    auto result = runtime_manager->editPatternInfo(nullptr, project_id, invalid_pattern_info);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. 模拟 Custom TCP project 已停止，pattern_info 也合法。
+2. service 的 UpdatePatternInfoWithProtocolWithdraw 返回 false，代表事务写入失败。
+3. 断言 manager 返回 kPersistFailed，receipt 保持全失败，避免调用方误以为协议项已经进入
+   待重配置状态。
+
+示例：
+  CustomTcp Project 9805(stopped)
+      |
+      v
+  UpdatePatternInfoWithProtocolWithdraw -> false
+      |
+      v
+  editPatternInfo -> persist failed
+*/
+TEST(ProjectRuntimeManagerSuite, EditPatternInfoReturnsPersistFailedWhenServiceUpdateFails)
+{
+    constexpr int64_t project_id = 9805;
+    const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id)));
+    EXPECT_CALL(*mocksvc, UpdatePatternInfoWithProtocolWithdraw(_, project_id, Eq(pattern_info)))
+        .WillOnce(Return(false));
+
+    auto result = runtime_manager->editPatternInfo(nullptr, project_id, pattern_info);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kPersistFailed);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
 }

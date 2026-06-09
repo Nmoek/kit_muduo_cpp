@@ -24,26 +24,6 @@ ProjectRepository::ProjectRepository(std::shared_ptr<ProjectDaoInterface> dao)
 
 }
 
-ProjectRepository::~ProjectRepository() { }
-
-static nlohmann::json CovertPatternInfoJson(const std::vector<char> &pattern_info)
-{
-    if(pattern_info.empty())
-    {
-        return nlohmann::json::object();
-    }
-
-    const std::string pattern_info_text(pattern_info.begin(), pattern_info.end());
-    nlohmann::json pattern_info_json = nlohmann::json::parse(pattern_info_text, nullptr, false);
-    return pattern_info_json.is_discarded() ? nlohmann::json::object() : pattern_info_json;
-}
-
-static std::vector<char> CovertPatternInfoBytes(const nlohmann::json &pattern_info)
-{
-    const std::string pattern_info_text = pattern_info.dump();
-    return std::vector<char>(pattern_info_text.begin(), pattern_info_text.end());
-}
-
 static kit_domain::Project CovertDomainProject(const kit_dao::Project &daoPj)
 {
     return kit_domain::Project{
@@ -56,7 +36,7 @@ static kit_domain::Project CovertDomainProject(const kit_dao::Project &daoPj)
         daoPj.m_userId,
         static_cast<ProjectStatus>(daoPj.m_status),
         static_cast<ProjectRuntimeState>(daoPj.m_runtimeState),
-        CovertPatternInfoJson(daoPj.m_patternInfo),
+        nlohmann::json::parse(daoPj.m_patternInfo),
         kit_muduo::TimeStamp(daoPj.m_ctime),
     };
 }
@@ -70,7 +50,7 @@ static std::vector<kit_domain::Project> CovertDomainProjects(const std::vector<k
 }
 
 
-static kit_dao::Project  CovertDaoProject(const kit_domain::Project &domainPj)
+static kit_dao::Project CovertDaoProject(const kit_domain::Project &domainPj)
 {
     return kit_dao::Project {
         domainPj.m_id,
@@ -82,8 +62,7 @@ static kit_dao::Project  CovertDaoProject(const kit_domain::Project &domainPj)
         domainPj.m_userId,
         static_cast<int32_t>(domainPj.m_status),
         static_cast<int32_t>(domainPj.m_runtimeState),
-        CovertPatternInfoBytes(domainPj.m_patternInfo),
-
+        domainPj.m_patternInfo.dump(),
     };
 }
 
@@ -123,14 +102,14 @@ std::vector<Project> ProjectRepository::GetAll(kit_muduo::HttpContextPtr ctx, in
     return CovertDomainProjects(_dao->GetAll(ctx, offset, limit));
 }
 
-std::vector<char> ProjectRepository::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) 
+nlohmann::json ProjectRepository::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    return _dao->GetPatternInfoById(ctx, project_id);
+    return nlohmann::json::parse(_dao->GetPatternInfoById(ctx, project_id));
 }
 
-bool ProjectRepository::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
+bool ProjectRepository::UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info)
 {
-    return _dao->UpdatePatternInfo(ctx, project_id, pattern_info);
+    return _dao->UpdatePatternInfoWithProtocolWithdraw(ctx, project_id, pattern_info);
 }
 
 std::vector<Project> ProjectRepository::GetAllValid(kit_muduo::HttpContextPtr ctx)
@@ -139,10 +118,10 @@ std::vector<Project> ProjectRepository::GetAllValid(kit_muduo::HttpContextPtr ct
     return CovertDomainProjects(_dao->GetAllByStatusAndRuntimeState(ctx, static_cast<int32_t>(ProjectStatus::kValid), -1));
 }
 
-std::vector<Project> ProjectRepository::GetAllActive(kit_muduo::HttpContextPtr ctx) 
+std::vector<Project> ProjectRepository::GetAllActive(kit_muduo::HttpContextPtr ctx)
 {
     // 查出所有未软删且正在运行的测试服务
-    return CovertDomainProjects(_dao->GetAllByStatusAndRuntimeState(ctx, 
+    return CovertDomainProjects(_dao->GetAllByStatusAndRuntimeState(ctx,
         static_cast<int32_t>(ProjectStatus::kValid)
         ,static_cast<int32_t>(ProjectRuntimeState::kRunning)));
 }

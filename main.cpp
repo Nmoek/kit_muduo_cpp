@@ -105,7 +105,7 @@ static std::shared_ptr<Application> InitApp()
     static std::shared_ptr<AuthHandler> authHdl;
     static std::shared_ptr<UserHandler> userHdl;
     protocHdl = std::make_shared<ProtocolHandler>(protocSvc, projSvc, project_runtime_manager);
-    projHdl = std::make_shared<ProjectHandler>(projSvc, project_runtime_manager);
+    projHdl = std::make_shared<ProjectHandler>(projSvc, protocSvc,project_runtime_manager);
     authHdl = std::make_shared<AuthHandler>(authSvc);
     userHdl = std::make_shared<UserHandler>(userSvc);
     auto server = InitWebServer(&loop, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), authSvc);

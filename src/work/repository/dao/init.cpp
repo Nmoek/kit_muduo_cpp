@@ -32,9 +32,10 @@ static std::vector<std::vector<const char*>> index_sqls{
     // 1 protocols
     {
         "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status ON protocols(project_id, status);",
-        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_runenabled ON protocols(project_id, runtime_enabled);",
-        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status_runenabled ON protocols(project_id, status, runtime_enabled);",
-        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_protocols_pjid_runkey ON protocols(project_id, runtime_key) WHERE status = 1;",
+        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_configstate ON protocols(project_id, config_state);",
+        "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status_configstate ON protocols(project_id, status, config_state);",
+        // runtime_key 唯一索引的条件: 协议项未软删 且 不处于待配置状态
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_protocols_pjid_runkey ON protocols(project_id, runtime_key) WHERE status = 1 AND config_state <> 2;",
     },
     // 2 users
     {

@@ -34,7 +34,7 @@ struct Protocol
     int64_t                 m_projectId;    // 所属测试服务Id
     std::string             m_runtimeKey;
     ProtocolStatus          m_status;       // 协议项是否有效
-    ProtocolRuntimeEnabled                 m_runtimeEnabled; // 协议项是否上线状态  0未上线 1已上线   
+    ProtocolConfigState                 m_configState; // 协议项配置状态  0未上线 1已上线 2待重配置
     ProtocolBodyType        m_reqBodyType;  // 请求协议数据类型
     ProtocolBodyType        m_respBodyType; // 响应协议数据类型
     int32_t                 m_reqBodyDataStatus; // body是否存在
@@ -59,7 +59,7 @@ struct ProtocolAccessInfo
     std::string             runtime_key;              // 协议项运行唯一键
     ProtocolType            protocol_type;            // 测试协议类型
     ProtocolStatus          protocol_status;          // 协议项是否有效
-    ProtocolRuntimeEnabled  protocol_runtime_enabled; // 协议项是否上线状态
+    ProtocolConfigState  protocol_config_state; // 协议项是否上线状态
     int64_t                 project_user_id;          // 所属用户Id
     ProjectRuntimeState     project_runtime_state;    // 测试服务是否正在运行
     ProjectStatus           project_status;           // 测试服务是否有效

@@ -55,7 +55,7 @@ int64_t SqliteOrmProtocolDao::Insert(std::shared_ptr<kit_muduo::http::HttpContex
         }
         // 系统设计问题 SQLite不支持高并发写 WAL模式仅支持 TPS:100 ~ 300 否则迁移Mysql/PostorgeSql
         protocol_id = tx_result.val->db().insert(daoPc);
-        
+
         tx_result.val->commit();
 
     } catch (const std::system_error &e) {
@@ -68,7 +68,7 @@ int64_t SqliteOrmProtocolDao::Insert(std::shared_ptr<kit_muduo::http::HttpContex
 
         protocol_id = -1;
     }
-    
+
 
     DAODB_INFO() << "qliteOrmProtocolDao::Insert, id= " << protocol_id << std::endl;
 
@@ -105,7 +105,7 @@ bool SqliteOrmProtocolDao::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64
         }
 
 
-        // UPDATE Protocols SET `status`= ?, `utime` = ? WHERE id = ? 
+        // UPDATE Protocols SET `status`= ?, `utime` = ? WHERE id = ?
 
         tx_result.val->db().update_all(
             set(
@@ -133,7 +133,7 @@ bool SqliteOrmProtocolDao::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64
     return true;
 }
 
-bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Protocol daoPc) 
+bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Protocol daoPc)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
     auto lease_result = _db_pool->acquire();
@@ -145,9 +145,9 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
 
     try {
 
-        // SELCT * FROM xxx WHERE id = ? 
+        // SELCT * FROM xxx WHERE id = ?
         auto pc = lease_result.val->db().get_pointer<kit_dao::Protocol>(daoPc.m_id);
-        if(!pc 
+        if(!pc
             || kit_domain::ProtocolStatus::kValid != static_cast<kit_domain::ProtocolStatus>(pc->m_status))
         {
             DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", daoPc.m_id);
@@ -170,7 +170,7 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
         pc->m_isEndian = daoPc.m_isEndian;
         pc->m_utime = now;
 
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
+        // UPDATE Protocols SET `status`= ? WHERE id = ?
 
         tx_result.val->db().update(*pc);
 
@@ -220,7 +220,7 @@ bool SqliteOrmProtocolDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t pro
             return false;
         }
 
-        // UPDATE Protocols SET `status`= ?, `utime` = ? WHERE id = ? 
+        // UPDATE Protocols SET `status`= ?, `utime` = ? WHERE id = ?
         tx_result.val->db().update_all(
             set(
                 c(&kit_dao::Protocol::m_name) = name
@@ -291,7 +291,7 @@ bool SqliteOrmProtocolDao::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t p
             ),
             where(c(&kit_dao::Protocol::m_id) == protocol_id)
         );
-        
+
         tx_result.val->commit();
 
     } catch (const std::system_error &e) {
@@ -403,7 +403,7 @@ bool SqliteOrmProtocolDao::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t pro
         {
             return false;
         }
-        // UPDATE Protocols SET `status`= ? WHERE id = ? 
+        // UPDATE Protocols SET `status`= ? WHERE id = ?
 
         tx_result.val->db().update_all(
             set(
@@ -448,7 +448,7 @@ kit_dao::Protocol SqliteOrmProtocolDao::GetById(kit_muduo::HttpContextPtr ctx, i
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT * FROM xxx WHERE id == protocol_id 
+        // SELCT * FROM xxx WHERE id == protocol_id
         auto pc_ptr = lease_result.val->db().get_pointer<kit_dao::Protocol>(protocol_id);
         if(!pc_ptr)
         {
@@ -485,7 +485,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列, 这里不查询Body数据
-        
+
         // SELCT id,name,... FROM xxx WHERE m_userId = ? and status = ?
         // BUG: 多结构体映射同一个表 sqlite3不支持
 #if 0
@@ -506,7 +506,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
         }
         pcs.swap(tmps);
 
-        
+
 #else
 
         // 旧写法是利用元组vector<tutle<10>>
@@ -530,7 +530,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
             c(&kit_dao::Protocol::m_projectId) ==  project_id
             &&
             c(&kit_dao::Protocol::m_status) == status
-        ), 
+        ),
         order_by(&kit_dao::Protocol::m_ctime).desc(),
         sqlite_orm::limit(offset, limit)
         );
@@ -584,7 +584,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
     return pcs;
 }
 
-std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t runtime_enabled)
+std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t config_state)
 {
     std::vector<kit_dao::Protocol> pcs;
 
@@ -597,9 +597,9 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAll(kit_muduo::HttpConte
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列, 这里不查询Body数据
-        
+
         // SELCT id,name,... FROM xxx WHERE project_id = ? and status = ?
-        if(-1 == runtime_enabled)
+        if(-1 == config_state)
         {
             pcs = lease_result.val->db().get_all<kit_dao::Protocol>(
                 where(
@@ -617,7 +617,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAll(kit_muduo::HttpConte
                     &&
                     c(&Protocol::m_status) == status
                     &&
-                    c(&Protocol::m_runtimeEnabled) == runtime_enabled
+                    c(&Protocol::m_configState) == config_state
                 )
             );
         }
@@ -637,7 +637,7 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAll(kit_muduo::HttpConte
         return pcs;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", status= " << status << ", runtime_enabled= " << runtime_enabled << ", size= " << pcs.size() << std::endl;
+    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", status= " << status << ", config_state= " << config_state << ", size= " << pcs.size() << std::endl;
 
     return pcs;
 }
@@ -660,7 +660,7 @@ int32_t SqliteOrmProtocolDao::CountByProject(kit_muduo::HttpContextPtr ctx, int6
 
         protocol_cnt = lease_result.val->db().count<kit_dao::Protocol>(where(
             c(&kit_dao::Protocol::m_projectId) == project_id
-            && 
+            &&
             c(&kit_dao::Protocol::m_status) == status
         ));
 
@@ -697,22 +697,22 @@ std::string SqliteOrmProtocolDao::GetTcpCommonFieldsById(kit_muduo::HttpContextP
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_body_type FROM xxx WHERE protocol_id 
+        // SELCT req_body_type FROM xxx WHERE protocol_id
 
 
         reses = lease_result.val->db().select(
             json_extract<std::string>(cfg, "$.common_fields"),
             where(c(&kit_dao::Protocol::m_id) == protocol_id)
         );
-        
+
 
 
     } catch(const std::exception &e) {
 
         DAOPC_ERROR() << "GetById faild! " << e.what() << std::endl;
-        
+
     }
-    
+
     DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetTcpCommonFieldsById "<< protocol_id  << std::endl;
 
     return reses.at(0);
@@ -734,7 +734,7 @@ int32_t SqliteOrmProtocolDao::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int
     std::vector<int32_t> body_types;
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_body_type FROM xxx WHERE protocol_id 
+        // SELCT req_body_type FROM xxx WHERE protocol_id
 
         const auto& tmps = lease_result.val->db().select(body_type_ptr,
             where(
@@ -751,7 +751,7 @@ int32_t SqliteOrmProtocolDao::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int
         {
             DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
         }
-      
+
         body_type = tmps.at(0);
 
     } catch (const std::system_error &e) {
@@ -763,8 +763,8 @@ int32_t SqliteOrmProtocolDao::GetBodyTypeById(kit_muduo::HttpContextPtr ctx, int
             side);
         return -1;
     }
-    
-    
+
+
     DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetBodyTypeById "<< protocol_id << ", " << body_type << std::endl;
 
     return body_type;
@@ -783,7 +783,7 @@ bool SqliteOrmProtocolDao::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_body_type FROM xxx WHERE protocol_id 
+        // SELCT req_body_type FROM xxx WHERE protocol_id
 
         auto tmps = lease_result.val->db().select(body_data_ptr,
             where(
@@ -799,7 +799,7 @@ bool SqliteOrmProtocolDao::GetBodyDataById(kit_muduo::HttpContextPtr ctx, int64_
         {
             DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
         }
-      
+
         body_data.swap(tmps.at(0));
 
     } catch (const std::system_error &e) {
@@ -832,8 +832,8 @@ bool SqliteOrmProtocolDao::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_
 
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_body_type FROM xxx WHERE protocol_id 
-  
+        // SELCT req_body_type FROM xxx WHERE protocol_id
+
         auto tmps = lease_result.val->db().select(
             columns(
                 body_type_ptr,
@@ -853,7 +853,7 @@ bool SqliteOrmProtocolDao::GetBodyInfoById(kit_muduo::HttpContextPtr ctx, int64_
         {
             DAOPC_F_WARN("protocol not unique! pcId[%ld]: %ld \n", protocol_id, tmps.size());
         }
-    
+
         body_type = std::get<0>(tmps.at(0));
         body_data = std::move(std::get<1>(tmps.at(0)));
 
@@ -887,7 +887,7 @@ nlohmann::json SqliteOrmProtocolDao::GetCfgById(kit_muduo::HttpContextPtr ctx, i
     }
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_cfg, resp_cfg FROM xxx WHERE protocol_id 
+        // SELCT req_cfg, resp_cfg FROM xxx WHERE protocol_id
 
         auto tmps = lease_result.val->db().select(
             columns(
@@ -911,7 +911,7 @@ nlohmann::json SqliteOrmProtocolDao::GetCfgById(kit_muduo::HttpContextPtr ctx, i
 
         root["req_cfg"] = nlohmann::json::parse(std::get<0>(tmps.at(0)));
         root["resp_cfg"] = nlohmann::json::parse(std::get<1>(tmps.at(0)));
-        
+
 
     } catch (const std::system_error &e) {
 
@@ -928,7 +928,7 @@ nlohmann::json SqliteOrmProtocolDao::GetCfgById(kit_muduo::HttpContextPtr ctx, i
     return root;
 }
 
-std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id) 
+std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolAndProjectByJoin(kit_muduo::HttpContextPtr ctx, int64_t protocol_id)
 {
     ProtocolAccessInfo access_info;
     auto lease_result = _db_pool->acquire();
@@ -939,12 +939,12 @@ std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolA
     }
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        /* 
-            SELECT ... 
+        /*
+            SELECT ...
             FROM `protocols` as pc
-            LEFT_JOIN `projects` as pj
+            INNER_JOIN `projects` as pj
             ON pj.id = pc.project_id
-            WHERE pc.id = ? 
+            WHERE pc.id = ?
         */
 
         auto tmps = lease_result.val->db().select(
@@ -954,7 +954,7 @@ std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolA
                 &Protocol::m_runtimeKey,
                 &Protocol::m_type,
                 &Protocol::m_status,
-                &Protocol::m_runtimeEnabled,
+                &Protocol::m_configState,
                 &Project::m_userId,
                 &Project::m_runtimeState,
                 &Project::m_status
@@ -983,7 +983,7 @@ std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolA
         access_info.runtime_key = std::get<2>(t);
         access_info.protocol_type = std::get<3>(t);
         access_info.protocol_status = std::get<4>(t);
-        access_info.protocol_runtime_enabled = std::get<5>(t);
+        access_info.protocol_config_state = std::get<5>(t);
         access_info.project_user_id = std::get<6>(t);
         access_info.project_runtime_state = std::get<7>(t);
         access_info.project_status = std::get<8>(t);
@@ -1004,7 +1004,7 @@ std::optional<kit_dao::ProtocolAccessInfo> SqliteOrmProtocolDao::AccessProtocolA
 }
 
 
-bool SqliteOrmProtocolDao::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t runtime_enabled) 
+bool SqliteOrmProtocolDao::UpdateConfigState(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, int32_t config_state)
 {
     auto now = kit_muduo::TimeStamp::NowMs();
     auto lease_result = _db_pool->acquire();
@@ -1015,7 +1015,7 @@ bool SqliteOrmProtocolDao::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, i
     }
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列
-        // SELCT req_cfg, resp_cfg FROM xxx WHERE protocol_id 
+        // SELCT req_cfg, resp_cfg FROM xxx WHERE protocol_id
 
         auto n = lease_result.val->db().count<kit_dao::Protocol>(
             where(
@@ -1036,13 +1036,13 @@ bool SqliteOrmProtocolDao::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, i
         }
 
 
-        // UPDATE Protocols SET `runtime_enabled`= ?, `utime` = ? WHERE id = ? 
+        // UPDATE Protocols SET `config_state`= ?, `utime` = ? WHERE id = ?
         tx_result.val->db().update_all(
             set(
-                    c(&kit_dao::Protocol::m_runtimeEnabled) = runtime_enabled
-                    ,c(&kit_dao::Protocol::m_utime) = now
-            ),
-            where(c(&kit_dao::Protocol::m_id) == protocol_id)
+                c(&kit_dao::Protocol::m_configState) = config_state
+                ,c(&kit_dao::Protocol::m_utime) = now
+            )
+            ,where(c(&kit_dao::Protocol::m_id) == protocol_id)
         );
 
         tx_result.val->commit();
@@ -1050,15 +1050,15 @@ bool SqliteOrmProtocolDao::UpdateRuntimeEnabled(kit_muduo::HttpContextPtr ctx, i
     } catch (const std::system_error &e) {
 
         DAOPC_F_ERROR(
-            "%s pcId[%ld] runtime_enabled[%d]\n",
+            "%s pcId[%ld] config_state[%d]\n",
             MakeSqliteErrorMsg(e).c_str(),
             protocol_id,
-            runtime_enabled);
+            config_state);
 
         return false;
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProtocolDao::UpdateRuntimeEnabled "<< protocol_id << ", runtime_enabled: " << runtime_enabled << std::endl;
+    DAOPC_DEBUG() << "SqliteOrmProtocolDao::UpdateConfigState "<< protocol_id << ", config_state: " << config_state << std::endl;
 
     return true;
 }

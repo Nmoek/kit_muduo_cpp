@@ -32,8 +32,10 @@ class RuntimeControllerInterface;
 class ProjectHandler
 {
 public:
-    ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc, std::shared_ptr<RuntimeControllerInterface> project_runtime_manager);
-    ~ProjectHandler();
+    ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc,
+        std::shared_ptr<ProtocolSvcInterface> pc_svc,
+        std::shared_ptr<RuntimeControllerInterface> project_runtime_manager);
+    ~ProjectHandler() = default;
 
     void RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> server);
 
@@ -47,7 +49,7 @@ public:
     void RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
 
     void SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
-    
+
     void List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
 
     void GetAllValid(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept;
@@ -62,8 +64,9 @@ public:
 
 private:
     std::shared_ptr<ProjectSvcInterface> svc_;
+    std::shared_ptr<ProtocolSvcInterface> pc_svc_;
     std::shared_ptr<RuntimeControllerInterface> project_runtime_manager_;
-    
+
 };
 
 } // namespace kit_domain

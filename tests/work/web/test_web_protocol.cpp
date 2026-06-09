@@ -219,7 +219,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
                 "|HTTP|GET|/d9/web/invalid-cfg",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
-                ProtocolRuntimeEnabled::kOn,
+                ProtocolConfigState::kOn,
                 1,
                 ProjectRuntimeState::kRunning,
                 ProjectStatus::kValid}
@@ -279,7 +279,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime
                 "|HTTP|GET|/d9/web/project-mismatch",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
-                ProtocolRuntimeEnabled::kOn,
+                ProtocolConfigState::kOn,
                 1,
                 ProjectRuntimeState::kRunning,
                 ProjectStatus::kValid}
@@ -350,7 +350,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
                 "|HTTP|GET|/d9/web/success",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
-                ProtocolRuntimeEnabled::kOn,
+                ProtocolConfigState::kOn,
                 1,
                 ProjectRuntimeState::kRunning,
                 ProjectStatus::kValid}
@@ -438,7 +438,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
                 "|HTTP|GET|/d9/web/old",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
-                ProtocolRuntimeEnabled::kOn,
+                ProtocolConfigState::kOn,
                 1,
                 ProjectRuntimeState::kRunning,
                 ProjectStatus::kValid}

@@ -416,9 +416,9 @@ std::vector<kit_dao::Project>  SqliteOrmProjectDao::GetAllByStatusAndRuntimeStat
 }
 
 
-std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
+std::string SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
-    std::vector<char> pattern_info;
+    std::string pattern_info;
     auto lease_result = _db_pool->acquire();
     if(!lease_result.ok())
     {
@@ -461,7 +461,7 @@ std::vector<char> SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContext
     return pattern_info;
 }
 
-bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info)
+bool SqliteOrmProjectDao::UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info)
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
@@ -473,7 +473,7 @@ bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64
     }
 
     try {
-        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        // SELECT COUNT(*) FROM `projects` WHERE `id`= ? && `status` = ?;
         auto n = lease_result.val->db().count<kit_dao::Project>(where(
             c(&kit_dao::Project::m_id) == project_id
             &&
@@ -489,14 +489,28 @@ bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64
         {
             return false;
         }
-
+        // 更新格式信息
         tx_result.val->db().update_all(
             set(
-                c(&kit_dao::Project::m_patternInfo) = pattern_info,
-                c(&kit_dao::Project::m_utime) = now
+                c(&Project::m_patternInfo) = pattern_info.dump(),
+                c(&Project::m_utime) = now
             ),
             where(
-                c(&kit_dao::Project::m_id) == project_id
+                c(&Project::m_id) == project_id
+            )
+        );
+
+        // 更新所有协议项
+        tx_result.val->db().update_all(
+            set(
+                c(&Protocol::m_configState) = static_cast<int32_t>(kit_domain::ProtocolConfigState::kReConfig)
+                ,c(&Protocol::m_reqCfg) = "{}"
+                ,c(&Protocol::m_respCfg) = "{}"
+                ,c(&Protocol::m_utime) = now
+            ),
+            where(
+                c(&Protocol::m_projectId) == project_id
+                && c(&Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::kValid)
             )
         );
 
@@ -508,7 +522,7 @@ bool SqliteOrmProjectDao::UpdatePatternInfo(kit_muduo::HttpContextPtr ctx, int64
             "%s pjId[%ld], pattern_info[%s] \n",
             MakeSqliteErrorMsg(e).c_str(),
             project_id,
-            nljson::parse(pattern_info).dump().c_str());
+            pattern_info.dump().c_str());
         return false;
     }
 

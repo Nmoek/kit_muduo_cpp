@@ -63,7 +63,7 @@ ProtocolVo CovertProtocolVo(const Protocol &p)
             ProtocolTypeToString(p.m_type),
             p.m_projectId,
             static_cast<int32_t>(p.m_status),
-            static_cast<int32_t>(p.m_runtimeEnabled),
+            static_cast<int32_t>(p.m_configState),
             std::move(p.m_reqCfg),
             std::move(p.m_respCfg),
             ProtocolBodyTypeToString(p.m_reqBodyType),

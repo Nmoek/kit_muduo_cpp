@@ -19,8 +19,8 @@ public:
     MOCK_METHOD(Project, GetById, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
     MOCK_METHOD(std::vector<Project>, GetByUser, (kit_muduo::HttpContextPtr ctx, int64_t userId, ProjectStatus status, int32_t offset, int32_t limit), (override));
     MOCK_METHOD(std::vector<Project>, GetAll, (kit_muduo::HttpContextPtr ctx, int32_t offset, int32_t limit), (override));
-    MOCK_METHOD(std::vector<char>, GetPatternInfoById, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
-    MOCK_METHOD(bool, UpdatePatternInfo, (kit_muduo::HttpContextPtr ctx, int64_t project_id, const std::vector<char> pattern_info), (override));
+    MOCK_METHOD(nlohmann::json, GetPatternInfoById, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
+    MOCK_METHOD(bool, UpdatePatternInfoWithProtocolWithdraw, (kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info), (override));
     MOCK_METHOD(std::vector<Project>, GetAllValid, (kit_muduo::HttpContextPtr ctx), (override));
     MOCK_METHOD(std::vector<Project>, GetAllActive, (kit_muduo::HttpContextPtr ctx), (override));
 };

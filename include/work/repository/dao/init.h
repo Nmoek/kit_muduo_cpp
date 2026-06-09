@@ -49,7 +49,7 @@ struct SqliteOrmPoolConfig;
             sqlite_orm::make_column("project_id", &Protocol::m_projectId), \
             sqlite_orm::make_column("runtime_key", &Protocol::m_runtimeKey, sqlite_orm::not_null(), sqlite_orm::default_value("")), \
             sqlite_orm::make_column("status", &Protocol::m_status, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
-            sqlite_orm::make_column("runtime_enabled", &Protocol::m_runtimeEnabled, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
+            sqlite_orm::make_column("config_state", &Protocol::m_configState, sqlite_orm::not_null(), sqlite_orm::default_value(0)), \
             sqlite_orm::make_column("req_body_type", &Protocol::m_reqBodyType), \
             sqlite_orm::make_column("resp_body_type", &Protocol::m_respBodyType), \
             sqlite_orm::make_column("req_body_status", &Protocol::m_reqBodyDataStatus), \

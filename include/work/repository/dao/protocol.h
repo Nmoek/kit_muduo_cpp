@@ -23,7 +23,7 @@ struct Protocol
     int64_t                 m_projectId;    // 所属测试服务Id
     std::string             m_runtimeKey;   // 运行态唯一键值, 用于判断当前加入的协议是否有重复
     int32_t                 m_status;       // 测试协议状态 0失效 1有效
-    int32_t                 m_runtimeEnabled; // 协议项是否上线状态  0未上线 1已上线
+    int32_t                 m_configState; // 协议项状态  0未上线 1已上线 2待重配置
     int32_t                 m_reqBodyType;  // 请求协议数据类型 
     int32_t                 m_respBodyType; // 响应协议数据类型
     int32_t                 m_reqBodyDataStatus; // body是否存在 目的不去对真正的Body数据进行查询
@@ -45,7 +45,7 @@ struct ProtocolAccessInfo
     std::string             runtime_key;              // 协议项运行唯一键
     int32_t                 protocol_type;            // 测试协议类型
     int32_t                 protocol_status;          // 协议项是否有效
-    int32_t                 protocol_runtime_enabled; // 协议项是否上线状态
+    int32_t                 protocol_config_state; // 协议项是否上线状态
     int64_t                 project_user_id;                  // 所属用户Id
     int32_t                 project_runtime_state;
     int32_t                 project_status;           // 测试服务是否有效

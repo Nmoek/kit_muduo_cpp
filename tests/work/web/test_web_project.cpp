@@ -35,6 +35,7 @@
 #include "net/tcp_server.h"
 #include "runtime/runtime_controller.h"
 #include "service/mock/svc_project_mock.h"
+#include "service/mock/svc_protocol_mock.h"
 #include "web/web_project.h"
 #include "work/runtime/mock/runtime_controller_mock.h"
 
@@ -191,16 +192,6 @@ static nljson MinimalCustomTcpPatternInfo()
             {"name":"func","byte_pos":2,"byte_len":2,"type":"STR","role":"function_code"}
         ]
     })");
-}
-
-static std::vector<char> ToChars(const std::string &data)
-{
-    return std::vector<char>(data.begin(), data.end());
-}
-
-static std::vector<char> ToChars(const nljson &data)
-{
-    return ToChars(data.dump());
 }
 
 static HttpContextPtr MakeAddProjectJsonContext(const AddProjectReq &request,
@@ -373,6 +364,11 @@ static std::shared_ptr<MockRuntimeController> ExpectNoRuntimeCalls()
     return std::make_shared<StrictMock<MockRuntimeController>>();
 }
 
+static std::shared_ptr<MockProtocolSvc> ExpectNoProtocolSvcCalls()
+{
+    return std::make_shared<StrictMock<MockProtocolSvc>>();
+}
+
 struct HandlerCase {
     std::string id;    // gtest 参数化测试名后缀。
     std::string desc;  // 中文业务说明，失败时由 SCOPED_TRACE 输出。
@@ -439,8 +435,9 @@ static void RunHandlerCase(const HandlerCase &c)
     SCOPED_TRACE(c.desc);
 
     auto svc = c.expect_svc();
+    auto pc_svc = ExpectNoProtocolSvcCalls();
     auto runtime = c.expect_runtime();
-    ProjectHandler handler(svc, runtime);
+    ProjectHandler handler(svc, pc_svc, runtime);
     auto ctx = c.build_ctx();
 
     c.invoke(handler, ctx);
@@ -1700,8 +1697,8 @@ static std::vector<HandlerCase> MakeQueryPatternInfoCases()
         /*
         测试思路：
         1. route param project_id 合法，且项目归当前用户所有。
-        2. ProjectSvc::GetPatternInfoById 返回 pattern_info JSON 字节。
-        3. handler parse 后把 JSON 写入 data。
+        2. ProjectSvc::GetPatternInfoById 返回 pattern_info JSON 对象。
+        3. handler 直接把 JSON 写入 data。
 
         示例：
           GET /projects/9501/pattern_info
@@ -1722,7 +1719,7 @@ static std::vector<HandlerCase> MakeQueryPatternInfoCases()
                 EXPECT_CALL(*svc, GetById(_, kProjectId))
                     .WillOnce(Return(MakeProject(kProjectId)));
                 EXPECT_CALL(*svc, GetPatternInfoById(_, kProjectId))
-                    .WillOnce(Return(ToChars(MinimalCustomTcpPatternInfo())));
+                    .WillOnce(Return(MinimalCustomTcpPatternInfo()));
                 return svc;
             },
             InvokeQueryPatternInfo,
@@ -1802,17 +1799,17 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
         /*
         测试思路：
         1. body 绑定 ProjectEditPatternInfoReq 成功。
-        2. 鉴权通过，pattern_info 能被 CustomTcpPatternSpec::FromJson 校验通过。
-        3. project 未运行且 RuntimeController::findServer 返回 nullptr，允许持久化更新。
+        2. handler 只做用户鉴权，Custom TCP schema 校验和运行态停止校验交给 RuntimeController。
+        3. RuntimeController::editPatternInfo 返回 persistedOk，表示 pattern_info 更新和协议项撤回成功。
 
         示例：
           POST /projects/pattern_info {id:9501, pattern_info:valid}
               |
               v
-          GetById(owner=1,stopped) -> findServer=null -> UpdatePatternInfo -> success
+          GetById(owner=1) -> editPatternInfo -> persistedOk
         */
         Case("Success",
-            "编辑 pattern_info 成功：格式合法、项目未运行、service 更新成功。",
+            "编辑 pattern_info 成功：鉴权通过，委托 RuntimeController 持久化更新并撤回协议项。",
             [] {
                 return MakeEditPatternInfoContext(ProjectEditPatternInfoReq{
                     kProjectId,
@@ -1822,15 +1819,18 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
             [] {
                 auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
                 EXPECT_CALL(*svc, GetById(_, kProjectId))
-                    .WillOnce(Return(MakeProject(kProjectId)));
-                EXPECT_CALL(*svc, UpdatePatternInfo(_, kProjectId, _))
-                    .WillOnce(Return(true));
+                    .WillOnce(Return(MakeProject(
+                        kProjectId,
+                        kCurrentUserId,
+                        ProtocolType::kCustomTcp)));
                 return svc;
             },
             [] {
                 auto runtime = std::make_shared<StrictMock<MockRuntimeController>>();
-                EXPECT_CALL(*runtime, findServer(kProjectId))
-                    .WillOnce(Return(nullptr));
+                EXPECT_CALL(*runtime, editPatternInfo(_, kProjectId, Eq(MinimalCustomTcpPatternInfo())))
+                    .WillOnce(Return(ProjectRuntimeResult::Success(
+                        RuntimeMutationReceipt::PersistedOk(),
+                        RuntimeSnapshot(kProjectId, ProjectRuntimeState::kStopped, 0))));
                 return runtime;
             },
             InvokeEditPatternInfo,
@@ -1877,7 +1877,7 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
         测试思路：
         1. body 解析成功，但 GetById 返回其他用户的 project。
         2. 当前用户不是管理员，鉴权失败。
-        3. 不校验 running，不调用 UpdatePatternInfo。
+        3. 不调用 RuntimeController::editPatternInfo。
 
         示例：
           owner=2,current_user=1 -> HTTP 403 forbidden
@@ -1909,14 +1909,17 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
         /*
         测试思路：
         1. 鉴权通过。
-        2. pattern_info 为空对象，不能通过 CustomTcpPatternSpec::FromJson。
-        3. handler 返回 pattern info invalid，不调用 RuntimeController 和 UpdatePatternInfo。
+        2. pattern_info 为空对象，RuntimeController::editPatternInfo 校验 CustomTcpPatternSpec 失败。
+        3. handler 只负责把 RuntimeController 的 kInvalidArgument 结果映射成写响应。
 
         示例：
-          pattern_info={} -> {"code":-200,"message":"pattern info invalid"}
+          editPatternInfo({}) -> Failed(kInvalidArgument,"pattern info invalid")
+              |
+              v
+          {"code":-200,"message":"pattern info invalid"}
         */
         Case("RejectInvalidPatternInfo",
-            "编辑 pattern_info 时格式定义非法：返回 pattern info invalid。",
+            "编辑 pattern_info 时格式定义非法：RuntimeController 返回 pattern info invalid。",
             [] {
                 return MakeEditPatternInfoContext(ProjectEditPatternInfoReq{
                     kProjectId,
@@ -1926,11 +1929,17 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
             [] {
                 auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
                 EXPECT_CALL(*svc, GetById(_, kProjectId))
-                    .WillOnce(Return(MakeProject(kProjectId)));
+                    .WillOnce(Return(MakeProject(
+                        kProjectId,
+                        kCurrentUserId,
+                        ProtocolType::kCustomTcp)));
                 return svc;
             },
             [] {
-                return ExpectNoRuntimeCalls();
+                auto runtime = std::make_shared<StrictMock<MockRuntimeController>>();
+                EXPECT_CALL(*runtime, editPatternInfo(_, kProjectId, Eq(nljson::object())))
+                    .WillOnce(Return(RuntimeFailure(RuntimeControlCode::kInvalidArgument, "pattern info invalid")));
+                return runtime;
             },
             InvokeEditPatternInfo,
             [](HttpContextPtr ctx) {
@@ -1941,15 +1950,18 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
 
         /*
         测试思路：
-        1. 鉴权和 pattern_info 校验都通过。
-        2. ProjectSvc::GetById 返回 runtime_state=running。
-        3. handler 不允许修改运行中的 project，且由于 || 短路，不调用 findServer。
+        1. 鉴权通过，handler 把 pattern_info 编辑命令交给 RuntimeController。
+        2. RuntimeController 发现 project 处于 running 或 registry 中有运行态 server。
+        3. handler 映射 RuntimeController 的失败结果，提示用户先停止测试服务。
 
         示例：
-          auth_project.runtime_state=running -> {"code":-200,"message":"project is running"}
+          editPatternInfo(valid schema) -> Failed(kInvalidArgument,"请先停止测试服务后再修改格式信息")
+              |
+              v
+          {"code":-200,"message":"请先停止测试服务后再修改格式信息"}
         */
         Case("RejectProjectRunning",
-            "项目处于运行中时禁止编辑 pattern_info。",
+            "项目处于运行中时禁止编辑 pattern_info：RuntimeController 返回运行态拒绝。",
             [] {
                 return MakeEditPatternInfoContext(ProjectEditPatternInfoReq{
                     kProjectId,
@@ -1962,32 +1974,40 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
                     .WillOnce(Return(MakeProject(
                         kProjectId,
                         kCurrentUserId,
-                        ProtocolType::kHttp,
+                        ProtocolType::kCustomTcp,
                         ProjectStatus::kValid,
                         ProjectRuntimeState::kRunning)));
                 return svc;
             },
             [] {
-                return ExpectNoRuntimeCalls();
+                auto runtime = std::make_shared<StrictMock<MockRuntimeController>>();
+                EXPECT_CALL(*runtime, editPatternInfo(_, kProjectId, Eq(MinimalCustomTcpPatternInfo())))
+                    .WillOnce(Return(RuntimeFailure(
+                        RuntimeControlCode::kInvalidArgument,
+                        "请先停止测试服务后再修改格式信息")));
+                return runtime;
             },
             InvokeEditPatternInfo,
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    WriteBody(-200, "project is running", 0, 0));
+                    WriteBody(-200, "请先停止测试服务后再修改格式信息", 0, 0));
             }),
 
         /*
         测试思路：
-        1. 前置校验都通过，findServer 返回 nullptr。
-        2. ProjectSvc::UpdatePatternInfo 返回 false，模拟持久化失败。
-        3. handler 返回 service failed。
+        1. 鉴权通过，handler 调用 RuntimeController::editPatternInfo。
+        2. RuntimeController 内部的 UpdatePatternInfoWithProtocolWithdraw 失败，并返回 kPersistFailed。
+        3. handler 把 kPersistFailed 映射为 code=-300 的 service failed 响应。
 
         示例：
-          UpdatePatternInfo -> false -> {"code":-300,"message":"service failed"}
+          editPatternInfo -> Failed(kPersistFailed,"service failed")
+              |
+              v
+          {"code":-300,"message":"service failed"}
         */
         Case("ServiceUpdatePatternInfoFailed",
-            "编辑 pattern_info 时 service 更新失败：返回 service failed。",
+            "编辑 pattern_info 时 RuntimeController 持久化失败：返回 service failed。",
             [] {
                 return MakeEditPatternInfoContext(ProjectEditPatternInfoReq{
                     kProjectId,
@@ -1997,15 +2017,16 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
             [] {
                 auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
                 EXPECT_CALL(*svc, GetById(_, kProjectId))
-                    .WillOnce(Return(MakeProject(kProjectId)));
-                EXPECT_CALL(*svc, UpdatePatternInfo(_, kProjectId, _))
-                    .WillOnce(Return(false));
+                    .WillOnce(Return(MakeProject(
+                        kProjectId,
+                        kCurrentUserId,
+                        ProtocolType::kCustomTcp)));
                 return svc;
             },
             [] {
                 auto runtime = std::make_shared<StrictMock<MockRuntimeController>>();
-                EXPECT_CALL(*runtime, findServer(kProjectId))
-                    .WillOnce(Return(nullptr));
+                EXPECT_CALL(*runtime, editPatternInfo(_, kProjectId, Eq(MinimalCustomTcpPatternInfo())))
+                    .WillOnce(Return(RuntimeFailure(RuntimeControlCode::kPersistFailed, "service failed")));
                 return runtime;
             },
             InvokeEditPatternInfo,
@@ -2091,7 +2112,7 @@ TEST(ProjectHandlerRegisterRoutesTest, RegistersAllProjectRoutes)
         false,
         TcpServer::KReusePort);
 
-    ProjectHandler handler(ExpectNoProjectSvcCalls(), ExpectNoRuntimeCalls());
+    ProjectHandler handler(ExpectNoProjectSvcCalls(), ExpectNoProtocolSvcCalls(), ExpectNoRuntimeCalls());
     handler.RegisterRoutes(server);
 
     std::unordered_map<std::string, MethodMask> methods_by_pattern;
