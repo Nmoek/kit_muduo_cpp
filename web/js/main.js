@@ -135,12 +135,11 @@ async function updateProtocolBodyReq(protocolId, projectId, req_or_resp, protoco
 
 // 协议请求项配置
 async function updateProtocolCfgReq(protocolId, projectId, req_or_resp, cfg_json) {
-    // req_or_resp: 1 表示请求配置，2 表示响应配置；后端字段名保持原样。
+    // req_or_resp: 1 表示请求配置，2 表示响应配置；API 层会转换为后端 side 字段。
     try {
         console.log('updateProtocolCfgReq: ', JSON.stringify({
-            id: protocolId,
-            project_id: projectId,
-            req_or_resp: req_or_resp, 
+            protocol_id: protocolId,
+            side: req_or_resp,
             cfg_data: cfg_json
         }));
 

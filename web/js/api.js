@@ -388,13 +388,12 @@
             return runMutation(`api-update-protocol-name-${protocolId}`, async function() {
                 if (isMockMode()) return KitProxy.mocks.updateProtocolName(protocolId, name);
 
-                await requestJson('/protocols/name', {
+                await requestJson('/protocols/' + String(protocolId) + '/name', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        id: protocolId,
                         name,
                     }),
                 }, '修改协议项标题失败');
@@ -406,15 +405,8 @@
             return runMutation(`api-delete-protocol-${protocolId}`, async function() {
                 if (isMockMode()) return KitProxy.mocks.deleteProtocol(protocolId, projectId);
 
-                await requestJson('/protocols/del', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        id: protocolId,
-                        project_id: projectId,
-                    }),
+                await requestJson('/protocols/' + String(protocolId), {
+                    method: 'DELETE',
                 }, '删除协议项失败');
 
                 return true;
@@ -435,15 +427,13 @@
             return runMutation(`api-update-protocol-cfg-${protocolId}-${reqOrResp}-${JSON.stringify(cfgJson || {})}`, async function() {
                 if (isMockMode()) return KitProxy.mocks.updateProtocolCfg(protocolId, reqOrResp, cfgJson);
 
-                await requestJson('/protocols/details/cfg', {
+                await requestJson('/protocols/' + String(protocolId) + '/details/cfg', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        id: protocolId,
-                        project_id: projectId,
-                        req_or_resp: reqOrResp,
+                        side: reqOrResp,
                         cfg_data: cfgJson,
                     }),
                 }, '修改协议项配置失败');
@@ -471,7 +461,7 @@
                     body,
                 );
 
-                await requestJson('/protocols/details/body', {
+                await requestJson('/protocols/' + String(protocolId) + '/details/body', {
                     method: 'POST',
                     body: formData,
                 }, '修改协议项Body失败');
@@ -484,27 +474,13 @@
 
             // Body 类型是 JSON 响应，Body 数据是原始字节流，所以这里不能用 requestJson 合并处理。
             const [typeResponse, dataResponse] = await Promise.all([
-                fetch(apiUrl('/protocols/details/body_type'), {
-                    method: 'POST',
+                fetch(apiUrl('/protocols/' + String(protocolId) + '/details/body_type?side=' + encodeURIComponent(String(reqOrResp))), {
+                    method: 'GET',
                     credentials: 'same-origin',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        id: protocolId,
-                        req_or_resp: reqOrResp,
-                    }),
                 }),
-                fetch(apiUrl('/protocols/details/body_data'), {
-                    method: 'POST',
+                fetch(apiUrl('/protocols/' + String(protocolId) + '/details/body_data?side=' + encodeURIComponent(String(reqOrResp))), {
+                    method: 'GET',
                     credentials: 'same-origin',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        id: protocolId,
-                        req_or_resp: reqOrResp,
-                    }),
                 }),
             ]);
 
@@ -520,15 +496,8 @@
         async getTcpCommonFields(protocolId, reqOrResp) {
             if (isMockMode()) return KitProxy.mocks.getTcpCommonFields(protocolId, reqOrResp);
 
-            return requestJson('/protocols/details/tcp/common_fields', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    id: protocolId,
-                    req_or_resp: reqOrResp,
-                }),
+            return requestJson('/protocols/' + String(protocolId) + '/details/tcp/common_fields?side=' + encodeURIComponent(String(reqOrResp)), {
+                method: 'GET',
             }, '获取普通字段信息失败');
         },
         async getAllPatternFields(projectId, protocolId, reqOrResp) {

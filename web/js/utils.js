@@ -774,13 +774,10 @@
     }
 
     function createProtocolBodyFormData(protocolId, projectId, reqOrResp, protocolType, bodyType, body) {
-        // /protocols/details/body 接口是 multipart：header 走 JSON 字符串，body 走文件字段。
+        // /protocols/:protocol_id/details/body 接口是 multipart：header 走 JSON 字符串，body 走文件字段。
         const formData = new FormData();
         formData.append('detail_header', JSON.stringify({
-            id: protocolId,
-            project_id: projectId,
-            req_or_resp: reqOrResp,
-            type: protocolType,
+            side: reqOrResp,
             body_type: bodyType,
         }));
 
