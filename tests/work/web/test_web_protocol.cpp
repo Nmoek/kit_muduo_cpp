@@ -120,6 +120,11 @@ HttpContextPtr MakeJsonContextForPath(const nljson &body, const std::string &pat
     return ctx;
 }
 
+void SetProtocolRouteParam(HttpContextPtr ctx, int64_t protocol_id)
+{
+    ctx->request()->addRouteParam("protocol_id", std::to_string(protocol_id));
+}
+
 nljson ResponseBody(HttpContextPtr ctx)
 {
     return nljson::parse(ctx->response()->body().toString());
@@ -264,12 +269,10 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
     EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_)).Times(0);
 
     auto ctx = MakeJsonContext(nljson{
-        {"id", protocol_id},
-        {"project_id", project_id},
-        {"type", ProtocolType::kHttp},
         {"side", kReqSide},
         {"cfg_data", nljson::array({"bad"})},
     });
+    SetProtocolRouteParam(ctx, protocol_id);
 
     handler_->DetailCfg(nullptr, ctx);
 
@@ -281,27 +284,28 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
 
 /*
 测试思路：
-1. 协议 1051 真实属于 project 9151，但请求体故意传 project_id=9152。
-2. 04 后 handler 只做鉴权，归属一致性由 manager 再次读取 access_info 后校验。
-3. 断言不会查询旧 cfg、不会写 DB，也不会根据错误 project_id 触碰 runtime server。
+1. 协议 1051 真实属于 project 9151，请求体故意夹带旧字段 project_id=9152。
+2. 新接口以 path 中 protocol_id 为唯一定位，project_id 由后端 access_info 反查。
+3. 断言旧 body project_id 被忽略，runtime manager 仍使用真实 project_id。
 
 示意：
   request.project_id=9152
        |
        v
-  GetById(protocol 1051) -> m_projectId=9151
+  GetAccessInfo(protocol 1051) -> project_id=9151
        |
        v
-  mismatch -> return -200
+  updateProtocolCfg(project_id=9151, protocol_id=1051)
 
 举例：
-  前端或恶意调用方传错 project_id 时，不能把协议 1051 的 runtime 更新投递到另一个项目的 server 上。
+  前端仍带旧字段时，不能把协议 1051 的 runtime 更新投递到另一个项目的 server 上。
 */
-TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime)
+TEST_F(ProtocolHandlerDetailCfgSuite, IgnoresBodyProjectIdAndUsesProjectIdFromAccessInfo)
 {
     constexpr int64_t actual_project_id = 9151;
     constexpr int64_t request_project_id = 9152;
     constexpr int64_t protocol_id = 1051;
+    const nljson patch = nljson{{"path", "/d9/web/body-project-id-ignored"}};
 
     EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
     .Times(2)
@@ -326,18 +330,17 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime
     EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_)).Times(0);
 
     auto ctx = MakeJsonContext(nljson{
-        {"id", protocol_id},
         {"project_id", request_project_id},
-        {"type", ProtocolType::kHttp},
         {"side", kReqSide},
-        {"cfg_data", nljson{{"path", "/d9/web/should-not-apply"}}},
+        {"cfg_data", patch},
     });
+    SetProtocolRouteParam(ctx, protocol_id);
 
     handler_->DetailCfg(nullptr, ctx);
 
     auto resp = ResponseBody(ctx);
-    EXPECT_EQ(resp["code"], -200);
-    EXPECT_EQ(resp["message"], "protocol project mismatch");
+    EXPECT_EQ(resp["code"], -300);
+    EXPECT_EQ(resp["message"], "project not running");
     EXPECT_EQ(ctx->response()->stateCode().toInt(), StateCode::k200Ok);
 }
 
@@ -402,12 +405,10 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
     }
 
     auto ctx = MakeJsonContext(nljson{
-        {"id", protocol_id},
-        {"project_id", project_id},
-        {"type", ProtocolType::kHttp},
         {"side", kReqSide},
         {"cfg_data", nljson{{"headers", nljson{{"X-New", "2"}}}}},
     });
+    SetProtocolRouteParam(ctx, protocol_id);
 
     handler_->DetailCfg(nullptr, ctx);
 
@@ -493,12 +494,10 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
     }
 
     auto ctx = MakeJsonContext(nljson{
-        {"id", protocol_id},
-        {"project_id", project_id},
-        {"type", ProtocolType::kHttp},
         {"side", kReqSide},
         {"cfg_data", nljson{{"path", "/d9/web/conflict"}}},
     });
+    SetProtocolRouteParam(ctx, protocol_id);
 
     handler_->DetailCfg(nullptr, ctx);
 
@@ -553,9 +552,9 @@ TEST_F(ProtocolHandlerRuntimeReceiptSuite, LaunchProtocolSuccessWritesRuntimeRec
             "success")));
 
     auto ctx = MakeJsonContextForPath(nljson{
-        {"id", protocol_id},
         {"runtime_enabled", ProtocolConfigState::kOn},
-    }, "/protocols/launch");
+    }, "/protocols/" + std::to_string(protocol_id) + "/runtime_enabled");
+    SetProtocolRouteParam(ctx, protocol_id);
 
     handler_->LaunchAndWithdrawsProtocol(nullptr, ctx);
 
@@ -614,12 +613,10 @@ TEST_F(ProtocolHandlerRuntimeReceiptSuite, DetailCfgRuntimeFailureWritesReceiptF
             ProtocolRuntimeSnapshot{project_id, protocol_id, ProtocolConfigState::kOn})));
 
     auto ctx = MakeJsonContext(nljson{
-        {"id", protocol_id},
-        {"project_id", project_id},
-        {"type", ProtocolType::kHttp},
         {"side", ProtocolSide::kRequest},
         {"cfg_data", patch},
     });
+    SetProtocolRouteParam(ctx, protocol_id);
 
     handler_->DetailCfg(nullptr, ctx);
 

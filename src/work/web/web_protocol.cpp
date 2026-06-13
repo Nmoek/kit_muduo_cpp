@@ -43,14 +43,14 @@ namespace kit_domain {
 struct AddProtocolReqHeader {
     int64_t id{-1};                    // 原来有id需要赋值没有默认-1
     std::string name;                          // 测试协议名称
-    ProtocolType type;                           // 测试协议类型 HTTP/TCP
-    int64_t project_id;                        // 所属测试服务Id
-    ProtocolBodyType req_body_type;                 // 请求协议体类型 json/xml/plain
-    ProtocolBodyType resp_body_type;                 // 响应协议体类型 json/xml/plain
-    ProtocolConfigState config_state;         // 协议项是否同步上线
+    ProtocolType type{ProtocolType::kUnknown};                           // 测试协议类型 HTTP/TCP
+    int64_t project_id{-1};                        // 所属测试服务Id
+    ProtocolBodyType req_body_type{ProtocolBodyType::kUnknown};                 // 请求协议体类型 json/xml/plain
+    ProtocolBodyType resp_body_type{ProtocolBodyType::kUnknown};                 // 响应协议体类型 json/xml/plain
+    ProtocolConfigState config_state{ProtocolConfigState::kOff};         // 协议项是否同步上线
     
     // TCP特有
-    int32_t is_endian;                          // 是否进行大小端转换 1进行 0不进行 频繁查询更新字段
+    int32_t is_endian{0};                          // 是否进行大小端转换 1进行 0不进行 频繁查询更新字段
     
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProtocolReqHeader, id, name, type, project_id, req_body_type, resp_body_type, config_state, is_endian)
 };
@@ -138,10 +138,9 @@ using ReconfigProtocolReq = AddProtocolReq;
 
 
 struct LaunchAndWithdrawsProtocolReq {
-    int64_t id;
     ProtocolConfigState runtime_enabled;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(LaunchAndWithdrawsProtocolReq, id, runtime_enabled)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(LaunchAndWithdrawsProtocolReq, runtime_enabled)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, LaunchAndWithdrawsProtocolReq &req)
     {
@@ -155,11 +154,6 @@ struct LaunchAndWithdrawsProtocolReq {
  * @brief DelProtocol 用于Body解析
  */
 struct DelProtocolReq {
-    int64_t id;
-    int64_t project_id;
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DelProtocolReq, id, project_id)
-
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, DelProtocolReq &req)
     {
         PC_WARN() << "DelProtocolReq dont supoort!" << std::endl;
@@ -188,10 +182,9 @@ struct ProtocolListReq {
 
 
 struct ProtocolDetailNameReq {
-    int64_t id;
     std::string name;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProtocolDetailNameReq, id, name)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProtocolDetailNameReq, name)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProtocolDetailNameReq &req)
     {
@@ -204,12 +197,10 @@ struct ProtocolDetailNameReq {
 
 
 struct DetailCfgReq {
-    int64_t          id;           // 协议项id
-    int64_t          project_id;   // 协议项所属测试服务id
     ProtocolSide     side;         // 校验到底是请求配置还是响应配置
     nljson           cfg_data;     // 协议配置数据 必须是json
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailCfgReq, id, project_id, side, cfg_data)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailCfgReq, side, cfg_data)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailCfgReq &req)
     {
@@ -220,14 +211,11 @@ struct DetailCfgReq {
 
 
 struct DetailReqHeader {
-    int64_t id;             // 协议项id
-    int64_t project_id;     // 协议项所属测试服务id
     ProtocolSide side;    // 校验到底是请求配置还是响应配置
-    ProtocolType type;       // 协议项种类
     ProtocolBodyType body_type;  // body数据格式类型
 
     // 带默认值 = 未解析到的字段也不会抛异常
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailReqHeader, id, project_id, side, type, body_type)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailReqHeader, side, body_type)
 
     static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailReqHeader &req)
     {
@@ -287,7 +275,7 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
     server->Post("/protocols/add", XX(AddProtocol));
 
     // 上线/下线协议项
-    server->Post("/protocols/runtime_enabled", XX(LaunchAndWithdrawsProtocol));
+    server->Post("/protocols/:protocol_id/runtime_enabled", XX(LaunchAndWithdrawsProtocol));
 
     // 获取单个测试项协议
     server->Get("/protocols/:protocol_id", XX(SingleProtocol));
@@ -295,10 +283,10 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
     server->Post("/protocols/:protocol_id/restore", XX(RestoreProtocol));
 
     // 删除测试项协议
-    server->Post("/protocols/del", XX(DelProtocol));
+    server->Delete("/protocols/:protocol_id", XX(DelProtocol));
 
     // 重配置测试协议项
-    server->Post("/protocols/reconfig", XX(ReconfigProtocol));
+    server->Post("/protocols/:protocol_id/reconfig", XX(ReconfigProtocol));
     
     // 获取整个测试项协议列表 按细节拆分 不能全量返回
         // 按二进制 / 已确定 协议拆分为不同的VO数据结构
@@ -306,24 +294,24 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
     server->Post("/protocols/list", XX(List));
 
     // 单独修改协议项某个细节
-    server->Post("/protocols/details/name", XX(DetailName)); 
-    server->Post("/protocols/details/cfg", XX(DetailCfg));
-    server->Post("/protocols/details/body", XX(DetailBody));
+    server->Post("/protocols/:protocol_id/name", XX(DetailName));
+    server->Post("/protocols/:protocol_id/details/cfg", XX(DetailCfg));
+    server->Post("/protocols/:protocol_id/details/body", XX(DetailBody));
 
     // 单独获取协议项某个细节
     server->Get("/protocols/:protocol_id/details/cfg", XX(GetCfg));
 
 
     // DEBUG: 这个接口弃用
-    // server->Post("/protocols/details/tcp/common_fields", XX(QueryCommonFields)); //TCP专属
+    // server->Get("/protocols/:protocol_id/details/tcp/common_fields", XX(QueryCommonFields)); //TCP专属
     
     // 单独获取协议项请求体配置
     // 将body格式和body数据合并查询
-    server->Post("/protocols/details/body_type", XX(GetProtocolBodyType));
-    server->Post("/protocols/details/body_data", XX(GetProtocolBodyData));
+    server->Get("/protocols/:protocol_id/details/body_type", XX(GetProtocolBodyType));
+    server->Get("/protocols/:protocol_id/details/body_data", XX(GetProtocolBodyData));
     
     // DEBUG: 这个接口弃用
-    // server->Post("/protocols/details/body_info", XX(GetProtocolBodyInfo));
+    // server->Get("/protocols/:protocol_id/details/body_info", XX(GetProtocolBodyInfo));
 
     // server->Get("/protocols/:project_id/cnt", XX(ProtocolCnt));
 
@@ -397,6 +385,46 @@ static void WriteForbidden(HttpContextPtr ctx)
     resp->setStateCode(StateCode::k403Forbidden);
     resp->body().setContentType(ContentType::kJsonType);
     resp->body().appendData(R"({"code": -403, "message": "forbidden", "data":{}})");
+}
+
+static bool ParseProtocolIdFromRoute(HttpContextPtr ctx, int64_t &protocol_id)
+{
+    try {
+        protocol_id = std::stol(ctx->routeParam("protocol_id"));
+        return protocol_id > 0;
+    } catch(const std::exception &e) {
+        PC_F_ERROR("route param transform fail! protocol_id=%ld, %s\n", protocol_id, e.what());
+        return false;
+    }
+}
+
+static bool TryParseProtocolSide(const std::string &side_str, ProtocolSide &side)
+{
+    if(side_str.empty())
+    {
+        return false;
+    }
+    try {
+        const int32_t side_val = std::stoi(side_str);
+        if(static_cast<int32_t>(ProtocolSide::kRequest) == side_val
+            || static_cast<int32_t>(ProtocolSide::kResponse) == side_val)
+        {
+            side = static_cast<ProtocolSide>(side_val);
+            return true;
+        }
+    } catch(const std::exception &e) {
+        PC_F_ERROR("protocol side transform fail! side=%s, %s\n", side_str.c_str(), e.what());
+    }
+    return false;
+}
+
+static bool ParseProtocolSideFromQuery(HttpContextPtr ctx, ProtocolSide &side)
+{
+    if(TryParseProtocolSide(ctx->queryParam("side"), side))
+    {
+        return true;
+    }
+    return TryParseProtocolSide(ctx->queryParam("req_or_resp"), side);
 }
 
 
@@ -496,11 +524,16 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
         return;
     }
 
-    int64_t protocol_id = request.id;
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
+        return;
+    }
+
     const ProtocolConfigState will_config_state = request.runtime_enabled;
 
-    if(protocol_id <= 0
-        || (ProtocolConfigState::kOn != will_config_state && ProtocolConfigState::kOff != will_config_state))
+    if(ProtocolConfigState::kOn != will_config_state && ProtocolConfigState::kOff != will_config_state)
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "request param invalid"));
         return;
@@ -567,23 +600,13 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     resp->body().setContentType(ContentType::kJsonType);
 
     WriteOpResult write_result;
-    DelProtocolReq request; //json
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
-
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
     {
-        PJ_F_ERROR("body bind error! \n");
-
-        WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
     }
-
-    // DTO转换 避免对外暴露领域模型Entity
-    int64_t protocol_id = request.id;
-    int64_t project_id = request.project_id;
 
     ProtocolAccessInfo access_info;
     if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
@@ -591,6 +614,7 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
         WriteForbidden(ctx);
         return;
     }
+    int64_t project_id = access_info.project_id;
 
     ProtocolRuntimeResult pc_runtime_result;
     try 
@@ -642,13 +666,27 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
         return;
     }
 
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
+        return;
+    }
+
+    ProtocolAccessInfo access_info;
+    if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
+
     // DTO转换 避免对外暴露领域模型Entity
     auto p = std::make_shared<kit_domain::Protocol>();
-    p->m_id = request.header.id; // 注意: 新增始终是-1
+    p->m_id = protocol_id;
     p->m_name = std::move(request.header.name);
-    // p->m_type = request.header.type; // 不能修改协议类型
-    p->m_projectId = request.header.project_id;
-    // p->m_status = ProtocolStatus::kValid;
+    p->m_type = access_info.protocol_type;
+    p->m_projectId = access_info.project_id;
+    p->m_status = access_info.protocol_status;
     p->m_configState = request.header.config_state;
     p->m_reqBodyType = request.header.req_body_type;
     p->m_respBodyType = request.header.resp_body_type;
@@ -659,15 +697,6 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
     p->m_reqBodyData = std::move(request.protocol_req_body);
     p->m_respBodyData = std::move(request.protocol_resp_body);
     p->m_isEndian = request.header.is_endian;
-
-    ProtocolAccessInfo access_info;
-    if(!CheckProtocolAccess(ctx, svc_.get(), p->m_id, true, false, access_info))
-    {
-        WriteForbidden(ctx);
-        return;
-    }
-    p->m_status = access_info.protocol_status;
-    p->m_type = access_info.protocol_type;
 
     ProtocolRuntimeResult pc_runtime_result;
     try 
@@ -842,8 +871,15 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         return;
     }
 
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
+        return;
+    }
+
     ProtocolAccessInfo access_info;
-    if(!CheckProtocolAccess(ctx, svc_.get(), request.id, true, false, access_info))
+    if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
     {
         WriteForbidden(ctx);
         return;
@@ -851,7 +887,7 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
 
     try {
 
-        bool ok = svc_->UpdateName(ctx, request.id, request.name);
+        bool ok = svc_->UpdateName(ctx, protocol_id, request.name);
         if(!ok)
         {
             throw std::runtime_error(" UpdateName error");
@@ -894,8 +930,13 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    int64_t protocol_id = request.id;
-    int64_t project_id = request.project_id;
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
+        return;
+    }
+
     const ProtocolSide side = request.side;
 
     ProtocolAccessInfo access_info;
@@ -904,6 +945,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         WriteForbidden(ctx);
         return;
     }
+    int64_t project_id = access_info.project_id;
 
 
     ProtocolRuntimeResult pc_runtime_result;
@@ -960,8 +1002,13 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         return;
     }
 
-    int64_t protocol_id = request.header.id;
-    int64_t project_id = request.header.project_id;
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
+        return;
+    }
+
     const ProtocolSide side = request.header.side;
     const ProtocolBodyType body_type = request.header.body_type;
     const auto& body_data = request.cfg_data;
@@ -973,6 +1020,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
         WriteForbidden(ctx);
         return;
     }
+    int64_t project_id = access_info.project_id;
 
     ProtocolRuntimeResult pc_runtime_result;
     try  {
@@ -1137,15 +1185,21 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
         return;
     }
 
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        return;
+    }
+
     ProtocolAccessInfo access_info;
-    if(!CheckProtocolAccess(ctx, svc_.get(), request.id, true, false, access_info))
+    if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
     {
         WriteForbidden(ctx);
         return;
     }
 
-    if(access_info.project_id != request.project_id
-        || ProtocolType::kCustomTcp != access_info.protocol_type)
+    if(ProtocolType::kCustomTcp != access_info.protocol_type)
     {
         resp->body().appendData(R"({"code": -200, "message":"request param error"})");
         return;
@@ -1163,7 +1217,7 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     try 
     {
 
-        common_fields_json = svc_->GetTcpCommonFieldsById(ctx, request.id, request.side);
+        common_fields_json = svc_->GetTcpCommonFieldsById(ctx, protocol_id, request.side);
 
     }
     catch(const std::exception& e)
@@ -1197,18 +1251,26 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
     {
-        PC_F_ERROR("body bind error! \n");
-
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
         return;
     }
 
-    int64_t protocol_id = request.id;
-    const ProtocolSide side = request.side;
+    ProtocolSide side = ProtocolSide::kRequest;
+    if(!ParseProtocolSideFromQuery(ctx, side))
+    {
+        // 兼容旧调用方，允许 POST JSON body 传 side。
+        bool ok = ctx->Bind(&request);
+        if(!ok)
+        {
+            PC_F_ERROR("body bind error! \n");
+            resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+            return;
+        }
+        side = request.side;
+    }
 
     ProtocolAccessInfo access_info;
     if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
@@ -1217,8 +1279,8 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
         return;
     }
 
-    if(ProtocolSide::kRequest != request.side
-        && ProtocolSide::kResponse !=  request.side)
+    if(ProtocolSide::kRequest != side
+        && ProtocolSide::kResponse !=  side)
     {
         resp->body().appendData(R"({"code": -100, "message":"request param error"})");
         return;
@@ -1262,18 +1324,26 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
     {
-        PC_F_ERROR("body bind error! \n");
-
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
         return;
     }
 
-    int64_t protocol_id = request.id;
-    const ProtocolSide side = request.side;
+    ProtocolSide side = ProtocolSide::kRequest;
+    if(!ParseProtocolSideFromQuery(ctx, side))
+    {
+        // 兼容旧调用方，允许 POST JSON body 传 side。
+        bool ok = ctx->Bind(&request);
+        if(!ok)
+        {
+            PC_F_ERROR("body bind error! \n");
+            resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+            return;
+        }
+        side = request.side;
+    }
 
     ProtocolAccessInfo access_info;
     if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
@@ -1292,7 +1362,7 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     std::vector<char> body_data;
     try 
     {
-        ok = svc_->GetBodyDataById(ctx, protocol_id, side, body_data);
+        bool ok = svc_->GetBodyDataById(ctx, protocol_id, side, body_data);
         if(!ok)
         {
             throw std::logic_error("GetBodyDataById failed");
@@ -1343,8 +1413,15 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
         return;
     }
 
+    int64_t protocol_id = 0;
+    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    {
+        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        return;
+    }
+
     ProtocolAccessInfo access_info;
-    if(!CheckProtocolAccess(ctx, svc_.get(), request.id, true, false, access_info))
+    if(!CheckProtocolAccess(ctx, svc_.get(), protocol_id, true, false, access_info))
     {
         WriteForbidden(ctx);
         return;
@@ -1361,7 +1438,7 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     std::vector<char> body_data;
     try {
 
-        ok = svc_->GetBodyInfoById(ctx, request.id, request.side, body_type, body_data);
+        ok = svc_->GetBodyInfoById(ctx, protocol_id, request.side, body_type, body_data);
         if(!ok)
             throw std::logic_error("GetBodyDataById failed");
     } catch(const std::exception& e) {
