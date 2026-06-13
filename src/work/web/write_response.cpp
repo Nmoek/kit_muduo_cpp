@@ -96,6 +96,22 @@ WriteOpResult WriteOpResult::FromPjRuntimeResult(ProjectRuntimeResult pj_result)
 
 }
 
+WriteOpResult WriteOpResult::FromPcRuntimeResult(ProtocolRuntimeResult pc_result)
+{
+    WriteOpResult write_result;
+
+    write_result.persisted = pc_result.receipt.persisted;
+    write_result.runtime_applied = pc_result.receipt.runtime_applied;
+
+    if(!pc_result.ok())
+    {
+        return write_result.failed(RuntimeControlCodeToWriteCode(pc_result.status.code), pc_result.status.message);
+    }
+
+    return write_result.success(pc_result.status.message);
+
+}
+
 
 void WriteOpResponseHelper(kit_muduo::HttpContextPtr ctx, const WriteOpResult &result, WriteOpDataFunc func)
 {

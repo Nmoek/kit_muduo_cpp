@@ -61,28 +61,41 @@ bool HttpItemReqHeaderCfg::fromJson(const nlohmann::json& req_json)
         return false;
     }
     auto it = req_json.find("method");
-    if(it == req_json.end())
+    if(it == req_json.end()
+        || !it->is_string())
     {
-        PCITEM_F_WARN("json not found 'method' field! \n");
+        PCITEM_F_ERROR("'method' field invalid! \n");
         return false;
     }
     method = HttpRequest::Method::FromString(it.value().get<std::string>());
-    
-
+    if(kit_muduo::http::HttpRequest::Method::kInvaild
+            == method.toInt())
+    {
+        PCITEM_F_ERROR("'method' field invalid! \n");
+        return false;
+    }
 
     it = req_json.find("path");
-    if(it == req_json.end())
+    if(it == req_json.end()
+        || !it->is_string())
     {
-        PCITEM_F_WARN("json not found 'path' field! \n");
+        PCITEM_F_ERROR("'path' field invalid! \n");
         return false;
     }
     it.value().get_to<std::string>(path);
+
+    if(path.empty() || '/' != path.at(0))
+    {
+        PCITEM_F_ERROR("'path' field invalid! \n");
+        return false;
+    }
     
     
     it = req_json.find("headers");
-    if(it == req_json.end())
+    if(it == req_json.end()
+        || !it->is_object())
     {
-        PCITEM_F_WARN("json not found 'headers' field! \n");
+        PCITEM_F_ERROR("'headers' field invalid! \n");
         return false;
     }
     it.value().get_to<std::unordered_map<std::string, std::string>>(headers);
@@ -130,14 +143,20 @@ bool HttpItemRespHeaderCfg::fromJson(const nlohmann::json &resp_json)
     version.set(Version::kHttp11);
     
     auto it = resp_json.find("status_code");
-    if(it == resp_json.end())
+    if(it == resp_json.end()
+        || !it->is_string())
     {
-        PCITEM_F_WARN("json not found 'status_code' field! \n");
+        PCITEM_F_ERROR("'status_code' field invalid! \n");
         return false;
     }
     state_code = StateCode::FromString(it.value().get<std::string>());
-    
-    
+
+    if(StateCode::kUnknow == state_code.toInt())
+    {
+        PCITEM_F_ERROR("'status_code' field invalid! \n");
+        return false;
+    }
+
     it = resp_json.find("headers");
     if(it == resp_json.end())
     {
@@ -209,6 +228,16 @@ bool HttpProtocolItem::setRespCfg(kit_muduo::HttpResponsePtr resp_cfg)
 bool HttpProtocolItem::setRespCfg(const nlohmann::json& resp_json)
 {
     return resp_cfg_.fromJson(resp_json);
+}
+
+
+void HttpProtocolItem::init(const Protocol& ori_protocol,
+    const HttpItemReqHeaderCfg& req_cfg,
+    const HttpItemRespHeaderCfg& resp_cfg)
+{
+    initBase(ori_protocol);
+    req_cfg_ = req_cfg;
+    resp_cfg_ = resp_cfg;
 }
 
 void HttpProtocolItem::setReqCfg(const HttpItemReqHeaderCfg &req_cfg)

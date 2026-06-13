@@ -69,29 +69,26 @@ CustomTcpItemCfg::CustomTcpItemCfg(const nlohmann::json &tcp_json, const CustomT
 
 bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  const CustomTcpPatternSpec &spec)
 {
-    const FieldSpec* function_field = spec.byUniqueRole(FieldRole::kFunctionCode);
     if(tcp_json.empty())
     {
         PCITEM_F_ERROR("json/pattern is null\n");
         return false;
     }
+
+    const FieldSpec* function_field = spec.byUniqueRole(FieldRole::kFunctionCode);
     if(!function_field)
     {
-        PCITEM_F_ERROR("pattern function_code field not found\n");
+        PCITEM_F_ERROR("pattern 'function_code' role not found\n");
         return false;
     }
 
     CustomTcpItemCfg parsed;
     // 填充功能码字段
     auto it = tcp_json.find("function_code");
-    if(it == tcp_json.end())
+    if(it == tcp_json.end()
+        || !it->is_string())
     {
-        PCITEM_F_ERROR("json field 'function_code' not found! \n");
-        return false;
-    }
-    if(!it->is_string())
-    {
-        PCITEM_F_ERROR("json field 'function_code' type invalid\n");
+        PCITEM_F_ERROR("field 'function_code' invalid! \n");
         return false;
     }
     it.value().get_to<std::string>(parsed.function_code);
@@ -230,6 +227,16 @@ bool CustomTcpProtocolItem::setRespCfg(const nlohmann::json& tcp_json)
     }
     return resp_cfg_.fromJson(tcp_json, tcp_pattern->spec());
 }
+
+void CustomTcpProtocolItem::init(const Protocol& ori_protocol,
+    const CustomTcpItemCfg& req_cfg,
+    const CustomTcpItemCfg& resp_cfg)
+{
+    initBase(ori_protocol);
+    req_cfg_ = req_cfg;
+    resp_cfg_ = resp_cfg;
+}
+
 
 void CustomTcpProtocolItem::setReqCfg(const CustomTcpItemCfg &req_cfg)
 {

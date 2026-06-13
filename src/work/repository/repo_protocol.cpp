@@ -22,52 +22,6 @@ namespace kit_domain {
 
 namespace {
 
-/**
- * @brief 生成协议项唯一运行键值
- * @param type
- * @param req_cfg
- * @return std::string
- */
-std::string GenerateRuntimeKey(ProtocolType type, nlohmann::json req_cfg)
-{
-    std::string key;
-    if(ProtocolType::kHttp == type)
-    {
-        key += "|";
-        key += "HTTP";
-        key += "|";
-        auto it = req_cfg.find("method");
-        if(it == req_cfg.end())
-        {
-            return "";
-        }
-        key += it.value().get<std::string>();
-        key += "|";
-        it = req_cfg.find("path");
-        if(it == req_cfg.end())
-        {
-            return "";
-        }
-        key += it.value().get<std::string>();
-        key += "|";
-    }
-    else if(ProtocolType::kCustomTcp == type)
-    {
-        key += "|";
-        key += "CUTOM_TCP";
-        key += "|";
-        auto it = req_cfg.find("function_code");
-        if(it == req_cfg.end())
-        {
-            return "";
-        }
-        key += it.value().get<std::string>();
-        key += "|";
-    }
-    return key;
-}
-
-
 
 static kit_domain::Protocol CovertDomainProtocol(const kit_dao::Protocol &daoPj)
 {
@@ -106,14 +60,14 @@ static std::vector<kit_domain::Protocol> CovertDomainProtocols(const std::vector
     return ans;
 }
 
-static kit_dao::Protocol CovertDaoProtocol(const std::string& runtime_key, const kit_domain::Protocol &domainPc)
+static kit_dao::Protocol CovertDaoProtocol(const kit_domain::Protocol &domainPc)
 {
     return kit_dao::Protocol {
         domainPc.m_id,
         domainPc.m_name,
         static_cast<int32_t>(domainPc.m_type),
         domainPc.m_projectId,
-        runtime_key,
+        domainPc.m_runtimeKey,
         static_cast<int32_t>(domainPc.m_status),
         static_cast<int32_t>(domainPc.m_configState),
         static_cast<int32_t>(domainPc.m_reqBodyType),
@@ -157,13 +111,7 @@ ProtocolRepository::~ProtocolRepository() { }
 
 int64_t ProtocolRepository::Create(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
 {
-    const std::string& runtime_key = GenerateRuntimeKey(domainPc.m_type, domainPc.m_reqCfg);
-    if(runtime_key.empty())
-    {
-        REPOPC_F_ERROR("rutime key generate error! type[%d]: %s\n", static_cast<int32_t>(domainPc.m_type), domainPc.m_reqCfg.dump().c_str());
-        return -1;
-    }
-    return _dao->Insert(ctx, CovertDaoProtocol(runtime_key, domainPc));
+    return _dao->Insert(ctx, CovertDaoProtocol(domainPc));
 }
 
 
@@ -174,13 +122,7 @@ bool ProtocolRepository::UpdateStatusById(kit_muduo::HttpContextPtr ctx, int64_t
 
 bool ProtocolRepository::UpdateById(kit_muduo::HttpContextPtr ctx, Protocol &domainPc)
 {
-    const std::string& runtime_key = GenerateRuntimeKey(domainPc.m_type, domainPc.m_reqCfg);
-    if(runtime_key.empty())
-    {
-        REPOPC_F_ERROR("rutime key generate error! type[%d]: %s\n", static_cast<int32_t>(domainPc.m_type), domainPc.m_reqCfg.dump().c_str());
-        return false;
-    }
-    return _dao->UpdateById(ctx, CovertDaoProtocol(runtime_key, domainPc));
+    return _dao->UpdateById(ctx, CovertDaoProtocol(domainPc));
 }
 
 bool ProtocolRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocolId, const std::string &name)
@@ -188,19 +130,12 @@ bool ProtocolRepository::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t proto
     return _dao->UpdateName(ctx, protocolId, name);
 }
 
-bool ProtocolRepository::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
+bool ProtocolRepository::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const std::string& runtime_key, const nlohmann::json& cfg_json)
 {
-    const std::string &runtime_key = GenerateRuntimeKey(type, cfg_json);
-    if(runtime_key.empty())
-    {
-        REPOPC_F_ERROR("runtime key generate error! type[%d]: %s\n", static_cast<int32_t>(type), cfg_json.dump().c_str());
-        return false;
-    }
-
     return _dao->UpdateReqCfg(ctx, protocol_id, runtime_key, cfg_json);
 }
 
-bool ProtocolRepository::UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
+bool ProtocolRepository::UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const nlohmann::json& cfg_json)
 {
     return _dao->UpdateRespCfg(ctx, protocol_id, cfg_json);
 }

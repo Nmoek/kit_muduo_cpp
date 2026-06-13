@@ -49,15 +49,20 @@ class CustomTcpProtocolItem: public ProtocolItem
 public:
     explicit CustomTcpProtocolItem(std::shared_ptr<CustomTcpPattern> tcp_pattern);
 
+    ~CustomTcpProtocolItem() override = default;
+
     bool init(std::shared_ptr<Protocol> ori_protocol) override;
 
     bool setReqCfg(const nlohmann::json& req_json) override;
     bool setRespCfg(const nlohmann::json& resp_json) override;
 
+    void init(const Protocol& ori_protocol,
+        const CustomTcpItemCfg& req_cfg,
+        const CustomTcpItemCfg& resp_cfg);
+
     void setReqCfg(const CustomTcpItemCfg &req_cfg);
     void setRespCfg(const CustomTcpItemCfg &resp_cfg);
 
-    ~CustomTcpProtocolItem() override = default;
 
     CustomTcpItemCfg getReqCfg() const { return req_cfg_; }
     CustomTcpItemCfg  getRespCfg() const { return resp_cfg_; }

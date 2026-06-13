@@ -33,6 +33,8 @@ class ProjectServer;
 class ProjectSvcInterface;
 class ProtocolSvcInterface;
 
+struct Protocol;
+
 /// @brief 运行态操作类型
 enum class RuntimeOperationKind
 {
@@ -51,6 +53,8 @@ enum class RuntimeOperationKind
     kDeleteProtocol,
     kUpdateProtocolCfg,
     kUpdateProtocolBody,
+    kReconfigProtocol,
+
 };
 
 /// @brief 运行态操作后状态码
@@ -62,11 +66,15 @@ enum class RuntimeControlCode
     kProjectNotFound,
     kProjectDeleted,
     kProjectTypeInvalid,
+    kProtocolNotFound,
+    kProtocolDeleted,
+    kProtocolTypeInvalid,
 
     kLoopLeaseFailed,
     kCreateServerFailed,
     kHydrateProtocolFailed,
     kCreateProtocolItemFailed,
+    kRuntimeKeyInvalid,
     kRuntimeApplyFailed,
     kRuntimeRollbackFailed,
 
@@ -197,6 +205,40 @@ struct RuntimeRecoverResult
 };
 /************ recover流程 批处理使用 ***********/
 
+
+struct ProtocolRuntimeSnapshot
+{
+    int64_t project_id{0};
+    int64_t protocol_id{0};
+    ProtocolConfigState config_state{ProtocolConfigState::kOff};
+};
+
+struct ProtocolRuntimeResult
+{
+    RuntimeCommandStatus status;
+    RuntimeMutationReceipt receipt;
+    ProtocolRuntimeSnapshot snapshot;
+
+    bool ok() const { return status.ok(); }
+
+    static ProtocolRuntimeResult Success(RuntimeMutationReceipt receipt,
+        ProtocolRuntimeSnapshot snapshot,
+        const std::string& msg = "success")
+    {
+        return {RuntimeCommandStatus::Ok(msg), std::move(receipt), std::move(snapshot)};
+    }
+
+    static ProtocolRuntimeResult Failed(RuntimeControlCode code,
+        RuntimeError err = RuntimeError(RuntimeError::kInternalError),
+        const std::string& msg = "command failed",
+        RuntimeMutationReceipt receipt = RuntimeMutationReceipt{},
+        ProtocolRuntimeSnapshot snapshot = ProtocolRuntimeSnapshot{})
+    {
+        return {RuntimeCommandStatus::Failed(code, std::move(err), msg), std::move(receipt), std::move(snapshot)};
+    }
+
+};
+
 struct RuntimeOperationOptions
 {
     int32_t timeout_ms{3000};
@@ -210,18 +252,28 @@ public:
 
     virtual void shutdown() = 0;
 
+    /** project运行态操作 **/
     virtual ProjectRuntimeResult startProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
     virtual ProjectRuntimeResult stopProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
     virtual ProjectRuntimeResult delProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
     virtual RuntimeRecoverResult recover(kit_muduo::HttpContextPtr ctx = nullptr) = 0;
     virtual ProjectRuntimeResult editPatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info) = 0;
 
+    /** protocol运行态操作 **/
+    virtual ProtocolRuntimeResult addProtocol(kit_muduo::HttpContextPtr ctx,  Protocol &p) = 0;
+    virtual ProtocolRuntimeResult enableProtocol(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id) = 0;
+    virtual ProtocolRuntimeResult disableProtocol(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id) = 0;
+    virtual ProtocolRuntimeResult delProtocol(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id) = 0;
+    virtual ProtocolRuntimeResult updateProtocolCfg(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id, ProtocolSide side, const nlohmann::json &patch) = 0;
+    virtual ProtocolRuntimeResult updateProtocolBody(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
+    virtual ProtocolRuntimeResult reconfigProtocol(kit_muduo::HttpContextPtr ctx, Protocol &p) = 0;
+
+
     virtual std::shared_ptr<ProjectServer> findServer(int64_t project_id) = 0;
     virtual void addServer(int64_t project_id, std::shared_ptr<ProjectServer> server) = 0;
     virtual void removeServer(int64_t project_id) = 0;
 
 };
-
 
 
 class ProjectRuntimeManager
@@ -251,6 +303,14 @@ public:
     RuntimeRecoverResult recover(kit_muduo::HttpContextPtr ctx = nullptr) override;
     ProjectRuntimeResult editPatternInfo(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json &pattern_info) override;
 
+    ProtocolRuntimeResult addProtocol(kit_muduo::HttpContextPtr ctx,  Protocol &p) override;
+    ProtocolRuntimeResult enableProtocol(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id) override;
+    ProtocolRuntimeResult disableProtocol(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id) override;
+    ProtocolRuntimeResult delProtocol(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id) override;
+    ProtocolRuntimeResult updateProtocolCfg(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id, ProtocolSide side, const nlohmann::json &patch) override;
+    ProtocolRuntimeResult updateProtocolBody(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char> &body_data) override;
+    ProtocolRuntimeResult reconfigProtocol(kit_muduo::HttpContextPtr ctx, Protocol &p) override;
+
     std::shared_ptr<ProjectServer> findServer(int64_t project_id) override;
     void addServer(int64_t project_id, std::shared_ptr<ProjectServer> server) override;
     void removeServer(int64_t project_id) override;
@@ -260,10 +320,10 @@ private:
 
     template<typename FuncType>
     auto submitProjectOperation(int64_t project_id,
-                            RuntimeOperationKind op_kind,
-                            const char* command_name,
-                            RuntimeOperationOptions options,
-                            FuncType &&func) -> std::invoke_result_t<FuncType>
+            RuntimeOperationKind op_kind,
+            const char* command_name,
+            RuntimeOperationOptions options,
+            FuncType &&func) -> std::invoke_result_t<FuncType>
     {
         // 第一版快速上线实现：command_name/options 只作为日志和后续迁移预留。
         // 后续替换 Command Dispatcher 时，public API 和 *Impl 不需要改。
@@ -291,7 +351,16 @@ private:
 
     RuntimeResult<void> registerRuntimeEnabledProtocolsLocked(kit_muduo::HttpContextPtr ctx,
         const std::shared_ptr<ProjectServer> &project_server,
-        int64_t project_id);
+        int64_t project_id,
+        ProtocolType type);
+
+    ProtocolRuntimeResult addProtocolImpl(kit_muduo::HttpContextPtr ctx,  Protocol &p);
+    ProtocolRuntimeResult enableProtocolImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id);
+    ProtocolRuntimeResult disableProtocolImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id);
+    ProtocolRuntimeResult delProtocolImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id);
+    ProtocolRuntimeResult updateProtocolCfgImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id, ProtocolSide side, const nlohmann::json &patch);
+    ProtocolRuntimeResult updateProtocolBodyImpl(kit_muduo::HttpContextPtr ctx, int64_t project_id, int64_t protocol_id, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char> &body_data);
+    ProtocolRuntimeResult reconfigProtocolImpl(kit_muduo::HttpContextPtr ctx, Protocol &p);
 
 private:
     std::shared_ptr<ProjectSvcInterface> project_svc_;

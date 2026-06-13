@@ -71,6 +71,8 @@ option(WORK_TEST.WEB_PROTOCOL "build test_web_protocol" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
+option(WORK_TEST.PROTOCOL_RUNTIME_KEY "build test_protocol_runtime_key" OFF)
+option(WORK_TEST.PROTOCOL_CONFIG_PIPELINE "build test_protocol_config_pipeline" OFF)
 option(WORK_TEST.RUNTIME "build test_runtime" OFF)
 option(WORK_TEST.PROJECT_RUNTIME_MANAGER "build test_project_runtime_manager" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
@@ -218,6 +220,7 @@ set(WORK_SVC_SRC
 
 set(WORK_DOMAIN_SRC
     src/work/domain/type.cpp
+    src/work/domain/protocol_runtime_key.cpp
     src/work/domain/user.cpp
     src/work/domain/runtime_result.cpp
     src/work/domain/runtime_loop_pool.cpp
@@ -226,6 +229,7 @@ set(WORK_DOMAIN_SRC
     src/work/domain/protocol_item.cpp
     src/work/domain/http_protocol_item.cpp
     src/work/domain/custom_tcp_protocol_item.cpp
+    src/work/domain/protocol_config_pipeline.cpp
 
     src/work/domain/http_project_server.cpp
     src/work/domain/custom_tcp_project_server.cpp
@@ -417,6 +421,16 @@ add_kit_test(WORK_TEST WORK_TEST.PJ_SERVER_FAC test_project_server_factory tests
 
 # runtime 操作结果类型测试 test_runtime_result
 add_kit_test(WORK_TEST WORK_TEST.RUNTIME_RESULT test_runtime_result tests/work/domain/test_runtime_result.cpp src/work/domain/runtime_result.cpp)
+
+# 协议运行键生成测试 test_protocol_runtime_key
+add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_RUNTIME_KEY test_protocol_runtime_key
+    tests/work/domain/test_protocol_runtime_key.cpp
+    src/work/domain/protocol_runtime_key.cpp)
+
+# 协议配置校验与运行态构建 pipeline 测试 test_protocol_config_pipeline
+add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_CONFIG_PIPELINE test_protocol_config_pipeline
+    tests/work/domain/test_protocol_config_pipeline.cpp
+    ${WORK_DOMAIN_SRC})
 
 # 自定义tcp字段测试 test_custom_tcp_field
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_FIELD test_custom_tcp_field tests/work/domain/test_custom_tcp_field.cpp ${WORK_SRC})

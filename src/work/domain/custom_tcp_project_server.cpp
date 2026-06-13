@@ -10,6 +10,7 @@
 #include "domain/protocol_item.h"
 #include "domain/protocol.h"
 #include "domain/runtime_result.h"
+#include "domain/type.h"
 #include "net/tcp_server.h"
 #include "domain/domain_log.h"
 #include "domain/custom_tcp_context.h"
@@ -294,6 +295,40 @@ RuntimeResult<void> CustomTcpProjectServer::UpdateRespCfgProtocolItem(int64_t pr
     return result;
 }
 
+
+
+RuntimeResult<void> CustomTcpProjectServer::UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data)
+{
+    RuntimeResult<void> result;
+
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = tcp_items_.find(protocol_id);
+    if(it == tcp_items_.end())
+    {
+        PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
+    }
+    if(!it->second.item)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
+
+    if(ProtocolSide::kRequest == side)
+    {
+        it->second.item->setReqBody(body_type, body_data);
+    }
+    else
+    {
+        it->second.item->setRespBody(body_type, body_data);
+    }
+
+
+    return result;
+}
+
 RuntimeResult<void> CustomTcpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data)
 {
     RuntimeResult<void> result;
@@ -349,7 +384,7 @@ RuntimeResult<void> CustomTcpProjectServer::setPatternInfo(const std::shared_ptr
     return RuntimeResult<void>();
 }
 
-std::shared_ptr<CustomTcpPattern> CustomTcpProjectServer::getPatternInfo()
+std::shared_ptr<CustomTcpPattern> CustomTcpProjectServer::GetPatternInfo()
 {
     std::lock_guard<std::mutex> lock(pattern_info_mtx_);
     return pattern_info_;
@@ -462,7 +497,7 @@ RuntimeResult<void> CustomTcpProjectServer::ReplaceReqCfgProtocolItem(const Cust
 void CustomTcpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, std::shared_ptr<CustomTcpMessage> req)
 {
     // 把收到的二进制头部进行打印
-    auto pattern = getPatternInfo();
+    auto pattern = GetPatternInfo();
 
     const std::string& func_code_str = req->functionCodeHex();
     

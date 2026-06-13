@@ -69,6 +69,9 @@ public:
     bool setReqCfg(const nlohmann::json& req_json) override;
     bool setRespCfg(const nlohmann::json& resp_json) override;
 
+    void init(const Protocol& ori_protocol,
+        const HttpItemReqHeaderCfg& req_cfg,
+        const HttpItemRespHeaderCfg& resp_cfg);
 
     bool setReqCfg(kit_muduo::HttpRequestPtr req_cfg);
     bool setRespCfg(kit_muduo::HttpResponsePtr resp_cfg);

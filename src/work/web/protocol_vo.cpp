@@ -15,45 +15,6 @@ using nljson = nlohmann::json;
 
 namespace kit_domain {
 
-
-static ProtocolCfgVoPtr CreateProtocolReqCfgVo(const ProtocolType type, const std::vector<char> &cfg_data)
-{
-    if(ProtocolType::kHttp == type ||
-        ProtocolType::kHttps == type)
-    {
-        auto p = std::make_shared<HttpProtocolReqCfgVo>();
-        nljson::parse(cfg_data).get_to(*p);
-        return p;
-    }
-    else if(ProtocolType::kCustomTcp == type)
-    {
-        auto p = std::make_shared<TcpProtocolReqCfgVo>();
-        nljson::parse(cfg_data).get_to(*p);
-        return p;
-    }
-
-    throw std::invalid_argument("protocol type invalid!");
-}
-
-static ProtocolCfgVoPtr CreateProtocolRespCfgVo(const ProtocolType type, const std::vector<char> &cfg_data)
-{
-    if(ProtocolType::kHttp == type ||
-        ProtocolType::kHttps == type)
-    {
-        auto p = std::make_shared<HttpProtocolRespCfgVo>();
-        nljson::parse(cfg_data).get_to(*p);
-        return p;
-    }
-    else if(ProtocolType::kCustomTcp == type)
-    {
-        auto p = std::make_shared<TcpProtocolRespCfgVo>();
-        nljson::parse(cfg_data).get_to(*p);
-        return p;
-    }
-
-    throw std::invalid_argument("protocol type invalid!");
-}
-
 ProtocolVo CovertProtocolVo(const Protocol &p)
 {
     try {
@@ -85,7 +46,9 @@ std::vector<ProtocolVo> CovertProtocolVos(const std::vector<Protocol> &projects)
 {
     std::vector<ProtocolVo> res;
     for(const auto &p : projects)
+    {
         res.emplace_back(CovertProtocolVo(p));
+    }
     return res;
 }
 

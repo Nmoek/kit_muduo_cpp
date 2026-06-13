@@ -76,11 +76,14 @@ public:
 
     virtual RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) = 0;
 
+    virtual RuntimeResult<void> UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
+
 
     virtual RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
 
     virtual RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data) = 0;
 
+    virtual std::shared_ptr<CustomTcpPattern> GetPatternInfo() = 0;
 
 protected:
     /// @brief 测试服务id
@@ -125,10 +128,13 @@ public:
 
     RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json) override;
 
+    RuntimeResult<void> UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
+
     RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data) override;
 
     RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &resp_body_data) override;
 
+    std::shared_ptr<CustomTcpPattern> GetPatternInfo() override;
 
 private:
 
@@ -184,14 +190,15 @@ public:
 
     RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) override;
 
+    RuntimeResult<void> UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
+
     RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& req_body_data) override;
 
     RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& resp_body_data) override;
 
+    std::shared_ptr<CustomTcpPattern> GetPatternInfo() override;
+
     RuntimeResult<void> setPatternInfo(const std::shared_ptr<CustomTcpPattern> pattern);
-
-
-    std::shared_ptr<CustomTcpPattern> getPatternInfo();
 
     // 通过请求的功能码来反向索引 配置的数据
     std::shared_ptr<CustomTcpProtocolItem> findByFuncCode(const std::string&func_code);

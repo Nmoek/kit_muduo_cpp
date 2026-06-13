@@ -54,6 +54,7 @@ public:
     ProtocolItemBodyView getReqBodyView() const;
     ProtocolItemBodyView getRespBodyView() const;
 
+    void setId(int64_t id);
     int64_t getId() const;
 
     std::string getName() const;
@@ -61,6 +62,9 @@ public:
     int64_t getProjectId() const;
 
     bool isEndian() const;
+
+protected:
+    void initBase(const Protocol& p);
 
 protected:
     int64_t id_;

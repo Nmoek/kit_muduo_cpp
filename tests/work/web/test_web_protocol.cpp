@@ -22,6 +22,7 @@
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_util.h"
+#include "runtime/mock/runtime_controller_mock.h"
 #include "runtime/runtime_controller.h"
 #include "service/mock/svc_project_mock.h"
 #include "service/mock/svc_protocol_mock.h"
@@ -112,6 +113,13 @@ HttpContextPtr MakeJsonContext(const nljson &body)
     return ctx;
 }
 
+HttpContextPtr MakeJsonContextForPath(const nljson &body, const std::string &path)
+{
+    auto ctx = MakeJsonContext(body);
+    ctx->request()->setPath(path);
+    return ctx;
+}
+
 nljson ResponseBody(HttpContextPtr ctx)
 {
     return nljson::parse(ctx->response()->body().toString());
@@ -189,22 +197,46 @@ protected:
     std::unique_ptr<ProtocolHandler> handler_;
 };
 
+class ProtocolHandlerRuntimeReceiptSuite : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        mock_ = std::make_shared<testing::NiceMock<MockProtocolSvc>>();
+        project_mock_ = std::make_shared<testing::NiceMock<MockProjectSvc>>();
+        runtime_mock_ = std::make_shared<testing::NiceMock<MockRuntimeController>>();
+        handler_ = std::make_unique<ProtocolHandler>(mock_, project_mock_, runtime_mock_);
+    }
+
+    void TearDown() override
+    {
+        testing::Mock::VerifyAndClearExpectations(mock_.get());
+        testing::Mock::VerifyAndClearExpectations(project_mock_.get());
+        testing::Mock::VerifyAndClearExpectations(runtime_mock_.get());
+    }
+
+    std::shared_ptr<testing::NiceMock<MockProtocolSvc>> mock_;
+    std::shared_ptr<testing::NiceMock<MockProjectSvc>> project_mock_;
+    std::shared_ptr<testing::NiceMock<MockRuntimeController>> runtime_mock_;
+    std::unique_ptr<ProtocolHandler> handler_;
+};
+
 } // namespace
 
 /*
 测试思路：
 1. 构造 DetailCfg 请求，但 cfg_data 传数组而不是 object。
 2. 直接调用 ProtocolHandler::DetailCfg。
-3. 当前实现会先做协议/项目权限校验，再校验 cfg_data；断言校验失败后不会读取旧 cfg、写 DB 或触碰 runtime。
+3. 04 后 handler 只做鉴权并委托 manager，manager 再校验 cfg_data；断言失败后不会读取旧 cfg、写 DB 或触碰 runtime。
 
 示意：
   HTTP body cfg_data = ["bad"]
            |
            v
-  CheckProtocolAccess OK -> is_object() == false -> return -100
+  CheckProtocolAccess OK -> manager is_object() == false -> return -200
 
 举例：
-  前端误传 cfg_data: [] 时，可以发生鉴权查询，但不应继续读写协议配置，也不应触碰运行态 server。
+  前端误传 cfg_data: [] 时，可以发生 handler/manager 两次 access 查询，但不应继续读写协议配置，也不应触碰运行态 server。
 */
 TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRuntime)
 {
@@ -212,11 +244,12 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
     constexpr int64_t protocol_id = 1001;
 
     EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
-        .WillOnce(testing::DoAll(
+        .Times(2)
+        .WillRepeatedly(testing::DoAll(
             testing::SetArgReferee<2>(ProtocolAccessInfo{
                 protocol_id,
                 project_id,
-                "|HTTP|GET|/d9/web/invalid-cfg",
+                "HTTP|GET|/d9/web/invalid-cfg",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
                 ProtocolConfigState::kOn,
@@ -228,7 +261,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
         ));
     EXPECT_CALL(*mock_, GetCfgById(testing::_, testing::_)).Times(0);
     EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
-    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_)).Times(0);
 
     auto ctx = MakeJsonContext(nljson{
         {"id", protocol_id},
@@ -241,15 +274,15 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
     handler_->DetailCfg(nullptr, ctx);
 
     auto resp = ResponseBody(ctx);
-    EXPECT_EQ(resp["code"], -100);
-    EXPECT_EQ(resp["message"], "request param error");
+    EXPECT_EQ(resp["code"], -200);
+    EXPECT_EQ(resp["message"], "protocol project mismatch");
     EXPECT_EQ(ctx->response()->stateCode().toInt(), StateCode::k200Ok);
 }
 
 /*
 测试思路：
 1. 协议 1051 真实属于 project 9151，但请求体故意传 project_id=9152。
-2. handler 应在鉴权拿到真实协议后校验归属一致性，发现不一致就返回参数错误。
+2. 04 后 handler 只做鉴权，归属一致性由 manager 再次读取 access_info 后校验。
 3. 断言不会查询旧 cfg、不会写 DB，也不会根据错误 project_id 触碰 runtime server。
 
 示意：
@@ -259,7 +292,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsNonObjectCfgDataBeforeServiceAndRun
   GetById(protocol 1051) -> m_projectId=9151
        |
        v
-  mismatch -> return -100
+  mismatch -> return -200
 
 举例：
   前端或恶意调用方传错 project_id 时，不能把协议 1051 的 runtime 更新投递到另一个项目的 server 上。
@@ -271,12 +304,13 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime
     constexpr int64_t protocol_id = 1051;
 
     EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
-    .WillOnce(
+    .Times(2)
+    .WillRepeatedly(
         testing::DoAll(
             testing::SetArgReferee<2>(ProtocolAccessInfo{
                 protocol_id,
                 actual_project_id,
-                "|HTTP|GET|/d9/web/project-mismatch",
+                "HTTP|GET|/d9/web/project-mismatch",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
                 ProtocolConfigState::kOn,
@@ -289,7 +323,7 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime
     );
     EXPECT_CALL(*mock_, GetCfgById(testing::_, testing::_)).Times(0);
     EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
-    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_)).Times(0);
 
     auto ctx = MakeJsonContext(nljson{
         {"id", protocol_id},
@@ -302,8 +336,8 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RejectsProjectIdMismatchBeforeDbAndRuntime
     handler_->DetailCfg(nullptr, ctx);
 
     auto resp = ResponseBody(ctx);
-    EXPECT_EQ(resp["code"], -100);
-    EXPECT_EQ(resp["message"], "request param error");
+    EXPECT_EQ(resp["code"], -200);
+    EXPECT_EQ(resp["message"], "protocol project mismatch");
     EXPECT_EQ(ctx->response()->stateCode().toInt(), StateCode::k200Ok);
 }
 
@@ -339,30 +373,31 @@ TEST_F(ProtocolHandlerDetailCfgSuite, MergesFullCfgWritesDbAndUpdatesRuntime)
         {MakeHttpProtocol(protocol_id, project_id, "/d9/web/success")});
     runtime_manager_->addServer(project_id, server);
 
-    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_)).Times(0);
     {
         testing::InSequence seq;
         EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
-        .WillOnce(testing::DoAll(
-            testing::SetArgReferee<2>(ProtocolAccessInfo{
-                protocol_id,
-                project_id,
-                "|HTTP|GET|/d9/web/success",
-                ProtocolType::kHttp,
-                ProtocolStatus::kValid,
-                ProtocolConfigState::kOn,
-                1,
-                ProjectRuntimeState::kRunning,
-                ProjectStatus::kValid}
-            )
-            ,testing::Return(true)
-        ));
+            .Times(2)
+            .WillRepeatedly(testing::DoAll(
+                testing::SetArgReferee<2>(ProtocolAccessInfo{
+                    protocol_id,
+                    project_id,
+                    "HTTP|GET|/d9/web/success",
+                    ProtocolType::kHttp,
+                    ProtocolStatus::kValid,
+                    ProtocolConfigState::kOn,
+                    1,
+                    ProjectRuntimeState::kRunning,
+                    ProjectStatus::kValid}
+                )
+                ,testing::Return(true)
+            ));
         EXPECT_CALL(*mock_, GetCfgById(testing::_, protocol_id))
             .WillOnce(testing::Return(nljson{
                 {"req_cfg", old_req_cfg},
                 {"resp_cfg", old_resp_cfg},
             }));
-        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, ProtocolType::kHttp, JsonEq(new_req_cfg)))
+        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, "HTTP|GET|/d9/web/success", JsonEq(new_req_cfg)))
             .WillOnce(testing::Return(true));
     }
 
@@ -426,16 +461,17 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
         });
     runtime_manager_->addServer(project_id, server);
 
-    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, UpdateRespCfg(testing::_, testing::_, testing::_)).Times(0);
     {
         testing::InSequence seq;
 
         EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
-        .WillOnce(testing::DoAll(
+        .Times(2)
+        .WillRepeatedly(testing::DoAll(
             testing::SetArgReferee<2>(ProtocolAccessInfo{
                 protocol_id,
                 project_id,
-                "|HTTP|GET|/d9/web/old",
+                "HTTP|GET|/d9/web/old",
                 ProtocolType::kHttp,
                 ProtocolStatus::kValid,
                 ProtocolConfigState::kOn,
@@ -450,9 +486,9 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
                 {"req_cfg", old_req_cfg},
                 {"resp_cfg", old_resp_cfg},
             }));
-        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, ProtocolType::kHttp, JsonEq(new_req_cfg)))
+        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, "HTTP|GET|/d9/web/conflict", JsonEq(new_req_cfg)))
             .WillOnce(testing::Return(true));
-        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, ProtocolType::kHttp, JsonEq(old_req_cfg)))
+        EXPECT_CALL(*mock_, UpdateReqCfg(testing::_, protocol_id, "HTTP|GET|/d9/web/old", JsonEq(old_req_cfg)))
             .WillOnce(testing::Return(true));
     }
 
@@ -468,10 +504,128 @@ TEST_F(ProtocolHandlerDetailCfgSuite, RuntimeFailureRollsBackDbAndKeepsRuntimeCf
 
     auto resp = ResponseBody(ctx);
     EXPECT_EQ(resp["code"], -300);
-    EXPECT_EQ(resp["message"], "protocolitem update cfg failed");
+    EXPECT_EQ(resp["message"], "protocol runtime apply failed");
 
     auto runtime_item = GetHttpRuntimeItem(server, protocol_id);
     ASSERT_NE(runtime_item, nullptr);
     EXPECT_EQ(runtime_item->getReqCfg().path, "/d9/web/old");
     EXPECT_EQ(runtime_item->getReqCfg().headers.at("X-Old"), "1");
+}
+
+/*
+测试思路：
+1. LaunchAndWithdrawsProtocol 现在只负责鉴权、调用 runtime manager、转换回执。
+2. mock runtime manager 返回 enableProtocol 成功，并携带 persisted/runtime_applied 和 snapshot。
+3. 断言 HTTP JSON 同时透出写操作回执和 protocol snapshot 字段。
+
+示意：
+  manager.enableProtocol -> persisted=1,runtime_applied=1,config_state=kOn
+           |
+           v
+  response.data 同步包含 persisted/runtime_applied/project_id/protocol_id/config_state
+
+举例：
+  前端点击上线成功后，可以直接根据 data.config_state=1 和 runtime_applied=1 刷新按钮状态。
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, LaunchProtocolSuccessWritesRuntimeReceiptAndSnapshot)
+{
+    constexpr int64_t project_id = 9301;
+    constexpr int64_t protocol_id = 930101;
+
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                project_id,
+                "HTTP|GET|/d9/web/launch-ok",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolConfigState::kOff,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}
+            ),
+            testing::Return(true)));
+    EXPECT_CALL(*runtime_mock_, enableProtocol(testing::_, project_id, protocol_id))
+        .WillOnce(testing::Return(ProtocolRuntimeResult::Success(
+            RuntimeMutationReceipt::AllOk(),
+            ProtocolRuntimeSnapshot{project_id, protocol_id, ProtocolConfigState::kOn},
+            "success")));
+
+    auto ctx = MakeJsonContextForPath(nljson{
+        {"id", protocol_id},
+        {"runtime_enabled", ProtocolConfigState::kOn},
+    }, "/protocols/launch");
+
+    handler_->LaunchAndWithdrawsProtocol(nullptr, ctx);
+
+    auto resp = ResponseBody(ctx);
+    EXPECT_EQ(resp["code"], 0);
+    EXPECT_EQ(resp["message"], "success");
+    EXPECT_EQ(resp["data"]["persisted"], 1);
+    EXPECT_EQ(resp["data"]["runtime_applied"], 1);
+    EXPECT_EQ(resp["data"]["project_id"], project_id);
+    EXPECT_EQ(resp["data"]["protocol_id"], protocol_id);
+    EXPECT_EQ(resp["data"]["config_state"], static_cast<int32_t>(ProtocolConfigState::kOn));
+}
+
+/*
+测试思路：
+1. DetailCfg 调用 runtime manager 更新运行中协议配置时，可能出现 DB 已写、runtime 失败、DB 已回滚的结果。
+2. handler 不应自己重新解释失败，而应把 manager 的 receipt 原样转换成 HTTP JSON。
+3. 断言失败响应 code/message 和 persisted/runtime_applied 与 ProtocolRuntimeResult 保持一致。
+
+示意：
+  manager.updateProtocolCfg -> failed(kRuntimeApplyFailed, receipt={0,0})
+           |
+           v
+  response code=-300, data.persisted=0, data.runtime_applied=0
+
+举例：
+  前端保存配置遇到 runtime 冲突后，可以看到没有 DB/runtime 半成功状态。
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, DetailCfgRuntimeFailureWritesReceiptFromManager)
+{
+    constexpr int64_t project_id = 9302;
+    constexpr int64_t protocol_id = 930201;
+    const nljson patch = nljson{{"path", "/d9/web/runtime-failed"}};
+
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                project_id,
+                "HTTP|GET|/d9/web/old",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolConfigState::kOn,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}
+            ),
+            testing::Return(true)));
+    EXPECT_CALL(*runtime_mock_,
+                updateProtocolCfg(testing::_, project_id, protocol_id, ProtocolSide::kRequest, JsonEq(patch)))
+        .WillOnce(testing::Return(ProtocolRuntimeResult::Failed(
+            RuntimeControlCode::kRuntimeApplyFailed,
+            RuntimeError(RuntimeError::kRouteConflict),
+            "protocol runtime apply failed",
+            RuntimeMutationReceipt::AllErr(),
+            ProtocolRuntimeSnapshot{project_id, protocol_id, ProtocolConfigState::kOn})));
+
+    auto ctx = MakeJsonContext(nljson{
+        {"id", protocol_id},
+        {"project_id", project_id},
+        {"type", ProtocolType::kHttp},
+        {"side", ProtocolSide::kRequest},
+        {"cfg_data", patch},
+    });
+
+    handler_->DetailCfg(nullptr, ctx);
+
+    auto resp = ResponseBody(ctx);
+    EXPECT_EQ(resp["code"], -300);
+    EXPECT_EQ(resp["message"], "protocol runtime apply failed");
+    EXPECT_EQ(resp["data"]["persisted"], 0);
+    EXPECT_EQ(resp["data"]["runtime_applied"], 0);
 }

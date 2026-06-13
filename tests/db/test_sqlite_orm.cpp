@@ -1,16 +1,20 @@
 
 #include "../test_log.h"
 #include "dao/init.h"
+#include "domain/type.h"
 #include "sqlite_orm/sqlite_orm.h"
 #include "nlohmann/json.hpp"
+#include "sqlite3.h"
 
 #include <gtest/gtest.h>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include <memory>
+#include <system_error>
 
 #include <limits.h>
 #include <sys/stat.h>
@@ -79,6 +83,104 @@ private:
     std::string old_dir_;
 };
 
+struct ScopedInitDbTestDir
+{
+    ScopedInitDbTestDir()
+    {
+        PrepareInitDbTestDir();
+    }
+
+    ~ScopedInitDbTestDir()
+    {
+        CleanupInitDbTestDir();
+    }
+};
+
+kit_dao::Protocol MakeIndexedProtocol(int64_t project_id,
+                                      const std::string &runtime_key,
+                                      kit_domain::ProtocolConfigState config_state,
+                                      kit_domain::ProtocolStatus status =
+                                          kit_domain::ProtocolStatus::kValid)
+{
+    kit_dao::Protocol protocol{};
+    protocol.m_name = "index_protocol_" + runtime_key;
+    protocol.m_type = static_cast<int32_t>(kit_domain::ProtocolType::kHttp);
+    protocol.m_projectId = project_id;
+    protocol.m_runtimeKey = runtime_key;
+    protocol.m_status = static_cast<int32_t>(status);
+    protocol.m_configState = static_cast<int32_t>(config_state);
+    protocol.m_reqBodyType = static_cast<int32_t>(kit_domain::ProtocolBodyType::kJson);
+    protocol.m_respBodyType = static_cast<int32_t>(kit_domain::ProtocolBodyType::kJson);
+    protocol.m_reqBodyDataStatus = 0;
+    protocol.m_respBodyDataStatus = 0;
+    protocol.m_reqCfg = R"({"method":"GET","path":"/index"})";
+    protocol.m_respCfg = "{}";
+    protocol.m_isEndian = 0;
+    return protocol;
+}
+
+std::string ReadSqliteIndexSql(const char *db_path, const char *index_name)
+{
+    sqlite3 *raw_db = nullptr;
+    const int open_rc = sqlite3_open(db_path, &raw_db);
+    if(open_rc != SQLITE_OK)
+    {
+        std::string msg = raw_db ? sqlite3_errmsg(raw_db) : "unknown sqlite open error";
+        if(raw_db)
+        {
+            sqlite3_close(raw_db);
+        }
+        throw std::runtime_error("open sqlite for index query failed: " + msg);
+    }
+
+    sqlite3_stmt *stmt = nullptr;
+    const char *sql = "SELECT sql FROM sqlite_master WHERE type='index' AND name=?;";
+    const int prepare_rc = sqlite3_prepare_v2(raw_db, sql, -1, &stmt, nullptr);
+    if(prepare_rc != SQLITE_OK)
+    {
+        std::string msg = sqlite3_errmsg(raw_db);
+        sqlite3_close(raw_db);
+        throw std::runtime_error("prepare index query failed: " + msg);
+    }
+
+    sqlite3_bind_text(stmt, 1, index_name, -1, SQLITE_TRANSIENT);
+    std::string index_sql;
+    const int step_rc = sqlite3_step(stmt);
+    if(step_rc == SQLITE_ROW)
+    {
+        const unsigned char *text = sqlite3_column_text(stmt, 0);
+        if(text != nullptr)
+        {
+            index_sql = reinterpret_cast<const char *>(text);
+        }
+    }
+    else if(step_rc != SQLITE_DONE)
+    {
+        std::string msg = sqlite3_errmsg(raw_db);
+        sqlite3_finalize(stmt);
+        sqlite3_close(raw_db);
+        throw std::runtime_error("step index query failed: " + msg);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(raw_db);
+    return index_sql;
+}
+
+template <typename Db>
+bool InsertFailsByUniqueRuntimeKey(Db &db, const kit_dao::Protocol &protocol)
+{
+    try
+    {
+        db.insert(protocol);
+    }
+    catch(const std::system_error &e)
+    {
+        return std::string(e.what()).find("UNIQUE constraint failed") != std::string::npos;
+    }
+    return false;
+}
+
 }   // namespace
 
 struct Employee {
@@ -109,7 +211,7 @@ using TestDbType = decltype(KIT_TEST_SQLITE_ORM());
 
 TEST(TestOrm, InitSqliteDbUsesWalAndPreservesSchema)
 {
-    PrepareInitDbTestDir();
+    ScopedInitDbTestDir test_dir;
     {
         ScopedWorkingDirectory cwd(kInitDbTestDir);
         auto db = kit_dao::InitSqliteDb();
@@ -118,7 +220,94 @@ TEST(TestOrm, InitSqliteDbUsesWalAndPreservesSchema)
         auto journal_mode = db->pragma.get_pragma<std::string>("journal_mode");
         ASSERT_EQ(journal_mode, "wal");
     }
-    CleanupInitDbTestDir();
+}
+
+/**
+ * 测试思路：
+ * 1. 通过 InitSqliteDb() 走真实初始化路径，确保不是测试手写索引。
+ * 2. 查询 sqlite_master 中 uidx_protocols_pjid_runkey 的实际 SQL。
+ * 3. 断言索引条件是 status = 1 AND config_state <> 2。
+ *
+ * 示例：
+ *
+ *   protocols(project_id, runtime_key)
+ *              |
+ *              v
+ *   WHERE status = 1 AND config_state <> 2
+ *
+ * 这个用例防止开发机旧库或初始化代码退回到 WHERE status = 1，导致 kReConfig
+ * 仍然占用 runtime_key。
+ */
+TEST(TestOrm, ProtocolRuntimeKeyIndexUsesReConfigAwarePredicate)
+{
+    ScopedInitDbTestDir test_dir;
+    {
+        ScopedWorkingDirectory cwd(kInitDbTestDir);
+        auto db = kit_dao::InitSqliteDb();
+        ASSERT_NE(db, nullptr);
+
+        const std::string index_sql =
+            ReadSqliteIndexSql("kit.sqlite", "uidx_protocols_pjid_runkey");
+
+        ASSERT_FALSE(index_sql.empty());
+        EXPECT_NE(index_sql.find("CREATE UNIQUE INDEX"), std::string::npos);
+        EXPECT_NE(index_sql.find("uidx_protocols_pjid_runkey"), std::string::npos);
+        EXPECT_NE(index_sql.find("ON protocols(project_id, runtime_key)"), std::string::npos);
+        EXPECT_NE(index_sql.find("WHERE status = 1 AND config_state <> 2"), std::string::npos);
+    }
+}
+
+/**
+ * 测试思路：
+ * 1. 同 project 下，kOff/kOn 都是有效配置态，必须占用 runtime_key。
+ * 2. kReConfig 是待重新配置态，不应占用 runtime_key，允许用户按新 schema 重配。
+ * 3. status=kInvalid 是软删态，也不应占用 runtime_key。
+ *
+ * 示例：
+ *
+ *   project 1001 + HTTP|GET|/same
+ *
+ *   kOff      + kOn       -> 冲突
+ *   kOff      + kReConfig -> 放行
+ *   kInvalid  + kOn       -> 放行
+ *
+ * 这组断言直接固定 04 文档的索引闭环：有效且非 kReConfig 的协议项唯一，
+ * 待重配和软删协议释放运行键。
+ */
+TEST(TestOrm, ProtocolRuntimeKeyIndexAppliesOnlyToValidRunnableConfigs)
+{
+    ScopedInitDbTestDir test_dir;
+    {
+        ScopedWorkingDirectory cwd(kInitDbTestDir);
+        auto db = kit_dao::InitSqliteDb();
+        ASSERT_NE(db, nullptr);
+
+        constexpr int64_t kProjectId = 1001;
+        const std::string runtime_key = "HTTP|GET|/same";
+
+        auto off_protocol = MakeIndexedProtocol(
+            kProjectId, runtime_key, kit_domain::ProtocolConfigState::kOff);
+        off_protocol.m_id = db->insert(off_protocol);
+
+        auto on_duplicate = MakeIndexedProtocol(
+            kProjectId, runtime_key, kit_domain::ProtocolConfigState::kOn);
+        EXPECT_TRUE(InsertFailsByUniqueRuntimeKey(*db, on_duplicate));
+
+        auto reconfig_duplicate = MakeIndexedProtocol(
+            kProjectId, runtime_key, kit_domain::ProtocolConfigState::kReConfig);
+        EXPECT_NO_THROW(reconfig_duplicate.m_id = db->insert(reconfig_duplicate));
+
+        auto invalid_duplicate = MakeIndexedProtocol(
+            kProjectId,
+            runtime_key,
+            kit_domain::ProtocolConfigState::kOn,
+            kit_domain::ProtocolStatus::kInvalid);
+        EXPECT_NO_THROW(invalid_duplicate.m_id = db->insert(invalid_duplicate));
+
+        auto other_project_duplicate = MakeIndexedProtocol(
+            kProjectId + 1, runtime_key, kit_domain::ProtocolConfigState::kOn);
+        EXPECT_NO_THROW(other_project_duplicate.m_id = db->insert(other_project_duplicate));
+    }
 }
 
 TEST(TestOrm, test1)

@@ -145,10 +145,12 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
 
     try {
 
-        // SELCT * FROM xxx WHERE id = ?
-        auto pc = lease_result.val->db().get_pointer<kit_dao::Protocol>(daoPc.m_id);
-        if(!pc
-            || kit_domain::ProtocolStatus::kValid != static_cast<kit_domain::ProtocolStatus>(pc->m_status))
+        // SELECT COUNT(*) FROM `protocols` WHERE `id`= ?;
+        auto n = lease_result.val->db().count<Protocol>(where(
+            c(&Protocol::m_id) == daoPc.m_id
+            && c(&Protocol::m_status) == static_cast<int32_t>(kit_domain::ProtocolStatus::kValid)
+        ));
+        if(0 == n)
         {
             DAOPC_F_WARN("protocol dont exist! pcId[%ld] \n", daoPc.m_id);
             return false;
@@ -160,19 +162,26 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
             return false;
         }
 
-        pc->m_name = daoPc.m_name;
-        pc->m_reqBodyType = daoPc.m_reqBodyType;
-        pc->m_respBodyType = daoPc.m_respBodyType;
-        pc->m_reqCfg = std::move(daoPc.m_reqCfg);
-        pc->m_respCfg = std::move(daoPc.m_respCfg);
-        pc->m_reqBodyData = std::move(daoPc.m_reqBodyData);
-        pc->m_respBodyData = std::move(daoPc.m_respBodyData);
-        pc->m_isEndian = daoPc.m_isEndian;
-        pc->m_utime = now;
-
-        // UPDATE Protocols SET `status`= ? WHERE id = ?
-
-        tx_result.val->db().update(*pc);
+        // UPDATE Protocols SET ... WHERE id = ?
+        // 注意: 这里更新时 id主键、type、ctime不更新
+        tx_result.val->db().update_all(
+            set(
+                c(&Protocol::m_name) = daoPc.m_name
+                ,c(&Protocol::m_projectId) = daoPc.m_projectId
+                ,c(&Protocol::m_runtimeKey) = daoPc.m_runtimeKey            
+                ,c(&Protocol::m_configState) = daoPc.m_configState
+                ,c(&Protocol::m_reqBodyType) = daoPc.m_reqBodyType 
+                ,c(&Protocol::m_respBodyType) = daoPc.m_respBodyType
+                ,c(&Protocol::m_reqBodyDataStatus) = (daoPc.m_reqBodyData.empty() ? 0 : 1)
+                ,c(&Protocol::m_respBodyDataStatus) = (daoPc.m_respBodyData.empty() ? 0 : 1)
+                ,c(&Protocol::m_reqBodyData) = std::move(daoPc.m_reqBodyData)
+                ,c(&Protocol::m_respBodyData) = std::move(daoPc.m_respBodyData)
+                ,c(&Protocol::m_isEndian) = std::move(daoPc.m_isEndian)
+                ,c(&Protocol::m_utime) = now
+            ), 
+            where(
+            c(&Protocol::m_id) == daoPc.m_id
+            ));
 
         tx_result.val->commit();
 

@@ -58,7 +58,7 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
     const auto& tmp =  buf.lookAllAsData();
     const std::vector<uint8_t> complete_data(tmp.begin(), tmp.end());
 
-    auto pattern = server_->getPatternInfo();
+    auto pattern = server_->GetPatternInfo();
 
     while(state_ != kGotAll)
     {

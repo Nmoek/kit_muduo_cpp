@@ -288,6 +288,37 @@ RuntimeResult<void> HttpProjectServer::UpdateRespCfgProtocolItem(int64_t protoco
     return result;
 }
 
+RuntimeResult<void> HttpProjectServer::UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data)
+{
+    RuntimeResult<void> result;
+
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = http_items_.find(protocol_id);
+    if(it == http_items_.end())
+    {
+        PJSERVER_F_ERROR("protocol_id[%d] not found! \n", protocol_id);
+
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
+    }
+    if(!it->second.item)
+    {
+        result.error.set(RuntimeError::kNullProtocolItem);
+        return result;
+    }
+
+    if(ProtocolSide::kRequest == side)
+    {
+        it->second.item->setReqBody(body_type, body_data);
+    }
+    else
+    {
+        it->second.item->setRespBody(body_type, body_data);
+    }
+
+    return result;
+}
+
 RuntimeResult<void> HttpProjectServer::UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &body_data)
 {
     RuntimeResult<void> result;
@@ -334,6 +365,11 @@ RuntimeResult<void> HttpProjectServer::UpdateRespBodyProtocolItem(int64_t protoc
     it->second.item->setRespBody(body_type, body_data);
 
     return result;
+}
+
+std::shared_ptr<CustomTcpPattern> HttpProjectServer::GetPatternInfo() 
+{ 
+    return nullptr; 
 }
 
 RuntimeResult<void> HttpProjectServer::ReplaceReqCfgProtocolItem(const HttpRuntimeItem& http_run_item, const HttpItemReqHeaderCfg &new_req_cfg)

@@ -22,6 +22,10 @@ using namespace kit_muduo::http;
 
 namespace kit_domain {
 
+void ProtocolItem::setId(int64_t id)
+{
+    id_ = id;
+}
 
 int64_t ProtocolItem::getId() const { return id_; }
 
@@ -30,6 +34,21 @@ std::string ProtocolItem::getName() const { return name_; }
 int64_t ProtocolItem::getProjectId() const { return project_id_; }
 
 bool ProtocolItem::isEndian() const { return is_endian_; }
+
+void ProtocolItem::initBase(const Protocol& p)
+{
+    id_ = p.m_id;
+    name_ = p.m_name;
+    type_ = p.m_type;
+    project_id_ = p.m_projectId;
+    is_endian_ = p.m_isEndian;
+
+    req_body_view_.body_type = ProtocolBodyTypeToContentType(p.m_reqBodyType);
+    req_body_view_.body_data = std::make_shared<const std::vector<char>>(p.m_reqBodyData);
+
+    resp_body_view_.body_type = ProtocolBodyTypeToContentType(p.m_respBodyType);
+    resp_body_view_.body_data = std::make_shared<const std::vector<char>>(p.m_respBodyData);
+}
 
 
 void ProtocolItem::setReqBody(const ProtocolBodyType body_type, const std::vector<char> &body_data)
@@ -70,7 +89,7 @@ std::shared_ptr<ProtocolItem> ProtocolItemFactory::Create(std::shared_ptr<Protoc
         {
             // 自定义TCP需要额外传入格式信息
             auto tcp_server = std::dynamic_pointer_cast<CustomTcpProjectServer>(pj_server);
-            auto p = std::make_shared<CustomTcpProtocolItem>(tcp_server->getPatternInfo());
+            auto p = std::make_shared<CustomTcpProtocolItem>(tcp_server->GetPatternInfo());
             if(!p || !p->init(ori_protocol))
             {
                 break;
@@ -78,8 +97,6 @@ std::shared_ptr<ProtocolItem> ProtocolItemFactory::Create(std::shared_ptr<Protoc
 
             return p;
         }
-        
-        case ProtocolType::kUnknown:
         default: 
         {
             return nullptr;

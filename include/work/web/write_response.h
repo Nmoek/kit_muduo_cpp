@@ -39,7 +39,7 @@ struct WriteOpResult
     WriteOpResult& failed(int32_t code,  const std::string &msg = "write operation failed");
 
     static WriteOpResult FromPjRuntimeResult(ProjectRuntimeResult pj_result);
-
+    static WriteOpResult FromPcRuntimeResult(ProtocolRuntimeResult pc_result);
 };
 
 void WriteOpResponseHelper(kit_muduo::HttpContextPtr ctx, const WriteOpResult &result, WriteOpDataFunc func = WriteOpDataFunc());

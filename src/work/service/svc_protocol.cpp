@@ -49,14 +49,14 @@ bool ProtocolService::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t protocol
 }
 
 
-bool ProtocolService::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
+bool ProtocolService::UpdateReqCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const std::string& runtime_key, const nlohmann::json& cfg_json)
 {
-    return _repo->UpdateReqCfg(ctx, protocol_id, type, cfg_json);
+    return _repo->UpdateReqCfg(ctx, protocol_id, runtime_key, cfg_json);
 }
 
-bool ProtocolService::UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolType type, const nlohmann::json& cfg_json)
+bool ProtocolService::UpdateRespCfg(kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const nlohmann::json& cfg_json)
 {
-    return _repo->UpdateRespCfg(ctx, protocol_id, type, cfg_json);
+    return _repo->UpdateRespCfg(ctx, protocol_id, cfg_json);
 
 }
 
