@@ -42,6 +42,7 @@
     function buildProtocolListUrl() {
         const params = new URLSearchParams(global.location.search);
         params.delete('protocolId');
+        params.delete('mode');
         if (pageState.projectId > 0) {
             params.set('projectId', String(pageState.projectId));
         }
@@ -50,17 +51,19 @@
     }
 
     /**
-     * @returns {{ projectId: number; protocolId: number | null; }}
+     * @returns {{ projectId: number; protocolId: number | null; mode: string; }}
      */
     function readURLParams() {
         const params = new URLSearchParams(global.location.search);
         const projectId = Number(params.get('projectId'));
         const protocolIdValue = params.get('protocolId');
         const protocolId = Number(protocolIdValue);
+        const mode = params.get('mode') === 'reconfig' ? 'reconfig' : '';
 
         return {
             projectId: Number.isInteger(projectId) && projectId > 0 ? projectId : -1,
             protocolId: Number.isInteger(protocolId) && protocolId > 0 ? protocolId : null,
+            mode,
         };
     }
 
@@ -140,8 +143,36 @@
         return JSON.parse(JSON.stringify(value == null ? {} : value));
     }
 
-    function isProjectActive(project) {
-        return Number(project && project.active) === 1;
+    function isProjectRunning(project) {
+        return Number(project && project.runtime_state) === 1;
+    }
+
+    /**
+     * 页面内部统一用 1/2/3 判断协议类型，兼容后端返回 HTTP/TCP/HTTPS 字符串。
+     * @param {any} protocolType
+     * @returns {number}
+     */
+    function normalizeProtocolTypeForPage(protocolType) {
+        if (typeof protocolType === 'string') {
+            const normalized = protocolType.trim().toUpperCase();
+            if (normalized === 'HTTP') return ProtocolType.HTTP;
+            if (normalized === 'TCP' || normalized === 'CUSTOM_TCP') return ProtocolType.CUSTOM_TCP;
+            if (normalized === 'HTTPS') return ProtocolType.HTTPS;
+        }
+
+        const value = Number(protocolType);
+        return [ProtocolType.HTTP, ProtocolType.CUSTOM_TCP, ProtocolType.HTTPS].includes(value) ? value : 0;
+    }
+
+    /**
+     * @param {any} project
+     * @param {any=} protocol
+     * @returns {number}
+     */
+    function resolveProtocolType(project, protocol) {
+        const protocolType = normalizeProtocolTypeForPage(protocol && protocol.type);
+        if (protocolType) return protocolType;
+        return normalizeProtocolTypeForPage(project && project.protocol_type);
     }
 
     /**
@@ -152,13 +183,14 @@
         if (!context) return;
 
         const endpointLabel = project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
-        const endpointValue = isProjectActive(project)
+        const endpointValue = isProjectRunning(project)
             ? (project.mode === ProjectMode.SERVER ? project.listen_port || '未分配' : project.target_ip || '未设置')
             : '未开启';
-        const protocolText = ProtocolTypeStr[project.protocol_type] || '未知协议';
+        const projectProtocolType = normalizeProtocolTypeForPage(project.protocol_type);
+        const protocolText = ProtocolTypeStr[projectProtocolType] || '未知协议';
         const modeText = ProjectModeStr[project.mode] || '未知模式';
-        const statusText = isProjectActive(project) ? '开启' : '未开启';
-        const patternHTML = Number(project.protocol_type) === ProtocolType.CUSTOM_TCP
+        const statusText = isProjectRunning(project) ? '开启' : '未开启';
+        const patternHTML = projectProtocolType === ProtocolType.CUSTOM_TCP
             ? `
                 <span class="service-context-item">
                     <span class="meta-label">报文格式</span>
@@ -173,7 +205,7 @@
                     <span class="service-context-kicker">当前测试服务</span>
                     <div class="service-context-title-row">
                         <strong class="service-context-title">${escapeHTML(project.name || '未命名服务')}</strong>
-                        <span class="service-context-status ${isProjectActive(project) ? 'is-active' : 'is-inactive'}">${escapeHTML(statusText)}</span>
+                        <span class="service-context-status ${isProjectRunning(project) ? 'is-active' : 'is-inactive'}">${escapeHTML(statusText)}</span>
                     </div>
                 </div>
                 <span class="service-context-id">ID ${escapeHTML(project.id || '')}</span>
@@ -203,13 +235,21 @@
         const saveButton = document.getElementById('save-protocol-form');
 
         if (title) {
-            title.textContent = pageState.mode === 'edit' ? '修改协议项' : '添加协议项';
+            if (pageState.mode === 'reconfig') {
+                title.textContent = '重配置协议项';
+            } else {
+                title.textContent = pageState.mode === 'edit' ? '修改协议项' : '添加协议项';
+            }
         }
 
         if (subtitle) {
-            subtitle.textContent = pageState.mode === 'edit'
-                ? '修改当前协议项配置、请求 Body 和响应 Body'
-                : '新增当前测试服务下的请求校验和响应行为';
+            if (pageState.mode === 'reconfig') {
+                subtitle.textContent = '重新提交当前协议项的完整配置、请求 Body 和响应 Body';
+            } else {
+                subtitle.textContent = pageState.mode === 'edit'
+                    ? '修改当前协议项配置、请求 Body 和响应 Body'
+                    : '新增当前测试服务下的请求校验和响应行为';
+            }
         }
 
         if (backLink) {
@@ -217,7 +257,36 @@
         }
 
         if (saveButton) {
-            saveButton.textContent = pageState.mode === 'edit' ? '保存修改' : '确认添加';
+            saveButton.textContent = '保存';
+        }
+
+        updateSaveActionState();
+    }
+
+    function updateSaveActionState() {
+        const toggleButton = document.getElementById('save-protocol-menu-toggle');
+        const menu = document.getElementById('save-protocol-menu');
+        const saveAndOnlineButton = document.getElementById('save-and-online-protocol');
+        const isCreateMode = pageState.mode === 'create';
+        const canSaveAndOnline = isCreateMode && isProjectRunning(pageState.project);
+
+        if (toggleButton) {
+            toggleButton.disabled = !isCreateMode;
+            toggleButton.title = isCreateMode ? '更多保存选项' : '只有新增协议项支持保存并上线';
+            if (!isCreateMode) {
+                toggleButton.setAttribute('aria-expanded', 'false');
+            }
+        }
+
+        if (menu && !isCreateMode) {
+            menu.hidden = true;
+        }
+
+        if (saveAndOnlineButton) {
+            saveAndOnlineButton.disabled = !canSaveAndOnline;
+            saveAndOnlineButton.title = canSaveAndOnline
+                ? '保存协议项并立即上线'
+                : '项目未运行，不能保存并上线';
         }
     }
 
@@ -226,7 +295,7 @@
      */
     function getAllowedBodyTypes() {
         if (KitProxy.protocolTypes && typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function') {
-            return KitProxy.protocolTypes.getBodyTypeOptions(pageState.project.protocol_type);
+            return KitProxy.protocolTypes.getBodyTypeOptions(pageState.protocolType || pageState.project.protocol_type);
         }
         return [
             { value: 'json', label: 'JSON', enabled: true },
@@ -728,12 +797,13 @@
         const container = document.getElementById('protocol-type-fields');
         if (!container) return;
 
-        if (Number(protocolType) === ProtocolType.HTTP) {
+        const normalizedProtocolType = normalizeProtocolTypeForPage(protocolType);
+        if (normalizedProtocolType === ProtocolType.HTTP) {
             renderHTTPFields(container, protocol);
             return;
         }
 
-        if (Number(protocolType) === ProtocolType.CUSTOM_TCP) {
+        if (normalizedProtocolType === ProtocolType.CUSTOM_TCP) {
             renderTCPFields(container, protocol);
             return;
         }
@@ -886,7 +956,7 @@
         }
 
         const base = collectBaseFields();
-        const cfg = Number(pageState.protocolType) === ProtocolType.CUSTOM_TCP
+        const cfg = normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.CUSTOM_TCP
             ? collectTCPCfg()
             : collectHTTPCfg();
 
@@ -900,10 +970,11 @@
 
     /**
      * @param {any} data
+     * @param {number=} configState
      * @returns {any}
      */
-    function buildAddPayload(data) {
-        const isTcp = Number(pageState.protocolType) === ProtocolType.CUSTOM_TCP;
+    function buildAddPayload(data, configState = 0) {
+        const isTcp = normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.CUSTOM_TCP;
         return {
             cfg_header: {
                 name: data.name,
@@ -911,6 +982,7 @@
                 project_id: pageState.projectId,
                 req_body_type: data.req_body_type,
                 resp_body_type: data.resp_body_type,
+                config_state: [0, 1].includes(Number(configState)) ? Number(configState) : 0,
                 ...(isTcp ? { is_endian: 1 } : {}),
             },
             req_cfg: data.req_cfg,
@@ -931,9 +1003,21 @@
 
     /**
      * @param {any} data
+     * @param {number=} configState
      */
-    async function handleAdd(data) {
-        await KitProxy.api.addProtocol(buildAddPayload(data));
+    async function handleAdd(data, configState = 0) {
+        await KitProxy.api.addProtocol(buildAddPayload(data, configState));
+    }
+
+    /**
+     * @param {any} data
+     */
+    async function handleReconfig(data) {
+        if (!pageState.protocolId) {
+            throw new Error('缺少协议项 ID，无法重配置');
+        }
+
+        await KitProxy.api.reconfigProtocol(pageState.protocolId, buildAddPayload(data, 0));
     }
 
     /**
@@ -972,43 +1056,79 @@
     }
 
     /**
-     * @param {Event} event
+     * @returns {string}
      */
-    async function handleSubmit(event) {
-        event.preventDefault();
+    function mutationKeyForSubmit() {
+        if (pageState.mode === 'edit') return `protocol-form-edit-${pageState.protocolId}`;
+        if (pageState.mode === 'reconfig') return `protocol-form-reconfig-${pageState.protocolId}`;
+        return `protocol-form-add-${pageState.projectId}`;
+    }
+
+    /**
+     * @returns {string}
+     */
+    function submitMessage() {
+        if (pageState.mode === 'edit') return '正在保存协议项...';
+        if (pageState.mode === 'reconfig') return '正在重配置协议项...';
+        return '正在添加协议项...';
+    }
+
+    /**
+     * @returns {string}
+     */
+    function submitSuccessMessage() {
+        if (pageState.mode === 'edit') return '协议项修改成功';
+        if (pageState.mode === 'reconfig') return '协议项重配置成功';
+        return '协议项添加成功';
+    }
+
+    /**
+     * @param {number=} configState
+     */
+    async function submitProtocolForm(configState = 0) {
         if (pageState.isSubmitting) return;
 
         const saveButton = document.getElementById('save-protocol-form');
-        const mutationKey = pageState.mode === 'edit'
-            ? `protocol-form-edit-${pageState.protocolId}`
-            : `protocol-form-add-${pageState.projectId}`;
 
         pageState.isSubmitting = true;
         await KitProxy.utils.runMutationOnce(
-            mutationKey,
+            mutationKeyForSubmit(),
             async function() {
-            clearPageError();
-            const data = collectFormData();
-            if (pageState.mode === 'edit') {
-                await handleEdit(data);
-            } else {
-                await handleAdd(data);
-            }
-            return true;
+                clearPageError();
+                const data = collectFormData();
+                if (pageState.mode === 'edit') {
+                    await handleEdit(data);
+                } else if (pageState.mode === 'reconfig') {
+                    await handleReconfig(data);
+                } else {
+                    await handleAdd(data, configState);
+                }
+                return true;
             },
             {
-                message: pageState.mode === 'edit' ? '正在保存协议项...' : '正在添加协议项...',
-                successMessage: pageState.mode === 'edit' ? '协议项修改成功' : '协议项添加成功',
+                message: submitMessage(),
+                successMessage: submitSuccessMessage(),
                 button: saveButton,
-                busyText: pageState.mode === 'edit' ? '保存中...' : '添加中...',
+                busyText: '保存中...',
             },
         ).then(function() {
             setTimeout(navigateBack, 650);
         }).catch(function(error) {
-            setInlineError((pageState.mode === 'edit' ? '修改协议项失败：' : '添加协议项失败：') + error.message);
+            const prefix = pageState.mode === 'edit'
+                ? '修改协议项失败：'
+                : (pageState.mode === 'reconfig' ? '重配置协议项失败：' : '添加协议项失败：');
+            setInlineError(prefix + error.message);
         }).finally(function() {
             pageState.isSubmitting = false;
         });
+    }
+
+    /**
+     * @param {Event} event
+     */
+    async function handleSubmit(event) {
+        event.preventDefault();
+        await submitProtocolForm(0);
     }
 
     /**
@@ -1025,13 +1145,9 @@
     async function loadEditProtocol() {
         if (!pageState.protocolId) return;
 
-        const protocols = await KitProxy.api.getProtocol(pageState.protocolId);
-        if (!Array.isArray(protocols) || protocols.length <= 0) {
-            throw new Error('获取协议项详情失败');
-        }
-
-        pageState.protocol = protocols[0];
-        if (Number(pageState.protocolType) === ProtocolType.HTTP) {
+        pageState.protocol = await KitProxy.api.getProtocolEditDetail(pageState.protocolId);
+        pageState.protocolType = resolveProtocolType(pageState.project, pageState.protocol);
+        if (normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.HTTP) {
             pageState.initialReqCfg = normalizeHttpReqCfgForSubmit(pageState.protocol.req_cfg || {});
             pageState.initialRespCfg = normalizeHttpRespCfgForSubmit(pageState.protocol.resp_cfg || {});
         } else {
@@ -1039,18 +1155,13 @@
             pageState.initialRespCfg = clone(pageState.protocol.resp_cfg || {});
         }
 
-        const [requestBodyInfo, responseBodyInfo] = await Promise.all([
-            KitProxy.api.getProtocolBody(pageState.protocolId, REQ_BODY),
-            KitProxy.api.getProtocolBody(pageState.protocolId, RESP_BODY),
-        ]);
-
         pageState.bodyState.request = {
-            bodyType: requestBodyInfo[0] || pageState.protocol.req_body_type || 'json',
-            content: decodeBodyData(requestBodyInfo[1]),
+            bodyType: pageState.protocol.req_body_type || 'json',
+            content: decodeBodyData(pageState.protocol.request_body || ''),
         };
         pageState.bodyState.response = {
-            bodyType: responseBodyInfo[0] || pageState.protocol.resp_body_type || 'json',
-            content: decodeBodyData(responseBodyInfo[1]),
+            bodyType: pageState.protocol.resp_body_type || 'json',
+            content: decodeBodyData(pageState.protocol.response_body || ''),
         };
         pageState.initialBodyState = {
             request: clone(pageState.bodyState.request),
@@ -1060,6 +1171,43 @@
 
     function bindFormActions() {
         document.getElementById('protocol-item-form')?.addEventListener('submit', handleSubmit);
+        const menuToggle = document.getElementById('save-protocol-menu-toggle');
+        const menu = document.getElementById('save-protocol-menu');
+        const saveAndOnlineButton = document.getElementById('save-and-online-protocol');
+
+        if (menuToggle && menu) {
+            menuToggle.addEventListener('click', function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (menuToggle.disabled) return;
+
+                const nextHidden = !menu.hidden ? true : false;
+                menu.hidden = nextHidden;
+                menuToggle.setAttribute('aria-expanded', String(!nextHidden));
+            });
+        }
+
+        if (saveAndOnlineButton) {
+            saveAndOnlineButton.addEventListener('click', async function(event) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (saveAndOnlineButton.disabled) {
+                    setInlineError('项目未运行，不能保存并上线');
+                    return;
+                }
+                if (menu) menu.hidden = true;
+                if (menuToggle) menuToggle.setAttribute('aria-expanded', 'false');
+                await submitProtocolForm(1);
+            });
+        }
+
+        document.addEventListener('click', function(event) {
+            if (!menu || menu.hidden) return;
+            if (menu.contains(event.target) || menuToggle?.contains(event.target)) return;
+            menu.hidden = true;
+            if (menuToggle) menuToggle.setAttribute('aria-expanded', 'false');
+        });
+
         document.getElementById('cancel-protocol-form')?.addEventListener('click', function() {
             navigateBack();
         });
@@ -1078,7 +1226,7 @@
         const params = readURLParams();
         pageState.projectId = params.projectId;
         pageState.protocolId = params.protocolId;
-        pageState.mode = pageState.protocolId ? 'edit' : 'create';
+        pageState.mode = pageState.protocolId ? (params.mode === 'reconfig' ? 'reconfig' : 'edit') : 'create';
 
         renderPageTitle();
 
@@ -1098,13 +1246,16 @@
             if (Number(pageState.project && pageState.project.status) === 0) {
                 throw new Error('已删除的测试服务不能编辑协议项');
             }
-            pageState.protocolType = pageState.project.protocol_type;
-            if (Number(pageState.protocolType) === ProtocolType.CUSTOM_TCP) {
+            pageState.protocolType = resolveProtocolType(pageState.project);
+            if (normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.CUSTOM_TCP) {
                 pageState.projectPatternInfo = await KitProxy.api.getProjectPatternInfo(pageState.projectId);
             }
 
-            if (pageState.mode === 'edit') {
+            if (pageState.mode === 'edit' || pageState.mode === 'reconfig') {
                 await loadEditProtocol();
+            }
+            if (normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.CUSTOM_TCP && !pageState.projectPatternInfo) {
+                pageState.projectPatternInfo = await KitProxy.api.getProjectPatternInfo(pageState.projectId);
             }
 
             renderPageTitle();

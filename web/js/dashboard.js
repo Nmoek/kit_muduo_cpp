@@ -43,7 +43,7 @@
      * @returns {boolean}
      */
     function isActiveProject(project) {
-        return !isDeletedProject(project) && Number(project && project.active) === 1;
+        return !isDeletedProject(project) && Number(project && project.runtime_state) === 1;
     }
 
     /**

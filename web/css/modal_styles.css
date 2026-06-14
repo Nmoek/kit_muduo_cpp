@@ -1488,6 +1488,53 @@
     padding: 0;
 }
 
+/* 协议卡片 Body 弹窗复用主页面 BodyEditor，避免被 legacy textarea 弹窗样式覆盖字体和行高。 */
+.edit-body-modal .body-editor-input-wrap {
+    --body-editor-gutter-width: 46px;
+    --body-editor-font-size: 14px;
+    --body-editor-line-height: 20px;
+    --body-editor-editor-padding: 12px;
+    --body-editor-min-height: 260px;
+
+    min-height: var(--body-editor-min-height);
+}
+
+.edit-body-modal .body-editor-lines,
+.edit-body-modal .body-editor-highlight,
+.edit-body-modal .body-editor-textarea {
+    box-sizing: border-box;
+    margin: 0;
+    padding: var(--body-editor-editor-padding);
+    border: 0;
+    border-radius: 0;
+    resize: none;
+    font-family: var(--code-font, "JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    font-size: var(--body-editor-font-size);
+    line-height: var(--body-editor-line-height);
+    letter-spacing: 0;
+    tab-size: 2;
+    white-space: pre;
+}
+
+.edit-body-modal .body-editor-highlight-code {
+    font: inherit;
+    line-height: inherit;
+    white-space: pre;
+}
+
+.edit-body-modal .body-editor-textarea {
+    min-height: max(var(--body-editor-min-height), var(--body-editor-content-height, 44px));
+    color: transparent;
+    background: transparent;
+    overflow: hidden;
+    caret-color: #111827;
+}
+
+.edit-body-modal .body-editor.is-highlight-disabled .body-editor-textarea {
+    color: var(--v13-text, #172033);
+    background: #ffffff;
+}
+
 .modal-header {
     padding: 16px 20px;
     border-bottom: 1px solid var(--v13-border, #d9e6f5);

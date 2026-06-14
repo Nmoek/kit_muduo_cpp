@@ -65,7 +65,13 @@
 
                     <div class="form-actions protocol-form-actions">
                         <button type="button" id="cancel-protocol-form" class="cancel-btn">取消</button>
-                        <button type="submit" id="save-protocol-form" class="confirm-btn">保存</button>
+                        <div class="split-action protocol-save-actions">
+                            <button type="submit" id="save-protocol-form" class="confirm-btn split-action-main">保存</button>
+                            <button type="button" id="save-protocol-menu-toggle" class="confirm-btn split-action-toggle" aria-haspopup="true" aria-expanded="false" aria-label="展开保存选项">▼</button>
+                            <div id="save-protocol-menu" class="split-action-menu" hidden>
+                                <button type="button" id="save-and-online-protocol" class="split-action-item">保存并上线</button>
+                            </div>
+                        </div>
                     </div>
                 </form>
             </div>

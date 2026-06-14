@@ -3856,6 +3856,70 @@ button.is-mutation-busy:disabled {
     background: linear-gradient(180deg, rgba(243, 248, 255, 0), var(--v13-bg) 42%);
 }
 
+.split-action {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    min-width: 142px;
+}
+
+.split-action-main {
+    min-width: 92px;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.split-action-toggle {
+    width: 40px;
+    min-width: 40px;
+    padding-left: 0;
+    padding-right: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.45);
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.split-action-toggle:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+.split-action-menu {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 6px);
+    min-width: 154px;
+    padding: 6px;
+    border: 1px solid var(--v13-border);
+    border-radius: 6px;
+    background: var(--v13-surface);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+.split-action-item {
+    width: 100%;
+    min-height: 34px;
+    padding: 7px 10px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--v13-text);
+    text-align: left;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.split-action-item:hover:not(:disabled) {
+    background: var(--v13-primary-soft);
+    color: var(--v13-primary);
+}
+
+.split-action-item:disabled {
+    color: var(--v13-muted);
+    cursor: not-allowed;
+    background: #f1f5f9;
+}
+
 .form-note {
     margin: 0;
     color: var(--v13-muted);
@@ -3899,6 +3963,7 @@ button.is-mutation-busy:disabled {
 }
 
 .protocol-toggle-btn,
+.protocol-runtime-btn,
 .edit-protocol-btn {
     min-height: 32px;
     padding: 5px 12px;
@@ -3909,6 +3974,41 @@ button.is-mutation-busy:disabled {
     font-size: 13px;
     font-weight: 800;
     cursor: pointer;
+}
+
+.protocol-runtime-btn {
+    width: 88px;
+    min-width: 88px;
+    border-radius: 999px;
+}
+
+.protocol-runtime-btn.is-offline {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+    color: #475569;
+}
+
+.protocol-runtime-btn.is-online {
+    border-color: #16a34a;
+    background: #ecfdf3;
+    color: #15803d;
+}
+
+.protocol-runtime-btn.is-reconfig {
+    border-color: #f59e0b;
+    background: #fffbeb;
+    color: #b45309;
+}
+
+.protocol-runtime-btn:disabled {
+    border-color: #d1d5db;
+    background: #f3f4f6;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+
+.protocol-runtime-btn.is-busy {
+    opacity: 0.68;
 }
 
 .protocol-toggle-btn {

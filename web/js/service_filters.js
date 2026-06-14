@@ -62,7 +62,7 @@
     function matchStatus(project, statusFilter) {
         if (!statusFilter || statusFilter === 'all') return true;
         const isDeleted = Number(project && project.status) === 0;
-        const isActive = Number(project && project.active) === 1;
+        const isActive = Number(project && project.runtime_state) === 1;
 
         if (statusFilter === 'deleted') return isDeleted;
         if (statusFilter === 'active') return !isDeleted && isActive;

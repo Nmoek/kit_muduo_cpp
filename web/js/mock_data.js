@@ -58,6 +58,7 @@
                 name: 'HTTP测试服务示例',
                 status: 1,
                 active: 1,
+                runtime_state: 1,
                 target_ip: '',
                 user_id: 1,
                 ctime: '2025-08-11 07:55:15',
@@ -71,6 +72,7 @@
                 name: 'TCP测试服务示例',
                 status: 1,
                 active: 0,
+                runtime_state: 0,
                 target_ip: '',
                 user_id: 1,
                 ctime: '2025-08-11 07:55:27',
@@ -84,6 +86,7 @@
                 name: 'HTTP归档测试服务示例',
                 status: 0,
                 active: 0,
+                runtime_state: 0,
                 target_ip: '',
                 user_id: 1,
                 ctime: '2025-08-12 10:20:15',
@@ -115,6 +118,7 @@
                 ctime: '2025-12-02 06:00:03',
                 utime: '2025-12-02 06:00:03',
                 status: 1,
+                config_state: 1,
             },
             {
                 id: 2,
@@ -143,6 +147,7 @@
                 ctime: '2025-12-02 06:01:03',
                 utime: '2025-12-02 06:01:03',
                 status: 1,
+                config_state: 0,
             },
             {
                 id: 3,
@@ -165,6 +170,7 @@
                 ctime: '2025-12-03 08:00:00',
                 utime: '2025-12-03 08:30:00',
                 status: 2,
+                config_state: 0,
             },
             {
                 id: 4,
@@ -192,6 +198,35 @@
                 ctime: '2025-12-03 09:00:00',
                 utime: '2025-12-03 09:30:00',
                 status: 2,
+                config_state: 2,
+            },
+            {
+                id: 5,
+                name: 'TCP待重配置示例',
+                project_id: 2,
+                type: 'TCP',
+                req_cfg: {
+                    function_code: 'H3000',
+                    fields: {
+                        4: 'H0000002A',
+                        8: 'H00000009',
+                    },
+                },
+                resp_cfg: {
+                    function_code: 'H3080',
+                    fields: {
+                        4: 'H0000002A',
+                        8: 'H00000009',
+                    },
+                },
+                resp_body_status: 0,
+                resp_body_type: 'json',
+                req_body_status: 0,
+                req_body_type: 'json',
+                ctime: '2025-12-03 10:00:00',
+                utime: '2025-12-03 10:30:00',
+                status: 1,
+                config_state: 2,
             },
         ],
         bodies: {
@@ -203,6 +238,8 @@
             '3-2': { body_type: 'json', body_data: '' },
             '4-1': { body_type: 'json', body_data: '' },
             '4-2': { body_type: 'json', body_data: '' },
+            '5-1': { body_type: 'json', body_data: '' },
+            '5-2': { body_type: 'json', body_data: '' },
         },
         patternInfos: {
             2: clone(defaultPatternInfo),
@@ -278,9 +315,12 @@
             id: ++state.nextProjectId,
             status: 1,
             active: 0,
+            runtime_state: 0,
             target_ip: '',
             ctime: nowText(),
         }, clone(projectPatch));
+        project.runtime_state = Number(project.runtime_state != null ? project.runtime_state : project.active) === 1 ? 1 : 0;
+        project.active = project.runtime_state;
         state.projects.push(project);
 
         if (Number(project.protocol_type) === 2) {
@@ -305,7 +345,9 @@
             ctime: nowText(),
             utime: nowText(),
             status: 1,
+            config_state: 0,
         }, clone(protocolPatch));
+        protocol.config_state = [0, 1, 2].includes(Number(protocol.config_state)) ? Number(protocol.config_state) : 0;
         state.protocols.push(protocol);
         state.bodies[`${protocol.id}-1`] = state.bodies[`${protocol.id}-1`] || {
             body_type: protocol.req_body_type,
@@ -337,6 +379,7 @@
                 mode: 1,
                 name: 'HTTP测试服务示例',
                 active: 1,
+                runtime_state: 1,
                 user_id: user.id,
                 ctime: '2025-08-11 07:55:15',
             });
@@ -374,6 +417,7 @@
                 mode: 1,
                 name: 'TCP测试服务示例',
                 active: 0,
+                runtime_state: 0,
                 user_id: user.id,
                 ctime: '2025-08-11 07:55:27',
             });
@@ -496,6 +540,21 @@
     }
 
     /**
+     * Mock 内存态仍按页面现有约定存数值，API 入参可以使用 HTTP/TCP/HTTPS 字符串。
+     * @param {any} protocolType
+     * @returns {number}
+     */
+    function normalizeProjectProtocolType(protocolType) {
+        if (typeof protocolType === 'string') {
+            const value = protocolType.trim().toUpperCase();
+            if (value === 'HTTP') return 1;
+            if (value === 'TCP' || value === 'CUSTOM_TCP') return 2;
+            if (value === 'HTTPS') return 3;
+        }
+        return Number(protocolType);
+    }
+
+    /**
      * @param {any} protocolId
      */
     function findProtocol(protocolId) {
@@ -540,6 +599,7 @@
                 id: projectId,
                 status: 1,
                 active: 0,
+                runtime_state: 0,
                 user_id: getCurrentMockUser().id,
                 ctime: nowText(),
             }, clone(project));
@@ -547,6 +607,8 @@
             created.id = projectId;
             created.status = 1;
             created.active = 0;
+            created.runtime_state = 0;
+            created.protocol_type = normalizeProjectProtocolType(created.protocol_type);
             state.projects.unshift(created);
 
             if (created.pattern_info) {
@@ -556,13 +618,14 @@
 
             return { project_id: projectId };
         },
-        setProjectActive(projectId, active) {
+        setProjectRuntimeState(projectId, running) {
             const project = findProject(projectId);
             if (!project) return {};
 
-            project.active = active ? 1 : 0;
+            project.runtime_state = running ? 1 : 0;
+            project.active = project.runtime_state;
             if (Number(project.mode) === 1) {
-                if (project.active) {
+                if (project.runtime_state) {
                     project.listen_port = Number(project.listen_port) > 0
                         ? Number(project.listen_port)
                         : 30000 + Number(project.id);
@@ -572,9 +635,13 @@
             }
 
             return clone({
+                runtime_state: project.runtime_state,
                 active: project.active,
                 listen_port: project.listen_port,
             });
+        },
+        setProjectActive(projectId, active) {
+            return this.setProjectRuntimeState(projectId, active);
         },
         updateProjectName(projectId, name) {
             const project = findProject(projectId);
@@ -586,6 +653,7 @@
             if (project) {
                 project.status = 0;
                 project.active = 0;
+                project.runtime_state = 0;
             }
             return true;
         },
@@ -595,6 +663,7 @@
             if (project) {
                 project.status = 1;
                 project.active = 0;
+                project.runtime_state = 0;
             }
             return true;
         },
@@ -633,6 +702,9 @@
                 req_body_type: protocol.cfg_header.req_body_type || 'json',
                 resp_body_status: protocol.response_body ? 1 : 0,
                 resp_body_type: protocol.cfg_header.resp_body_type || 'json',
+                config_state: [0, 1].includes(Number(protocol.cfg_header.config_state))
+                    ? Number(protocol.cfg_header.config_state)
+                    : 0,
                 status: 1,
                 ctime: nowText(),
                 utime: nowText(),
@@ -648,7 +720,61 @@
                 body_data: protocol.response_body || '',
             };
 
-            return { protocol_id: protocolId };
+            return {
+                project_id: created.project_id,
+                protocol_id: protocolId,
+                config_state: created.config_state,
+                persisted: 1,
+                runtime_applied: created.config_state === 1 ? 1 : 0,
+            };
+        },
+        setProtocolRuntime(protocolId, enabled) {
+            const protocol = findProtocol(protocolId);
+            if (!protocol) return {};
+            if (Number(protocol.config_state) === 2) {
+                throw new Error('待重配置协议项不能直接上线或下线');
+            }
+
+            protocol.config_state = enabled ? 1 : 0;
+            protocol.utime = nowText();
+            return clone({
+                project_id: protocol.project_id,
+                protocol_id: protocol.id,
+                config_state: protocol.config_state,
+                persisted: 1,
+                runtime_applied: 1,
+            });
+        },
+        reconfigProtocol(protocolId, protocol) {
+            const existing = findProtocol(protocolId);
+            if (!existing) return {};
+
+            existing.name = protocol.cfg_header.name;
+            existing.req_cfg = clone(protocol.req_cfg || {});
+            existing.resp_cfg = clone(protocol.resp_cfg || {});
+            existing.req_body_status = protocol.request_body ? 1 : 0;
+            existing.req_body_type = protocol.cfg_header.req_body_type || existing.req_body_type || 'json';
+            existing.resp_body_status = protocol.response_body ? 1 : 0;
+            existing.resp_body_type = protocol.cfg_header.resp_body_type || existing.resp_body_type || 'json';
+            existing.config_state = 0;
+            existing.utime = nowText();
+
+            state.bodies[`${existing.id}-1`] = {
+                body_type: existing.req_body_type,
+                body_data: protocol.request_body || '',
+            };
+            state.bodies[`${existing.id}-2`] = {
+                body_type: existing.resp_body_type,
+                body_data: protocol.response_body || '',
+            };
+
+            return clone({
+                project_id: existing.project_id,
+                protocol_id: existing.id,
+                config_state: existing.config_state,
+                persisted: 1,
+                runtime_applied: 0,
+            });
         },
         updateProtocolName(protocolId, name) {
             const protocol = findProtocol(protocolId);
@@ -725,6 +851,12 @@
             if (project) {
                 project.length_policy = patternInfo && patternInfo.length_policy ? patternInfo.length_policy : '';
             }
+            state.protocols
+                .filter(protocol => Number(protocol.project_id) === Number(projectId) && Number(protocol.status || 1) === 1)
+                .forEach(protocol => {
+                    protocol.config_state = 2;
+                    protocol.utime = nowText();
+                });
             return true;
         },
         getTcpCommonFields(protocolId, reqOrResp) {

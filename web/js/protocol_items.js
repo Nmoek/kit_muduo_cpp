@@ -3,6 +3,7 @@
     const pageState = KitProxy.pagination.createState();
     const pageContext = {
         project: null,
+        protocolRuntimeStateOverrides: new Map(),
     };
 
     /**
@@ -54,7 +55,7 @@
     }
 
     function isProjectActive(project) {
-        return Number(project && project.active) === 1;
+        return Number(project && project.runtime_state) === 1;
     }
 
     function isProjectDeleted(project) {
@@ -120,6 +121,7 @@
         if (root) {
             root.id = `service-card-${project.id}`;
             root.dataset.protocolType = String(project.protocol_type);
+            root.dataset.runtimeState = String(isProjectActive(project) ? 1 : 0);
             root.dataset.active = String(isProjectActive(project) ? 1 : 0);
         }
 
@@ -181,19 +183,34 @@
             toggleButton.classList.add('is-busy');
 
             try {
-                const runtimeData = await KitProxy.api.setProjectActive(pageContext.project.id, nextActive);
+                const runtimeData = await KitProxy.api.setProjectRuntimeState(pageContext.project.id, nextActive);
                 pageContext.project = Object.assign({}, pageContext.project, runtimeData || {}, {
+                    runtime_state: nextActive ? 1 : 0,
                     active: nextActive ? 1 : 0,
                 });
                 if (!nextActive && Number(pageContext.project.mode) === ProjectMode.SERVER) {
                     pageContext.project.listen_port = 0;
                 }
                 renderProjectContext(pageContext.project);
+                syncProtocolRuntimeControls();
             } catch (error) {
                 KitProxy.utils.showGlobalError(`${nextActive ? '启动' : '停止'}测试服务失败：${error.message}`);
                 toggleButton.disabled = false;
                 toggleButton.classList.remove('is-busy');
             }
+        });
+    }
+
+    function syncProtocolRuntimeControls() {
+        const root = getPageRoot();
+        if (!root || typeof global.refreshProtocolRuntimeControl !== 'function') return;
+
+        const runtimeState = String(isProjectActive(pageContext.project) ? 1 : 0);
+        root.dataset.runtimeState = runtimeState;
+        root.dataset.active = runtimeState;
+        root.querySelectorAll('.protocol-item').forEach(protocolItem => {
+            protocolItem.dataset.projectRuntimeState = runtimeState;
+            global.refreshProtocolRuntimeControl(protocolItem, protocolItem.dataset.configState);
         });
     }
 
@@ -246,6 +263,45 @@
     }
 
     /**
+     * 记录刚刚由运行态命令确认成功的协议项状态，避免列表接口短暂返回旧值时把按钮回刷为旧状态。
+     * @param {number | string} protocolId
+     * @param {number | string} configState
+     */
+    function rememberProtocolRuntimeState(protocolId, configState) {
+        const id = Number(protocolId);
+        const state = Number(configState);
+        if (!Number.isInteger(id) || id <= 0 || ![0, 1, 2].includes(state)) return;
+
+        pageContext.protocolRuntimeStateOverrides.set(id, state);
+    }
+
+    function clearProtocolRuntimeStateOverrides() {
+        pageContext.protocolRuntimeStateOverrides.clear();
+    }
+
+    /**
+     * 应用本页已确认的运行态命令结果；当列表接口返回同值后移除覆盖。
+     * @param {any} protocol
+     * @returns {any}
+     */
+    function applyProtocolRuntimeStateOverride(protocol) {
+        const protocolId = Number(protocol && protocol.id);
+        if (!Number.isInteger(protocolId) || !pageContext.protocolRuntimeStateOverrides.has(protocolId)) {
+            return protocol;
+        }
+
+        const overrideState = pageContext.protocolRuntimeStateOverrides.get(protocolId);
+        if (Number(protocol.config_state) === overrideState) {
+            pageContext.protocolRuntimeStateOverrides.delete(protocolId);
+            return protocol;
+        }
+
+        return Object.assign({}, protocol, {
+            config_state: overrideState,
+        });
+    }
+
+    /**
      * 加载当前服务的协议项分页列表。
      * @param {number=} page
      */
@@ -271,7 +327,7 @@
 
             protocolList.innerHTML = '';
             KitProxy.pagination.takeVisibleItems(protocols, pageState).forEach(protocol => {
-                addProtocolItem(root, protocol);
+                addProtocolItem(root, applyProtocolRuntimeStateOverride(protocol));
             });
 
             checkProtocolEmptyState();
@@ -365,6 +421,8 @@
         buildProtocolItemCreateUrl,
         initPage,
         loadProtocolItems,
+        rememberProtocolRuntimeState,
+        clearProtocolRuntimeStateOverrides,
         handleProtocolAdded: async function() {
             await loadProtocolItems(1);
         },

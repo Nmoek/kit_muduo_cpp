@@ -71,6 +71,10 @@ export function createProtocolItemFormContext(search) {
             <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
             <div id="protocol-body-editor-host"></div>
             <button id="save-protocol-form" type="submit"></button>
+            <button id="save-protocol-menu-toggle" type="button"></button>
+            <div id="save-protocol-menu" hidden>
+                <button id="save-and-online-protocol" type="button"></button>
+            </div>
             <button id="cancel-protocol-form" type="button"></button>
         </form>
     </body></html>`, `http://localhost/html/protocol_item_form.html${search}`);

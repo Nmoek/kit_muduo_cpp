@@ -157,6 +157,284 @@ describe('V1.5 protocol item form page and compact cards', () => {
     });
 
     /**
+     * 测试思路：协议卡片 config_state=0 且项目 running 时，状态按钮应调用 setProtocolRuntime(true)。
+     * 示例：未上线协议点击“未上线”后，按钮状态跟随后端返回 config_state=1 刷新为“已上线”。
+     */
+    it('协议卡片未上线状态点击调用 setProtocolRuntime(true)', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime')
+            .mockResolvedValue({ protocol_id: 1, config_state: 1 });
+        const protocolItem = context.addProtocolItem(root, {
+            id: 1,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            config_state: 0,
+            req_cfg: { method: 'GET', path: '/api/test1' },
+            resp_cfg: {},
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        protocolItem.querySelector('.protocol-runtime-btn').click();
+        await flushPromises(8);
+
+        expect(setProtocolRuntime).toHaveBeenCalledWith(1, true);
+        expect(protocolItem.dataset.configState).toBe('1');
+        expect(protocolItem.querySelector('.protocol-runtime-btn').textContent).toBe('已上线');
+    });
+
+    /**
+     * 测试思路：运行态命令成功后，协议项列表刷新可能短时间返回旧的 config_state，页面应优先展示命令确认状态。
+     * 示例：点击“未上线”后 setProtocolRuntime 返回 config_state=1，但 getProtocolList 仍返回 config_state=0，按钮仍保持“已上线”。
+     */
+    it('协议项页上线成功后列表旧状态不覆盖按钮状态', async () => {
+        const context = createProtocolItemPageContext(1);
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+        loadProtocolListScripts(context);
+
+        const staleProtocol = {
+            id: 10,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            config_state: 0,
+            req_cfg: { method: 'GET', path: '/api/test1' },
+            resp_cfg: {},
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        };
+        vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue([staleProtocol]);
+        const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime')
+            .mockResolvedValue({ protocol_id: 10, config_state: 1, persisted: 1, runtime_applied: 1 });
+
+        await context.KitProxy.protocolItemsPage.initPage?.();
+        await flushPromises(12);
+
+        expect(context.document.querySelector('.protocol-runtime-btn').textContent).toBe('未上线');
+
+        context.document.querySelector('.protocol-runtime-btn').click();
+        await flushPromises(12);
+
+        const runtimeButton = context.document.querySelector('.protocol-runtime-btn');
+        expect(setProtocolRuntime).toHaveBeenCalledWith(10, true);
+        expect(context.document.querySelector('.protocol-item').dataset.configState).toBe('1');
+        expect(runtimeButton.textContent).toBe('已上线');
+    });
+
+    /**
+     * 测试思路：协议卡片 config_state=1 且项目 running 时，状态按钮应调用 setProtocolRuntime(false)。
+     * 示例：已上线协议点击“已上线”后，按钮状态跟随后端返回 config_state=0 刷新为“未上线”。
+     */
+    it('协议卡片已上线状态点击调用 setProtocolRuntime(false)', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime')
+            .mockResolvedValue({ protocol_id: 1, config_state: 0 });
+        const protocolItem = context.addProtocolItem(root, {
+            id: 1,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            config_state: 1,
+            req_cfg: { method: 'GET', path: '/api/test1' },
+            resp_cfg: {},
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        protocolItem.querySelector('.protocol-runtime-btn').click();
+        await flushPromises(8);
+
+        expect(setProtocolRuntime).toHaveBeenCalledWith(1, false);
+        expect(protocolItem.dataset.configState).toBe('0');
+        expect(protocolItem.querySelector('.protocol-runtime-btn').textContent).toBe('未上线');
+    });
+
+    /**
+     * 测试思路：协议项管理页切换项目运行态后，已渲染卡片的上线/下线按钮也要同步禁用状态。
+     * 示例：running 服务下未上线协议按钮可点击，停止服务后按钮应置灰且不再调用 setProtocolRuntime。
+     */
+    it('协议项页停止项目后同步置灰协议上线下线按钮', async () => {
+        const context = createProtocolItemPageContext(1);
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+        loadProtocolListScripts(context);
+
+        vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue([
+            {
+                id: 10,
+                name: '未上线接口',
+                project_id: 1,
+                type: 'HTTP',
+                config_state: 0,
+                req_cfg: { method: 'GET', path: '/api/offline' },
+                resp_cfg: {},
+                req_body_status: 0,
+                resp_body_status: 0,
+                ctime: '2025-12-02 06:01:03',
+                utime: '2025-12-02 06:01:03',
+            },
+        ]);
+        vi.spyOn(context.KitProxy.api, 'setProjectRuntimeState')
+            .mockResolvedValue({ runtime_state: 0, listen_port: 0 });
+        const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime');
+
+        await context.KitProxy.protocolItemsPage.initPage?.();
+        await flushPromises(12);
+
+        const runtimeButton = context.document.querySelector('.protocol-runtime-btn');
+        expect(runtimeButton.disabled).toBe(false);
+
+        context.document.querySelector('#protocol-service-meta .service-active-toggle').click();
+        await flushPromises(12);
+
+        expect(context.document.querySelector('.protocol-items-page').dataset.runtimeState).toBe('0');
+        expect(runtimeButton.disabled).toBe(true);
+        runtimeButton.click();
+        await flushPromises(4);
+        expect(setProtocolRuntime).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 测试思路：TCP 项目格式修改会让该服务下协议项进入待重配置，保存成功后列表必须立即刷新。
+     * 示例：projectId=2 保存 TCP 格式后，列表里的 TCP 协议项按钮从旧状态刷新为“待重配置”。
+     */
+    it('协议项页 TCP 格式保存成功后刷新列表为待重配置状态', async () => {
+        const context = createProtocolItemPageContext(2);
+
+        loadCoreScripts(context);
+        await loginMockUser(context, {
+            note: 'admin',
+            loginType: 'admin',
+            password: 'admin123',
+        });
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+        context.confirm = () => true;
+        loadProtocolListScripts(context);
+
+        await context.KitProxy.protocolItemsPage.initPage?.();
+        await flushPromises(12);
+
+        const firstRuntimeButton = context.document.querySelector('.protocol-runtime-btn');
+        expect(firstRuntimeButton.textContent).toBe('未上线');
+
+        const loadProtocolItems = vi.spyOn(context.KitProxy.protocolItemsPage, 'loadProtocolItems');
+        context.document.querySelector('.project-pattern').click();
+        await flushPromises(12);
+
+        const modal = context.document.querySelector('.config-pattern-modal');
+        expect(modal).toBeTruthy();
+        modal.querySelector('#config-pattern-modal-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(20);
+
+        expect(loadProtocolItems).toHaveBeenCalled();
+        const runtimeTexts = Array.from(context.document.querySelectorAll('.protocol-runtime-btn'))
+            .map(button => button.textContent);
+        expect(runtimeTexts).toContain('待重配置');
+        expect(context.document.querySelector('#protocol-item-2 .protocol-runtime-btn').textContent).toBe('待重配置');
+    });
+
+    /**
+     * 测试思路：协议卡片 config_state=2 表示待重配置，应直接跳转 mode=reconfig 页面。
+     * 示例：无论项目是否 running，点击“待重配置”都生成 protocol_item_form.html?...&mode=reconfig。
+     */
+    it('协议卡片待重配置状态点击跳转 reconfig URL', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.dataset.runtimeState = '0';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocolItem = context.addProtocolItem(root, {
+            id: 2,
+            name: '待重配置接口',
+            project_id: 1,
+            type: 'HTTP',
+            config_state: 2,
+            req_cfg: { method: 'GET', path: '/api/reconfig' },
+            resp_cfg: {},
+            req_body_status: 0,
+            resp_body_status: 0,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        let targetUrl = '';
+        protocolItem.addEventListener('protocol-item:navigate-reconfig', event => {
+            event.preventDefault();
+            targetUrl = event.detail.url;
+        });
+        protocolItem.querySelector('.protocol-runtime-btn').click();
+
+        expect(protocolItem.dataset.protocolItemFormUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1&protocolId=2&mode=reconfig');
+        expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1&protocolId=2&mode=reconfig');
+    });
+
+    /**
      * 测试思路：注册表创建的详情网格应是纯展示结构，编辑行为由协议项卡片层绑定。
      * 示例：直接点击 method/path/body/fields 网格单元，不应创建 modal-overlay。
      */
@@ -247,6 +525,24 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         expect(context.document.querySelector('.edit-body-modal')).toBeTruthy();
         expect(context.document.querySelector('.body-editor-textarea')).toBeTruthy();
+    });
+
+    /**
+     * 测试思路：协议卡片 Body 弹窗和独立协议项表单应使用同一套 BodyEditor 字体变量。
+     * 示例：protocol-body-content 不能被普通弹窗 textarea 的 monospace/resize 样式覆盖，应和 protocol-form-body-content 一样使用 --body-editor-font-size、--body-editor-line-height。
+     */
+    it('协议卡片 Body 弹窗字体样式和表单页 BodyEditor 对齐', () => {
+        const mainCss = readRepoFile('css/main.css');
+        const modalCss = readRepoFile('css/modal_styles.css');
+
+        expect(mainCss).toContain('.protocol-body-section .body-editor-input-wrap');
+        expect(modalCss).toContain('.edit-body-modal .body-editor-input-wrap');
+        expect(modalCss).toContain('--body-editor-font-size: 14px;');
+        expect(modalCss).toContain('--body-editor-line-height: 20px;');
+        expect(modalCss).toContain('.edit-body-modal .body-editor-lines,\n.edit-body-modal .body-editor-highlight,\n.edit-body-modal .body-editor-textarea');
+        expect(modalCss).toContain('font-size: var(--body-editor-font-size);');
+        expect(modalCss).toContain('line-height: var(--body-editor-line-height);');
+        expect(modalCss).toContain('resize: none;');
     });
 
     /**
@@ -475,6 +771,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
             const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
 
             expect(payload.cfg_header.type).toBe('HTTP');
+            expect(payload.cfg_header.config_state).toBe(0);
             expect(payload.req_cfg).toEqual({
                 method: 'POST',
                 path: '/api/new',
@@ -534,11 +831,12 @@ describe('V1.5 protocol item form page and compact cards', () => {
         respFunctionField.value = 'H1080';
         reqCommonField.value = 'H00000209';
 
-        const data = context.KitProxy.protocolItemForm.collectFormData();
-        const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
+            const data = context.KitProxy.protocolItemForm.collectFormData();
+            const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
 
-        expect(payload.cfg_header.type).toBe('TCP');
-        expect(payload.req_cfg).toEqual({
+            expect(payload.cfg_header.type).toBe('TCP');
+            expect(payload.cfg_header.config_state).toBe(0);
+            expect(payload.req_cfg).toEqual({
             function_code: 'H1000',
             fields: { 4: 'H00000209' },
         });
@@ -548,6 +846,108 @@ describe('V1.5 protocol item form page and compact cards', () => {
         });
         expect(payload.req_cfg).not.toHaveProperty('function_code_filed_value');
         expect(payload.req_cfg).not.toHaveProperty('common_fields');
+    });
+
+    /**
+     * 测试思路：新增页主按钮“保存”只能提交保存态，不应自动上线。
+     * 示例：填写 HTTP 协议项后提交表单，addProtocol 收到 cfg_header.config_state=0。
+     */
+    it('表单页新增默认保存提交 config_state=0', async () => {
+        const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        const addProtocol = vi.spyOn(context.KitProxy.api, 'addProtocol').mockResolvedValue({ protocol_id: 99 });
+        context.document.addEventListener('protocol-item-form:navigate-back', event => {
+            event.preventDefault();
+        });
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(8);
+
+        context.document.getElementById('protocol-item-name').value = '保存协议';
+        context.document.getElementById('request-path').value = '/api/save';
+        context.document.getElementById('protocol-item-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(12);
+
+        expect(addProtocol).toHaveBeenCalledTimes(1);
+        expect(addProtocol.mock.calls[0][0].cfg_header.config_state).toBe(0);
+    });
+
+    /**
+     * 测试思路：running 项目允许点击“保存并上线”，且只通过 AddProtocol(config_state=1) 一步完成。
+     * 示例：projectId=1 runtime_state=1，点击下拉项后 addProtocol 收到 config_state=1。
+     */
+    it('表单页 running 项目保存并上线提交 config_state=1', async () => {
+        const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        const addProtocol = vi.spyOn(context.KitProxy.api, 'addProtocol').mockResolvedValue({ protocol_id: 100 });
+        const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime');
+        context.document.addEventListener('protocol-item-form:navigate-back', event => {
+            event.preventDefault();
+        });
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(8);
+
+        context.document.getElementById('protocol-item-name').value = '上线协议';
+        context.document.getElementById('request-path').value = '/api/online';
+        expect(context.document.getElementById('save-and-online-protocol').disabled).toBe(false);
+        context.document.getElementById('save-and-online-protocol').click();
+        await flushPromises(12);
+
+        expect(addProtocol).toHaveBeenCalledTimes(1);
+        expect(addProtocol.mock.calls[0][0].cfg_header.config_state).toBe(1);
+        expect(setProtocolRuntime).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 测试思路：stopped 项目不能“保存并上线”，按钮应置灰且不触发新增请求。
+     * 示例：projectId=2 runtime_state=0，点击保存并上线按钮后 addProtocol 不应被调用。
+     */
+    it('表单页 stopped 项目保存并上线置灰', async () => {
+        const context = createProtocolItemFormContext('?apiMode=mock&projectId=2');
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        const addProtocol = vi.spyOn(context.KitProxy.api, 'addProtocol');
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(8);
+
+        const saveAndOnline = context.document.getElementById('save-and-online-protocol');
+        expect(saveAndOnline.disabled).toBe(true);
+        expect(saveAndOnline.title).toContain('项目未运行');
+        saveAndOnline.click();
+        await flushPromises(4);
+
+        expect(addProtocol).not.toHaveBeenCalled();
     });
 
     /**
@@ -613,4 +1013,150 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(updateCfg).toHaveBeenCalledTimes(1);
         expect(updateBody).not.toHaveBeenCalled();
     });
-});
+
+    /**
+     * 测试思路：重配置模式必须重新查询当前协议项完整详情，并把名称、请求配置、响应配置和 Body 都回填到控件。
+     * 示例：getProtocolEditDetail 返回数据库当前值后，页面显示原 path/status，Body 切换到响应侧也能看到查出的响应 Body。
+     */
+    it('表单页 reconfig 模式回填并调用 reconfigProtocol', async () => {
+        const context = createProtocolItemFormContext('?apiMode=mock&projectId=1&protocolId=1&mode=reconfig');
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        const reconfigProtocol = vi.spyOn(context.KitProxy.api, 'reconfigProtocol').mockResolvedValue({ protocol_id: 1, config_state: 0 });
+        const getProtocolEditDetail = vi.spyOn(context.KitProxy.api, 'getProtocolEditDetail').mockResolvedValue({
+            id: 1,
+            name: '数据库HTTP协议',
+            project_id: 1,
+            type: 'HTTP',
+            req_cfg: {
+                method: 'POST',
+                path: '/api/from-db',
+                headers: { 'X-Trace': 'db' },
+            },
+            resp_cfg: {
+                status_code: 201,
+                headers: { 'X-Resp': 'ok' },
+            },
+            req_body_type: 'json',
+            resp_body_type: 'text',
+            request_body: '{\n  "from": "db-request"\n}',
+            response_body: 'db-response-body',
+        });
+        const updateName = vi.spyOn(context.KitProxy.api, 'updateProtocolName');
+        const updateCfg = vi.spyOn(context.KitProxy.api, 'updateProtocolCfg');
+        const updateBody = vi.spyOn(context.KitProxy.api, 'updateProtocolBody');
+        context.document.addEventListener('protocol-item-form:navigate-back', event => {
+            event.preventDefault();
+        });
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(12);
+
+        expect(getProtocolEditDetail).toHaveBeenCalledWith(1);
+        expect(context.document.getElementById('protocol-form-title').textContent).toBe('重配置协议项');
+        expect(context.document.getElementById('protocol-item-name').value).toBe('数据库HTTP协议');
+        expect(context.document.querySelector('input[name="request-method"]:checked').value).toBe('POST');
+        expect(context.document.getElementById('request-path').value).toBe('/api/from-db');
+        expect(context.document.getElementById('response-status-code').value).toBe('201');
+        expect(context.KitProxy.protocolItemForm.pageState.bodyEditor.getType()).toBe('json');
+        expect(context.KitProxy.protocolItemForm.pageState.bodyEditor.getValue()).toContain('"from": "db-request"');
+        context.KitProxy.protocolItemForm.setActiveBodyTab('response');
+        expect(context.KitProxy.protocolItemForm.pageState.bodyEditor.getType()).toBe('text');
+        expect(context.KitProxy.protocolItemForm.pageState.bodyEditor.getValue()).toBe('db-response-body');
+        context.KitProxy.protocolItemForm.setActiveBodyTab('request');
+
+        context.document.getElementById('protocol-item-name').value = '重配置HTTP';
+        context.document.getElementById('request-path').value = '/api/reconfig';
+        context.document.getElementById('protocol-item-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(12);
+
+        expect(reconfigProtocol).toHaveBeenCalledTimes(1);
+        expect(reconfigProtocol.mock.calls[0][0]).toBe(1);
+        expect(reconfigProtocol.mock.calls[0][1].cfg_header.config_state).toBe(0);
+        expect(reconfigProtocol.mock.calls[0][1].cfg_header.name).toBe('重配置HTTP');
+        expect(reconfigProtocol.mock.calls[0][1].req_cfg.path).toBe('/api/reconfig');
+        expect(reconfigProtocol.mock.calls[0][1].request_body).toContain('"from": "db-request"');
+        expect(reconfigProtocol.mock.calls[0][1].response_body).toBe('db-response-body');
+        expect(updateName).not.toHaveBeenCalled();
+        expect(updateCfg).not.toHaveBeenCalled();
+        expect(updateBody).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 测试思路：重配置页要按查出的协议详情渲染并回填对应协议控件，不能因为项目协议类型是字符串而隐藏请求/响应配置。
+     * 示例：getProtocolEditDetail 返回 type="TCP" 时，请求侧和响应侧 TCP 头部字段控件都应显示并回填字段值。
+     */
+    it('表单页 reconfig 模式支持字符串 TCP 类型并展示请求响应控件', async () => {
+        const context = createProtocolItemFormContext('?apiMode=mock&projectId=2&protocolId=2&mode=reconfig');
+
+        loadCoreScripts(context);
+        await loginMockUser(context, {
+            note: 'admin',
+            loginType: 'admin',
+            password: 'admin123',
+        });
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        vi.spyOn(context.KitProxy.api, 'getProject').mockResolvedValue([{
+            id: 2,
+            name: '真实TCP服务',
+            protocol_type: 'TCP',
+            mode: 1,
+            runtime_state: 1,
+            listen_port: 18082,
+            status: 1,
+            length_policy: 'body_length',
+        }]);
+        const getProtocolEditDetail = vi.spyOn(context.KitProxy.api, 'getProtocolEditDetail').mockResolvedValue({
+            id: 2,
+            name: 'TCP开包检测示例',
+            project_id: 2,
+            type: 'TCP',
+            req_cfg: {
+                function_code: 'H1000',
+                fields: { 4: 'H00000209' },
+            },
+            resp_cfg: {
+                function_code: 'H1080',
+                fields: { 4: 'H00000209' },
+            },
+            req_body_type: 'json',
+            resp_body_type: 'json',
+            request_body: '',
+            response_body: '',
+        });
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(12);
+
+        const reqButton = context.document.getElementById('req-pattern-infos');
+        const respButton = context.document.getElementById('resp-pattern-infos');
+        expect(getProtocolEditDetail).toHaveBeenCalledWith(2);
+        expect(context.KitProxy.protocolItemForm.pageState.protocolType).toBe(context.ProtocolType.CUSTOM_TCP);
+        expect(reqButton).toBeTruthy();
+        expect(respButton).toBeTruthy();
+        expect(context.document.querySelector('.protocol-config-card-request').textContent).toContain('请求侧配置');
+        expect(context.document.querySelector('.protocol-config-card-response').textContent).toContain('响应侧配置');
+
+        const reqFields = JSON.parse(reqButton.dataset.patternInfos).fields;
+        const respFields = JSON.parse(respButton.dataset.patternInfos).fields;
+        expect(reqFields.some(field => field.role === 'function_code' && field.value === 'H1000')).toBe(true);
+        expect(respFields.some(field => field.role === 'function_code' && field.value === 'H1080')).toBe(true);
+    });
+	});

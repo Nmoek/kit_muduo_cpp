@@ -446,10 +446,10 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
     });
 
     /**
-     * 测试思路：服务卡片状态按钮应调用 setProjectActive，并用返回端口刷新卡片。
-     * 示例：active=0 的服务器模式服务点击后变为“开启”，监听端口显示 Mock 返回值。
+     * 测试思路：服务卡片状态按钮应调用 setProjectRuntimeState，并用返回端口刷新卡片。
+     * 示例：runtime_state=0 的服务器模式服务点击后变为“开启”，监听端口显示 Mock 返回值。
      */
-    it('服务卡片状态开关调用 setProjectActive 并刷新 active 与端口', async () => {
+    it('服务卡片状态开关调用 setProjectRuntimeState 并刷新 runtime_state 与端口', async () => {
         const project = {
             id: 9,
             name: '待启动服务',
@@ -457,17 +457,17 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
             listen_port: 0,
             mode: context.ProjectMode.SERVER,
             status: 1,
-            active: 0,
+            runtime_state: 0,
             ctime: '2025-08-11 07:55:15',
         };
-        const setActive = vi.spyOn(context.KitProxy.api, 'setProjectActive')
-            .mockResolvedValue({ active: 1, listen_port: 39009 });
+        const setRuntimeState = vi.spyOn(context.KitProxy.api, 'setProjectRuntimeState')
+            .mockResolvedValue({ runtime_state: 1, listen_port: 39009 });
 
         const card = context.addServiceCard(project);
         card.querySelector('.service-active-toggle').click();
         await flushPromises(8);
 
-        expect(setActive).toHaveBeenCalledWith(9, true);
+        expect(setRuntimeState).toHaveBeenCalledWith(9, true);
         expect(card.querySelector('.project-status .field-value').textContent).toBe('开启');
         expect(card.querySelector('.project-listen-port .field-value').textContent).toBe('39009');
     });

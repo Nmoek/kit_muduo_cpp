@@ -142,6 +142,31 @@ describe('V1 utils', () => {
     });
 
     /**
+     * 测试思路：新增协议的上线态由 cfg_header.config_state 传给后端，保存和保存并上线都要能序列化。
+     * 示例：config_state=0 表示只保存，config_state=1 表示保存并上线，两个值都应进入 protocol_cfg_header。
+     */
+    it('构造新增协议项 FormData 保留 config_state', () => {
+        [0, 1].forEach(configState => {
+            const formData = context.KitProxy.utils.createAddProtocolFormData({
+                cfg_header: {
+                    name: '运行态协议',
+                    type: 'HTTP',
+                    project_id: 1,
+                    req_body_type: 'json',
+                    resp_body_type: 'json',
+                    config_state: configState,
+                },
+                req_cfg: {},
+                resp_cfg: {},
+                request_body: '',
+                response_body: '',
+            });
+
+            expect(JSON.parse(formData.get('protocol_cfg_header')).config_state).toBe(configState);
+        });
+    });
+
+    /**
      * 测试思路：所有插入 innerHTML 的用户文案都依赖 escapeHTML 防止标签注入。
      * 示例：包含 <、>、&、双引号、单引号的字符串应转为对应 HTML 实体。
      */

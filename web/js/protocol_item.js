@@ -8,6 +8,14 @@ function createProtocolItemGrids(item, protocol) {
     return item.create(protocol);
 }
 
+if (typeof globalThis.readDatasetProjectId !== 'function') {
+    globalThis.readDatasetProjectId = function(value) {
+        const directId = Number(value);
+        if (Number.isInteger(directId) && directId > 0) return directId;
+        return ExtractId(value);
+    };
+}
+
 
 var httpProtocolItemGrids = {
     create: function(protocol) {
@@ -53,7 +61,7 @@ async function getAllPatternFieldsReq(protocolId, req_or_resp) {
     
     const protocolItem = document.getElementById(`protocol-item-${protocolId}`);
 
-    const projectId = ExtractId(protocolItem.dataset.projectId);
+    const projectId = readDatasetProjectId(protocolItem.dataset.projectId);
 
 
     try{
@@ -98,7 +106,7 @@ async function getPatternFields(protocolId, req_or_resp) {
 
     try {
         const protocolItem = document.getElementById(`protocol-item-${protocolId}`);
-        const projectId = ExtractId(protocolItem.dataset.projectId);
+        const projectId = readDatasetProjectId(protocolItem.dataset.projectId);
         const [patternInfo, cfgInfo] = await Promise.all([
             KitProxy.api.getProjectPatternInfo(projectId),
             KitProxy.api.getProtocolDetailsCfg(protocolId),

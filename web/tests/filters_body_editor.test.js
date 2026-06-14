@@ -3,17 +3,17 @@ import { createBrowserContext, loadCoreScripts } from './helpers/browser_context
 
 describe('V1.3 service filters and body editor', () => {
     /**
-     * 测试思路：服务运行态筛选必须看 active，而 status 只代表软删除有效性。
-     * 示例：status 都是 1 时，只有 active=1 的 HTTP 服务能命中“开启 + HTTP + 日期”组合。
+     * 测试思路：服务运行态筛选必须看 runtime_state，而 status 只代表软删除有效性。
+     * 示例：status 都是 1 时，只有 runtime_state=1 的 HTTP 服务能命中“开启 + HTTP + 日期”组合。
      */
-    it('服务筛选支持 active 运行态、协议种类和日期范围', () => {
+    it('服务筛选支持 runtime_state 运行态、协议种类和日期范围', () => {
         const context = createBrowserContext('?apiMode=mock');
         loadCoreScripts(context);
 
         const projects = [
-            { id: 1, protocol_type: 1, status: 1, active: 1, ctime: '2025-08-11 07:55:15' },
-            { id: 2, protocol_type: 2, status: 1, active: 0, ctime: '2025-08-12 07:55:15' },
-            { id: 3, protocol_type: 1, status: 1, active: 0, ctime: '' },
+            { id: 1, protocol_type: 1, status: 1, runtime_state: 1, ctime: '2025-08-11 07:55:15' },
+            { id: 2, protocol_type: 2, status: 1, runtime_state: 0, ctime: '2025-08-12 07:55:15' },
+            { id: 3, protocol_type: 1, status: 1, runtime_state: 0, ctime: '' },
         ];
 
         expect(context.KitProxy.serviceFilters.apply(projects, {

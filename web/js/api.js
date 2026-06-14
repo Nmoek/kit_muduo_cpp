@@ -73,10 +73,154 @@
 
     function normalizeProjectForBackend(project) {
         const normalized = Object.assign({}, project || {});
+        normalized.protocol_type = projectProtocolTypeForBackend(normalized.protocol_type);
         if (normalized.pattern_info) {
             normalized.pattern_info = normalizePatternInfoForBackend(normalized.pattern_info);
         }
         return normalized;
+    }
+
+    /**
+     * 新增项目和新增协议统一使用 HTTP/TCP/HTTPS 字符串表达协议类型。
+     * @param {any} protocolType
+     * @returns {string}
+     */
+    function projectProtocolTypeForBackend(protocolType) {
+        if (typeof protocolType === 'string') {
+            const normalized = protocolType.trim().toUpperCase();
+            if (normalized === 'CUSTOM_TCP') return 'TCP';
+            if (normalized === 'HTTP' || normalized === 'TCP' || normalized === 'HTTPS') return normalized;
+        }
+
+        const value = Number(protocolType);
+        if (value === 1) return 'HTTP';
+        if (value === 2) return 'TCP';
+        if (value === 3) return 'HTTPS';
+        return '';
+    }
+
+    /**
+     * 后端可能返回 HTTP/TCP/HTTPS 字符串，页面内部仍统一使用 1/2/3 数值常量。
+     * @param {any} protocolType
+     * @returns {number}
+     */
+    function projectProtocolTypeForPage(protocolType) {
+        if (typeof protocolType === 'string') {
+            const normalized = protocolType.trim().toUpperCase();
+            if (normalized === 'HTTP') return 1;
+            if (normalized === 'TCP' || normalized === 'CUSTOM_TCP') return 2;
+            if (normalized === 'HTTPS') return 3;
+        }
+
+        const value = Number(protocolType);
+        return [1, 2, 3].includes(value) ? value : 0;
+    }
+
+    /**
+     * 项目 VO 以 runtime_state 表示运行态；active 只作为旧页面兼容字段保留。
+     * @param {any} project
+     * @returns {any}
+     */
+    function normalizeProject(project) {
+        if (!project) return null;
+        const runtimeState = project.runtime_state != null
+            ? Number(project.runtime_state)
+            : (Number(project.active) === 1 ? 1 : 0);
+        return Object.assign({}, project, {
+            protocol_type: projectProtocolTypeForPage(project.protocol_type),
+            runtime_state: runtimeState === 1 ? 1 : 0,
+            active: runtimeState === 1 ? 1 : 0,
+        });
+    }
+
+    /**
+     * @param {any} projects
+     * @returns {Array<any>}
+     */
+    function normalizeProjects(projects) {
+        return Array.isArray(projects) ? projects.map(normalizeProject).filter(Boolean) : [];
+    }
+
+    /**
+     * 协议 VO 以 config_state 表示上线态；runtime_enabled 只允许作为命令入参。
+     * @param {any} protocol
+     * @returns {any}
+     */
+    function normalizeProtocol(protocol) {
+        if (!protocol) return null;
+        const configState = protocol.config_state != null ? Number(protocol.config_state) : 0;
+        const normalized = Object.assign({}, protocol, {
+            config_state: [0, 1, 2].includes(configState) ? configState : 0,
+        });
+        delete normalized.runtime_enabled;
+        return normalized;
+    }
+
+    /**
+     * @param {any} protocols
+     * @returns {Array<any>}
+     */
+    function normalizeProtocols(protocols) {
+        return Array.isArray(protocols) ? protocols.map(normalizeProtocol).filter(Boolean) : [];
+    }
+
+    /**
+     * @param {any} bodyData
+     * @returns {string}
+     */
+    function decodeProtocolBodyData(bodyData) {
+        if (KitProxy.bodySyntax && typeof KitProxy.bodySyntax.decodeBodyData === 'function') {
+            return KitProxy.bodySyntax.decodeBodyData(bodyData);
+        }
+        if (bodyData == null) return '';
+        if (typeof bodyData === 'string') return bodyData;
+        if (bodyData instanceof ArrayBuffer) {
+            return new TextDecoder().decode(new Uint8Array(bodyData));
+        }
+        if (ArrayBuffer.isView(bodyData)) {
+            return new TextDecoder().decode(bodyData);
+        }
+        return String(bodyData);
+    }
+
+    /**
+     * 协议项编辑/重配置页需要从数据库重新读取当前完整详情，并一次性回填表单控件。
+     * @param {number | string} protocolId
+     * @returns {Promise<any>}
+     */
+    async function getProtocolEditDetail(protocolId) {
+        const [protocols, requestBodyInfo, responseBodyInfo] = await Promise.all([
+            api.getProtocol(protocolId),
+            api.getProtocolBody(protocolId, 1),
+            api.getProtocolBody(protocolId, 2),
+        ]);
+
+        if (!Array.isArray(protocols) || protocols.length <= 0) {
+            throw new Error('获取协议项详情失败');
+        }
+
+        const protocol = protocols[0];
+        return Object.assign({}, protocol, {
+            request_body: decodeProtocolBodyData(requestBodyInfo && requestBodyInfo[1]),
+            response_body: decodeProtocolBodyData(responseBodyInfo && responseBodyInfo[1]),
+            req_body_type: (requestBodyInfo && requestBodyInfo[0]) || protocol.req_body_type || 'json',
+            resp_body_type: (responseBodyInfo && responseBodyInfo[0]) || protocol.resp_body_type || 'json',
+        });
+    }
+
+    /**
+     * @param {any} runtimeData
+     * @param {boolean} running
+     * @returns {any}
+     */
+    function normalizeProjectRuntimeResult(runtimeData, running) {
+        const runtimeState = runtimeData && runtimeData.runtime_state != null
+            ? Number(runtimeData.runtime_state)
+            : (running ? 1 : 0);
+        return Object.assign({}, runtimeData || {}, {
+            runtime_state: runtimeState === 1 ? 1 : 0,
+            active: runtimeState === 1 ? 1 : 0,
+        });
     }
 
     /**
@@ -262,16 +406,17 @@
         },
         async getProjectList(offset = 0, limit = 10) {
             const options = arguments.length >= 3 && arguments[2] ? arguments[2] : {};
-            if (isMockMode()) return KitProxy.mocks.getProjectList(offset, limit, options);
+            if (isMockMode()) return normalizeProjects(KitProxy.mocks.getProjectList(offset, limit, options));
 
-            return requestJsonBody('/projects/list', Object.assign({ offset, limit }, options), '获取测试服务列表失败');
+            return requestJsonBody('/projects/list', Object.assign({ offset, limit }, options), '获取测试服务列表失败')
+                .then(normalizeProjects);
         },
         async getProject(projectId) {
-            if (isMockMode()) return KitProxy.mocks.getProject(projectId);
+            if (isMockMode()) return normalizeProjects(KitProxy.mocks.getProject(projectId));
 
             return requestJson('/projects/' + String(projectId), {
                 method: 'GET',
-            }, '获取单个测试服务失败');
+            }, '获取单个测试服务失败').then(normalizeProjects);
         },
         async addProject(project) {
             return runMutation('api-add-project', async function() {
@@ -286,15 +431,25 @@
                 }, '添加测试服务失败');
             }, '正在添加测试服务...');
         },
-        async setProjectActive(projectId, active) {
-            return runMutation(`api-set-project-active-${projectId}`, async function() {
-                if (isMockMode()) return KitProxy.mocks.setProjectActive(projectId, active);
+        async setProjectRuntimeState(projectId, running) {
+            return runMutation(`api-set-project-runtime-state-${projectId}`, async function() {
+                if (isMockMode()) {
+                    const result = KitProxy.mocks.setProjectRuntimeState
+                        ? KitProxy.mocks.setProjectRuntimeState(projectId, running)
+                        : KitProxy.mocks.setProjectActive(projectId, running);
+                    return normalizeProjectRuntimeResult(result, running);
+                }
 
-                const operation = active ? 1 : 0;
-                return requestJson('/projects/' + String(projectId) + '/status?operation=' + String(operation), {
+                const operation = running ? 1 : 0;
+                const result = await requestJson('/projects/' + String(projectId) + '/runtime_state?operation=' + String(operation), {
                     method: 'POST',
-                }, active ? '启动测试服务失败' : '停止测试服务失败');
-            }, active ? '正在启动测试服务...' : '正在停止测试服务...');
+                }, running ? '启动测试服务失败' : '停止测试服务失败');
+                return normalizeProjectRuntimeResult(result, running);
+            }, running ? '正在启动测试服务...' : '正在停止测试服务...');
+        },
+        async setProjectActive(projectId, active) {
+            // 兼容旧调用名；新增代码应使用 setProjectRuntimeState。
+            return api.setProjectRuntimeState(projectId, active);
         },
         async updateProjectName(projectId, name) {
             return runMutation(`api-update-project-name-${projectId}`, async function() {
@@ -356,21 +511,22 @@
         },
         async getProtocolList(projectId, offset = 0, limit = 10) {
             const options = arguments.length >= 4 && arguments[3] ? arguments[3] : {};
-            if (isMockMode()) return KitProxy.mocks.getProtocolList(projectId, offset, limit, options);
+            if (isMockMode()) return normalizeProtocols(KitProxy.mocks.getProtocolList(projectId, offset, limit, options));
 
             return requestJsonBody('/protocols/list', Object.assign({
                 project_id: projectId,
                 offset,
                 limit,
-            }, options), '获取协议项列表失败');
+            }, options), '获取协议项列表失败').then(normalizeProtocols);
         },
         async getProtocol(protocolId) {
-            if (isMockMode()) return KitProxy.mocks.getProtocol(protocolId);
+            if (isMockMode()) return normalizeProtocols(KitProxy.mocks.getProtocol(protocolId));
 
             return requestJson('/protocols/' + String(protocolId), {
                 method: 'GET',
-            }, '获取单个协议项失败');
+            }, '获取单个协议项失败').then(normalizeProtocols);
         },
+        getProtocolEditDetail,
         async addProtocol(protocol) {
             const projectId = protocol && protocol.cfg_header ? protocol.cfg_header.project_id : 'unknown';
             return runMutation(`api-add-protocol-${projectId}`, async function() {
@@ -400,6 +556,26 @@
 
                 return true;
             }, '正在保存协议项名称...');
+        },
+        async setProtocolRuntime(protocolId, enabled) {
+            return runMutation(`api-set-protocol-runtime-${protocolId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.setProtocolRuntime(protocolId, enabled);
+
+                return requestJsonBody('/protocols/' + String(protocolId) + '/runtime_enabled', {
+                    runtime_enabled: enabled ? 1 : 0,
+                }, enabled ? '上线协议项失败' : '下线协议项失败');
+            }, enabled ? '正在上线协议项...' : '正在下线协议项...');
+        },
+        async reconfigProtocol(protocolId, protocol) {
+            return runMutation(`api-reconfig-protocol-${protocolId}`, async function() {
+                if (isMockMode()) return KitProxy.mocks.reconfigProtocol(protocolId, protocol);
+
+                const formData = KitProxy.utils.createAddProtocolFormData(protocol);
+                return requestJson('/protocols/' + String(protocolId) + '/reconfig', {
+                    method: 'POST',
+                    body: formData,
+                }, '重配置协议项失败');
+            }, '正在重配置协议项...');
         },
         async deleteProtocol(protocolId, projectId) {
             return runMutation(`api-delete-protocol-${protocolId}`, async function() {

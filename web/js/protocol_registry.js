@@ -215,6 +215,12 @@
                     if (textNode) {
                         textNode.textContent = tcpLengthPolicyText(nextPatternInfo.length_policy);
                     }
+                    if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.clearProtocolRuntimeStateOverrides === 'function') {
+                        KitProxy.protocolItemsPage.clearProtocolRuntimeStateOverrides();
+                    }
+                    if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.loadProtocolItems === 'function') {
+                        await KitProxy.protocolItemsPage.loadProtocolItems();
+                    }
                     return true;
                     },
                 );

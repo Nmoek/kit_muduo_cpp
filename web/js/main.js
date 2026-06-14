@@ -5,7 +5,7 @@ const serviceFilterState = KitProxy.serviceFilters
 let currentPageProjects = [];
 
 function isProjectActive(project) {
-    return Number(project && project.active) === 1;
+    return Number(project && project.runtime_state) === 1;
 }
 
 function isProjectDeleted(project) {
@@ -41,6 +41,15 @@ function getProjectEndpointDisplay(project) {
 function getProjectOwnerNote(project) {
     return String(project && (project.owner_note || project.note_name || project.note || project.user_note) || '');
 }
+
+const readDatasetProjectId = typeof globalThis.readDatasetProjectId === 'function'
+    ? globalThis.readDatasetProjectId
+    : function(value) {
+        const directId = Number(value);
+        if (Number.isInteger(directId) && directId > 0) return directId;
+        return ExtractId(value);
+    };
+globalThis.readDatasetProjectId = readDatasetProjectId;
 
 async function buildUserNoteMap() {
     if (!KitProxy.auth || !KitProxy.auth.isCurrentUserAdmin()) return {};
@@ -86,6 +95,26 @@ function isProtocolInactive(protocol) {
 
 function getProtocolStatusText(protocol) {
     return isProtocolInactive(protocol) ? '已删除' : '正常';
+}
+
+function getProtocolConfigState(protocol) {
+    const state = Number(protocol && protocol.config_state);
+    return [0, 1, 2].includes(state) ? state : 0;
+}
+
+function isProtocolOnline(protocol) {
+    return getProtocolConfigState(protocol) === 1;
+}
+
+function isProtocolNeedReconfig(protocol) {
+    return getProtocolConfigState(protocol) === 2;
+}
+
+function getProtocolConfigStateText(protocol) {
+    const configState = getProtocolConfigState(protocol);
+    if (configState === 1) return '已上线';
+    if (configState === 2) return '待重配置';
+    return '未上线';
 }
 
 // 更新协议项显示
@@ -239,7 +268,7 @@ function getCurProtocolItemCfg(idStr, req_or_resp_str) {
 async function updateProtocolBody(idStr, req_or_resp, protocolType, newBodyType, newBody) {
     const protocolItemId = ExtractId(idStr);
     const protocolItem = document.getElementById(idStr);
-    const serviceCardId = ExtractId(protocolItem.dataset.projectId);
+    const serviceCardId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     return KitProxy.utils.runMutationOnce(
         `update-protocol-body-${protocolItemId}-${req_or_resp}`,
@@ -269,7 +298,7 @@ async function updateProtocolBody(idStr, req_or_resp, protocolType, newBodyType,
 async function updateProtocolTcpFuncCode(protocolItemId, newCode) {
     const idStr = `protocol-item-${protocolItemId}`;
     const protocolItem = document.getElementById(idStr);
-    const serviceCardId = ExtractId(protocolItem.dataset.projectId);
+    const serviceCardId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     // 获取出来所有req_cfg  返回一个JSON结构
     // 不同协议获取的JSON结构不同
@@ -303,7 +332,7 @@ async function updateProtocolTcpFuncCode(protocolItemId, newCode) {
 async function updateProtocolHttpUrl(protocolItemId, newPath) {
     const idStr = `protocol-item-${protocolItemId}`;
     const protocolItem = document.getElementById(idStr);
-    const serviceCardId = ExtractId(protocolItem.dataset.projectId);
+    const serviceCardId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     // 获取出来所有req_cfg  返回一个JSON结构
     // 不同协议获取的JSON结构不同
@@ -337,7 +366,7 @@ async function updateProtocolHttpUrl(protocolItemId, newPath) {
 async function updateProtocolHttpMethod(protocolItemId, newMethod) {
     const idStr = `protocol-item-${protocolItemId}`;
     const protocolItem = document.getElementById(idStr);
-    const serviceCardId = ExtractId(protocolItem.dataset.projectId);
+    const serviceCardId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     console.info(idStr + ' :: ' + protocolItemId, protocolItem.dataset.projectId + '-' + serviceCardId);
     // 获取出来所有req_cfg  返回一个JSON结构
@@ -380,7 +409,7 @@ async function updateProtocolHttpStatus(protocolItemId, newStatusCode) {
 async function updateProtocolCfg(protocolItemId, req_or_resp, key, newValue) {
     const idStr = `protocol-item-${protocolItemId}`;
     const protocolItem = document.getElementById(idStr);
-    const projectId = ExtractId(protocolItem.dataset.projectId);
+    const projectId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     console.info(idStr + ' :: ' + protocolItemId, protocolItem.dataset.projectId + '-' + projectId);
     // 获取出来所有req_cfg  返回一个JSON结构
@@ -428,7 +457,7 @@ async function updateProtocolCfg(protocolItemId, req_or_resp, key, newValue) {
 async function updateProtocolTcpHeaderValues(protocolItemId, reqOrResp, cfgJson) {
     const idStr = `protocol-item-${protocolItemId}`;
     const protocolItem = document.getElementById(idStr);
-    const projectId = ExtractId(protocolItem.dataset.projectId);
+    const projectId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     return KitProxy.utils.runMutationOnce(
         `update-protocol-tcp-header-${protocolItemId}-${reqOrResp}`,
@@ -638,7 +667,7 @@ function bindProtocolEditAction(protocolItem) {
         event.preventDefault();
         event.stopPropagation();
 
-        const projectId = ExtractId(protocolItem.dataset.projectId);
+        const projectId = readDatasetProjectId(protocolItem.dataset.projectId);
         const protocolId = ExtractId(protocolItem.id);
         const targetUrl = buildProtocolItemFormUrl(projectId, protocolId);
         protocolItem.dataset.protocolItemFormUrl = targetUrl;
@@ -654,6 +683,99 @@ function bindProtocolEditAction(protocolItem) {
         protocolItem.dispatchEvent(navigateEvent);
         if (navigateEvent.defaultPrevented) return;
         window.location.href = targetUrl;
+    });
+}
+
+/**
+ * 生成协议项重配置 URL，并保留 mock/后端调试参数。
+ * @param {number | string} projectId
+ * @param {number | string} protocolId
+ * @returns {string}
+ */
+function buildProtocolReconfigUrl(projectId, protocolId) {
+    const params = new URLSearchParams(window.location.search);
+    params.set('projectId', String(projectId));
+    params.set('protocolId', String(protocolId));
+    params.set('mode', 'reconfig');
+    return `protocol_item_form.html?${params.toString()}`;
+}
+
+function refreshProtocolRuntimeControl(protocolItem, configState) {
+    const state = [0, 1, 2].includes(Number(configState)) ? Number(configState) : 0;
+    const button = protocolItem.querySelector('.protocol-runtime-btn');
+    if (!button) return;
+
+    protocolItem.dataset.configState = String(state);
+    button.dataset.configState = String(state);
+    button.textContent = state === 1 ? '已上线' : (state === 2 ? '待重配置' : '未上线');
+    button.classList.toggle('is-online', state === 1);
+    button.classList.toggle('is-offline', state === 0);
+    button.classList.toggle('is-reconfig', state === 2);
+
+    const projectRunning = Number(protocolItem.dataset.projectRuntimeState) === 1;
+    const disabled = !projectRunning && state !== 2;
+    button.disabled = disabled;
+    button.title = disabled
+        ? '项目未运行，不能上线或下线'
+        : (state === 2 ? '进入重配置页面' : (state === 1 ? '点击下线协议项' : '点击上线协议项'));
+}
+
+function bindProtocolRuntimeAction(protocolItem) {
+    const runtimeButton = protocolItem.querySelector('.protocol-runtime-btn');
+    if (!runtimeButton) return;
+
+    runtimeButton.addEventListener('click', async function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const protocolId = ExtractId(protocolItem.id);
+        const projectId = Number(protocolItem.dataset.projectId || 0);
+        const configState = Number(protocolItem.dataset.configState || 0);
+        const projectRunning = Number(protocolItem.dataset.projectRuntimeState) === 1;
+
+        if (configState === 2) {
+            const targetUrl = buildProtocolReconfigUrl(projectId, protocolId);
+            protocolItem.dataset.protocolItemFormUrl = targetUrl;
+            const navigateEvent = new CustomEvent('protocol-item:navigate-reconfig', {
+                bubbles: true,
+                cancelable: true,
+                detail: {
+                    projectId,
+                    protocolId,
+                    url: targetUrl,
+                },
+            });
+            protocolItem.dispatchEvent(navigateEvent);
+            if (navigateEvent.defaultPrevented) return;
+            window.location.href = targetUrl;
+            return;
+        }
+
+        if (!projectRunning) {
+            showErrorPopup('项目未运行，不能上线或下线协议项');
+            return;
+        }
+
+        const enable = configState === 0;
+        runtimeButton.disabled = true;
+        runtimeButton.classList.add('is-busy');
+
+        try {
+            const result = await KitProxy.api.setProtocolRuntime(protocolId, enable);
+            const nextConfigState = result && result.config_state != null ? Number(result.config_state) : (enable ? 1 : 0);
+            refreshProtocolRuntimeControl(protocolItem, nextConfigState);
+            if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.rememberProtocolRuntimeState === 'function') {
+                KitProxy.protocolItemsPage.rememberProtocolRuntimeState(protocolId, nextConfigState);
+            }
+            if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.loadProtocolItems === 'function') {
+                await KitProxy.protocolItemsPage.loadProtocolItems();
+            }
+        } catch (error) {
+            showErrorPopup(`${enable ? '上线' : '下线'}协议项失败：${error.message}`);
+            refreshProtocolRuntimeControl(protocolItem, configState);
+        } finally {
+            runtimeButton.classList.remove('is-busy');
+        }
     });
 }
 
@@ -1126,9 +1248,15 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
 
     const protocolItem = document.createElement('div');
     const protocolInactive = isProtocolInactive(protocol);
+    const configState = getProtocolConfigState(protocol);
+    const projectId = ExtractId(serviceCard.id);
+    const projectRuntimeState = Number(serviceCard.dataset.runtimeState != null ? serviceCard.dataset.runtimeState : serviceCard.dataset.active) === 1 ? 1 : 0;
     protocolItem.className = `protocol-item ${protocol.type.toLowerCase()}${protocolInactive ? ' is-inactive' : ''}`;
     protocolItem.id = `protocol-item-${protocol.id}`;
-    protocolItem.dataset.projectId = serviceCard.id; //使用dataset存储
+    protocolItem.dataset.projectId = String(projectId);
+    protocolItem.dataset.protocolId = String(protocol.id);
+    protocolItem.dataset.configState = String(configState);
+    protocolItem.dataset.projectRuntimeState = String(projectRuntimeState);
     protocolItem.dataset.protocolType = protocol.type;
     protocolItem.dataset.status = protocolInactive ? 'inactive' : 'active';
 
@@ -1136,7 +1264,8 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
     const escape = KitProxy.utils.escapeHTML;
     const actionHTML = protocolInactive
         ? '<button type="button" class="restore-protocol-btn">恢复协议项</button>'
-        : `<button type="button" class="protocol-toggle-btn" aria-label="展开协议项详情" aria-expanded="false">
+        : `<button type="button" class="protocol-runtime-btn is-${configState === 1 ? 'online' : (configState === 2 ? 'reconfig' : 'offline')}" data-config-state="${escape(configState)}">${escape(getProtocolConfigStateText(protocol))}</button>
+                <button type="button" class="protocol-toggle-btn" aria-label="展开协议项详情" aria-expanded="false">
                     <span class="protocol-toggle-icon" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="edit-protocol-btn">修改协议项</button>
@@ -1172,6 +1301,8 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
         bindProtocolTitleEdit(protocolItem);
         bindProtocolDeleteAction(protocolItem);
         bindProtocolEditAction(protocolItem);
+        bindProtocolRuntimeAction(protocolItem);
+        refreshProtocolRuntimeControl(protocolItem, configState);
         bindProtocolFieldEditors(protocolItem);
         bindProtocolBodyEditor(protocolItem);
     }
@@ -1839,7 +1970,7 @@ async function updateProjectName(id_str, tilte_name) {
 
 async function setProjectActiveReq(projectId, active) {
     try {
-        return await KitProxy.api.setProjectActive(projectId, active);
+        return await KitProxy.api.setProjectRuntimeState(projectId, active);
     } catch (error) {
         console.error(active ? '启动测试服务请求失败:' : '停止测试服务请求失败:', error.message);
         throw error;
@@ -1850,7 +1981,10 @@ function mergeProjectRuntimeState(projectId, runtimeData, active) {
     const project = currentPageProjects.find(item => Number(item.id) === Number(projectId));
     if (!project) return null;
 
-    project.active = active ? 1 : 0;
+    project.runtime_state = runtimeData && runtimeData.runtime_state != null
+        ? Number(runtimeData.runtime_state)
+        : (active ? 1 : 0);
+    project.active = project.runtime_state;
     if (runtimeData && Object.prototype.hasOwnProperty.call(runtimeData, 'listen_port')) {
         project.listen_port = runtimeData.listen_port;
     } else if (!active && Number(project.mode) === ProjectMode.SERVER) {
@@ -1867,6 +2001,7 @@ async function setProjectActive(projectId, active) {
             const runtimeData = await setProjectActiveReq(projectId, active);
             return mergeProjectRuntimeState(projectId, runtimeData || {}, active) || Object.assign({}, runtimeData || {}, {
                 id: projectId,
+                runtime_state: active ? 1 : 0,
                 active: active ? 1 : 0,
             });
         },
@@ -1938,7 +2073,7 @@ async function delProtocol(id_str) {
     // 获取当前测试服务卡片ID
     const protocolItemId = ExtractId(id_str);
     const protocolItem = document.getElementById(id_str);
-    const serviceCardId = ExtractId(protocolItem.dataset.projectId);
+    const serviceCardId = readDatasetProjectId(protocolItem.dataset.projectId);
 
     return KitProxy.utils.runMutationOnce(
         `delete-protocol-${protocolItemId}`,
@@ -2164,6 +2299,7 @@ function updateServiceCard(id_str, project) {
     // serviceCard.querySelector(".project-protocol-cnt .field-value").textContent = project.protocol_cnt || '0';
     // TODO: 待考虑 是否能修改
 
+    serviceCard.dataset.runtimeState = String(isProjectActive(project) ? 1 : 0);
     serviceCard.dataset.active = String(isProjectActive(project) ? 1 : 0);
     serviceCard.dataset.status = String(project.status == null ? 1 : project.status);
     serviceCard.classList.toggle('is-deleted', isProjectDeleted(project));
@@ -2188,6 +2324,11 @@ function updateServiceCard(id_str, project) {
         statusValue.textContent = getProjectRuntimeStatusText(project);
         statusValue.className = `meta-value field-value status ${isProjectDeleted(project) ? 'status-deleted' : (isProjectActive(project) ? 'status-active' : 'status-inactive')}`;
     }
+
+    serviceCard.querySelectorAll('.protocol-item').forEach(protocolItem => {
+        protocolItem.dataset.projectRuntimeState = serviceCard.dataset.runtimeState;
+        refreshProtocolRuntimeControl(protocolItem, protocolItem.dataset.configState);
+    });
     
 }
 
@@ -2340,6 +2481,7 @@ function addServiceCard(project, pos = -1) {
     const serviceCard = document.createElement('div');
     serviceCard.className = 'service-card';
     serviceCard.id = String("service-card-" + project.id);
+    serviceCard.dataset.runtimeState = String(isProjectActive(project) ? 1 : 0);
     serviceCard.dataset.active = String(isProjectActive(project) ? 1 : 0);
     serviceCard.dataset.status = String(project.status == null ? 1 : project.status);
     serviceCard.classList.toggle('is-deleted', isProjectDeleted(project));
