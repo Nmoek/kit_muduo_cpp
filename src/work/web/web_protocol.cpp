@@ -656,6 +656,8 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
     WriteOpResult write_result;
     ReconfigProtocolReq request; // 表单
 
+    PC_F_DEBUG("\n%s\n", req->body().toString().c_str());
+
     // 自动根据req中的 content-type类型去解析对象
     bool ok = ctx->Bind(&request);
     if(!ok)

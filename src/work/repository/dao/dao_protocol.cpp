@@ -174,6 +174,8 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
                 ,c(&Protocol::m_respBodyType) = daoPc.m_respBodyType
                 ,c(&Protocol::m_reqBodyDataStatus) = (daoPc.m_reqBodyData.empty() ? 0 : 1)
                 ,c(&Protocol::m_respBodyDataStatus) = (daoPc.m_respBodyData.empty() ? 0 : 1)
+                ,c(&Protocol::m_reqCfg) = daoPc.m_reqCfg
+                ,c(&Protocol::m_respCfg) = daoPc.m_respCfg
                 ,c(&Protocol::m_reqBodyData) = std::move(daoPc.m_reqBodyData)
                 ,c(&Protocol::m_respBodyData) = std::move(daoPc.m_respBodyData)
                 ,c(&Protocol::m_isEndian) = std::move(daoPc.m_isEndian)
@@ -521,26 +523,28 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
         // 旧写法是利用元组vector<tutle<10>>
         auto tmps = lease_result.val->db().select(
         columns(
-            &kit_dao::Protocol::m_id,
-            &kit_dao::Protocol::m_name,
-            &kit_dao::Protocol::m_type,
-            &kit_dao::Protocol::m_projectId,
-            &kit_dao::Protocol::m_status,
-            &kit_dao::Protocol::m_reqBodyType,
-            &kit_dao::Protocol::m_respBodyType,
-            &kit_dao::Protocol::m_reqBodyDataStatus,
-            &kit_dao::Protocol::m_respBodyDataStatus,
-            &kit_dao::Protocol::m_reqCfg,
-            &kit_dao::Protocol::m_respCfg,
-            &kit_dao::Protocol::m_ctime,
-            &kit_dao::Protocol::m_utime
+            &Protocol::m_id,
+            &Protocol::m_name,
+            &Protocol::m_type,
+            &Protocol::m_projectId,
+            &Protocol::m_status,
+            &Protocol::m_configState,
+            &Protocol::m_reqBodyType,
+            &Protocol::m_respBodyType,
+            &Protocol::m_reqBodyDataStatus,
+            &Protocol::m_respBodyDataStatus,
+            &Protocol::m_reqCfg,
+            &Protocol::m_respCfg,
+            &Protocol::m_isEndian,
+            &Protocol::m_ctime,
+            &Protocol::m_utime
         ),
         where(
-            c(&kit_dao::Protocol::m_projectId) ==  project_id
+            c(&Protocol::m_projectId) ==  project_id
             &&
-            c(&kit_dao::Protocol::m_status) == status
+            c(&Protocol::m_status) == status
         ),
-        order_by(&kit_dao::Protocol::m_ctime).desc(),
+        order_by(&Protocol::m_ctime).desc(),
         sqlite_orm::limit(offset, limit)
         );
 
@@ -554,23 +558,25 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
         // 一边转换一边copy
         std::transform(tmps.begin(), tmps.end(), std::back_inserter(pcs), [](auto &item){
             // 全部移动 不要拷贝 查询量上去后很损耗性能
-            kit_dao::Protocol p;
+            Protocol p;
             p.m_id = std::move(std::get<0>(item));
             p.m_name = std::move(std::get<1>(item));
             p.m_type = std::move(std::get<2>(item));
             p.m_projectId = std::move(std::get<3>(item));
             p.m_status = std::move(std::get<4>(item));
-            p.m_reqBodyType = std::move(std::get<5>(item));
-            p.m_respBodyType = std::move(std::get<6>(item));
+            p.m_configState = std::move(std::get<5>(item));
+            p.m_reqBodyType = std::move(std::get<6>(item));
+            p.m_respBodyType = std::move(std::get<7>(item));
 
-            p.m_reqBodyDataStatus= std::move(std::get<7>(item));
-            p.m_respBodyDataStatus = std::move(std::get<8>(item));
+            p.m_reqBodyDataStatus= std::move(std::get<8>(item));
+            p.m_respBodyDataStatus = std::move(std::get<9>(item));
 
 
-            p.m_reqCfg = std::move(std::get<9>(item));
-            p.m_respCfg = std::move(std::get<10>(item));
-            p.m_ctime = std::move(std::get<11>(item));
-            p.m_utime = std::move(std::get<12>(item));
+            p.m_reqCfg = std::move(std::get<10>(item));
+            p.m_respCfg = std::move(std::get<11>(item));
+            p.m_isEndian = std::move(std::get<12>(item));
+            p.m_ctime = std::move(std::get<13>(item));
+            p.m_utime = std::move(std::get<14>(item));
 
             return p;
         });

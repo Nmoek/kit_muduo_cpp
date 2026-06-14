@@ -504,8 +504,6 @@ bool SqliteOrmProjectDao::UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpC
         tx_result.val->db().update_all(
             set(
                 c(&Protocol::m_configState) = static_cast<int32_t>(kit_domain::ProtocolConfigState::kReConfig)
-                ,c(&Protocol::m_reqCfg) = "{}"
-                ,c(&Protocol::m_respCfg) = "{}"
                 ,c(&Protocol::m_utime) = now
             ),
             where(

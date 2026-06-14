@@ -699,7 +699,7 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
     root["data"] = pattern_info;
     resp->body().appendData(root.dump());
 
-    PJ_DEBUG() << std::endl << root.dump(4) << std::endl;
+    // PJ_DEBUG() << std::endl << root.dump(4) << std::endl;
 
     return;
 }

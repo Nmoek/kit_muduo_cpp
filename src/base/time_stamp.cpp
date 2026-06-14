@@ -20,7 +20,7 @@ TimeStamp::TimeStamp(uint64_t millSeconds)
 
 }
 
-std::string TimeStamp::toString() const
+std::string TimeStamp::toString(bool is_ms) const
 {
     char buf[128] = {0};
     time_t now = real_time_ms_ + 8*60*60;
@@ -30,8 +30,11 @@ std::string TimeStamp::toString() const
     tm = *localtime_r(&now, &tm);
     ::strftime(buf, 128, "%Y-%m-%d %H:%M:%S", &tm);
     std::string res(buf);
-    res += ".";
-    res += std::to_string(remain);
+    if(is_ms)
+    {
+        res += ".";
+        res += std::to_string(remain);
+    }
 
     return res;
 }

@@ -34,7 +34,7 @@ public:
      * @brief 转为时间字符串, 如2025-05-20 22:14:17
      * @return std::string
      */
-    std::string toString() const;
+    std::string toString(bool is_ms = false) const;
 
     /**
      * @brief 时间字符串转为时间戳(仅支持格式%Y-%m-%d %H:%M:%S)

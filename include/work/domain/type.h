@@ -65,10 +65,10 @@ enum class ProtocolType {
     kMax,
 };
 NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolType, {
-    {ProtocolType::kUnknown,    0},
-    {ProtocolType::kHttp,       1},
-    {ProtocolType::kCustomTcp,  2},
-    {ProtocolType::kHttps,      3},
+    {ProtocolType::kUnknown,    "UNKNOWN"},
+    {ProtocolType::kHttp,       "HTTP"},
+    {ProtocolType::kCustomTcp,  "TCP"},
+    {ProtocolType::kHttps,      "HTTPS"},
 })
 inline bool CheckProtocolType(ProtocolType type)
 {
@@ -99,7 +99,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolBodyType, {
     {ProtocolBodyType::kJson,    "json"},
     {ProtocolBodyType::kXml,     "xml"},
     {ProtocolBodyType::kText,    "text"},
-    {ProtocolBodyType::kBinary,  "binart"},
+    {ProtocolBodyType::kBinary,  "binary"},
 })
 
 enum class ProtocolStatus {
