@@ -8,6 +8,7 @@
  */
 #include "domain/custom_tcp_pattern.h"
 #include "domain/domain_log.h"
+#include "domain/protocol_body_pipeline.h"
 #include "domain/protocol_config_pipeline.h"
 #include "domain/runtime_result.h"
 #include "domain/type.h"
@@ -597,7 +598,7 @@ ProtocolRuntimeResult ProjectRuntimeManager::addProtocolImpl(kit_muduo::HttpCont
     }
     int64_t project_id = pj.m_id;
 
-    // 注意: 重配置状态洪用户不可以配置
+    // 注意: 重配置状态用户不可以配置
     if(ProtocolConfigState::kOff != p.m_configState
         && ProtocolConfigState::kOn != p.m_configState)
     {
@@ -610,6 +611,17 @@ ProtocolRuntimeResult ProjectRuntimeManager::addProtocolImpl(kit_muduo::HttpCont
     {
        return ProtocolRuntimeResult::Failed(RuntimeControlCode::kProjectTypeInvalid, RuntimeError(RuntimeError::kInternalError),
         "project type invliad");
+    }
+
+    // body格式检查
+    auto body_check = ProtocolBodyPipeline::CheckFullProtocol(p);
+    if(!body_check.ok)
+    {
+        RUNTIME_F_ERROR("protocol body check invalid: %s\n", body_check.message.c_str());
+        return ProtocolRuntimeResult::Failed(
+            RuntimeControlCode::kInvalidArgument,
+            RuntimeError(RuntimeError::kInternalError),
+            body_check.message);
     }
 
     auto pj_server = findServer(project_id);
@@ -1157,6 +1169,26 @@ ProtocolRuntimeResult ProjectRuntimeManager::updateProtocolBodyImpl(kit_muduo::H
         return ProtocolRuntimeResult::Failed(RuntimeControlCode::kInvalidArgument, RuntimeError(RuntimeError::kInternalError),
         "protocol project mismatch");
     }
+
+    // body格式检查
+    auto body_check = ProtocolBodyPipeline::CheckBody({
+        .body_type = body_type,
+        .body_data = body_data,
+    });
+    if(!body_check.ok)
+    {
+        RUNTIME_F_ERROR("protocol body check invalid! pcId[%ld], side[%d], type[%s]: \n",
+            protocol_id,
+            static_cast<int32_t>(side),
+            ProtocolBodyTypeToString(body_type).c_str(),
+            body_check.message.c_str());
+
+        return ProtocolRuntimeResult::Failed(
+            RuntimeControlCode::kInvalidArgument,
+            RuntimeError(RuntimeError::kInternalError),
+            body_check.message);
+    }
+
     auto pj_server = findServer(project_id);
 
     auto result = CheckProtocolRuntimeCondition(access_info,  
@@ -1258,6 +1290,18 @@ ProtocolRuntimeResult ProjectRuntimeManager::reconfigProtocolImpl(kit_muduo::Htt
     {
         return result;
     }
+
+    // body格式检查
+    auto body_check = ProtocolBodyPipeline::CheckFullProtocol(p);
+    if(!body_check.ok)
+    {
+        RUNTIME_F_ERROR("protocol body check invalid: %s\n", body_check.message.c_str());
+        return ProtocolRuntimeResult::Failed(
+            RuntimeControlCode::kInvalidArgument,
+            RuntimeError(RuntimeError::kInternalError),
+            body_check.message);
+    }
+
 
     std::shared_ptr<CustomTcpPattern> pattern = nullptr;
 

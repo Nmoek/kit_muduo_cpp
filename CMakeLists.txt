@@ -62,6 +62,9 @@ option(MUDUO_TEST.ASAN "build test_asan" OFF)
 option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
 option(MUDUO_TEST.CONTENT_PARSER "build test_content_parser" OFF)
+option(MUDUO_TEST.CONTENT_CODEC "build test_content_codec" OFF)
+ 
+
 option(WORK_TEST "build all work tests" OFF)
 option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
 option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
@@ -73,6 +76,7 @@ option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
 option(WORK_TEST.PROTOCOL_RUNTIME_KEY "build test_protocol_runtime_key" OFF)
 option(WORK_TEST.PROTOCOL_CONFIG_PIPELINE "build test_protocol_config_pipeline" OFF)
+option(WORK_TEST.PROTOCOL_BODY_PIPELINE "build test_protocol_body_pipeline" OFF)
 option(WORK_TEST.RUNTIME "build test_runtime" OFF)
 option(WORK_TEST.PROJECT_RUNTIME_MANAGER "build test_project_runtime_manager" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
@@ -104,6 +108,7 @@ enable_testing()
 # 添加第三方库链接路径
 set(PKG_LIB_PATH
     "pkg/llhttp/lib"
+    "pkg/pugixml/lib"
 )
 
 link_directories(${PKG_LIB_PATH})
@@ -121,8 +126,8 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/pkg/llhttp/include
     ${PROJECT_SOURCE_DIR}/pkg/
     ${PROJECT_SOURCE_DIR}/include/db/sqlite3/
-    ${PROJECT_SOURCE_DIR}/include/db/sqlite3/
     ${PROJECT_SOURCE_DIR}/pkg/nanoid_cpp/include/
+    ${PROJECT_SOURCE_DIR}pkg/pugixml/include
 )
 
 set(BASE_SRC
@@ -135,6 +140,7 @@ set(BASE_SRC
     src/base/util.cpp
     src/base/time_stamp.cpp
     src/base/content_parser.cpp
+    src/base/content_codec.cpp
     # src/base/multi_form_data_parser.cpp
 
     src/base/thread.cpp
@@ -230,6 +236,7 @@ set(WORK_DOMAIN_SRC
     src/work/domain/http_protocol_item.cpp
     src/work/domain/custom_tcp_protocol_item.cpp
     src/work/domain/protocol_config_pipeline.cpp
+    src/work/domain/protocol_body_pipeline.cpp
 
     src/work/domain/http_project_server.cpp
     src/work/domain/custom_tcp_project_server.cpp
@@ -296,6 +303,7 @@ set(LIB_LIB
     GTest::gmock_main
     llhttp
     crypt
+    pugixml
 )
 
 set(DEPENDS
@@ -395,6 +403,11 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache
 # test_content_parser multipart解析器测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_PARSER test_content_parser tests/test_content_parser.cpp ${WORK_SRC})
 
+# test_content_codec 基础数据类型序列化/反序列化测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_CODEC test_content_codec tests/test_content_codec.cpp)
+
+
+
 #sqlite3测试相关配置是否生效
 add_kit_test(WORK_TEST WORK_TEST.SQLITE3 test_sqlite3 tests/db/test_sqlite3.cpp ${WORK_SRC})
 
@@ -430,6 +443,11 @@ add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_RUNTIME_KEY test_protocol_runtime_key
 # 协议配置校验与运行态构建 pipeline 测试 test_protocol_config_pipeline
 add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_CONFIG_PIPELINE test_protocol_config_pipeline
     tests/work/domain/test_protocol_config_pipeline.cpp
+    ${WORK_DOMAIN_SRC})
+
+# 协议 Body 类型与字节内容匹配校验测试 test_protocol_body_pipeline
+add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_BODY_PIPELINE test_protocol_body_pipeline
+    tests/work/domain/test_protocol_body_pipeline.cpp
     ${WORK_DOMAIN_SRC})
 
 # 自定义tcp字段测试 test_custom_tcp_field

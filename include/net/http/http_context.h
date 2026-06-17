@@ -9,6 +9,7 @@
 #ifndef __KIT_HTTP_CONTEXT_H__
 #define __KIT_HTTP_CONTEXT_H__
 
+#include "base/content_codec.h"
 #include "net/http/http_request.h"
 #include "net/call_backs.h"
 #include "base/content_parser.h"
@@ -79,60 +80,21 @@ public:
         return it == attributes_.end() ? "" : it->second;
     }
 
-    /**
-     * @brief  从HttpRequest中自动根据Content-Type解析出body
-     * @param[in] body 
-     * @return true 
-     * @return false 
-     */
     template<typename T>
-    bool Bind(T *obj)
+    kit_muduo::ContentCodecResult bindJson(T *obj)
     {
-        int32_t type = _request->body().contentType()();
-
-        // 有点类似 配置系统设计
-        // 同时需要满足 多态 + 模版
-        // 特化与偏特化
-        try {
-
-            switch (type)
-            {
-                case http::ContentType::kJsonType: return BindWithJson<T>(obj); break;
-                case http::ContentType::kMultiForm: return BindWithMultiForm<T>(obj);
-                case http::ContentType::kXmlType:  break;
-    
-                default:
-                    break;
-            }
-    
-        } catch(std::exception &e) {
-            std::cerr << "HttpContext::Bind error! " << e.what() << std::endl;
-        }
-
-        return false;
-    }
-    template<typename T>
-    bool BindWithJson(T *obj)
-    {
-        *obj = nljson::parse(_request->body().data()).get<T>();
-        return true;
+        return kit_muduo::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::ContentFormat::kJson});
     }
 
     template<typename T>
-    bool BindWithMultiForm(T *obj)
+    kit_muduo::ContentCodecResult bindMultipart(T *obj)
     {
-        const auto &data = _request->body().data();
-        auto parts = MultiFormParser::parse(data.data(), data.size(), _request->getHeader("Content-Type"));
-        
-        return T::from_multi_form(parts, *obj);
+        return kit_muduo::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::ContentFormat::kMultipart});
     }
 
 
-    template<typename T>
-    bool BindWithXml(T *obj)
-    {
-        return false;
-    }
+private:
+    kit_muduo::ContentView makeContentView() const;
 
 private:
     /// @brief HTTP请求解析状态

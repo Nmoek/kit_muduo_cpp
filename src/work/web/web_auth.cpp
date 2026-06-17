@@ -24,11 +24,6 @@ struct LoginReq {
     std::string password;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(LoginReq, note, login_type, password)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, LoginReq &req)
-    {
-        return false;
-    }
 };
 
 nljson CurrentUserJson(const CurrentUser &user)
@@ -69,7 +64,8 @@ void AuthHandler::RegisterRoutes(std::shared_ptr<HttpServer> server)
 void AuthHandler::Login(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     LoginReq request;
-    if(!ctx->Bind(&request))
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
         return;

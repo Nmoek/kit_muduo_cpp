@@ -9,31 +9,29 @@
 
  #include "base/log.h"
 
-static auto g_base_logger = KIT_LOGGER("base");
-
 /*********流式输出**********/
 #define BASE_DEBUG(module) \
-    KIT_DEBUG(g_base_logger, module)
+    KIT_DEBUG(KIT_LOGGER("base"), module)
 #define BASE_INFO(module) \
-    KIT_INFO(g_base_logger, module)
+    KIT_INFO(KIT_LOGGER("base"), module)
 #define BASE_WARN(module) \
-    KIT_WARN(g_base_logger, module)
+    KIT_WARN(KIT_LOGGER("base"), module)
 #define BASE_ERROR(module) \
-    KIT_ERROR(g_base_logger, module)
+    KIT_ERROR(KIT_LOGGER("base"), module)
 #define BASE_FATAL(module) \
-    KIT_FATAL(g_base_logger, module)
+    KIT_FATAL(KIT_LOGGER("base"), module)
 
 /**********变参输出***********/
 #define BASE_F_DEBUG(module, fmt, ...) \
-    KIT_FMT_DEBUG(g_base_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_DEBUG(KIT_LOGGER("base"), module, fmt, ##__VA_ARGS__)
 #define BASE_F_INFO(module, fmt, ...) \
-    KIT_FMT_INFO(g_base_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_INFO(KIT_LOGGER("base"), module, fmt, ##__VA_ARGS__)
 #define BASE_F_WARN(module, fmt, ...) \
-    KIT_FMT_WARN(g_base_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_WARN(KIT_LOGGER("base"), module, fmt, ##__VA_ARGS__)
 #define BASE_F_ERROR(module, fmt, ...) \
-    KIT_FMT_ERROR(g_base_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_ERROR(KIT_LOGGER("base"), module, fmt, ##__VA_ARGS__)
 #define BASE_F_FATAL(module, fmt, ...) \
-    KIT_FMT_FATAL(g_base_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_FATAL(KIT_LOGGER("base"), module, fmt, ##__VA_ARGS__)
 
 /*******thread模块*********/
 #define THREAD_DEBUG()     BASE_DEBUG("Thread")
@@ -77,3 +75,18 @@ static auto g_base_logger = KIT_LOGGER("base");
 #define PARSER_F_FATAL(fmt, ...)     BASE_F_FATAL("parser", fmt, ##__VA_ARGS__)
 
 /*******content parser模块*********/
+
+/*******content codec模块*********/
+#define CODEC_DEBUG()     BASE_DEBUG("codec")
+#define CODEC_INFO()      BASE_INFO("codec")
+#define CODEC_WARN()      BASE_WARN("codec")
+#define CODEC_ERROR()     BASE_ERROR("codec")
+#define CODEC_FATAL()     BASE_FATAL("codec")
+
+#define CODEC_F_DEBUG(fmt, ...)     BASE_F_DEBUG("codec", fmt, ##__VA_ARGS__)
+#define CODEC_F_INFO(fmt, ...)      BASE_F_INFO("codec", fmt, ##__VA_ARGS__)
+#define CODEC_F_WARN(fmt, ...)      BASE_F_WARN("codec", fmt, ##__VA_ARGS__)
+#define CODEC_F_ERROR(fmt, ...)     BASE_F_ERROR("codec", fmt, ##__VA_ARGS__)
+#define CODEC_F_FATAL(fmt, ...)     BASE_F_FATAL("codec", fmt, ##__VA_ARGS__)
+
+/*******content codec模块*********/

@@ -32,6 +32,11 @@ enum ProjectMode {
     ServerMode = 1,  //服务器模式
     ClientMode = 2,  //客户端模式
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(ProjectMode, {
+    {static_cast<ProjectMode>(0), 0},
+    {ProjectMode::ServerMode, 1},
+    {ProjectMode::ClientMode, 2},
+})
 
 inline bool CheckProjectMode(ProjectMode mode)
 {

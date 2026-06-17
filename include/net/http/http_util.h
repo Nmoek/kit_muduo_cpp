@@ -97,9 +97,6 @@ struct ContentType
         return "application/json";
     }
 
-    // TODO 接口名称改一下
-    // const char * toStr() const { return toString().c_str(); }
-
     static ContentType FromString( const std::string &contentTypeStr)
     {
         std::string tmp;
@@ -220,13 +217,11 @@ public:
     void setContentType(int32_t contentTypeVal)
     {
         _contentType.set(contentTypeVal);
-        // _contentParser = ContentParser::Creator(contentTypeVal);
     }
 
     void setContentType(const ContentType &contentType)
     {
         _contentType = contentType;
-        // _contentParser = ContentParser::Creator(contentType());
     }
 
     void appendData(const std::string &data)
@@ -253,34 +248,19 @@ public:
 
     void reset() { _data.clear(); }
 
-    std::vector<char> data() const { return _data; }
+    std::vector<char> data() { return _data; }
+    const std::vector<char>& data() const { return _data; }
     std::string toString() const
     {
         return std::string(_data.begin(), _data.end());
     }
 
-    // std::shared_ptr<ContentParser> contentParser() const { return _contentParser; }
-    // void setContentParser(std::shared_ptr<ContentParser> parser) { _contentParser = std::move(parser); }
-
-    // bool parse()
-    // {
-    //     if(_contentParser)
-    //     {
-    //         bool ok = _contentParser->parse(_data);
-    //         _data = ok ? _contentParser->toString() : _data;
-    //         return ok;
-    //     }
-    //     // 解析器不存在默认不需要解析
-    //     return true;
-    // }
 
 private:
     /// @brief Body格式
     ContentType _contentType;
     /// @brief Body原始数据
     std::vector<char> _data;
-    /// @brief Body解析器(内含格式化后的数据)
-    // std::shared_ptr<ContentParser> _contentParser;
 };
 
 }

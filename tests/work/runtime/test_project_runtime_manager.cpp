@@ -61,6 +61,11 @@ static nlohmann::json RuntimeHttpRespCfg(const std::string &status_code)
     };
 }
 
+static std::vector<char> RuntimeBody(const std::string &text)
+{
+    return std::vector<char>(text.begin(), text.end());
+}
+
 static Protocol MakeRuntimeHttpProtocol(int64_t protocol_id, int64_t project_id, const std::string &path)
 {
     Protocol protocol;
@@ -77,7 +82,7 @@ static Protocol MakeRuntimeHttpProtocol(int64_t protocol_id, int64_t project_id,
     protocol.m_respBodyDataStatus = 1;
     protocol.m_reqCfg = RuntimeHttpReqCfg("GET", path);
     protocol.m_respCfg = RuntimeHttpRespCfg("200");
-    protocol.m_respBodyData = {'o', 'k'};
+    protocol.m_respBodyData = {'{', '}'};
     protocol.m_isEndian = false;
     protocol.m_ctime = kit_muduo::TimeStamp::Now();
     protocol.m_utime = kit_muduo::TimeStamp::Now();
@@ -550,6 +555,42 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolOffPersistsOnlyAndGeneratesRuntimeKe
 
 /*
 测试思路：
+1. 新增协议在写 DB 前必须先校验完整 req/resp body。
+2. req_body_type=json 但 req_body_data 是坏 JSON 时，应直接返回 kInvalidArgument。
+3. 断言 ProtocolSvc::Add 不被调用，避免非法 body 落库。
+
+示例：
+  AddProtocol(kOff, req_body_type=json, req_body="{\"bad\":")
+       |
+       v
+  ProtocolBodyPipeline failed -> no DB Add
+*/
+TEST(ProjectRuntimeManagerSuite, AddProtocolRejectsInvalidRequestJsonBodyBeforePersist)
+{
+    constexpr int64_t project_id = 9905;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        -1, project_id, "/runtime/add-invalid-req-body", ProtocolConfigState::kOff);
+    protocol.m_reqBodyData = RuntimeBody(R"({"bad":)");
+    protocol.m_reqBodyDataStatus = 1;
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mocksvc, GetById(_, project_id))
+        .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
+    EXPECT_CALL(*mock_protocol_svc, Add(_, _)).Times(0);
+
+    auto result = runtime_manager->addProtocol(nullptr, protocol);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
 1. 新增协议选择“保存并上线”时，如果项目 DB 状态是 STOPPED，后端必须拒绝。
 2. 断言拒绝发生在 ProtocolSvc::Add 前，避免把 kOn 协议保存成一个没有 runtime 的半状态。
 3. 返回 persisted=0/runtime_applied=0。
@@ -639,7 +680,7 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolOnPersistsAndAppliesRuntime)
        v
   runtime AddProtocolItem failed -> DB Del(id=990401)
 */
-TEST(ProjectRuntimeManagerSuite, DISABLED_AddProtocolOnRuntimeFailureRollsBackInsertedProtocol)
+TEST(ProjectRuntimeManagerSuite, AddProtocolOnRuntimeFailureRollsBackInsertedProtocol)
 {
     constexpr int64_t project_id = 9904;
     constexpr int64_t protocol_id = 990401;
@@ -1253,7 +1294,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyReConfigPersistsOnly)
     constexpr int64_t protocol_id = 992201;
     auto protocol = MakeRuntimeHttpProtocolWithState(
         protocol_id, project_id, "/runtime/body-reconfig", ProtocolConfigState::kReConfig);
-    const std::vector<char> body_data{'n', 'e', 'w'};
+    const std::vector<char> body_data{'{', '"', 'n', 'e', 'w', '"', ':', 't', 'r', 'u', 'e', '}'};
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
@@ -1277,6 +1318,169 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyReConfigPersistsOnly)
 
 /*
 测试思路：
+1. DetailBody/updateProtocolBody 是单侧 body 修改入口，也必须在写 DB 前校验 body_type 与数据。
+2. body_type=json 但 body_data 是坏 JSON 时，manager 应在 ProtocolSvc::UpdateBody 前拒绝。
+3. 断言不会读取旧 body，也不会写 DB 或触碰 runtime。
+
+示例：
+  updateProtocolBody(response, json, "{\"bad\":")
+       |
+       v
+  ProtocolBodyPipeline failed -> no UpdateBody
+*/
+TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidJsonBeforePersist)
+{
+    constexpr int64_t project_id = 9926;
+    constexpr int64_t protocol_id = 992601;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/body-invalid-json", ProtocolConfigState::kOff);
+    const auto invalid_body = RuntimeBody(R"({"bad":)");
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+        .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
+                        Return(true)));
+    EXPECT_CALL(*mock_protocol_svc, GetBodyInfoById(_, _, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_protocol_svc, UpdateBody(_, _, _, _, _)).Times(0);
+
+    auto result = runtime_manager->updateProtocolBody(
+        nullptr, project_id, protocol_id, ProtocolSide::kResponse, ProtocolBodyType::kJson, invalid_body);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. updateProtocolBody 的 XML 分支也必须在写 DB 前走 ProtocolBodyPipeline。
+2. body_type=xml 但 body_data 标签未正确闭合时，应直接返回 kInvalidArgument。
+3. 断言不会读取旧 body、不会调用 UpdateBody，也不会触碰 runtime。
+
+示例：
+  updateProtocolBody(request, xml, "<root><a></root>")
+       |
+       v
+  xml body invalid -> no UpdateBody
+*/
+TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidXmlBeforePersist)
+{
+    constexpr int64_t project_id = 9928;
+    constexpr int64_t protocol_id = 992801;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/body-invalid-xml", ProtocolConfigState::kOff);
+    const auto invalid_body = RuntimeBody("<root><a></root>");
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+        .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
+                        Return(true)));
+    EXPECT_CALL(*mock_protocol_svc, GetBodyInfoById(_, _, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_protocol_svc, UpdateBody(_, _, _, _, _)).Times(0);
+
+    auto result = runtime_manager->updateProtocolBody(
+        nullptr, project_id, protocol_id, ProtocolSide::kRequest, ProtocolBodyType::kXml, invalid_body);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. text body 只允许合法 UTF-8 文本，不能保存非法 UTF-8 字节。
+2. 输入 0xC3 0x28 是典型非法 UTF-8 序列，pipeline 应在 DB 前拒绝。
+3. 断言 UpdateBody 不被调用，防止二进制数据误按 text 保存。
+
+示例：
+  updateProtocolBody(response, text, [0xC3,0x28])
+       |
+       v
+  text body invalid -> no UpdateBody
+*/
+TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidTextBeforePersist)
+{
+    constexpr int64_t project_id = 9929;
+    constexpr int64_t protocol_id = 992901;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/body-invalid-text", ProtocolConfigState::kOff);
+    const std::vector<char> invalid_body{static_cast<char>(0xC3), static_cast<char>(0x28)};
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+        .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
+                        Return(true)));
+    EXPECT_CALL(*mock_protocol_svc, GetBodyInfoById(_, _, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_protocol_svc, UpdateBody(_, _, _, _, _)).Times(0);
+
+    auto result = runtime_manager->updateProtocolBody(
+        nullptr, project_id, protocol_id, ProtocolSide::kResponse, ProtocolBodyType::kText, invalid_body);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. binary body 是任意字节透传，NUL 和非法 UTF-8 都应允许保存。
+2. 协议处于 kOff，manager 只写 DB，不触碰 runtime。
+3. 断言 UpdateBody 收到原始字节，返回 persisted=1/runtime_applied=0。
+
+示例：
+  updateProtocolBody(request, binary, [0x00,0xff,0xc3,0x28])
+       |
+       v
+  UpdateBody called once
+*/
+TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyBinaryPersistsAnyBytes)
+{
+    constexpr int64_t project_id = 9930;
+    constexpr int64_t protocol_id = 993001;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/body-binary", ProtocolConfigState::kOff);
+    const std::vector<char> body_data{
+        '\0',
+        static_cast<char>(0xFF),
+        static_cast<char>(0xC3),
+        static_cast<char>(0x28),
+    };
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+        .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
+                        Return(true)));
+    EXPECT_CALL(*mock_protocol_svc, GetBodyInfoById(_, _, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_protocol_svc,
+                UpdateBody(_, protocol_id, ProtocolSide::kRequest, ProtocolBodyType::kBinary, Eq(body_data)))
+        .WillOnce(Return(true));
+
+    auto result = runtime_manager->updateProtocolBody(
+        nullptr, project_id, protocol_id, ProtocolSide::kRequest, ProtocolBodyType::kBinary, body_data);
+
+    ASSERT_TRUE(result.ok()) << result.status.message;
+    EXPECT_EQ(result.receipt.persisted, 1);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+    EXPECT_EQ(result.snapshot.config_state, ProtocolConfigState::kOff);
+}
+
+/*
+测试思路：
 1. kOn 协议运行中更新 body，manager 要先读取旧 body 用于回滚，再写 DB，再更新 runtime。
 2. runtime 更新失败时，应把 DB body 回滚为旧值。
 3. 返回 persisted=0/runtime_applied=0，runtime item 的 body 保持旧值。
@@ -1290,9 +1494,9 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRuntimeFailureRollsBackDbBody
     constexpr int64_t protocol_id = 992301;
     auto protocol = MakeRuntimeHttpProtocolWithState(
         protocol_id, project_id, "/runtime/body-rollback", ProtocolConfigState::kOn);
-    protocol.m_respBodyData = {'o', 'l', 'd'};
-    const std::vector<char> old_body{'o', 'l', 'd'};
-    const std::vector<char> new_body{'n', 'e', 'w'};
+    protocol.m_respBodyData = {'{', '"', 'o', 'l', 'd', '"', ':', 't', 'r', 'u', 'e', '}'};
+    const std::vector<char> old_body{'{', '"', 'o', 'l', 'd', '"', ':', 't', 'r', 'u', 'e', '}'};
+    const std::vector<char> new_body{'{', '"', 'n', 'e', 'w', '"', ':', 't', 'r', 'u', 'e', '}'};
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
@@ -1411,6 +1615,46 @@ TEST(ProjectRuntimeManagerSuite, ReconfigProtocolRejectsNonReConfigProtocol)
     constexpr int64_t protocol_id = 992501;
     auto input = MakeRuntimeHttpProtocolWithState(
         protocol_id, project_id, "/runtime/reconfig-reject", ProtocolConfigState::kOff);
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+        .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(input, ProjectRuntimeState::kStopped)),
+                        Return(true)));
+    EXPECT_CALL(*mock_protocol_svc, UpdateById(_, _)).Times(0);
+
+    auto result = runtime_manager->reconfigProtocol(nullptr, input);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
+}
+
+/*
+测试思路：
+1. ReconfigProtocol 会重写完整协议项，因此也必须校验完整 req/resp body。
+2. req body 合法但 resp_body_type=json/resp_body_data 非法时，应在 UpdateById 前拒绝。
+3. 该用例固定 response body 也会被独立校验，避免只校验 request body 的漏检。
+
+示例：
+  ReconfigProtocol(req="{}", resp="{\"bad\":")
+       |
+       v
+  response body invalid -> no UpdateById
+*/
+TEST(ProjectRuntimeManagerSuite, ReconfigProtocolRejectsInvalidResponseJsonBodyBeforePersist)
+{
+    constexpr int64_t project_id = 9927;
+    constexpr int64_t protocol_id = 992701;
+    auto input = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/reconfig-invalid-resp-body", ProtocolConfigState::kReConfig);
+    input.m_reqBodyData = RuntimeBody("{}");
+    input.m_reqBodyDataStatus = 1;
+    input.m_respBodyData = RuntimeBody(R"({"bad":)");
+    input.m_respBodyDataStatus = 1;
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();

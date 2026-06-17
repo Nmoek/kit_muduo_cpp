@@ -120,6 +120,35 @@ HttpContextPtr MakeJsonContextForPath(const nljson &body, const std::string &pat
     return ctx;
 }
 
+HttpContextPtr MakeRawProtocolContext(const std::string &path,
+                                      const std::string &content_type,
+                                      const std::string &body)
+{
+    auto ctx = std::make_shared<HttpContext>();
+    SetCurrentUserToContext(ctx, CurrentUser{1, "web_protocol_tester", UserRole::kNormal, UserStatus::kActive});
+    auto req = ctx->request();
+    req->setVersion(Version::kHttp11);
+    req->setMethod(HttpRequest::Method::kPost);
+    req->setPath(path);
+    req->addHeader("Content-Type", content_type);
+
+    Body req_body;
+    req_body.appendData(body);
+    req->setBody(req_body);
+    return ctx;
+}
+
+std::string MakeMinimalMultipartBody(const std::string &boundary)
+{
+    std::string body;
+    body.append("--").append(boundary).append("\r\n");
+    body.append("Content-Disposition: form-data; name=\"field\"\r\n");
+    body.append("\r\n");
+    body.append("value\r\n");
+    body.append("--").append(boundary).append("--\r\n");
+    return body;
+}
+
 void SetProtocolRouteParam(HttpContextPtr ctx, int64_t protocol_id)
 {
     ctx->request()->addRouteParam("protocol_id", std::to_string(protocol_id));
@@ -625,4 +654,107 @@ TEST_F(ProtocolHandlerRuntimeReceiptSuite, DetailCfgRuntimeFailureWritesReceiptF
     EXPECT_EQ(resp["message"], "protocol runtime apply failed");
     EXPECT_EQ(resp["data"]["persisted"], 0);
     EXPECT_EQ(resp["data"]["runtime_applied"], 0);
+}
+
+/*
+测试思路：
+1. AddProtocol 是 multipart-only 接口，不能接受 application/json 请求体。
+2. 构造 JSON body 调用 handler，bindMultipart 应在格式检查阶段失败。
+3. 断言不会进入 project access、protocol service 或 runtime manager。
+
+示例：
+  POST /protocols/add
+  Content-Type=application/json
+       |
+       v
+  {"code":-200,"message":"body parse error"}
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, AddProtocolRejectsJsonBodyBeforeAccessAndRuntime)
+{
+    EXPECT_CALL(*project_mock_, GetById(testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*runtime_mock_, addProtocol(testing::_, testing::_)).Times(0);
+
+    auto ctx = MakeRawProtocolContext(
+        "/protocols/add",
+        "application/json",
+        R"({"header":{"project_id":1}})");
+
+    handler_->AddProtocol(nullptr, ctx);
+
+    auto resp = ResponseBody(ctx);
+    EXPECT_EQ(resp["code"], -200);
+    EXPECT_EQ(resp["message"], "body parse error");
+    EXPECT_EQ(resp["data"]["persisted"], 0);
+    EXPECT_EQ(resp["data"]["runtime_applied"], 0);
+}
+
+/*
+测试思路：
+1. DetailBody 是 multipart-only 接口，body 数据必须通过 multipart part 上传。
+2. 构造 JSON body 调用 handler，应在 bindMultipart 阶段被拒绝。
+3. 断言不会解析 route 后继续鉴权，也不会调用 updateProtocolBody。
+
+示例：
+  POST /protocols/930301/details/body
+  Content-Type=application/json
+       |
+       v
+  body parse error
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, DetailBodyRejectsJsonBodyBeforeAccessAndRuntime)
+{
+    constexpr int64_t protocol_id = 930301;
+
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*runtime_mock_,
+                updateProtocolBody(testing::_, testing::_, testing::_, testing::_, testing::_, testing::_))
+        .Times(0);
+
+    auto ctx = MakeRawProtocolContext(
+        "/protocols/" + std::to_string(protocol_id) + "/details/body",
+        "application/json",
+        R"({"header":{"side":1,"body_type":"json"},"cfg_data":"{}"})");
+    SetProtocolRouteParam(ctx, protocol_id);
+
+    handler_->DetailBody(nullptr, ctx);
+
+    auto resp = ResponseBody(ctx);
+    EXPECT_EQ(resp["code"], -200);
+    EXPECT_EQ(resp["message"], "body parse error");
+}
+
+/*
+测试思路：
+1. LaunchAndWithdrawsProtocol 是 JSON-only 接口，不能接受 multipart/form-data。
+2. 构造一个最小 multipart body，但调用 JSON-only handler。
+3. bindJson 应拒绝该格式，且不调用 access 查询或 runtime manager。
+
+示例：
+  POST /protocols/930401/runtime_enabled
+  Content-Type=multipart/form-data
+       |
+       v
+  body parse error
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, LaunchProtocolRejectsMultipartBodyBeforeAccessAndRuntime)
+{
+    constexpr int64_t protocol_id = 930401;
+    const std::string boundary = "WEB-PROTOCOL-JSON-ONLY";
+
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*runtime_mock_, enableProtocol(testing::_, testing::_, testing::_)).Times(0);
+    EXPECT_CALL(*runtime_mock_, disableProtocol(testing::_, testing::_, testing::_)).Times(0);
+
+    auto ctx = MakeRawProtocolContext(
+        "/protocols/" + std::to_string(protocol_id) + "/runtime_enabled",
+        "multipart/form-data; boundary=" + boundary,
+        MakeMinimalMultipartBody(boundary));
+    SetProtocolRouteParam(ctx, protocol_id);
+
+    handler_->LaunchAndWithdrawsProtocol(nullptr, ctx);
+
+    auto resp = ResponseBody(ctx);
+    EXPECT_EQ(resp["code"], -200);
+    EXPECT_EQ(resp["message"], "body parse error");
 }

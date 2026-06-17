@@ -19,11 +19,6 @@ struct UserListReq {
     std::string status{"all"};
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(UserListReq, offset, limit, status)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, UserListReq &req)
-    {
-        return false;
-    }
 };
 
 struct UserEditReq {
@@ -33,11 +28,6 @@ struct UserEditReq {
     std::string password;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(UserEditReq, note_name, role, status, password)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, UserEditReq &req)
-    {
-        return false;
-    }
 };
 
 UserStatus ListStatusFromString(const std::string &status)
@@ -100,7 +90,8 @@ void UserHandler::RegisterRoutes(std::shared_ptr<HttpServer> server)
 void UserHandler::List(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     UserListReq request;
-    if(!ctx->Bind(&request))
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
         return;
@@ -118,7 +109,8 @@ void UserHandler::List(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 void UserHandler::Add(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     UserEditReq request;
-    if(!ctx->Bind(&request))
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
         return;
@@ -154,7 +146,8 @@ void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
     UserEditReq request;
-    if(!ParseUserId(ctx, user_id) || !ctx->Bind(&request))
+    auto bind_result = ctx->bindJson(&request);
+    if(!ParseUserId(ctx, user_id) || !bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "request parse error"}, {"data", nljson::object()}});
         return;

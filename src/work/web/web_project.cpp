@@ -48,13 +48,6 @@ struct CustomPatternFieldReq {
     std::string attr;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CustomPatternFieldReq, name, len, attr)
-
-    // multiform转换
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, CustomPatternFieldReq &req)
-    {
-        PJ_WARN() << "CustomPatternFieldReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 struct CustomPatternMagicNumReq {
@@ -62,30 +55,18 @@ struct CustomPatternMagicNumReq {
     std::string  value;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(CustomPatternMagicNumReq, pos, value)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, CustomPatternMagicNumReq &req)
-    {
-        PJ_WARN() << "CustomPatternMagicNumReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 
 struct AddProjectReq {
     std::string              name;             // 测试名称
-    int32_t                  mode;             // 测试模式
+    ProjectMode              mode;             // 测试模式
     ProtocolType                  protocol_type;    // 协议种类 1 2 3
     // uint16_t                 listen_port;      // 监听端口号(弃用 不再由用户指定)
     std::string              target_ip;        // 目标ip + 端口 x.x.x.x:8888
     nljson                   pattern_info;  // 解析格式信息
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(AddProjectReq, name, mode, protocol_type, target_ip, pattern_info)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, AddProjectReq &req)
-    {
-        PJ_WARN() << "AddProjectReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 
@@ -95,12 +76,6 @@ struct StartAndStopProjectReq
     int32_t operation; // 1 start 0 stop
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(StartAndStopProjectReq, operation)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, StartAndStopProjectReq &req)
-    {
-        PJ_WARN() << "StartAndStopProjectReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 /**
@@ -111,36 +86,18 @@ struct ProjectListReq {
     int32_t                  limit;           // 页大小
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectListReq, offset, limit)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProjectListReq &req)
-    {
-        PJ_WARN() << "ProjectListReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 struct ProjectDetailNameReq {
 
     std::string name;
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectDetailNameReq, name)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProjectDetailNameReq &req)
-    {
-        PC_WARN() << "ProjectDetailNameReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 struct ProjectEditPatternInfoReq {
     int64_t     id;            // project id
     nljson      pattern_info;  // 格式内容
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectEditPatternInfoReq, id, pattern_info)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProjectEditPatternInfoReq &req)
-    {
-        PC_WARN() << "ProjectEditPatternInfoReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 
@@ -241,11 +198,10 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     WriteOpResult write_result;
     AddProjectReq request;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PJ_F_ERROR("body bind error! \n");
+        PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
@@ -270,7 +226,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     kit_domain::Project p;
     p.m_id = -1;
     p.m_name = std::move(request.name);
-    p.m_mode = static_cast<ProjectMode>(request.mode);
+    p.m_mode = request.mode;
     p.m_protocolType = request.protocol_type;
     p.m_listenPort = 0;
     p.m_targetIp =  std::move(request.target_ip);
@@ -499,11 +455,10 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
 
     PJ_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PJ_F_ERROR("body bind error! \n");
+        PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
         resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
         return;
     }
@@ -631,11 +586,10 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
@@ -716,10 +670,10 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
     WriteOpResult write_result;
     ProjectEditPatternInfoReq request;
 
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;

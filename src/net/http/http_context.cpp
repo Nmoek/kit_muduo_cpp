@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "net/http/http_context.h"
+#include "base/content_codec.h"
 #include "net/buffer.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
@@ -16,6 +17,9 @@
 
 #include <algorithm>
 #include "net/http/http_context.h"
+
+
+using namespace kit_muduo;
 
 namespace kit_muduo {
 namespace http {
@@ -80,7 +84,17 @@ bool HttpContext::parseResponse(const std::string &data, TimeStamp receiveTime)
     }
     return ok;
 }
-
+ContentView HttpContext::makeContentView() const
+{
+    const auto &body_data = _request->body().data();
+    const std::string &raw_content_type = _request->getHeader("Content-Type");
+    
+    return {
+        .data = body_data.data(),
+        .size = body_data.size(),
+        .meta = ParseContentMetaFromHttpHeader(raw_content_type),
+    };
+}
 
 }
 }

@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "web/web_protocol.h"
+#include "base/content_codec.h"
 #include "domain/protocol.h"
 #include "domain/project.h"
 #include "domain/type.h"
@@ -83,82 +84,61 @@ struct AddProtocolReq {
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AddProtocolReq, header, protocol_req_cfg, protocol_resp_cfg, protocol_req_body, protocol_resp_body) 
 
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, AddProtocolReq &req)
-    {
-        
-        // 必填 且 不能为空
-        auto it = parts.find("protocol_cfg_header");
-        if(it == parts.end() || it->second.data.empty()) 
-        {
-            PC_F_ERROR("multiform name 'protocol_cfg_header' invalid! \n");
-            return false;
-        }
-        nljson::parse(it->second.data).get_to<AddProtocolReqHeader>(req.header);
-
-        // 必填 允许为空
-        it = parts.find("protocol_req_cfg");
-        if(it == parts.end())
-        {
-            PC_F_ERROR("multiform name 'protocol_req_cfg' invalid! \n");
-            return false;
-        }
-        req.protocol_req_cfg = nljson::parse(it->second.data);
-  
-        it = parts.find("protocol_resp_cfg");
-        if(it == parts.end())
-        {
-            PC_F_ERROR("multiform name 'protocol_resp_cfg' invalid! \n");
-            return false;
-        }
-        req.protocol_resp_cfg = nljson::parse(it->second.data);
-
-        it = parts.find("protocol_req_body");
-        if(it == parts.end())
-        {
-            PC_F_ERROR("multiform name 'protocol_req_body' invalid! \n");
-            return false;
-        }
-        req.protocol_req_body = std::move(it->second.data);
-
-        it = parts.find("protocol_resp_body");
-        if(it == parts.end())
-        {
-            PC_F_ERROR("multiform name 'protocol_resp_body' invalid! \n");
-            return false;
-        }
-        req.protocol_resp_body = std::move(it->second.data);
-
-        return true;
-    }
-
 };
 
 // 重配置请求结构 复用新增
 using ReconfigProtocolReq = AddProtocolReq;
+}
 
+/***********Multipart 参数模版特化***********/
+namespace kit_muduo {
+template<>
+struct MultipartObjectBinder<kit_domain::AddProtocolReq>
+{
+    static ContentCodecResult Bind(const kit_muduo::MultiFormParser::PartMap& parts, kit_domain::AddProtocolReq *req)
+    {
+        auto result = ParseJsonPartToObject(parts, "protocol_cfg_header", &req->header);
+        if(!result.ok)
+        {
+            return result;
+        }
+
+        result = ParseJsonPartToRaw(parts, "protocol_req_cfg", req->protocol_req_cfg);
+        if(!result.ok)
+        {
+            return result;
+        }
+        result = ParseJsonPartToRaw(parts, "protocol_resp_cfg", req->protocol_resp_cfg);
+        if(!result.ok)
+        {
+            return result;
+        }
+
+        result = ParseOctetStreamPartToRaw(parts, "protocol_req_body", req->protocol_req_body);
+        if(!result.ok)
+        {
+            return result;
+        }
+
+        result = ParseOctetStreamPartToRaw(parts, "protocol_resp_body", req->protocol_resp_body);
+        if(!result.ok)
+        {
+            return result;
+        }
+
+        return ContentCodecResult::Success();
+    }
+};
+
+}
+/***********Multipart 参数模版特化***********/
+
+namespace kit_domain {
 
 struct LaunchAndWithdrawsProtocolReq {
     ProtocolConfigState runtime_enabled;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(LaunchAndWithdrawsProtocolReq, runtime_enabled)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, LaunchAndWithdrawsProtocolReq &req)
-    {
-        PC_WARN() << "DelProtocolReq dont supoort!" << std::endl;
-        return false;
-    }
-};
-
-
-/**
- * @brief DelProtocol 用于Body解析
- */
-struct DelProtocolReq {
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, DelProtocolReq &req)
-    {
-        PC_WARN() << "DelProtocolReq dont supoort!" << std::endl;
-        return false;
-    }
 };
 
 /**
@@ -166,18 +146,12 @@ struct DelProtocolReq {
  */
 struct ProtocolListReq {
     int64_t                  project_id;      // 所属测试服务id
-    int32_t                  status{static_cast<int32_t>(ProtocolStatus::kValid)};  // 状态
+    ProtocolStatus           status{ProtocolStatus::kValid};  // 状态
     bool                     include_inactive{false}; // 管理员列表是否包含已删除协议项
     int32_t                  offset;          // 页码
     int32_t                  limit;           // 页大小
     
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ProtocolListReq, project_id, status, include_inactive, offset, limit)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProtocolListReq &req)
-    {
-        PJ_WARN() << "ProtocolListReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 
@@ -185,12 +159,6 @@ struct ProtocolDetailNameReq {
     std::string name;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProtocolDetailNameReq, name)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, ProtocolDetailNameReq &req)
-    {
-        PC_WARN() << "ProtocolDetailNameReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 /*复用 */
@@ -201,12 +169,6 @@ struct DetailCfgReq {
     nljson           cfg_data;     // 协议配置数据 必须是json
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailCfgReq, side, cfg_data)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailCfgReq &req)
-    {
-        PC_WARN() << "DetailCfgReq dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 
@@ -216,12 +178,6 @@ struct DetailReqHeader {
 
     // 带默认值 = 未解析到的字段也不会抛异常
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailReqHeader, side, body_type)
-
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailReqHeader &req)
-    {
-        PC_WARN() << "DetailReqHeader dont support from_multi_form" << std::endl;
-        return false;
-    }
 };
 
 struct DetailReq {
@@ -230,28 +186,37 @@ struct DetailReq {
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(DetailReq, header, cfg_data)
 
-    static bool from_multi_form(const MultiFormConvert::PartMap &parts, DetailReq &req)
-    {
-        auto it = parts.find("detail_header");
-        if(it == parts.end()) 
-        {
-            PC_F_ERROR("multiform name: detail_req_header not found! \n");
-            return false;
-        }
-        req.header = nljson::parse(it->second.data).get<DetailReqHeader>();
+};
 
-        it = parts.find("detail_cfg_data");
-        if(it == parts.end())  // 可能会传入空的detail_cfg_data
+}
+
+/***********Multipart 参数模版特化***********/
+namespace kit_muduo {
+template<>
+struct MultipartObjectBinder<kit_domain::DetailReq>
+{
+    static ContentCodecResult Bind(const kit_muduo::MultiFormParser::PartMap& parts, kit_domain::DetailReq *req)
+    {
+        auto result = ParseJsonPartToObject(parts, "detail_header", &req->header);
+        if(!result.ok)
         {
-            PC_F_WARN("multiform name: detail_cfg_data not found! \n");
+            return result;
         }
-        else
+
+        result = ParseOctetStreamPartToRaw(parts, "detail_cfg_data", req->cfg_data);
+        if(!result.ok)
         {
-            req.cfg_data = std::move(it->second.data);
+            return result;
         }
-        return true;
+
+        return ContentCodecResult::Success();
     }
 };
+
+}
+/***********Multipart 参数模版特化***********/
+
+namespace kit_domain {
 
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
@@ -439,11 +404,10 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     WriteOpResult write_result;
     AddProtocolReq request; // 表单
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindMultipart(&request);
+    if(!bind_result.ok)
     {
-        PJ_F_ERROR("body bind error! \n");
+        PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "body parse error"));
         return;
@@ -515,10 +479,10 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
     WriteOpResult write_result;
     LaunchAndWithdrawsProtocolReq request;
 
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PJ_F_ERROR("body bind error! \n");
+        PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "body parse error"));
         return;
@@ -658,11 +622,10 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
 
     PC_F_DEBUG("\n%s\n", req->body().toString().c_str());
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindMultipart(&request);
+    if(!bind_result.ok)
     {
-        PJ_F_ERROR("body bind error! \n");
+        PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "body parse error"));
         return;
@@ -796,15 +759,14 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
-    ProtocolListReq request = {0}; //json
+    ProtocolListReq request; //json
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
         return;
@@ -864,11 +826,10 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
 
     PC_DEBUG()  << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
         WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
     }
@@ -922,11 +883,10 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
@@ -994,11 +954,10 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindMultipart(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "body parse error"));
         return;
@@ -1178,10 +1137,10 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
         return;
@@ -1249,8 +1208,6 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     resp->setStateCode(StateCode::k200Ok);
     resp->body().setContentType(ContentType::kJsonType);
 
-    DetailReqHeader request; //json
-
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
     int64_t protocol_id = 0;
@@ -1263,15 +1220,8 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     ProtocolSide side = ProtocolSide::kRequest;
     if(!ParseProtocolSideFromQuery(ctx, side))
     {
-        // 兼容旧调用方，允许 POST JSON body 传 side。
-        bool ok = ctx->Bind(&request);
-        if(!ok)
-        {
-            PC_F_ERROR("body bind error! \n");
-            resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
-            return;
-        }
-        side = request.side;
+        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        return;
     }
 
     ProtocolAccessInfo access_info;
@@ -1322,8 +1272,6 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
 
-    DetailReqHeader request; //json
-
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
     int64_t protocol_id = 0;
@@ -1336,15 +1284,8 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     ProtocolSide side = ProtocolSide::kRequest;
     if(!ParseProtocolSideFromQuery(ctx, side))
     {
-        // 兼容旧调用方，允许 POST JSON body 传 side。
-        bool ok = ctx->Bind(&request);
-        if(!ok)
-        {
-            PC_F_ERROR("body bind error! \n");
-            resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
-            return;
-        }
-        side = request.side;
+        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        return;
     }
 
     ProtocolAccessInfo access_info;
@@ -1406,10 +1347,10 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
     // 自动根据req中的 content-type类型去解析对象
-    bool ok = ctx->Bind(&request);
-    if(!ok)
+    auto bind_result = ctx->bindJson(&request);
+    if(!bind_result.ok)
     {
-        PC_F_ERROR("body bind error! \n");
+        PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
         resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
         return;
@@ -1440,7 +1381,7 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     std::vector<char> body_data;
     try {
 
-        ok = svc_->GetBodyInfoById(ctx, protocol_id, request.side, body_type, body_data);
+        bool ok = svc_->GetBodyInfoById(ctx, protocol_id, request.side, body_type, body_data);
         if(!ok)
             throw std::logic_error("GetBodyDataById failed");
     } catch(const std::exception& e) {

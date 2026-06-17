@@ -66,8 +66,8 @@ constexpr const char *kCurrentUserName = "web_project_tester";
 
 struct AddProjectReq {
     std::string name;
-    int32_t mode;
-    int32_t protocol_type;
+    ProjectMode mode;
+    ProtocolType protocol_type;
     std::string target_ip;
     nljson pattern_info;
 
@@ -543,8 +543,8 @@ static std::vector<HandlerCase> MakeAddProjectCases()
             [] {
                 return MakeAddProjectJsonContext(AddProjectReq{
                     "test1",
-                    static_cast<int32_t>(ProjectMode::ServerMode),
-                    static_cast<int32_t>(ProtocolType::kHttp),
+                    ProjectMode::ServerMode,
+                    ProtocolType::kHttp,
                     "",
                     nljson::object(),
                 });
@@ -602,20 +602,20 @@ static std::vector<HandlerCase> MakeAddProjectCases()
 
         /*
         测试思路：
-        1. JSON 解析成功，但 protocol_type 超出 ProtocolType 有效范围。
+        1. JSON 解析成功，但 protocol_type 映射为 ProtocolType::kUnknown。
         2. CheckProjectInfo 在 service 前失败。
         3. ProjectSvc::Add 不应被调用。
 
         示例：
-          protocol_type=999 -> {"code":-200,"message":"project info invalid"}
+          protocol_type=UNKNOWN -> {"code":-200,"message":"project info invalid"}
         */
         Case("RejectInvalidProtocolType",
             "拒绝非法协议类型：业务参数校验失败，不进入 ProjectSvc::Add。",
             [] {
                 return MakeAddProjectJsonContext(AddProjectReq{
                     "bad_type",
-                    static_cast<int32_t>(ProjectMode::ServerMode),
-                    999,
+                    ProjectMode::ServerMode,
+                    ProtocolType::kUnknown,
                     "",
                     nljson::object(),
                 });
@@ -648,8 +648,8 @@ static std::vector<HandlerCase> MakeAddProjectCases()
                     "/projects/add",
                     AddProjectReq{
                         "test1",
-                        static_cast<int32_t>(ProjectMode::ServerMode),
-                        static_cast<int32_t>(ProtocolType::kHttp),
+                        ProjectMode::ServerMode,
+                        ProtocolType::kHttp,
                         "",
                         nljson::object(),
                     });
@@ -679,8 +679,8 @@ static std::vector<HandlerCase> MakeAddProjectCases()
             [] {
                 return MakeAddProjectJsonContext(AddProjectReq{
                     "test1",
-                    static_cast<int32_t>(ProjectMode::ServerMode),
-                    static_cast<int32_t>(ProtocolType::kHttp),
+                    ProjectMode::ServerMode,
+                    ProtocolType::kHttp,
                     "",
                     nljson::object(),
                 });
