@@ -90,7 +90,7 @@ void UserHandler::RegisterRoutes(std::shared_ptr<HttpServer> server)
 void UserHandler::List(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     UserListReq request;
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
@@ -109,7 +109,7 @@ void UserHandler::List(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 void UserHandler::Add(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     UserEditReq request;
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
@@ -146,7 +146,7 @@ void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
     UserEditReq request;
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!ParseUserId(ctx, user_id) || !bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "request parse error"}, {"data", nljson::object()}});

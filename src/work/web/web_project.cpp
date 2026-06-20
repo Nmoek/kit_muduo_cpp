@@ -198,7 +198,7 @@ void ProjectHandler::AddProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     WriteOpResult write_result;
     AddProjectReq request;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -455,7 +455,7 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
 
     PJ_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -586,7 +586,7 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
         return;
     }
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -670,7 +670,7 @@ void ProjectHandler::EditPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_muduo
     WriteOpResult write_result;
     ProjectEditPatternInfoReq request;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());

@@ -7,11 +7,13 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "web/web_protocol.h"
-#include "base/content_codec.h"
+
 #include "domain/protocol.h"
 #include "domain/project.h"
 #include "domain/type.h"
 #include "domain/user.h"
+#include "net/http/http_content_codec.h"
+#include "net/http/multiform.h"
 #include "service/svc_project.h"
 #include "service/svc_protocol.h"
 #include "web/protocol_vo.h"
@@ -88,52 +90,33 @@ struct AddProtocolReq {
 
 // 重配置请求结构 复用新增
 using ReconfigProtocolReq = AddProtocolReq;
-}
 
-/***********Multipart 参数模版特化***********/
-namespace kit_muduo {
-template<>
-struct MultipartObjectBinder<kit_domain::AddProtocolReq>
+inline void from_multiform(const MultiForm &form, AddProtocolReq &req)
 {
-    static ContentCodecResult Bind(const kit_muduo::MultiFormParser::PartMap& parts, kit_domain::AddProtocolReq *req)
-    {
-        auto result = ParseJsonPartToObject(parts, "protocol_cfg_header", &req->header);
-        if(!result.ok)
-        {
-            return result;
-        }
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
+        form.at("protocol_cfg_header"),
+        req.header,
+        {kit_muduo::http::ContentFormat::kJson}));
 
-        result = ParseJsonPartToRaw(parts, "protocol_req_cfg", req->protocol_req_cfg);
-        if(!result.ok)
-        {
-            return result;
-        }
-        result = ParseJsonPartToRaw(parts, "protocol_resp_cfg", req->protocol_resp_cfg);
-        if(!result.ok)
-        {
-            return result;
-        }
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
+        form.at("protocol_req_cfg"),
+        req.protocol_req_cfg,
+        {kit_muduo::http::ContentFormat::kJson}));
 
-        result = ParseOctetStreamPartToRaw(parts, "protocol_req_body", req->protocol_req_body);
-        if(!result.ok)
-        {
-            return result;
-        }
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
+        form.at("protocol_resp_cfg"),
+        req.protocol_resp_cfg,
+        {kit_muduo::http::ContentFormat::kJson}));
 
-        result = ParseOctetStreamPartToRaw(parts, "protocol_resp_body", req->protocol_resp_body);
-        if(!result.ok)
-        {
-            return result;
-        }
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartToRaw(
+        form.at("protocol_req_body"),
+        req.protocol_req_body));
 
-        return ContentCodecResult::Success();
-    }
-};
-
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartToRaw(
+        form.at("protocol_resp_body"),
+        req.protocol_resp_body));
 }
-/***********Multipart 参数模版特化***********/
 
-namespace kit_domain {
 
 struct LaunchAndWithdrawsProtocolReq {
     ProtocolConfigState runtime_enabled;
@@ -188,35 +171,19 @@ struct DetailReq {
 
 };
 
-}
 
-/***********Multipart 参数模版特化***********/
-namespace kit_muduo {
-template<>
-struct MultipartObjectBinder<kit_domain::DetailReq>
+inline void from_multiform(const MultiForm &form, DetailReq &req)
 {
-    static ContentCodecResult Bind(const kit_muduo::MultiFormParser::PartMap& parts, kit_domain::DetailReq *req)
-    {
-        auto result = ParseJsonPartToObject(parts, "detail_header", &req->header);
-        if(!result.ok)
-        {
-            return result;
-        }
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
+        form.at("detail_header"),
+        req.header,
+        {kit_muduo::http::ContentFormat::kJson}));
 
-        result = ParseOctetStreamPartToRaw(parts, "detail_cfg_data", req->cfg_data);
-        if(!result.ok)
-        {
-            return result;
-        }
-
-        return ContentCodecResult::Success();
-    }
-};
+    kit_muduo::http::ThrowIfFailed(DecodeMultiPartToRaw(
+        form.at("detail_cfg_data"),
+        req.cfg_data));
 
 }
-/***********Multipart 参数模版特化***********/
-
-namespace kit_domain {
 
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
@@ -404,7 +371,7 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     WriteOpResult write_result;
     AddProtocolReq request; // 表单
 
-    auto bind_result = ctx->bindMultipart(&request);
+    auto bind_result = ctx->bindMultipart(request);
     if(!bind_result.ok)
     {
         PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -479,7 +446,7 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
     WriteOpResult write_result;
     LaunchAndWithdrawsProtocolReq request;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -622,7 +589,7 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
 
     PC_F_DEBUG("\n%s\n", req->body().toString().c_str());
 
-    auto bind_result = ctx->bindMultipart(&request);
+    auto bind_result = ctx->bindMultipart(request);
     if(!bind_result.ok)
     {
         PJ_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -763,7 +730,7 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -826,7 +793,7 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
 
     PC_DEBUG()  << std::endl << req->body().toString() << std::endl;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -883,7 +850,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -954,7 +921,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    auto bind_result = ctx->bindMultipart(&request);
+    auto bind_result = ctx->bindMultipart(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -1137,7 +1104,7 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
 
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
@@ -1347,7 +1314,7 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     PC_DEBUG() << std::endl << req->body().toString() << std::endl;
 
     // 自动根据req中的 content-type类型去解析对象
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());

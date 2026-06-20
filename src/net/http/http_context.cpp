@@ -7,8 +7,9 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "net/http/http_context.h"
-#include "base/content_codec.h"
+
 #include "net/buffer.h"
+#include "net/http/http_content.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
@@ -90,9 +91,9 @@ ContentView HttpContext::makeContentView() const
     const std::string &raw_content_type = _request->getHeader("Content-Type");
     
     return {
-        .data = body_data.data(),
+        .data = reinterpret_cast<const uint8_t* >(body_data.data()),
         .size = body_data.size(),
-        .meta = ParseContentMetaFromHttpHeader(raw_content_type),
+        .meta = ParseHttpContentType(raw_content_type),
     };
 }
 

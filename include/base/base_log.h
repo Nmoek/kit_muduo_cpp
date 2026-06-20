@@ -76,7 +76,7 @@
 
 /*******content parser模块*********/
 
-/*******content codec模块*********/
+/*******bytes codec模块*********/
 #define CODEC_DEBUG()     BASE_DEBUG("codec")
 #define CODEC_INFO()      BASE_INFO("codec")
 #define CODEC_WARN()      BASE_WARN("codec")
@@ -89,4 +89,4 @@
 #define CODEC_F_ERROR(fmt, ...)     BASE_F_ERROR("codec", fmt, ##__VA_ARGS__)
 #define CODEC_F_FATAL(fmt, ...)     BASE_F_FATAL("codec", fmt, ##__VA_ARGS__)
 
-/*******content codec模块*********/
+/*******bytes codec模块*********/

@@ -9,10 +9,10 @@
 #ifndef __KIT_HTTP_CONTEXT_H__
 #define __KIT_HTTP_CONTEXT_H__
 
-#include "base/content_codec.h"
+#include "net/http/http_content_codec.h"
 #include "net/http/http_request.h"
 #include "net/call_backs.h"
-#include "base/content_parser.h"
+
 
 #include <memory>
 #include <atomic>
@@ -81,20 +81,20 @@ public:
     }
 
     template<typename T>
-    kit_muduo::ContentCodecResult bindJson(T *obj)
+    kit_muduo::http::ContentCodecResult bindJson(T &obj)
     {
-        return kit_muduo::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::ContentFormat::kJson});
+        return kit_muduo::http::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::http::ContentFormat::kJson});
     }
 
     template<typename T>
-    kit_muduo::ContentCodecResult bindMultipart(T *obj)
+    kit_muduo::http::ContentCodecResult bindMultipart(T &obj)
     {
-        return kit_muduo::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::ContentFormat::kMultipart});
+        return kit_muduo::http::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::http::ContentFormat::kMultipartFormData});
     }
 
 
 private:
-    kit_muduo::ContentView makeContentView() const;
+    kit_muduo::http::ContentView makeContentView() const;
 
 private:
     /// @brief HTTP请求解析状态

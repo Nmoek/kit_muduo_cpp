@@ -64,7 +64,7 @@ void AuthHandler::RegisterRoutes(std::shared_ptr<HttpServer> server)
 void AuthHandler::Login(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     LoginReq request;
-    auto bind_result = ctx->bindJson(&request);
+    auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});

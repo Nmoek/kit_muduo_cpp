@@ -40,7 +40,7 @@ set(SQLITE3_DEF
 
 
 # 测试 target 默认关闭。
-# MUDUO_TEST=ON 构建全部 muduo 测试；MUDUO_TEST.HTTP=ON 只构建对应子测试。
+# MUDUO_TEST=ON 构建全部 muduo 测试；MUDUO_TEST.HTTP_MESSAGE=ON 只构建对应子测试。
 option(MUDUO_TEST "build all muduo tests" OFF)
 option(MUDUO_TEST.TIME_STAMP "build test_time_stamp" OFF)
 option(MUDUO_TEST.INET_ADDRESS "build test_inet_address" OFF)
@@ -52,7 +52,11 @@ option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
 option(MUDUO_TEST.LOG "build test_log" OFF)
 option(MUDUO_TEST.TCP_SERVER "build test_tcp_server" OFF)
-option(MUDUO_TEST.HTTP "build test_http" OFF)
+option(MUDUO_TEST.HTTP_MESSAGE "build test_http_message" OFF)
+option(MUDUO_TEST.HTTP_CONTEXT "build test_http_context" OFF)
+option(MUDUO_TEST.HTTP_SERVER "build test_http_server" OFF)
+option(MUDUO_TEST.HTTP_CONTENT "build test_http_content" OFF)
+option(MUDUO_TEST.HTTP_CONTENT_CODEC "build test_http_content_codec" OFF)
 option(MUDUO_TEST.LLHTTP "build test_llhttp" OFF)
 option(MUDUO_TEST.THREAD_POOL "build test_thread_pool" OFF)
 option(MUDUO_TEST.CONVERT "build test_convert" OFF)
@@ -61,8 +65,8 @@ option(MUDUO_TEST.VARIANT "build test_variant" OFF)
 option(MUDUO_TEST.ASAN "build test_asan" OFF)
 option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
-option(MUDUO_TEST.CONTENT_PARSER "build test_content_parser" OFF)
-option(MUDUO_TEST.CONTENT_CODEC "build test_content_codec" OFF)
+option(MUDUO_TEST.BYTES_CODEC "build test_bytes_codec" OFF)
+option(MUDUO_TEST.MULTIFORM "build test_multiform" OFF)
  
 
 option(WORK_TEST "build all work tests" OFF)
@@ -139,9 +143,7 @@ set(BASE_SRC
 
     src/base/util.cpp
     src/base/time_stamp.cpp
-    src/base/content_parser.cpp
-    src/base/content_codec.cpp
-    # src/base/multi_form_data_parser.cpp
+    src/base/bytes_codec.cpp
 
     src/base/thread.cpp
     src/base/thread_pool.cpp
@@ -160,6 +162,9 @@ set(NET_HTTP_SRC
     src/net/http/http_router.cpp
     src/net/http/http_servlet.cpp
     src/net/http/http_util.cpp
+    src/net/http/http_content.cpp
+    src/net/http/http_content_codec.cpp
+    src/net/http/multiform.cpp
 )
 
 
@@ -371,40 +376,52 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
 
-# http测试 test_http
-add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP test_http tests/http/test_http.cpp)
+# HTTP request/response 报文模型与解析测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_MESSAGE test_http_message tests/http/test_http_message.cpp)
+
+# HttpContext body bind facade 测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTEXT test_http_context tests/http/test_http_context.cpp)
+
+# HTTP server 行为测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_SERVER test_http_server tests/http/test_http_server.cpp)
 
 # llhttp测试 test_llhttp
 add_kit_test(MUDUO_TEST MUDUO_TEST.LLHTTP test_llhttp tests/http/test_llhttp.cpp)
 
 # thread_pool 测试 test_thread_pool
-add_kit_test(MUDUO_TEST MUDUO_TEST.THREAD_POOL test_thread_pool tests/test_thread_pool.cpp ${WORK_SRC})
+add_kit_test(MUDUO_TEST MUDUO_TEST.THREAD_POOL test_thread_pool tests/test_thread_pool.cpp)
 
 # 格式转换 测试 test_convert
-add_kit_test(MUDUO_TEST MUDUO_TEST.CONVERT test_convert tests/test_convert.cpp ${WORK_SRC})
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONVERT test_convert tests/test_convert.cpp)
 
 # http router 测试 test_router
 add_kit_test(MUDUO_TEST MUDUO_TEST.ROUTER test_router tests/http/test_router.cpp)
 
 # variant 自定义类型包装器
-add_kit_test(MUDUO_TEST MUDUO_TEST.VARIANT test_variant tests/test_variant.cpp ${WORK_SRC})
+add_kit_test(MUDUO_TEST MUDUO_TEST.VARIANT test_variant tests/test_variant.cpp)
 
 
 # test_asan 内存泄漏工具
-add_kit_test(MUDUO_TEST MUDUO_TEST.ASAN test_asan tests/test_asan.cpp ${WORK_SRC})
+add_kit_test(MUDUO_TEST MUDUO_TEST.ASAN test_asan tests/test_asan.cpp)
 
 # test_udp udp集成测试
-add_kit_test(MUDUO_TEST MUDUO_TEST.UDP test_udp tests/test_udp.cpp ${WORK_SRC})
+add_kit_test(MUDUO_TEST MUDUO_TEST.UDP test_udp tests/test_udp.cpp)
 
 
 # test_lru_cache LRU缓存测试
-add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache.cpp ${WORK_SRC})
+add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache.cpp)
 
-# test_content_parser multipart解析器测试
-add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_PARSER test_content_parser tests/test_content_parser.cpp ${WORK_SRC})
+# test_bytes_codec 纯字节格式 codec 测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.BYTES_CODEC test_bytes_codec tests/test_bytes_codec.cpp)
 
-# test_content_codec 基础数据类型序列化/反序列化测试
-add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_CODEC test_content_codec tests/test_content_codec.cpp)
+# test_http_content HTTP content meta 解析测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTENT test_http_content tests/http/test_http_content.cpp)
+
+# test_http_content_codec HTTP content codec 测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTENT_CODEC test_http_content_codec tests/http/test_http_content_codec.cpp)
+
+# test_multiform multipart/form-data 解析器测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.MULTIFORM test_multiform tests/http/test_multiform.cpp)
 
 
 

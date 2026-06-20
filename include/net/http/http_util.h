@@ -9,10 +9,11 @@
 #ifndef __KIT_HTTP_UTIL_H__
 #define __KIT_HTTP_UTIL_H__
 #include "net/buffer.h"
-#include "base/content_parser.h"
+
 
 #include <bits/stdint-intn.h>
 #include <cctype>
+#include <cstring>
 #include <string>
 #include <assert.h>
 #include <memory>
@@ -99,26 +100,65 @@ struct ContentType
 
     static ContentType FromString( const std::string &contentTypeStr)
     {
-        std::string tmp;
-        for(auto &c : contentTypeStr)
-        {
-            tmp += std::isalpha(c) ? std::tolower(c) : c;
-        }
+        auto trim = [](const std::string& s) {
+            const size_t first = s.find_first_not_of(" \t\r\n");
+            if(first == std::string::npos)
+            {
+                return std::string{};
+            }
+            const size_t last = s.find_last_not_of(" \t\r\n");
+            return s.substr(first, last - first + 1);
+        };
 
-        if(-1 != tmp.find("json"))
+        auto to_lower = [](std::string s) {
+            for(auto& c : s)
+            {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            return s;
+        };
+
+        size_t semi = contentTypeStr.find(';');
+        std::string media_type = to_lower(trim(contentTypeStr.substr(0, semi)));
+
+        auto has_suffix = [&media_type](const std::string& suffix) {
+            return media_type.size() >= suffix.size()
+                && media_type.compare(media_type.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+
+        const bool is_application_media =
+            media_type.compare(0, std::strlen("application/"), "application/") == 0;
+
+        if(media_type == "application/json" || (is_application_media && has_suffix("+json")))
+        {
             return ContentType(kJsonType);
-        if(-1 != tmp.find("svg"))
+        }
+        if(media_type == "image/svg+xml")
+        {
             return ContentType(kSvgXml);
-        if(-1 != tmp.find("xml"))
+        }
+        if(media_type == "application/xml"
+            || media_type == "text/xml"
+            || (is_application_media && has_suffix("+xml")))
+        {
             return ContentType(kXmlType);
-        if(-1 != tmp.find("plain"))
+        }
+        if(media_type == "text/plain")
+        {
             return ContentType(kPlainType);
-        if(-1 != tmp.find("jpeg"))
+        }
+        if(media_type == "image/jpeg")
+        {
             return ContentType(kImageJpgType);
-        if(-1 != tmp.find("multipart"))
+        }
+        if(media_type == "multipart/form-data")
+        {
             return ContentType(kMultiForm);
-        if(-1 != tmp.find("stream"))
+        }
+        if(media_type == "application/octet-stream")
+        {
             return ContentType(kOctetStream);
+        }
 
         return ContentType(kUnknowType);
     }
@@ -248,7 +288,6 @@ public:
 
     void reset() { _data.clear(); }
 
-    std::vector<char> data() { return _data; }
     const std::vector<char>& data() const { return _data; }
     std::string toString() const
     {
