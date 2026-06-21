@@ -160,7 +160,7 @@ struct DetailReqHeader {
     ProtocolBodyType body_type;  // body数据格式类型
 
     // 带默认值 = 未解析到的字段也不会抛异常
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(DetailReqHeader, side, body_type)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(DetailReqHeader, side, body_type)
 };
 
 struct DetailReq {
@@ -618,8 +618,8 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
     p->m_name = std::move(request.header.name);
     p->m_type = access_info.protocol_type;
     p->m_projectId = access_info.project_id;
-    p->m_status = access_info.protocol_status;
-    p->m_configState = request.header.config_state;
+    // p->m_status = access_info.protocol_status;
+    // p->m_configState = request.header.config_state;
     p->m_reqBodyType = request.header.req_body_type;
     p->m_respBodyType = request.header.resp_body_type;
     p->m_reqBodyDataStatus = request.protocol_req_body.empty() ? 0 : 1;

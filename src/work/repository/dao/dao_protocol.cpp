@@ -172,8 +172,8 @@ bool SqliteOrmProtocolDao::UpdateById(kit_muduo::HttpContextPtr ctx, kit_dao::Pr
                 ,c(&Protocol::m_configState) = daoPc.m_configState
                 ,c(&Protocol::m_reqBodyType) = daoPc.m_reqBodyType 
                 ,c(&Protocol::m_respBodyType) = daoPc.m_respBodyType
-                ,c(&Protocol::m_reqBodyDataStatus) = (daoPc.m_reqBodyData.empty() ? 0 : 1)
-                ,c(&Protocol::m_respBodyDataStatus) = (daoPc.m_respBodyData.empty() ? 0 : 1)
+                ,c(&Protocol::m_reqBodyDataStatus) = daoPc.m_reqBodyDataStatus
+                ,c(&Protocol::m_respBodyDataStatus) = daoPc.m_respBodyDataStatus
                 ,c(&Protocol::m_reqCfg) = daoPc.m_reqCfg
                 ,c(&Protocol::m_respCfg) = daoPc.m_respCfg
                 ,c(&Protocol::m_reqBodyData) = std::move(daoPc.m_reqBodyData)
@@ -388,6 +388,7 @@ bool SqliteOrmProtocolDao::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t pro
     const auto body_type_ptr =  side == 1 ? &kit_dao::Protocol::m_reqBodyType : &kit_dao::Protocol::m_respBodyType;
     const auto body_data_ptr = side == 1 ? &kit_dao::Protocol::m_reqBodyData : &kit_dao::Protocol::m_respBodyData;
     const auto body_status_ptr = side == 1 ? &kit_dao::Protocol::m_reqBodyDataStatus : &kit_dao::Protocol::m_respBodyDataStatus;
+    const int32_t body_status_val = body_data.empty() ? 0 : 1;
 
     auto lease_result = _db_pool->acquire();
     if(!lease_result.ok())
@@ -420,7 +421,7 @@ bool SqliteOrmProtocolDao::UpdateBody(kit_muduo::HttpContextPtr ctx, int64_t pro
             set(
                 c(body_type_ptr) = body_type
                 ,c(body_data_ptr) = body_data
-                ,c(body_status_ptr) = (body_data.size() ? 1 : 0)
+                ,c(body_status_ptr) = body_status_val
                 ,c(&kit_dao::Protocol::m_utime) = now
             ),
             where(c(&kit_dao::Protocol::m_id) == protocol_id)
