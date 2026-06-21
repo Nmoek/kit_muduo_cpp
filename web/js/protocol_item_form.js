@@ -305,24 +305,14 @@
         ];
     }
 
-    const HTTP_HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-
     /**
      * @param {any} headers
      * @returns {Record<string, string>}
      */
     function normalizeHttpHeaders(headers) {
-        const normalized = {};
-        if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
-            return normalized;
-        }
-
-        Object.keys(headers).forEach(name => {
-            const headerName = String(name || '').trim();
-            if (!headerName) return;
-            normalized[headerName] = String(headers[name] == null ? '' : headers[name]);
-        });
-        return normalized;
+        return KitProxy.httpHeaders
+            ? KitProxy.httpHeaders.normalize(headers)
+            : {};
     }
 
     /**
@@ -358,8 +348,9 @@
      * @returns {string}
      */
     function summarizeHttpHeaders(headers) {
-        const count = Object.keys(normalizeHttpHeaders(headers)).length;
-        return count > 0 ? `已设置 ${count} 条` : '未设置';
+        return KitProxy.httpHeaders
+            ? KitProxy.httpHeaders.summarize(headers)
+            : '未设置';
     }
 
     /**
@@ -367,178 +358,9 @@
      * @param {Record<string, string>} headers
      */
     function updateHttpHeaderButtonState(button, headers) {
-        if (!button) return;
-        const normalized = normalizeHttpHeaders(headers);
-        const status = button.closest('.form-group')?.querySelector('.import-status');
-        button.dataset.headers = JSON.stringify(normalized);
-        if (status) {
-            status.textContent = summarizeHttpHeaders(normalized);
-            status.style.display = 'inline';
+        if (KitProxy.httpHeaders) {
+            KitProxy.httpHeaders.updateButtonState(button, headers);
         }
-    }
-
-    /**
-     * @param {{ name?: string; value?: string; }} header
-     * @returns {HTMLElement}
-     */
-    function createHttpHeaderRow(header = {}) {
-        const row = document.createElement('div');
-        row.className = 'http-header-row';
-        row.innerHTML = `
-            <div class="http-header-cell">
-                <label>Header 名称</label>
-                <input type="text" class="http-header-name" value="${escapeHTML(header.name || '')}" placeholder="Key" aria-label="Header 名称">
-            </div>
-            <div class="http-header-cell">
-                <label>Header 值</label>
-                <input type="text" class="http-header-value" value="${escapeHTML(header.value || '')}" placeholder="Value" aria-label="Header 值">
-            </div>
-            <div class="http-header-actions">
-                <button type="button" class="delete-http-header-btn" aria-label="删除 Header" title="删除 Header">&times;</button>
-            </div>
-        `;
-        row.querySelector('.delete-http-header-btn')?.addEventListener('click', function() {
-            row.remove();
-        });
-        return row;
-    }
-
-    /**
-     * @param {Record<string, string>} headers
-     * @returns {Array<{ name: string; value: string; }>}
-     */
-    function httpHeaderEntries(headers) {
-        return Object.keys(normalizeHttpHeaders(headers)).map(name => ({
-            name,
-            value: normalizeHttpHeaders(headers)[name],
-        }));
-    }
-
-    /**
-     * @param {HTMLElement} modal
-     * @returns {{ valid: boolean; headers: Record<string, string>; errors: Array<string>; }}
-     */
-    function collectHttpHeadersFromModal(modal) {
-        const headers = {};
-        const errors = [];
-        const seenNames = new Set();
-
-        modal.querySelectorAll('.http-header-row').forEach((row, index) => {
-            const name = row.querySelector('.http-header-name')?.value.trim() || '';
-            const value = row.querySelector('.http-header-value')?.value.trim() || '';
-
-            if (!name && !value) return;
-
-            if (!name) {
-                errors.push(`第 ${index + 1} 行：Header 名称不能为空`);
-                return;
-            }
-
-            if (!HTTP_HEADER_NAME_RE.test(name)) {
-                errors.push(`第 ${index + 1} 行：Header 名称只能使用 HTTP token 字符`);
-                return;
-            }
-
-            const normalizedName = name.toLowerCase();
-            if (seenNames.has(normalizedName)) {
-                errors.push(`第 ${index + 1} 行：Header 名称重复`);
-                return;
-            }
-
-            seenNames.add(normalizedName);
-            headers[name] = value;
-        });
-
-        return {
-            valid: errors.length === 0,
-            headers,
-            errors,
-        };
-    }
-
-    /**
-     * @param {string} title
-     * @param {Record<string, string>} headers
-     * @param {(headers: Record<string, string>) => void} onSave
-     */
-    function openHttpHeadersModal(title, headers, onSave) {
-        const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
-        modal.innerHTML = `
-            <div class="http-headers-modal">
-                <div class="modal-header">
-                    <h3>${escapeHTML(title)}</h3>
-                    <button type="button" class="close-modal">&times;</button>
-                </div>
-                <div class="modal-body">
-                    <form class="http-headers-form">
-                        <div class="http-headers-toolbar">
-                            <button type="button" class="add-http-header-btn">新增 Header</button>
-                            <button type="button" class="clear-http-headers-btn">清空</button>
-                        </div>
-                        <div class="http-headers-table">
-                            <div class="http-headers-head" aria-hidden="true">
-                                <span>Key</span>
-                                <span>Value</span>
-                                <span></span>
-                            </div>
-                            <div class="http-headers-list"></div>
-                        </div>
-                        <div class="http-headers-error" aria-live="polite"></div>
-                        <div class="form-actions">
-                            <button type="button" class="cancel-btn">取消</button>
-                            <button type="submit" class="confirm-btn">确定</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(modal);
-
-        const closeModal = utils.bindModalCloseActions
-            ? utils.bindModalCloseActions(modal)
-            : function() { utils.removeDomNode ? utils.removeDomNode(modal) : modal.remove(); };
-        const list = modal.querySelector('.http-headers-list');
-        const errorBox = modal.querySelector('.http-headers-error');
-
-        const entries = httpHeaderEntries(headers);
-        entries.forEach(entry => {
-            list.appendChild(createHttpHeaderRow(entry));
-        });
-        if (entries.length === 0) {
-            list.appendChild(createHttpHeaderRow());
-        }
-
-        modal.querySelector('.add-http-header-btn')?.addEventListener('click', function() {
-            list.appendChild(createHttpHeaderRow());
-        });
-
-        modal.querySelector('.clear-http-headers-btn')?.addEventListener('click', function() {
-            list.innerHTML = '';
-            list.appendChild(createHttpHeaderRow());
-            if (errorBox) errorBox.textContent = '';
-        });
-
-        modal.querySelector('.http-headers-form')?.addEventListener('submit', function(event) {
-            event.preventDefault();
-            event.stopPropagation();
-
-            const result = collectHttpHeadersFromModal(modal);
-            if (!result.valid) {
-                if (errorBox) {
-                    errorBox.innerHTML = result.errors
-                        .map(error => `<div>${escapeHTML(error)}</div>`)
-                        .join('');
-                }
-                return;
-            }
-
-            onSave(result.headers);
-            closeModal();
-        });
-
-        return modal;
     }
 
     /**
@@ -551,7 +373,7 @@
                 event.stopPropagation();
 
                 const isReq = button.id === 'req-http-headers';
-                openHttpHeadersModal(
+                KitProxy.httpHeaders.openModal(
                     isReq ? '配置请求 Headers' : '配置响应 Headers',
                     isReq ? pageState.reqHttpHeaders : pageState.respHttpHeaders,
                     function(headers) {

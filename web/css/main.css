@@ -2489,6 +2489,48 @@ button.is-mutation-busy:disabled {
     border-radius: var(--v13-radius);
 }
 
+.details-grid.http {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px;
+}
+
+/* HTTP 卡片详情按请求/响应分两行，减少展开后的纵向空间占用。 */
+.http-details-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    align-items: stretch;
+    min-width: 0;
+}
+
+.details-grid.http .protocol-field {
+    min-height: 72px;
+    padding: 10px 12px;
+    gap: 6px;
+    border-radius: 6px;
+}
+
+.details-grid.http .protocol-field.http-empty-slot {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.details-grid.http .protocol-field label {
+    font-size: 13px;
+}
+
+.details-grid.http .protocol-field .value {
+    align-self: center;
+    font-size: 14px;
+}
+
+.details-grid.http .protocol-field.path .value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .protocol-field {
     display: grid;
     grid-template-rows: auto 1fr;
@@ -3308,6 +3350,11 @@ button.is-mutation-busy:disabled {
     .details-grid.tcp {
         grid-template-columns: 1fr;
         padding: 10px;
+    }
+
+    .http-details-row,
+    .http-details-row.http-response-config {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .body-editor-toolbar {

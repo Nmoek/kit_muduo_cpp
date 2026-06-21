@@ -603,6 +603,82 @@ describe('V1.5 protocol item form page and compact cards', () => {
     });
 
     /**
+     * 测试思路：HTTP 卡片详情应复用表单页 Headers 配置能力，并按请求/响应分两行展示。
+     * 示例：请求行包含 method/path/请求 Headers/请求 Body，响应行包含 status/响应 Headers/响应 Body；点击请求 Headers 保存后只更新 req_cfg.headers。
+     */
+    it('协议项 HTTP 卡片展示并保存请求和响应 Headers', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+
+        const updateCfg = vi.spyOn(context.KitProxy.api, 'updateProtocolCfg');
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocolItem = context.addProtocolItem(root, {
+            id: 1,
+            name: '接口1',
+            project_id: 1,
+            type: 'HTTP',
+            req_cfg: {
+                method: 'GET',
+                path: '/api/test1',
+                headers: { 'X-Req': 'old' },
+            },
+            resp_cfg: {
+                status_code: 200,
+                headers: { 'X-Resp': 'ok' },
+            },
+            req_body_status: 0,
+            resp_body_status: 1,
+            ctime: '2025-12-02 06:01:03',
+            utime: '2025-12-02 06:01:03',
+        });
+
+        const grid = protocolItem.querySelector('.details-grid.http');
+        expect(grid.querySelectorAll('.http-details-row')).toHaveLength(2);
+        expect(grid.querySelector('.http-details-row-title')).toBeNull();
+        expect(grid.querySelector('.http-request-config').querySelectorAll('.protocol-field')).toHaveLength(4);
+        expect(grid.querySelector('.http-response-config').querySelectorAll('.protocol-field')).toHaveLength(4);
+        expect(grid.querySelector('.http-response-config .http-empty-slot')).toBeTruthy();
+        expect(grid.querySelector('.http-request-config').textContent).toContain('请求 Headers');
+        expect(grid.querySelector('.http-response-config').textContent).toContain('响应 Headers');
+        const mainCss = readRepoFile('css/main.css');
+        expect(mainCss).toContain('.http-details-row');
+        expect(mainCss).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));');
+        expect(mainCss).toContain('.details-grid.http .protocol-field.http-empty-slot');
+        expect(mainCss).not.toContain('.http-details-row-title');
+        expect(grid.querySelector('[data-http-headers-side="request"] .value').textContent).toBe('已设置 1 条');
+        expect(grid.querySelector('[data-http-headers-side="response"] .value').textContent).toBe('已设置 1 条');
+
+        grid.querySelector('[data-http-headers-side="request"]').click();
+        const modal = context.document.querySelector('.http-headers-modal');
+        expect(modal).toBeTruthy();
+        expect(modal.querySelector('.modal-header').textContent).toContain('配置请求 Headers');
+        modal.querySelector('.http-header-name').value = 'X-Req-New';
+        modal.querySelector('.http-header-value').value = 'new';
+        modal.querySelector('.confirm-btn').click();
+        await flushPromises(8);
+
+        expect(updateCfg).toHaveBeenCalledWith(1, 1, 1, {
+            headers: { 'X-Req-New': 'new' },
+        });
+        expect(context.document.querySelector('.http-headers-modal')).toBeNull();
+        expect(grid.querySelector('[data-http-headers-side="request"] .value').textContent).toBe('已设置 1 条');
+        expect(JSON.parse(grid.querySelector('[data-http-headers-side="request"]').dataset.headers)).toEqual({
+            'X-Req-New': 'new',
+        });
+    });
+
+    /**
      * 测试思路：服务 active=0 只影响运行态，不应阻止维护 TCP 协议项头部字段值。
      * 示例：未开启的 TCP 服务仍能打开字段值弹窗，修改功能码和普通字段后调用 updateProtocolCfg。
      */

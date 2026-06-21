@@ -229,10 +229,18 @@ function getCurProtocolItemCfgV1(idStr, req_or_resp_str) {
         // 2. localcache
         // 3. localDb
 
-        const valueElement = field.querySelector('.value');
-        if(valueElement) {
-
-            val = valueElement.textContent;
+        if (key === 'headers' && field.dataset.headers) {
+            try {
+                val = JSON.parse(field.dataset.headers);
+            } catch (error) {
+                val = {};
+            }
+        } else {
+            const valueElement = field.querySelector('.value');
+            if(valueElement) {
+    
+                val = valueElement.textContent;
+            }
         }
 
             // if(valueElement.id) {
@@ -248,7 +256,7 @@ function getCurProtocolItemCfgV1(idStr, req_or_resp_str) {
             //     return;
             // }
 
-        if(key && val) {
+        if(key && val != null) {
             root[key] = val;
         } 
 
@@ -402,6 +410,10 @@ async function updateProtocolHttpMethod(protocolItemId, newMethod) {
 
 async function updateProtocolHttpStatus(protocolItemId, newStatusCode) {
     return updateProtocolCfg(protocolItemId, 2, 'status_code', String(newStatusCode));
+}
+
+async function updateProtocolHttpHeaders(protocolItemId, reqOrResp, headers) {
+    return updateProtocolCfg(protocolItemId, reqOrResp, 'headers', KitProxy.httpHeaders.normalize(headers));
 }
 
 
@@ -1092,6 +1104,49 @@ function bindProtocolHttpStatusEditor(protocolItem) {
 }
 
 /**
+ * 绑定 HTTP Headers 配置弹窗。
+ * @param {HTMLElement} protocolItem
+ */
+function bindProtocolHttpHeadersEditor(protocolItem) {
+    if (!KitProxy.httpHeaders) return;
+
+    protocolItem.querySelectorAll('.protocol-field.http-headers[data-field-name="headers"]').forEach(field => {
+        field.addEventListener('click', function(event) {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const isRequest = field.dataset.httpHeadersSide !== 'response';
+            const reqOrResp = isRequest ? 1 : 2;
+            let headers = {};
+            try {
+                headers = JSON.parse(field.dataset.headers || '{}');
+            } catch (error) {
+                headers = {};
+            }
+
+            KitProxy.httpHeaders.openModal(
+                isRequest ? '配置请求 Headers' : '配置响应 Headers',
+                headers,
+                async function(nextHeaders) {
+                    const ok = await updateProtocolHttpHeaders(
+                        ExtractId(protocolItem.id),
+                        reqOrResp,
+                        nextHeaders,
+                    );
+                    if (!ok) {
+                        showErrorPopup('Headers 保存失败!');
+                        return false;
+                    }
+
+                    KitProxy.httpHeaders.updateFieldState(field, nextHeaders);
+                    return true;
+                },
+            );
+        });
+    });
+}
+
+/**
  * 绑定 TCP 头部字段值点击编辑弹窗。
  * @param {HTMLElement} protocolItem
  */
@@ -1170,6 +1225,7 @@ function bindProtocolFieldEditors(protocolItem) {
     bindProtocolHttpMethodEditor(protocolItem);
     bindProtocolHttpPathEditor(protocolItem);
     bindProtocolHttpStatusEditor(protocolItem);
+    bindProtocolHttpHeadersEditor(protocolItem);
     bindProtocolTcpCommonFieldsEditor(protocolItem);
 }
 

@@ -752,38 +752,69 @@
     function appendProtocolBodyData(formData, body, bodyType, bodyData) {
         // 新增协议接口要求 req/resp body 的 multipart name 即使内容为空也必须出现。
         const bodyKey = body === 1 ? 'protocol_req_body' : 'protocol_resp_body';
-        if (bodyData == null || String(bodyData).length <= 0) {
+        if (bodyData == null ||
+            String(bodyData).length <= 0) {
             formData.append(bodyKey, '');
             return;
         }
 
         // 后端新增协议接口要求 req/resp body 使用不同字段名，不能合并成同一个 key。
-        let bodyValue = '';
+        let bodyValue;
 
         if (bodyType.includes('json')) {
-            bodyValue = JSON.stringify(JSON.parse(bodyData));
+            bodyValue = new Blob(
+                [bodyData],
+                { type: 'application/json' }
+            );
         } else if (bodyType.includes('xml')) {
-            bodyValue = bodyData;
+            // 创建 XML 文档
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(
+                bodyData,
+                'text/xml'
+            );
+
+            // 序列化为字符串
+            const serializer = new XMLSerializer();
+            const xmlString = serializer.serializeToString(xmlDoc);
+            bodyValue = new Blob(
+                [xmlString],
+                { type: 'application/xml' }
+            );
         } else if (bodyType.includes('binary')) {
-            bodyValue = new Blob([bodyData]);
+            bodyValue = new Blob(
+                [bodyData],
+                { type: 'application/octet-stream'}
+            );
         } else {
-            bodyValue = bodyData;
+            bodyValue = new Blob(
+                [bodyData],
+                { type: 'text/plain'}
+            );
         }
 
-        formData.append(bodyKey, bodyValue);
+        formData.append(bodyKey, bodyValue, 'body.dat');
     }
 
     function createProtocolBodyFormData(protocolId, projectId, reqOrResp, protocolType, bodyType, body) {
         // /protocols/:protocol_id/details/body 接口是 multipart：header 走 JSON 字符串，body 走文件字段。
         const formData = new FormData();
-        formData.append('detail_header', JSON.stringify({
-            side: reqOrResp,
-            body_type: bodyType,
-        }));
+        
+        formData.append('detail_header', new Blob(
+            [JSON.stringify({
+                side: reqOrResp,
+                body_type: bodyType,
+            })],
+            { type: "application/json"},
+        ), 'detail_header.json');
 
         if (body && body.length > 0) {
             const binaryBlob = new Blob([body], { type: 'application/octet-stream' });
-            formData.append('detail_cfg_data', binaryBlob, reqOrResp === 1 ? 'req_body.bin' : 'resp_body.bin');
+
+            formData.append('detail_cfg_data', binaryBlob, reqOrResp === 1 ? 'req_body.dat' : 'resp_body.dat');
+        }
+        else {
+            formData.append('detail_cfg_data', '');
         }
 
         return formData;
@@ -792,9 +823,25 @@
     function createAddProtocolFormData(protocol) {
         // /protocols/add 的三个配置字段名是后端约定，重构时不能改名。
         const formData = new FormData();
-        formData.append('protocol_cfg_header', JSON.stringify(protocol.cfg_header));
-        formData.append('protocol_req_cfg', JSON.stringify(protocol.req_cfg));
-        formData.append('protocol_resp_cfg', JSON.stringify(protocol.resp_cfg));
+
+        // JSON 数据（指定为 application/json）
+        let configBlob = new Blob(
+            [JSON.stringify(protocol.cfg_header)],
+            { type: 'application/json' }
+        );
+        formData.append('protocol_cfg_header', configBlob);
+
+        configBlob = new Blob(
+            [JSON.stringify(protocol.req_cfg)],
+            { type: 'application/json' }
+        );
+        formData.append('protocol_req_cfg',configBlob);
+
+        configBlob = new Blob(
+            [JSON.stringify(protocol.resp_cfg)],
+            { type: 'application/json' }
+        );
+        formData.append('protocol_resp_cfg', configBlob);
 
         appendProtocolBodyData(formData, 1, protocol.cfg_header.req_body_type, protocol.request_body);
         appendProtocolBodyData(formData, 2, protocol.cfg_header.resp_body_type, protocol.response_body);
