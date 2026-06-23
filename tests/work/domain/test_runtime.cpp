@@ -17,15 +17,122 @@
 #include "net/http/http_request.h"
 #include "base/time_stamp.h"
 
+#include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <memory>
+#include <netinet/in.h>
 #include <string>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 using namespace kit_domain;
 using namespace kit_muduo::http;
+
+struct RuntimeTestFdGuard
+{
+    explicit RuntimeTestFdGuard(int32_t input_fd = -1)
+        :fd(input_fd)
+    {}
+
+    ~RuntimeTestFdGuard()
+    {
+        if(fd >= 0)
+        {
+            ::close(fd);
+        }
+    }
+
+    int32_t fd;
+};
+
+static int32_t ConnectLoopback(uint16_t port)
+{
+    for(int32_t i = 0; i < 50; ++i)
+    {
+        int32_t fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if(fd < 0)
+        {
+            return -1;
+        }
+
+        timeval timeout;
+        timeout.tv_sec = 2;
+        timeout.tv_usec = 0;
+        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+
+        sockaddr_in addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_port = ::htons(port);
+        addr.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+
+        if(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0)
+        {
+            return fd;
+        }
+
+        ::close(fd);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    return -1;
+}
+
+static bool SendAll(int32_t fd, const std::string &data)
+{
+    const char *cur = data.data();
+    size_t left = data.size();
+    while(left > 0)
+    {
+        ssize_t n = ::send(fd, cur, left, 0);
+        if(n < 0)
+        {
+            if(errno == EINTR)
+            {
+                continue;
+            }
+            return false;
+        }
+
+        cur += n;
+        left -= static_cast<size_t>(n);
+    }
+
+    return true;
+}
+
+static std::string ReadAll(int32_t fd)
+{
+    std::string data;
+    char buf[4096];
+    while(true)
+    {
+        ssize_t n = ::recv(fd, buf, sizeof(buf), 0);
+        if(n > 0)
+        {
+            data.append(buf, static_cast<size_t>(n));
+            continue;
+        }
+        if(n == 0)
+        {
+            break;
+        }
+        if(errno == EINTR)
+        {
+            continue;
+        }
+        break;
+    }
+
+    return data;
+}
 
 static nljson HttpReqCfg(const std::string &method,
                          const std::string &path,
@@ -679,4 +786,100 @@ TEST(HttpProjectRuntimeSuite, UpdateReqBodyOnlyReplacesReqBodyView)
     EXPECT_NE(after->getReqBodyView().body_data, before_req_body.body_data);
     EXPECT_EQ(*after->getReqBodyView().body_data, new_body);
     EXPECT_EQ(after->getRespBodyView().body_data, before_resp_body.body_data);
+}
+
+/*
+测试思路：
+1. ProtocolItemBodyView 是协议无关的运行态 body 快照，只保存业务 body_type 和 body bytes。
+2. HTTP media type 和 codec format 都是 body_type 的派生语义，不应缓存在共享运行态快照中。
+3. 该用例不发网络请求，只验证快照保存事实字段，派生值由转换 helper 现场得到。
+
+示例：
+  req_body_type=json -> body_view.body_type=json
+  ProtocolBodyTypeToHttpContentMeta(json) -> application/json
+  ProtocolBodyTypeToContentCodecFormat(json) -> kJson
+*/
+TEST(HttpProjectRuntimeSuite, BodyViewStoresProtocolBodyOnlyAndDerivesHttpMetadata)
+{
+    RuntimeLoopPool pool(1);
+    auto result = pool.acquire(9005LL);
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.val, nullptr);
+
+    auto server = std::make_shared<HttpProjectServer>(9005, result.val);
+    auto protocol = MakeHttpProtocol(501, 9005, "/d9/http/body-meta", {'{', '}'}, {'o', 'k'});
+    auto item = ProtocolItemFactory::Create(protocol, server);
+    ASSERT_NE(item, nullptr);
+
+    auto add_result = server->AddProtocolItem(item);
+    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+
+    auto runtime_item = GetHttpRuntimeItem(server, 501);
+    ASSERT_NE(runtime_item, nullptr);
+    auto body_view = runtime_item->getReqBodyView();
+    EXPECT_EQ(body_view.body_type, ProtocolBodyType::kJson);
+    EXPECT_EQ(ProtocolBodyTypeToContentCodecFormat(body_view.body_type), ContentCodecFormat::kJson);
+    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).known_type, KnownMediaType::kApplicationJson);
+    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).media_type, "application/json");
+
+    const std::vector<char> text_body{'h', 'e', 'l', 'l', 'o'};
+    auto update_result = server->UpdateReqBodyProtocolItem(501, ProtocolBodyType::kText, text_body);
+    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
+
+    body_view = runtime_item->getReqBodyView();
+    EXPECT_EQ(body_view.body_type, ProtocolBodyType::kText);
+    EXPECT_EQ(ProtocolBodyTypeToContentCodecFormat(body_view.body_type), ContentCodecFormat::kText);
+    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).known_type, KnownMediaType::kTextPlain);
+    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).media_type, "text/plain");
+    EXPECT_EQ(*body_view.body_data, text_body);
+}
+
+/*
+测试思路：
+1. HTTP project runtime 是协议测试平台，默认要求请求 Content-Type 精确命中协议项配置的 media type。
+2. 配置 req_body_type=json 时，期望 media_type 是 application/json；application/problem+json 虽然 codec 也是 JSON，但不应命中协议项。
+3. 通过真实 loopback HTTP 请求触发 runtime handler，断言响应明确区分为 media type mismatch，而不是 body parse error。
+
+示例：
+  protocol cfg: req_body_type=json, req_body={}
+  request: Content-Type=application/problem+json, body={}
+        |
+        v
+  {"code":-200,"message":"media type mismatch"}
+*/
+TEST(HttpProjectRuntimeSuite, RuntimeStrictMatchRejectsProblemJsonForConfiguredJsonBody)
+{
+    RuntimeLoopPool pool(1);
+    auto result = pool.acquire(9006LL);
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.val, nullptr);
+
+    auto server = std::make_shared<HttpProjectServer>(9006, result.val);
+    auto protocol = MakeHttpProtocol(601, 9006, "/d9/http/strict-json", {'{', '}'}, {'{', '}'});
+    auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
+    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+
+    server->start();
+
+    RuntimeTestFdGuard client_fd(ConnectLoopback(server->getBindAddr().toPort()));
+    ASSERT_GE(client_fd.fd, 0);
+
+    const std::string body = "{}";
+    const std::string request =
+        "GET /d9/http/strict-json HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Content-Type: application/problem+json\r\n"
+        "Content-Length: " + std::to_string(body.size()) + "\r\n"
+        "Connection: close\r\n"
+        "\r\n" +
+        body;
+    ASSERT_TRUE(SendAll(client_fd.fd, request));
+
+    const std::string response = ReadAll(client_fd.fd);
+    EXPECT_NE(response.find("HTTP/1.1 200 OK\r\n"), std::string::npos) << response;
+    EXPECT_NE(response.find("\"code\":-200"), std::string::npos) << response;
+    EXPECT_NE(response.find("\"message\":\"media type mismatch\""), std::string::npos) << response;
+    EXPECT_EQ(response.find("body parse error"), std::string::npos) << response;
+
+    EXPECT_TRUE(server->stop());
 }

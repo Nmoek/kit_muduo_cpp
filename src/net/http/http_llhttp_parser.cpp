@@ -341,35 +341,13 @@ int LLhttpParser::onBody(llhttp_t* parser, const char *data, size_t len)
     HttpRequestPtr request = parser_ptr->_context->request();
     HttpResponsePtr response = parser_ptr->_context->response();
 
-#if 0
-    int64_t content_len = atoi(parser_ptr->_type == ReqType ?request->getHeader("Content-Length").c_str() : response->getHeader("Content-Length").c_str());
-#endif
-
-    const std::string &content_type_str = parser_ptr->_type == ReqType ? request->getHeader("Content-Type") : response->getHeader("Content-Type");
-
-
-    const ContentType content_type = content_type_str.empty()
-    ? ContentType(ContentType::kOctetStream)
-    : ContentType::FromString(content_type_str);
-
-    // 需要分情况检查Content-Length是否应该被包含
-#if 0
-    if(content_len <= 0 || content_type_str.empty())
-    {
-        HTTP_F_ERROR("Content-Length: %d, Content-Type:%s \n", content_len, content_type_str.c_str());
-         return -1;
-    }
-#endif
-
     if(ReqType == parser_ptr->_type)
     {
-        request->body().setContentType(content_type);
-        request->body().appendData(data, len);
+        request->appendBodyData(data, len);
     }
     else 
     {
-        response->body().setContentType(content_type);
-        response->body().appendData(data, len);
+        response->appendBodyData(data, len);
     }
 
     return 0;
@@ -381,8 +359,8 @@ int LLhttpParser::onMessageComplete(llhttp_t* parser)
     HttpRequestPtr request = parser_ptr->_context->request();
     HttpResponsePtr response = parser_ptr->_context->response();
  
-    HTTP_F_INFO("http request/response parse finish! body data size: [%lld/%lld]\n", (ReqType == parser_ptr->_type ? 
-        request->body().data().size() : response->body().data().size()), 
+    HTTP_F_INFO("http request/response parse finish! body data size: [%lld/%lld]\n", (ReqType == parser_ptr->_type ?
+        request->bodyData().size() : response->bodyData().size()),
         parser->content_length);
     
     // 头部上下文清除一下

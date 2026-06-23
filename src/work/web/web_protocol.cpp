@@ -17,6 +17,7 @@
 #include "service/svc_project.h"
 #include "service/svc_protocol.h"
 #include "web/protocol_vo.h"
+#include "web/web_common.h"
 #include "web/web_log.h"
 
 #include "net/http/http_server.h"
@@ -96,17 +97,17 @@ inline void from_multiform(const MultiForm &form, AddProtocolReq &req)
     kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
         form.at("protocol_cfg_header"),
         req.header,
-        {kit_muduo::http::ContentFormat::kJson}));
+        {kit_muduo::http::ContentCodecFormat::kJson}));
 
     kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
         form.at("protocol_req_cfg"),
         req.protocol_req_cfg,
-        {kit_muduo::http::ContentFormat::kJson}));
+        {kit_muduo::http::ContentCodecFormat::kJson}));
 
     kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
         form.at("protocol_resp_cfg"),
         req.protocol_resp_cfg,
-        {kit_muduo::http::ContentFormat::kJson}));
+        {kit_muduo::http::ContentCodecFormat::kJson}));
 
     kit_muduo::http::ThrowIfFailed(DecodeMultiPartToRaw(
         form.at("protocol_req_body"),
@@ -177,7 +178,7 @@ inline void from_multiform(const MultiForm &form, DetailReq &req)
     kit_muduo::http::ThrowIfFailed(DecodeMultiPartHelper(
         form.at("detail_header"),
         req.header,
-        {kit_muduo::http::ContentFormat::kJson}));
+        {kit_muduo::http::ContentCodecFormat::kJson}));
 
     kit_muduo::http::ThrowIfFailed(DecodeMultiPartToRaw(
         form.at("detail_cfg_data"),
@@ -253,110 +254,9 @@ void ProtocolHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer
 }
 
 
-static bool CheckProjectAccess(HttpContextPtr ctx, ProjectSvcInterface *project_svc, int64_t project_id, bool require_active, bool admin_only)
+static void WriteProtocolJsonError(HttpContextPtr ctx, int32_t code, const std::string &message)
 {
-    auto current_user = CurrentUserFromContext(ctx);
-    if(admin_only && !current_user.IsAdmin())
-    {
-        return false;
-    }
-    if(!project_svc || project_id <= 0)
-    {
-        return false;
-    }
-    auto project = project_svc->GetById(ctx, project_id);
-    if(project.m_id <= 0)
-    {
-        return false;
-    }
-    if(require_active && project.m_status != ProjectStatus::kValid)
-    {
-        return false;
-    }
-    return current_user.IsAdmin() || project.m_userId == current_user.user_id;
-}
-
-static bool CheckProtocolAccess(HttpContextPtr ctx,
-    ProtocolSvcInterface *protocol_svc,
-    int64_t protocol_id,
-    bool require_active,
-    bool admin_only,
-    ProtocolAccessInfo &access_info)
-{
-    if(!protocol_svc)
-    {
-        return false;
-    }
-
-    if(!protocol_svc->GetAccessInfo(ctx, protocol_id, access_info))
-    {
-        return false;
-    }
-
-    auto current_user = CurrentUserFromContext(ctx);
-
-    // 需要管理员权限 但当前非管理员
-    if(admin_only && !current_user.IsAdmin())
-    {
-        return false;
-    }
-
-    // 当前操作需要`未软删`，如果已处于软删则不允许操作
-    if(require_active && (ProjectStatus::kValid != access_info.project_status || ProtocolStatus::kValid != access_info.protocol_status))
-    {
-        return false;
-    }
-    
-    return current_user.IsAdmin() 
-        || access_info.project_user_id == current_user.user_id;
-}
-
-static void WriteForbidden(HttpContextPtr ctx)
-{
-    auto resp = ctx->response();
-    resp->setStateCode(StateCode::k403Forbidden);
-    resp->body().setContentType(ContentType::kJsonType);
-    resp->body().appendData(R"({"code": -403, "message": "forbidden", "data":{}})");
-}
-
-static bool ParseProtocolIdFromRoute(HttpContextPtr ctx, int64_t &protocol_id)
-{
-    try {
-        protocol_id = std::stol(ctx->routeParam("protocol_id"));
-        return protocol_id > 0;
-    } catch(const std::exception &e) {
-        PC_F_ERROR("route param transform fail! protocol_id=%ld, %s\n", protocol_id, e.what());
-        return false;
-    }
-}
-
-static bool TryParseProtocolSide(const std::string &side_str, ProtocolSide &side)
-{
-    if(side_str.empty())
-    {
-        return false;
-    }
-    try {
-        const int32_t side_val = std::stoi(side_str);
-        if(static_cast<int32_t>(ProtocolSide::kRequest) == side_val
-            || static_cast<int32_t>(ProtocolSide::kResponse) == side_val)
-        {
-            side = static_cast<ProtocolSide>(side_val);
-            return true;
-        }
-    } catch(const std::exception &e) {
-        PC_F_ERROR("protocol side transform fail! side=%s, %s\n", side_str.c_str(), e.what());
-    }
-    return false;
-}
-
-static bool ParseProtocolSideFromQuery(HttpContextPtr ctx, ProtocolSide &side)
-{
-    if(TryParseProtocolSide(ctx->queryParam("side"), side))
-    {
-        return true;
-    }
-    return TryParseProtocolSide(ctx->queryParam("req_or_resp"), side);
+    WriteJsonError(ctx, code, message, true);
 }
 
 
@@ -366,7 +266,7 @@ void ProtocolHandler::AddProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
     AddProtocolReq request; // 表单
@@ -441,7 +341,7 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
     LaunchAndWithdrawsProtocolReq request;
@@ -456,7 +356,7 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
@@ -528,12 +428,12 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -582,12 +482,12 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
     ReconfigProtocolReq request; // 表单
 
-    PC_F_DEBUG("\n%s\n", req->body().toString().c_str());
+    PC_F_DEBUG("\n%s\n", req->bodyString().c_str());
 
     auto bind_result = ctx->bindMultipart(request);
     if(!bind_result.ok)
@@ -599,7 +499,7 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
@@ -666,22 +566,14 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t protocol_id = 0;
-    try {
-        // TODO boost万能转换
-        protocol_id = std::stol(ctx->routeParam("protocol_id"));
-        if(protocol_id <= 0)
-            throw;
-
-    } catch(const std::exception& e) {
-
-        PJ_F_ERROR("query param transform fail! protocol_id=%d , %s\n", protocol_id, e.what());
-        
-        resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    {
+        WriteProtocolJsonError(ctx, -200, "query param transform fail");
         return;
     }
 
@@ -702,7 +594,7 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
     catch(const std::exception& e)
     {
         PC_F_ERROR("service GetByUser exception: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
 
@@ -713,7 +605,7 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
     root["message"] = "success";
     root["data"].push_back(CovertProtocolVo(protocol));
 
-    resp->body().appendData(root.dump());
+    WriteJsonResponse(ctx, root);
     PC_DEBUG() << std::endl << root.dump(4) << std::endl;
 }
 
@@ -724,18 +616,18 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     ProtocolListReq request; //json
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        WriteProtocolJsonError(ctx, -200, "body parse error");
         return;
     }
 
@@ -764,7 +656,7 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
     catch(const std::exception& e)
     {
         PC_F_ERROR("service GetByUser exception: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
 
@@ -774,7 +666,7 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
     root["message"] = "success";
     root["data"] = CovertProtocolVos(protocols);
 
-    resp->body().appendData(root.dump());
+    WriteJsonResponse(ctx, root);
 
     PC_DEBUG() << std::endl << root.dump(4) << std::endl;
 }
@@ -786,12 +678,12 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
     ProtocolDetailNameReq request;
 
-    PC_DEBUG()  << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG()  << std::endl << req->bodyString() << std::endl;
 
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
@@ -802,7 +694,7 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -843,12 +735,12 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
     DetailCfgReq request;
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
@@ -860,7 +752,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -913,13 +805,13 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
     DetailReq request;
     // 注意 请求/响应 走同一个服务处理 url不同
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     auto bind_result = ctx->bindMultipart(request);
     if(!bind_result.ok)
@@ -931,7 +823,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -986,23 +878,15 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
 
     int64_t project_id = 0;
-    try {
-        // TODO boost万能转换
-        project_id = std::stol(ctx->routeParam("project_id"));
-        if(project_id <= 0)
-            throw;
-
-    } catch(const std::exception& e) {
-
-        PC_F_ERROR("query param transform fail! project_id=%d , %s\n", project_id, e.what());
-        
-        resp->body().appendData(R"({"code": -200, "message":"query param transform fail"})");
+    if(!ParseRouteInt64(ctx, "project_id", project_id))
+    {
+        WriteProtocolJsonError(ctx, -200, "query param transform fail");
         return;
     }
 
@@ -1021,7 +905,7 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     catch(const std::exception& e)
     {
         PC_F_ERROR("service get protocol count failed: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
 
@@ -1031,7 +915,7 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     root["data"]["protocol_cnt"] = protocol_cnt;
 
 
-    resp->body().appendData(root.dump());
+    WriteJsonResponse(ctx, root);
     PJ_DEBUG() << std::endl << root.dump(4) << std::endl;
 
 }
@@ -1043,22 +927,12 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     int64_t protocol_id = 0;
-    try {
-        // TODO boost万能转换
-        protocol_id = std::stol(ctx->routeParam("protocol_id"));
-        if(protocol_id <= 0)
-        {
-            throw std::invalid_argument("quest param error");
-        }
-
-    } catch(const std::exception& e) {
-
-        PJ_F_ERROR("query param transform fail! protocol_id=%d , %s\n", protocol_id, e.what());
-        
-        resp->body().appendData(R"({"code": -200, "message":"query param error"})");
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    {
+        WriteProtocolJsonError(ctx, -200, "query param error");
         return;
     }
 
@@ -1077,7 +951,7 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
     } catch(const std::exception& e){
 
         PC_F_ERROR("service GetCfg failed: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
 
@@ -1086,7 +960,7 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
     root["message"] = "success";
     root["data"] = protocol_cfg;
 
-    resp->body().appendData(root.dump());
+    WriteJsonResponse(ctx, root);
 
     PC_DEBUG() << std::endl << root.dump(4) << std::endl;
 
@@ -1098,25 +972,25 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     DetailReqHeader request;
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        WriteProtocolJsonError(ctx, -200, "body parse error");
         return;
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
-        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
     }
 
@@ -1129,14 +1003,14 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
 
     if(ProtocolType::kCustomTcp != access_info.protocol_type)
     {
-        resp->body().appendData(R"({"code": -200, "message":"request param error"})");
+        WriteProtocolJsonError(ctx, -200, "request param error");
         return;
     }
 
     if(ProtocolSide::kRequest != request.side
         && ProtocolSide::kResponse !=  request.side)
     {
-        resp->body().appendData(R"({"code": -200, "message":"request param error"})");
+        WriteProtocolJsonError(ctx, -200, "request param error");
         return;
     }
 
@@ -1151,7 +1025,7 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     catch(const std::exception& e)
     {
         PC_F_ERROR("service GetTcpCommonFieldsById failed: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
 
@@ -1160,7 +1034,7 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     root["message"] = "success";
     root["data"] = common_fields_json;
 
-    resp->body().appendData(root.dump());
+    WriteJsonResponse(ctx, root);
 
     PC_DEBUG() << std::endl << root.dump(4) << std::endl;
 
@@ -1173,21 +1047,21 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
-        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
     }
 
     ProtocolSide side = ProtocolSide::kRequest;
     if(!ParseProtocolSideFromQuery(ctx, side))
     {
-        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
     }
 
@@ -1201,7 +1075,7 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     if(ProtocolSide::kRequest != side
         && ProtocolSide::kResponse !=  side)
     {
-        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+        WriteProtocolJsonError(ctx, -100, "request param error");
         return;
     }
 
@@ -1219,7 +1093,7 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     catch(const std::exception& e)
     {
         PC_F_ERROR("service GetBodyTypeById exception: %s \n", e.what());
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
     nljson root;
@@ -1227,7 +1101,7 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     root["message"] = "success";
     root["data"]["body_type"] = ProtocolBodyTypeToString(body_type);
 
-    resp->body().appendData(root.dump());
+    WriteJsonResponse(ctx, root);
     PC_DEBUG() << root.dump(4) << std::endl;
 }
 
@@ -1239,19 +1113,19 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
-        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
     }
 
     ProtocolSide side = ProtocolSide::kRequest;
     if(!ParseProtocolSideFromQuery(ctx, side))
     {
-        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
     }
 
@@ -1265,7 +1139,7 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     if(ProtocolSide::kRequest != side
         && ProtocolSide::kResponse != side)
     {
-        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+        WriteProtocolJsonError(ctx, -100, "request param error");
         return;
     }
 
@@ -1282,15 +1156,14 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     {
         PC_F_ERROR("service GetBodyDataById exception: %s \n", e.what());
         
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
     // TODO 这里可能存在分块传输问题
 
     if(body_data.size()) 
     {
-        resp->body().setContentType(ContentType::kOctetStream);
-        resp->body().appendData(body_data);
+        resp->setOctetStream(std::vector<uint8_t>(body_data.begin(), body_data.end()));
     }
     else
     {
@@ -1307,11 +1180,11 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     DetailReqHeader request; //json
 
-    PC_DEBUG() << std::endl << req->body().toString() << std::endl;
+    PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     // 自动根据req中的 content-type类型去解析对象
     auto bind_result = ctx->bindJson(request);
@@ -1319,14 +1192,14 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     {
         PC_F_ERROR("body bind error: %s\n", bind_result.message.c_str());
 
-        resp->body().appendData(R"({"code": -200, "message":"body parse error"})");
+        WriteProtocolJsonError(ctx, -200, "body parse error");
         return;
     }
 
     int64_t protocol_id = 0;
-    if(!ParseProtocolIdFromRoute(ctx, protocol_id))
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
     {
-        resp->body().appendData(R"({"code": -200, "message":"query param fail"})");
+        WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
     }
 
@@ -1340,7 +1213,7 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     if(ProtocolSide::kRequest != request.side
         && ProtocolSide::kResponse !=  request.side)
     {
-        resp->body().appendData(R"({"code": -100, "message":"request param error"})");
+        WriteProtocolJsonError(ctx, -100, "request param error");
         return;
     }
 
@@ -1355,15 +1228,17 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
 
         PC_F_ERROR("service GetBodyDataById exception: %s \n", e.what());
         
-        resp->body().appendData(R"({"code": -300, "message":"service failed"})");
+        WriteProtocolJsonError(ctx, -300, "service failed");
         return;
     }
 
     // TODO 这里可能存在分块传输问题
 
-    resp->body().setContentType(ContentType::kMultiForm);
+    auto multipart_meta = MakeContentMeta(KnownMediaType::kMultipartFormData);
+    SetContentTypeParam(multipart_meta, "boundary", "----WebKitFormBoundaryNQJ0YrO2NeaUfM7n");
+    resp->setContentMeta(std::move(multipart_meta));
     // DEBUG 手动输入一部分数据 先测试一下
-    resp->body().appendData(
+    resp->appendBodyData(
 R"(------WebKitFormBoundaryNQJ0YrO2NeaUfM7n
 Content-Disposition: form-data;name="body_type"
 Content-Type: text/plain
@@ -1388,15 +1263,13 @@ void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_mudu
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     WriteOpResult write_result;
 
     int64_t protocol_id = 0;
-    try {
-        protocol_id = std::stol(ctx->routeParam("protocol_id"));
-    } catch(const std::exception &) {
-
+    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
     }

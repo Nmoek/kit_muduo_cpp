@@ -6,6 +6,7 @@
 #include "net/http/http_response.h"
 #include "net/http/http_server.h"
 #include "service/svc_auth.h"
+#include "web/web_common.h"
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
@@ -36,14 +37,6 @@ nljson CurrentUserJson(const CurrentUser &user)
     };
 }
 
-void WriteJson(HttpContextPtr ctx, const nljson &root)
-{
-    auto resp = ctx->response();
-    resp->setVersion(Version::kHttp11);
-    resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
-    resp->body().appendData(root.dump());
-}
 }
 
 AuthHandler::AuthHandler(std::shared_ptr<AuthService> auth_svc)
@@ -67,20 +60,20 @@ void AuthHandler::Login(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
         return;
     }
 
     LoginResult result = auth_svc_->Login(ctx, LoginRequest{request.note, request.login_type, request.password});
     if(!result.ok)
     {
-        WriteJson(ctx, {{"code", -300}, {"message", result.message}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -300}, {"message", result.message}, {"data", nljson::object()}});
         return;
     }
 
     auto resp = ctx->response();
     resp->addHeader("Set-Cookie", std::string(kSessionCookieName) + "=" + result.cookie_value + kSessionCookieOptions);
-    WriteJson(ctx, {{"code", 0}, {"message", "success"}, {"data", CurrentUserJson(result.user)}});
+    WriteOkJsonResponse(ctx, {{"code", 0}, {"message", "success"}, {"data", CurrentUserJson(result.user)}});
 }
 
 void AuthHandler::Logout(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
@@ -88,12 +81,12 @@ void AuthHandler::Logout(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     const std::string cookie = ExtractCookieValue(ctx->request()->getHeader("Cookie"), kSessionCookieName);
     auth_svc_->Logout(ctx, cookie);
     ctx->response()->addHeader("Set-Cookie", kExpiredSessionCookie);
-    WriteJson(ctx, {{"code", 0}, {"message", "success"}, {"data", nljson::object()}});
+    WriteOkJsonResponse(ctx, {{"code", 0}, {"message", "success"}, {"data", nljson::object()}});
 }
 
 void AuthHandler::Me(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
-    WriteJson(ctx, {{"code", 0}, {"message", "success"}, {"data", CurrentUserJson(CurrentUserFromContext(ctx))}});
+    WriteOkJsonResponse(ctx, {{"code", 0}, {"message", "success"}, {"data", CurrentUserJson(CurrentUserFromContext(ctx))}});
 }
 
 } // namespace kit_domain

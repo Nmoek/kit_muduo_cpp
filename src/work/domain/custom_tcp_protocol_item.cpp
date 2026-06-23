@@ -190,8 +190,7 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
         return false;
     }
 
-    req_body_view_.body_type = ProtocolBodyTypeToContentType(ori_protocol->m_reqBodyType);
-    req_body_view_.body_data = std::make_shared<const std::vector<char>>(ori_protocol->m_reqBodyData);
+    req_body_view_.setBody(ori_protocol->m_reqBodyType, ori_protocol->m_reqBodyData);
 
     if(!resp_cfg_.fromJson(resp_cfg_json, spec))
     {
@@ -199,8 +198,7 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
         return false;
     }
 
-    resp_body_view_.body_type = ProtocolBodyTypeToContentType(ori_protocol->m_respBodyType);
-    resp_body_view_.body_data = std::make_shared<const std::vector<char>>(ori_protocol->m_respBodyData);
+    resp_body_view_.setBody(ori_protocol->m_respBodyType, ori_protocol->m_respBodyData);
 
     return true;
 }

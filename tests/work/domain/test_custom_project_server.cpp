@@ -835,21 +835,21 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
     EXPECT_TRUE(context->parseRequest(buf, now));
     EXPECT_EQ(context->state(), CustomTcpContext::kExpectBody);
     EXPECT_FALSE(context->gotAll());
-    EXPECT_TRUE(context->request()->body().toString().empty());
+    EXPECT_TRUE(context->request()->bodyString().empty());
 
     // 第2段: body 还不完整, 状态仍应停留在 kExpectBody, 等待更多数据。
     buf.append(body_part1.data(), body_part1.size());
     EXPECT_TRUE(context->parseRequest(buf, now));
     EXPECT_EQ(context->state(), CustomTcpContext::kExpectBody);
     EXPECT_FALSE(context->gotAll());
-    EXPECT_TRUE(context->request()->body().toString().empty());
+    EXPECT_TRUE(context->request()->bodyString().empty());
 
     // 第3段: 补齐剩余 body, 这时应该完整解析成功。
     buf.append(body_part2.data(), body_part2.size());
     EXPECT_TRUE(context->parseRequest(buf, now));
     EXPECT_EQ(context->state(), CustomTcpContext::kGotAll);
     EXPECT_TRUE(context->gotAll());
-    EXPECT_EQ(context->request()->body().toString(), expect_body);
+    EXPECT_EQ(context->request()->bodyString(), expect_body);
 }
 
 /*

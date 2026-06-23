@@ -9,9 +9,11 @@
 #ifndef __KIT_HTTP_RESPONSE_H__
 #define __KIT_HTTP_RESPONSE_H__
 
+#include "net/http/http_content.h"
 #include "net/http/http_util.h"
 #include "net/buffer.h"
 #include "base/time_stamp.h"
+#include "nlohmann/json.hpp"
 
 #include <vector>
 #include <algorithm>
@@ -45,7 +47,7 @@ public:
 
     const std::unordered_map<std::string, std::string>& headers() const { return headers_; }
     const std::unordered_map<std::string, std::string>& headers() { return headers_; }
-    void setHeaders(const std::unordered_map<std::string, std::string> &headers) { headers_ = headers; }
+    void setHeaders(const std::unordered_map<std::string, std::string> &headers);
 
     void setConnectionClosed(bool on) { connection_closed_ = on; }
     bool connectionClosed() const { return connection_closed_; }
@@ -54,10 +56,29 @@ public:
     TimeStamp receiveTime() const { return receive_time_; }
     TimeStamp receiveTime() { return receive_time_; }
 
-    Body& body() { return body_; }
-    void setBody(const Body &body) { body_ = body; }
+    const ContentMeta& contentMeta() const { return content_meta_; }
+    ContentMeta& contentMeta() { return content_meta_; }
+    void setContentMeta(const ContentMeta& meta);
+    void setContentMeta(ContentMeta&& meta);
 
+    const std::vector<uint8_t>& bodyData() const { return body_data_; }
+    std::vector<uint8_t>& bodyData() { return body_data_; }
+    void setBodyData(const std::vector<uint8_t>& data) { body_data_ = data; }
+    void setBodyData(std::vector<uint8_t>&& data) { body_data_ = std::move(data); }
+    void setBodyData(const std::vector<char>& data);
+    void setBodyData(const std::string& data);
+    void appendBodyData(const char* start, size_t len);
+    void appendBodyData(const std::string& data);
+    void appendBodyData(const std::vector<char>& data);
+    void appendBodyData(const std::vector<uint8_t>& data);
+    void resetBodyData() { body_data_.clear(); }
+    std::string bodyString() const;
 
+    void setJson(const nlohmann::json& root);
+    void setText(const std::string& text);
+    void setOctetStream(std::vector<uint8_t> data);
+
+    std::vector<uint8_t> toBytes() const;
     std::string toString();
 
 protected:
@@ -69,8 +90,10 @@ protected:
     std::unordered_map<std::string, std::string> headers_;
     /// @brief 连接是否关闭
     bool connection_closed_;
-    /// @brief Body结构
-    Body body_;
+    /// @brief Content-Type 元数据
+    ContentMeta content_meta_;
+    /// @brief Body原始字节
+    std::vector<uint8_t> body_data_;
     /// @brief 收到响应时间
     TimeStamp receive_time_;
 };

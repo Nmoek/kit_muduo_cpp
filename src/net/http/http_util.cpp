@@ -8,7 +8,81 @@
  */
 #include "net/http/http_util.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace kit_muduo::http {
+
+bool IsHeaderName(const std::string& actual, const std::string& expected)
+{
+    return actual.size() == expected.size()
+        && std::equal(actual.begin(), actual.end(), expected.begin(),
+            [](unsigned char lhs, unsigned char rhs) {
+                return std::tolower(lhs) == std::tolower(rhs);
+            });
+}
+
+std::string GetHeaderIgnoreCase(
+    const std::unordered_map<std::string, std::string>& headers,
+    const std::string& key)
+{
+    auto direct_it = headers.find(key);
+    if(direct_it != headers.end())
+    {
+        return direct_it->second;
+    }
+
+    for(const auto& item : headers)
+    {
+        if(IsHeaderName(item.first, key))
+        {
+            return item.second;
+        }
+    }
+
+    return "";
+}
+
+void SetOrReplaceHeader(std::unordered_map<std::string, std::string>& headers,
+                        const std::string& canonical_key,
+                        const std::string& value)
+{
+    for(auto it = headers.begin(); it != headers.end(); ++it)
+    {
+        if(IsHeaderName(it->first, canonical_key))
+        {
+            const bool same_key = it->first == canonical_key;
+            if(same_key)
+            {
+                it->second = value;
+            }
+            else
+            {
+                headers.erase(it);
+                headers[canonical_key] = value;
+            }
+            return;
+        }
+    }
+
+    headers[canonical_key] = value;
+}
+
+void EraseHeader(std::unordered_map<std::string, std::string>& headers,
+                 const std::string& key)
+{
+    for(auto it = headers.begin(); it != headers.end();)
+    {
+        if(IsHeaderName(it->first, key))
+        {
+            it = headers.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
 
 std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
     {kUnknow, ""},

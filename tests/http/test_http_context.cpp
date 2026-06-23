@@ -65,9 +65,8 @@ kit_muduo::HttpContextPtr MakeBindContext(const std::string &content_type, const
     req->setMethod(HttpRequest::Method::kPost);
     req->setPath("/bind-test");
     req->addHeader("Content-Type", content_type);
-    Body req_body;
-    req_body.appendData(body);
-    req->setBody(req_body);
+    req->setContentMeta(ParseHttpContentType(content_type));
+    req->setBodyData(body);
     return ctx;
 }
 
@@ -76,7 +75,7 @@ void from_multiform(const MultiForm& form, HttpBindMultipartDto& out)
     ThrowIfFailed(DecodeMultiPartHelper(
         form.at("header"),
         out.header,
-        {ContentFormat::kJson}));
+        {ContentCodecFormat::kJson}));
 
     ThrowIfFailed(DecodeMultiPartToRaw(
         form.at("body"),
@@ -112,6 +111,33 @@ TEST(TestHttpContextBind, BindJsonAcceptsJsonWithCharset)
     ASSERT_TRUE(result.ok) << result.message;
     EXPECT_EQ(dto.id, 11);
     EXPECT_EQ(dto.name, "ctx-json");
+}
+
+/*
+测试思路：
+1. 普通业务 handler 的 bindJson 按 codec 能力匹配，不按协议项 runtime 的严格 media type 命中规则。
+2. application/problem+json 的 suffix 是 json，ResolveContentCodecFormat 应归为 kJson。
+3. 绑定成功后 DTO 字段被填充，证明 facade 仍可解码 vendor/problem JSON。
+
+示例：
+  Content-Type=application/problem+json
+  body={"id":12,"name":"problem-json"}
+        |
+        v
+  bindJson ok
+*/
+TEST(TestHttpContextBind, BindJsonAcceptsProblemJsonByCodecFormat)
+{
+    auto ctx = MakeBindContext(
+        "application/problem+json",
+        R"({"id":12,"name":"problem-json"})");
+    HttpBindJsonDto dto;
+
+    const auto result = ctx->bindJson(dto);
+
+    ASSERT_TRUE(result.ok) << result.message;
+    EXPECT_EQ(dto.id, 12);
+    EXPECT_EQ(dto.name, "problem-json");
 }
 
 /*

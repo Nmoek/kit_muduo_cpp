@@ -130,7 +130,7 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
                 return true;
             }
             // 注意: buffer里可能还有残余数据 不能全部清除 需要保留下来给下一个请求使用
-            request_->body().appendData((char*)buf.peek(), remain_bytes_len_);
+            request_->appendBodyData(buf.peek(), remain_bytes_len_);
             // 减去剩余body长度
             buf.reset(remain_bytes_len_);
 

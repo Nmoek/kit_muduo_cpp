@@ -61,7 +61,7 @@ ContentCodecResult ToHttpContentResult(const kit_muduo::CodecResult &result);
 
 
 
-template<typename T, ContentFormat Format>
+template<typename T, ContentCodecFormat Format>
 struct ContentDecoder
 {
     static ContentCodecResult Decode(const ContentView&, T&)
@@ -71,7 +71,7 @@ struct ContentDecoder
 };
 
 template<typename T>
-struct ContentDecoder<T, ContentFormat::kJson>
+struct ContentDecoder<T, ContentCodecFormat::kJson>
 {
     static ContentCodecResult Decode(const ContentView& view, T& out)
     {
@@ -79,47 +79,8 @@ struct ContentDecoder<T, ContentFormat::kJson>
     }
 };
 
-//  TODO xml 序列化/反序列化 暂时不实现
-template<typename T>
-struct ContentDecoder<T, ContentFormat::kXml>
-{
-    static ContentCodecResult Decode(const ContentView& view, T& out)
-    {
-        return ContentCodecResult::Failed(ContentCodecErrorCode::kUnsupportedFormat);
-    }
-};
-
 template<>
-struct ContentDecoder<std::string, ContentFormat::kPlainText>
-{
-    static ContentCodecResult Decode(const ContentView &view, std::string &out)
-    {
-        return ToHttpContentResult(kit_muduo::TextCodec::Decode(view.toBytesView(), out));
-    }
-};
-
-template<>
-struct ContentDecoder<std::vector<uint8_t>, ContentFormat::kOctetStream>
-{
-    // 注意: 二进制数据流不需要转换 直接赋值
-    static ContentCodecResult Decode(const ContentView& view, std::vector<uint8_t> &out)
-    {
-        out.clear();
-        if(nullptr != view.data && view.size > 0)
-        {
-            out.assign(view.data, view.data + view.size);
-        }
-
-        return ContentCodecResult::Success();
-    }
-};
-
-
-/*****************MultipartForm 格式********** */
-
-
-template<>
-struct ContentDecoder<MultiForm, ContentFormat::kMultipartFormData>
+struct ContentDecoder<MultiForm, ContentCodecFormat::kMultipartFormData>
 {
     static ContentCodecResult Decode(const ContentView &view, MultiForm& form)
     {
@@ -144,12 +105,12 @@ struct ContentDecoder<MultiForm, ContentFormat::kMultipartFormData>
 };
 
 template<typename T>
-struct ContentDecoder<T, ContentFormat::kMultipartFormData>
+struct ContentDecoder<T, ContentCodecFormat::kMultipartFormData>
 {
     static ContentCodecResult Decode(const ContentView &view, T &out)
     {
         MultiForm form;
-        auto result = ContentDecoder<MultiForm, ContentFormat::kMultipartFormData>::Decode(view, form);
+        auto result = ContentDecoder<MultiForm, ContentCodecFormat::kMultipartFormData>::Decode(view, form);
         if(!result.ok)
         {
             return result;
@@ -168,32 +129,84 @@ struct ContentDecoder<T, ContentFormat::kMultipartFormData>
 };
 
 
-/*****************MultipartForm 格式********** */
+//  TODO xml 序列化/反序列化 暂时不实现
+template<typename T>
+struct ContentDecoder<T, ContentCodecFormat::kXml>
+{
+    static ContentCodecResult Decode(const ContentView& view, T& out)
+    {
+        return ContentCodecResult::Failed(ContentCodecErrorCode::kUnsupportedFormat, "xml decoder not enabled");
+    }
+};
+
+template<>
+struct ContentDecoder<std::string, ContentCodecFormat::kText>
+{
+    static ContentCodecResult Decode(const ContentView &view, std::string &out)
+    {
+        return ToHttpContentResult(kit_muduo::TextCodec::Decode(view.toBytesView(), out));
+    }
+};
+
+template<>
+struct ContentDecoder<std::vector<uint8_t>, ContentCodecFormat::kFormUrlEncoded>
+{
+    static ContentCodecResult Decode(const ContentView& view, std::vector<uint8_t> &out)
+    {
+        return ContentCodecResult::Failed(ContentCodecErrorCode::kUnsupportedFormat, "form-url-encoded decoder not enabled");
+    }
+};
+
+template<>
+struct ContentDecoder<std::vector<uint8_t>, ContentCodecFormat::kBinary>
+{
+    // 注意: 二进制数据流不需要转换 直接赋值
+    static ContentCodecResult Decode(const ContentView& view, std::vector<uint8_t> &out)
+    {
+        out.clear();
+        if(nullptr != view.data && view.size > 0)
+        {
+            out.assign(view.data, view.data + view.size);
+        }
+
+        return ContentCodecResult::Success();
+    }
+};
+
+
+
 
 template<typename T>
 class ContentDecodePipeline
 {
 public:
-    static ContentCodecResult Decode(const ContentView &view, T& out, std::initializer_list<ContentFormat> allowed_formats)
+    static ContentCodecResult Decode(const ContentView &view, T& out, std::initializer_list<ContentCodecFormat> allowed_formats)
     {
         if(!view.data && view.size > 0)
         {
             return ContentCodecResult::Failed(ContentCodecErrorCode::kInternalError, "data is null");
         }
-        if(!IsAllowed(view.meta.format, allowed_formats))
+
+        const auto codec_format = ResolveContentCodecFormat(view.meta);
+
+        if(!IsAllowed(codec_format, allowed_formats))
         {
             return ContentCodecResult::Failed(
                 ContentCodecErrorCode::kUnsupportedFormat,
                 "unsupported content format");
         }
 
-        switch (view.meta.format) 
+        switch (codec_format)
         {
-            case ContentFormat::kJson: return ContentDecoder<T, ContentFormat::kJson>::Decode(view, out);
-            case ContentFormat::kMultipartFormData: return ContentDecoder<T, ContentFormat::kMultipartFormData>::Decode(view, out);
-            case ContentFormat::kXml: return ContentDecoder<T, ContentFormat::kXml>::Decode(view, out);
-            case ContentFormat::kPlainText: return ContentDecoder<T, ContentFormat::kPlainText>::Decode(view, out);
-            case ContentFormat::kOctetStream: return ContentDecoder<T, ContentFormat::kOctetStream>::Decode(view, out);
+            case ContentCodecFormat::kJson: return ContentDecoder<T, ContentCodecFormat::kJson>::Decode(view, out);
+            case ContentCodecFormat::kMultipartFormData: return ContentDecoder<T, ContentCodecFormat::kMultipartFormData>::Decode(view, out);
+            case ContentCodecFormat::kXml: return ContentDecoder<T, ContentCodecFormat::kXml>::Decode(view, out);
+            case ContentCodecFormat::kText: return ContentDecoder<T, ContentCodecFormat::kText>::Decode(view, out);
+            case ContentCodecFormat::kFormUrlEncoded:
+                return ContentCodecResult::Failed(
+                    ContentCodecErrorCode::kUnsupportedFormat,
+                    "form-url-encoded decoder not enabled");
+            case ContentCodecFormat::kBinary: return ContentDecoder<T, ContentCodecFormat::kBinary>::Decode(view, out);
             default:
                 return ContentCodecResult::Failed(
                     ContentCodecErrorCode::kUnsupportedFormat,
@@ -202,7 +215,7 @@ public:
         
     }
 private:
-    static bool IsAllowed(ContentFormat actual_format, std::initializer_list<ContentFormat> allowed_formats)
+    static bool IsAllowed(ContentCodecFormat actual_format, std::initializer_list<ContentCodecFormat> allowed_formats)
     {
         for(const auto f : allowed_formats)
         {
@@ -217,7 +230,7 @@ private:
 };
 
 template<typename T>
-ContentCodecResult DecodeMultiPartHelper(const FormPart &part, T &out, std::initializer_list<ContentFormat> allowed_formats)
+ContentCodecResult DecodeMultiPartHelper(const FormPart &part, T &out, std::initializer_list<ContentCodecFormat> allowed_formats)
 {
     return ContentDecodePipeline<T>::Decode(part.toContentView(), out, allowed_formats);
 }
@@ -256,7 +269,7 @@ inline void ThrowIfFailed(const ContentCodecResult& result)
 
 /***************TODO 序列化能力预留****************** */
 
-template<typename T, ContentFormat Format>
+template<typename T, ContentCodecFormat Format>
 struct ContentEncoder
 {
     static ContentCodecResult Encode(const T&, std::vector<char>&)
@@ -266,7 +279,7 @@ struct ContentEncoder
 };
 
 template<typename T>
-struct ContentEncoder<T, ContentFormat::kJson>
+struct ContentEncoder<T, ContentCodecFormat::kJson>
 {
     static ContentCodecResult Encode(const T& in, std::vector<char>& out_data)
     {

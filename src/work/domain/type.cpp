@@ -7,9 +7,6 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/type.h"
-#include "net/http/http_util.h"
-
-using namespace kit_muduo::http;
 
 namespace kit_domain {
 
@@ -53,16 +50,43 @@ std::string ProtocolBodyTypeToString(ProtocolBodyType type)
     return "";
 }
 
-ContentType ProtocolBodyTypeToContentType(ProtocolBodyType type)
+kit_muduo::http::ContentCodecFormat ProtocolBodyTypeToContentCodecFormat(ProtocolBodyType type)
 {
-    if(ProtocolBodyType::kJson == type) return ContentType(ContentType::kJsonType);
-    if(ProtocolBodyType::kXml == type) return ContentType(ContentType::kXmlType);
+    using kit_muduo::http::ContentCodecFormat;
 
-    // 默认给个文本类型
-    return ContentType(ContentType::kPlainType);
+    switch(type)
+    {
+        case ProtocolBodyType::kJson:
+            return ContentCodecFormat::kJson;
+        case ProtocolBodyType::kXml:
+            return ContentCodecFormat::kXml;
+        case ProtocolBodyType::kText:
+            return ContentCodecFormat::kText;
+        case ProtocolBodyType::kBinary:
+            return ContentCodecFormat::kBinary;
+        default:
+            return ContentCodecFormat::kNone;
+    }
+}
+
+kit_muduo::http::ContentMeta ProtocolBodyTypeToHttpContentMeta(ProtocolBodyType type)
+{
+    using kit_muduo::http::KnownMediaType;
+    using kit_muduo::http::MakeContentMeta;
+
+    switch(type)
+    {
+        case ProtocolBodyType::kJson:
+            return MakeContentMeta(KnownMediaType::kApplicationJson);
+        case ProtocolBodyType::kXml:
+            return MakeContentMeta(KnownMediaType::kApplicationXml);
+        case ProtocolBodyType::kText:
+            return MakeContentMeta(KnownMediaType::kTextPlain);
+        case ProtocolBodyType::kBinary:
+            return MakeContentMeta(KnownMediaType::kApplicationOctetStream);
+        default:
+            return MakeContentMeta(KnownMediaType::kUnknown);
+    }
 }
 
 } // namespace kit_domain
-    
-
-

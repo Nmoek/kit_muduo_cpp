@@ -19,6 +19,7 @@
 #include "domain/user.h"
 #include "net/call_backs.h"
 #include "net/http/http_context.h"
+#include "net/http/http_content.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_util.h"
@@ -105,11 +106,8 @@ HttpContextPtr MakeJsonContext(const nljson &body)
     req->setMethod(HttpRequest::Method::kPost);
     req->setPath("/protocols/details/cfg");
     req->addHeader("Content-Type", "application/json");
-
-    Body req_body((ContentType(ContentType::kJsonType)));
-    
-    req_body.appendData(body.dump());
-    req->setBody(req_body);
+    req->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+    req->setBodyData(body.dump());
     return ctx;
 }
 
@@ -131,10 +129,8 @@ HttpContextPtr MakeRawProtocolContext(const std::string &path,
     req->setMethod(HttpRequest::Method::kPost);
     req->setPath(path);
     req->addHeader("Content-Type", content_type);
-
-    Body req_body;
-    req_body.appendData(body);
-    req->setBody(req_body);
+    req->setContentMeta(ParseHttpContentType(content_type));
+    req->setBodyData(body);
     return ctx;
 }
 
@@ -156,7 +152,7 @@ void SetProtocolRouteParam(HttpContextPtr ctx, int64_t protocol_id)
 
 nljson ResponseBody(HttpContextPtr ctx)
 {
-    return nljson::parse(ctx->response()->body().toString());
+    return nljson::parse(ctx->response()->bodyString());
 }
 
 std::shared_ptr<HttpProtocolItem> GetHttpRuntimeItem(

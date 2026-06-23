@@ -10,12 +10,12 @@
 #define __KIT_CUSTOM_REQUEST_H__
 
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "base/time_stamp.h"
 #include "domain/custom_tcp_field_model.h"
-#include "net/http/http_util.h"
 #include "nlohmann/json.hpp"
 
 namespace kit_domain {
@@ -54,11 +54,13 @@ public:
     const HeadersValueMap& headerFields() const { return header_fields_by_byte_pos_; }
     size_t getFieldNums() const { return header_fields_by_byte_pos_.size(); }
 
-    /******暂时这么写**** */
-    void setBody(const kit_muduo::http::Body& body) { body_ = body; }
-
-    kit_muduo::http::Body& body() { return body_; }
-    /******暂时这么写**** */
+    const std::vector<uint8_t>& bodyData() const { return body_data_; }
+    std::vector<uint8_t>& bodyData() { return body_data_; }
+    void setBodyData(const std::vector<uint8_t>& data) { body_data_ = data; }
+    void setBodyData(std::vector<uint8_t>&& data) { body_data_ = std::move(data); }
+    void appendBodyData(const char* start, size_t len);
+    void appendBodyData(const std::vector<uint8_t>& data);
+    std::string bodyString() const;
 
     /**
      * @brief 获取头部的总长度
@@ -75,8 +77,8 @@ private:
     std::string function_code_hex_;
     /// @brief 按 byte_pos 索引的报文头字段表
     HeadersValueMap header_fields_by_byte_pos_;
-    /// @brief 报文Body数据 先复用HTTP结构Body 后续更改该数据结构位置
-    kit_muduo::http::Body body_;
+    /// @brief 报文Body原始字节
+    std::vector<uint8_t> body_data_;
     /// @brief 收发时间点
     kit_muduo::TimeStamp recordTime_;
 

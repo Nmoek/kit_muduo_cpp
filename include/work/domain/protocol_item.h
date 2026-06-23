@@ -12,7 +12,6 @@
 
 #include "domain/project_server.h"
 #include "domain/type.h"
-#include "net/http/http_util.h"
 
 #include <memory>
 #include <string>
@@ -27,14 +26,16 @@ class Protocol;
 
 struct ProtocolItemBodyView
 {
-    kit_muduo::http::ContentType body_type;
+    ProtocolBodyType body_type{ProtocolBodyType::kUnknown};
     std::shared_ptr<const std::vector<char>> body_data{std::make_shared<const std::vector<char>>()};
 
     ProtocolItemBodyView() = default;
-    ProtocolItemBodyView(kit_muduo::http::ContentType body_type, const std::vector<char>& body_data)
-        :body_type(body_type)
-        ,body_data(std::make_shared<const std::vector<char>>(body_data))
-    {}
+    ProtocolItemBodyView(ProtocolBodyType body_type, const std::vector<char>& body_data)
+    {
+        setBody(body_type, body_data);
+    }
+
+    void setBody(ProtocolBodyType new_body_type, const std::vector<char>& new_body_data);
 };
 
 class ProtocolItem

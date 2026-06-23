@@ -10,19 +10,10 @@
 #ifndef __KIT_DOMAIN_TYPE_H__
 #define __KIT_DOMAIN_TYPE_H__
 
+#include "net/http/http_content.h"
 #include "nlohmann/json.hpp"
 
 #include <string>
-#include <vector>
-
-namespace kit_muduo {
-namespace http {
-
-struct ContentType;
-
-}
-}
-
 
 namespace kit_domain {
 
@@ -152,8 +143,9 @@ std::string ProtocolTypeToString(ProtocolType type);
 ProtocolBodyType ProtocolBodyTypeFromString(const std::string &type);
 std::string ProtocolBodyTypeToString(ProtocolBodyType type);
 
-kit_muduo::http::ContentType ProtocolBodyTypeToContentType(ProtocolBodyType type);
+kit_muduo::http::ContentCodecFormat ProtocolBodyTypeToContentCodecFormat(ProtocolBodyType type);
 
+kit_muduo::http::ContentMeta ProtocolBodyTypeToHttpContentMeta(ProtocolBodyType type);
 
 }
 #endif // __KIT_DOMAIN_PROTOCOL_H__

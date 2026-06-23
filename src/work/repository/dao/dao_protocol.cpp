@@ -9,7 +9,6 @@
 
 #include "dao/dao_protocol.h"
 #include "dao/protocol.h"
-#include "domain/protocol.h"
 #include "dao/dao_log.h"
 #include "dao/dao_util.h"
 #include "base/time_stamp.h"
@@ -18,7 +17,6 @@
 
 #include <exception>
 #include <system_error>
-#include <thread>
 
 using nljson = nlohmann::json;
 using namespace sqlite_orm;

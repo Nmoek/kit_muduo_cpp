@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "net/http/http_parser.h"
+#include "net/http/http_content.h"
 #include "net/http/http_context.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
@@ -100,12 +101,12 @@ bool CustomHttpParser::parse(Buffer &buf)
                     if(ReqType == _type)
                     {
                         const std::string& content_type_str = request->getHeader("Content-Type");
-                        request->body().setContentType(http::ContentType::FromString(content_type_str));
+                        request->setContentMeta(ParseHttpContentType(content_type_str));
                     }
                     else if(RespType == _type)
                     {
                         const std::string& content_type_str = response->getHeader("Content-Type");
-                        response->body().setContentType(http::ContentType::FromString(content_type_str));
+                        response->setContentMeta(ParseHttpContentType(content_type_str));
                     }
 
                     _context->setState(HttpContext::kExpectBody);
@@ -135,11 +136,11 @@ bool CustomHttpParser::parse(Buffer &buf)
 
             if(ReqType == _type)
             {
-                request->body().appendData(buf.peek(), min_len);
+                request->appendBodyData(buf.peek(), min_len);
             }
             else if(RespType == _type)
             {
-                response->body().appendData(buf.peek(), min_len);
+                response->appendBodyData(buf.peek(), min_len);
             }
 
             buf.reset(min_len);

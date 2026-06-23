@@ -40,6 +40,27 @@ const FieldValue* CustomTcpMessage::getField(size_t byte_pos) const
     return it == header_fields_by_byte_pos_.end() ? nullptr : &it->second;
 }
 
+void CustomTcpMessage::appendBodyData(const char* start, size_t len)
+{
+    if(start == nullptr || len == 0)
+    {
+        return;
+    }
+    body_data_.insert(body_data_.end(),
+        reinterpret_cast<const uint8_t*>(start),
+        reinterpret_cast<const uint8_t*>(start + len));
+}
+
+void CustomTcpMessage::appendBodyData(const std::vector<uint8_t>& data)
+{
+    body_data_.insert(body_data_.end(), data.begin(), data.end());
+}
+
+std::string CustomTcpMessage::bodyString() const
+{
+    return std::string(body_data_.begin(), body_data_.end());
+}
+
 
 
 uint64_t CustomTcpMessage::getHeaderBytes() const

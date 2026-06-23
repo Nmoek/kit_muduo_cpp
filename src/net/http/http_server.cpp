@@ -243,7 +243,7 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
             HTTP_ERROR() << "http request parse error! " << std::endl;
        
             BadRequest400Servlet::Handle(conn, context);
-            conn->send(context->response()->toString());
+            conn->send(context->response()->toBytes());
             conn->shutdown();
 
             return;
@@ -283,8 +283,7 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
         dispatch->handle(conn, ctx);
 
-        // TODO 这里都要改 send 接口不应该是string
-        conn->send(resp_ptr->toString());
+        conn->send(resp_ptr->toBytes());
         if(resp_ptr->connectionClosed())
         {
             conn->shutdown();
@@ -310,10 +309,10 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
                     }
                     else
                     {
-                        resp_ptr->body().setContentType(ContentType::kJsonType);
-                        resp_ptr->body().appendData(auth_result.message);
+                        resp_ptr->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+                        resp_ptr->appendBodyData(auth_result.message);
                     }
-                    conn->send(resp_ptr->toString());
+                    conn->send(resp_ptr->toBytes());
                     return;
                 }
             }
@@ -325,7 +324,7 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
             HTTP_F_WARN("submit task error! fd[%d][%s], path[%s] \n", conn->fd(), conn->name().c_str(), ctx->request()->path().c_str());
 
             ServiceUnavailable503Servlet::Handle(conn, ctx);
-            conn->send(ctx->response()->toString());
+            conn->send(ctx->response()->toBytes());
             conn->shutdown();
             return;
         }
@@ -348,10 +347,10 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
                 }
                 else
                 {
-                    resp_ptr->body().setContentType(ContentType::kJsonType);
-                    resp_ptr->body().appendData(auth_result.message);
+                    resp_ptr->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+                    resp_ptr->appendBodyData(auth_result.message);
                 }
-                conn->send(resp_ptr->toString());
+                conn->send(resp_ptr->toBytes());
                 return;
             }
         }
@@ -375,7 +374,7 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     svl.handle(conn, ctx);
 
-    conn->send(resp->toString());
+    conn->send(resp->toBytes());
     if(resp->connectionClosed())
     {
         conn->shutdown();

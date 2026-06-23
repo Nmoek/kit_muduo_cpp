@@ -101,7 +101,8 @@ TEST(MultiFormTest, SingleTextField)
     EXPECT_TRUE(part.filename.empty());
     EXPECT_FALSE(part.isFile());
     EXPECT_EQ(PartText(part), "john");
-    EXPECT_EQ(part.meta.format, ContentFormat::kPlainText);
+    EXPECT_EQ(part.meta.known_type, KnownMediaType::kTextPlain);
+    EXPECT_EQ(ResolveContentCodecFormat(part.meta), ContentCodecFormat::kText);
     EXPECT_EQ(part.meta.media_type, "text/plain");
 }
 
@@ -199,7 +200,8 @@ TEST(MultiFormTest, FileUploadPreservesFilenameContentTypeAndBytes)
     EXPECT_TRUE(part.isFile());
     EXPECT_EQ(part.meta.raw_content_type, " image/png");
     EXPECT_EQ(part.meta.media_type, "image/png");
-    EXPECT_EQ(part.meta.format, ContentFormat::kUnknown);
+    EXPECT_EQ(part.meta.known_type, KnownMediaType::kImagePng);
+    EXPECT_EQ(ResolveContentCodecFormat(part.meta), ContentCodecFormat::kBinary);
     EXPECT_EQ(PartText(part), std::string("\x89PNG\r\nfake_data"));
 }
 
@@ -503,7 +505,8 @@ TEST(MultiFormTest, ContentTypeWithLeadingTrailingWhitespace)
     const auto& part = form.at("f");
     EXPECT_EQ(part.meta.raw_content_type, "   text/plain   ");
     EXPECT_EQ(part.meta.media_type, "text/plain");
-    EXPECT_EQ(part.meta.format, ContentFormat::kPlainText);
+    EXPECT_EQ(part.meta.known_type, KnownMediaType::kTextPlain);
+    EXPECT_EQ(ResolveContentCodecFormat(part.meta), ContentCodecFormat::kText);
 }
 
 /*
@@ -531,7 +534,8 @@ TEST(MultiFormTest, PartContentTypeEmptyFallsBackToPlainText)
     const auto& part = form.at("f");
     EXPECT_TRUE(part.meta.raw_content_type.empty());
     EXPECT_EQ(part.meta.media_type, "text/plain");
-    EXPECT_EQ(part.meta.format, ContentFormat::kPlainText);
+    EXPECT_EQ(part.meta.known_type, KnownMediaType::kTextPlain);
+    EXPECT_EQ(ResolveContentCodecFormat(part.meta), ContentCodecFormat::kText);
 }
 
 /*
@@ -580,6 +584,7 @@ TEST(MultiFormTest, FormPartToContentViewPreservesBytesAndMeta)
     ASSERT_EQ(view.size, part.data.size());
     ASSERT_NE(view.data, nullptr);
     EXPECT_EQ(std::memcmp(view.data, part.data.data(), part.data.size()), 0);
-    EXPECT_EQ(view.meta.format, ContentFormat::kPlainText);
+    EXPECT_EQ(view.meta.known_type, KnownMediaType::kTextPlain);
+    EXPECT_EQ(ResolveContentCodecFormat(view.meta), ContentCodecFormat::kText);
     EXPECT_EQ(view.meta.media_type, "text/plain");
 }

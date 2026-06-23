@@ -5,6 +5,7 @@
 #include "net/http/http_response.h"
 #include "net/http/http_server.h"
 #include "service/svc_user.h"
+#include "web/web_common.h"
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
@@ -48,24 +49,6 @@ nljson UserJson(const User &user)
     };
 }
 
-void WriteJson(HttpContextPtr ctx, const nljson &root)
-{
-    auto resp = ctx->response();
-    resp->setVersion(Version::kHttp11);
-    resp->setStateCode(StateCode::k200Ok);
-    resp->body().setContentType(ContentType::kJsonType);
-    resp->body().appendData(root.dump());
-}
-
-bool ParseUserId(HttpContextPtr ctx, int64_t &user_id)
-{
-    try {
-        user_id = std::stoll(ctx->routeParam("user_id"));
-    } catch(const std::exception &) {
-        return false;
-    }
-    return user_id > 0;
-}
 }
 
 UserHandler::UserHandler(std::shared_ptr<UserService> user_svc)
@@ -93,7 +76,7 @@ void UserHandler::List(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
         return;
     }
 
@@ -103,7 +86,7 @@ void UserHandler::List(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     {
         data.push_back(UserJson(user));
     }
-    WriteJson(ctx, {{"code", 0}, {"message", "success"}, {"data", data}});
+    WriteOkJsonResponse(ctx, {{"code", 0}, {"message", "success"}, {"data", data}});
 }
 
 void UserHandler::Add(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
@@ -112,34 +95,34 @@ void UserHandler::Add(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     auto bind_result = ctx->bindJson(request);
     if(!bind_result.ok)
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "body parse error"}, {"data", nljson::object()}});
         return;
     }
 
     const int64_t user_id = user_svc_->AddUser(ctx, UserCreateParam{request.note_name, UserRoleFromString(request.role), request.password});
     if(user_id <= 0)
     {
-        WriteJson(ctx, {{"code", -300}, {"message", "service failed"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -300}, {"message", "service failed"}, {"data", nljson::object()}});
         return;
     }
-    WriteJson(ctx, {{"code", 0}, {"message", "success"}, {"data", {{"user_id", user_id}}}});
+    WriteOkJsonResponse(ctx, {{"code", 0}, {"message", "success"}, {"data", {{"user_id", user_id}}}});
 }
 
 void UserHandler::Get(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
-    if(!ParseUserId(ctx, user_id))
+    if(!ParseRouteInt64(ctx, "user_id", user_id))
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
         return;
     }
     const User user = user_svc_->GetById(ctx, user_id);
     if(user.id <= 0)
     {
-        WriteJson(ctx, {{"code", -300}, {"message", "service failed"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -300}, {"message", "service failed"}, {"data", nljson::object()}});
         return;
     }
-    WriteJson(ctx, {{"code", 0}, {"message", "success"}, {"data", UserJson(user)}});
+    WriteOkJsonResponse(ctx, {{"code", 0}, {"message", "success"}, {"data", UserJson(user)}});
 }
 
 void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
@@ -147,9 +130,9 @@ void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     int64_t user_id = 0;
     UserEditReq request;
     auto bind_result = ctx->bindJson(request);
-    if(!ParseUserId(ctx, user_id) || !bind_result.ok)
+    if(!ParseRouteInt64(ctx, "user_id", user_id) || !bind_result.ok)
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "request parse error"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "request parse error"}, {"data", nljson::object()}});
         return;
     }
     bool ok = user_svc_->UpdateUser(ctx, user_id, UserUpdateParam{
@@ -158,31 +141,31 @@ void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
         UserStatusFromString(request.status),
         request.password,
     });
-    WriteJson(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
+    WriteOkJsonResponse(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
 }
 
 void UserHandler::Disable(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
-    if(!ParseUserId(ctx, user_id))
+    if(!ParseRouteInt64(ctx, "user_id", user_id))
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
         return;
     }
     bool ok = user_svc_->DisableUser(ctx, user_id);
-    WriteJson(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
+    WriteOkJsonResponse(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
 }
 
 void UserHandler::Restore(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
-    if(!ParseUserId(ctx, user_id))
+    if(!ParseRouteInt64(ctx, "user_id", user_id))
     {
-        WriteJson(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
         return;
     }
     bool ok = user_svc_->RestoreUser(ctx, user_id);
-    WriteJson(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
+    WriteOkJsonResponse(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
 }
 
 } // namespace kit_domain

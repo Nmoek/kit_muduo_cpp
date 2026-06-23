@@ -28,6 +28,7 @@
 #include "domain/user.h"
 #include "net/event_loop.h"
 #include "net/http/http_context.h"
+#include "net/http/http_content.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_server.h"
@@ -136,26 +137,24 @@ static void SetJsonBody(HttpRequestPtr req, int32_t method, const std::string &p
 {
     SetRequestBase(req, method, path);
 
-    Body body((ContentType(ContentType::kJsonType)));
     nljson root = std::move(data);
-    body.appendData(root.dump());
-    req->setBody(body);
+    req->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+    req->setBodyData(root.dump());
 }
 
 static void SetRawBody(HttpRequestPtr req,
                        int32_t method,
                        const std::string &path,
-                       ContentType content_type,
+                       KnownMediaType content_type,
                        const std::string &body_data)
 {
     req->setVersion(Version::kHttp11);
     req->setMethod(method);
     req->setPath(path);
-    req->addHeader("Content-Type", content_type.toString());
-
-    Body body(content_type);
-    body.appendData(body_data);
-    req->setBody(body);
+    auto meta = MakeContentMeta(content_type);
+    req->addHeader("Content-Type", ToContentTypeHeaderValue(meta));
+    req->setContentMeta(std::move(meta));
+    req->setBodyData(body_data);
 }
 
 static Project MakeProject(int64_t project_id,
@@ -256,7 +255,7 @@ static HttpContextPtr MakeEditPatternInfoContext(const ProjectEditPatternInfoReq
 
 static nljson ParseJsonBody(HttpContextPtr ctx)
 {
-    return nljson::parse(ctx->response()->body().toString());
+    return nljson::parse(ctx->response()->bodyString());
 }
 
 static void ExpectJsonResponse(HttpContextPtr ctx, int32_t state_code, const nljson &expected)
@@ -586,7 +585,7 @@ static std::vector<HandlerCase> MakeAddProjectCases()
                 SetRawBody(ctx->request(),
                     HttpRequest::Method::kPost,
                     "/projects/add",
-                    ContentType(ContentType::kXmlType),
+                    KnownMediaType::kApplicationXml,
                     "<project><name>test1</name></project>");
                 return ctx;
             },
@@ -1394,7 +1393,7 @@ static std::vector<HandlerCase> MakeListCases()
                 SetRawBody(ctx->request(),
                     HttpRequest::Method::kPost,
                     "/projects/list",
-                    ContentType(ContentType::kJsonType),
+                    KnownMediaType::kApplicationJson,
                     R"({"offset":)");
                 return ctx;
             },
@@ -1640,7 +1639,7 @@ static std::vector<HandlerCase> MakeDetailNameCases()
                 SetRawBody(ctx->request(),
                     HttpRequest::Method::kPost,
                     "/projects/" + std::to_string(kProjectId) + "/name",
-                    ContentType(ContentType::kJsonType),
+                    KnownMediaType::kApplicationJson,
                     R"({"name":)");
                 ctx->request()->addRouteParam("project_id", std::to_string(kProjectId));
                 return ctx;
@@ -1856,7 +1855,7 @@ static std::vector<HandlerCase> MakeEditPatternInfoCases()
                 SetRawBody(ctx->request(),
                     HttpRequest::Method::kPost,
                     "/projects/pattern_info",
-                    ContentType(ContentType::kJsonType),
+                    KnownMediaType::kApplicationJson,
                     R"({"id":)");
                 return ctx;
             },

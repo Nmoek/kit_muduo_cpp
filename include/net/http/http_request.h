@@ -9,13 +9,13 @@
 #ifndef __KIT_HTTP_REQUEST_H__
 #define __KIT_HTTP_REQUEST_H__
 #include "base/time_stamp.h"
+#include "net/http/http_content.h"
 #include "net/http/http_util.h"
-#include "net/buffer.h"
 
 #include <string>
 #include <unordered_map>
 #include <assert.h>
-#include <memory>
+#include <vector>
 
 
 
@@ -108,21 +108,36 @@ public:
 
     const std::unordered_map<std::string, std::string>& headers() const { return headers_; }
     std::unordered_map<std::string, std::string>& headers() { return headers_; }
-    void setHeaders(const std::unordered_map<std::string, std::string> &headers) { headers_ = std::move(headers); }
+    void setHeaders(const std::unordered_map<std::string, std::string> &headers);
 
 
     void setReceiveTime(TimeStamp receiveTime) { receive_time_ = receiveTime; }
     TimeStamp receiveTime() const { return receive_time_; }
     TimeStamp receiveTime() { return receive_time_; }
 
-    Body& body() { return body_; }
-    const Body& body() const { return body_; }
-    void setBody(const Body &body) { body_ = body; }
+    const ContentMeta& contentMeta() const { return content_meta_; }
+    ContentMeta& contentMeta() { return content_meta_; }
+    void setContentMeta(const ContentMeta& meta);
+    void setContentMeta(ContentMeta&& meta);
+
+    const std::vector<uint8_t>& bodyData() const { return body_data_; }
+    std::vector<uint8_t>& bodyData() { return body_data_; }
+    void setBodyData(const std::vector<uint8_t>& data) { body_data_ = data; }
+    void setBodyData(std::vector<uint8_t>&& data) { body_data_ = std::move(data); }
+    void setBodyData(const std::vector<char>& data);
+    void setBodyData(const std::string& data);
+    void appendBodyData(const char* start, size_t len);
+    void appendBodyData(const std::string& data);
+    void appendBodyData(const std::vector<char>& data);
+    void appendBodyData(const std::vector<uint8_t>& data);
+    void resetBodyData() { body_data_.clear(); }
+    std::string bodyString() const;
 
     /**
      * @brief 报文序列化
      * @return std::string
      */
+    std::vector<uint8_t> toBytes() const;
     std::string toString();
 
 private:
@@ -142,8 +157,10 @@ protected:
     Version version_;
     /// @brief 头部字段
     std::unordered_map<std::string, std::string> headers_;
-    /// @brief Body结构
-    Body body_;
+    /// @brief Content-Type 元数据
+    ContentMeta content_meta_;
+    /// @brief Body原始字节
+    std::vector<uint8_t> body_data_;
     /// @brief 接收请求时间点
     TimeStamp receive_time_;
 

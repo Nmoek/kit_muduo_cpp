@@ -8,20 +8,26 @@
  */
 #ifndef __KIT_HTTP_UTIL_H__
 #define __KIT_HTTP_UTIL_H__
-#include "net/buffer.h"
-
 
 #include <bits/stdint-intn.h>
-#include <cctype>
-#include <cstring>
 #include <string>
-#include <assert.h>
-#include <memory>
-#include <iostream>
-#include <vector>
+#include <unordered_map>
 
 
 namespace kit_muduo::http {
+
+bool IsHeaderName(const std::string& actual, const std::string& expected);
+
+std::string GetHeaderIgnoreCase(
+    const std::unordered_map<std::string, std::string>& headers,
+    const std::string& key);
+
+void SetOrReplaceHeader(std::unordered_map<std::string, std::string>& headers,
+                        const std::string& canonical_key,
+                        const std::string& value);
+
+void EraseHeader(std::unordered_map<std::string, std::string>& headers,
+                 const std::string& key);
 
 struct Version
 {
@@ -63,110 +69,6 @@ struct Version
 
 private:
     int32_t m_version{kUnknow};
-};
-
-struct ContentType
-{
-    enum {kUnknowType, kJsonType, kXmlType, kPlainType, kImageJpgType, kMultiForm, kOctetStream, kHtml, kCss, kJavaScript, kSvgXml, kMax};
-
-    explicit ContentType(int32_t contentType = kUnknowType): m_content_type(contentType) { }
-    int32_t operator()() const { return m_content_type; }
-
-    int32_t toInt() const { return m_content_type; }
-
-    void set(int32_t val) { m_content_type = val; }
-
-    std::string toString() const { return toStr(); }
-
-    const char * toStr() const
-    {
-        switch (m_content_type)
-        {
-            case kJsonType: return "application/json";
-            case kXmlType: return "application/xml";
-            case kPlainType: return "text/plain";
-            case kImageJpgType: return "image/jpeg";
-            case kMultiForm: return "multipart/form-data";
-            case kOctetStream: return "application/octet-stream";
-            case kHtml: return "text/html";
-            case kCss: return "text/css";
-            case kJavaScript: return "text/javascript";
-            case kSvgXml: return "image/svg+xml";
-
-            default: return "application/json";
-        }
-        return "application/json";
-    }
-
-    static ContentType FromString( const std::string &contentTypeStr)
-    {
-        auto trim = [](const std::string& s) {
-            const size_t first = s.find_first_not_of(" \t\r\n");
-            if(first == std::string::npos)
-            {
-                return std::string{};
-            }
-            const size_t last = s.find_last_not_of(" \t\r\n");
-            return s.substr(first, last - first + 1);
-        };
-
-        auto to_lower = [](std::string s) {
-            for(auto& c : s)
-            {
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            }
-            return s;
-        };
-
-        size_t semi = contentTypeStr.find(';');
-        std::string media_type = to_lower(trim(contentTypeStr.substr(0, semi)));
-
-        auto has_suffix = [&media_type](const std::string& suffix) {
-            return media_type.size() >= suffix.size()
-                && media_type.compare(media_type.size() - suffix.size(), suffix.size(), suffix) == 0;
-        };
-
-        const bool is_application_media =
-            media_type.compare(0, std::strlen("application/"), "application/") == 0;
-
-        if(media_type == "application/json" || (is_application_media && has_suffix("+json")))
-        {
-            return ContentType(kJsonType);
-        }
-        if(media_type == "image/svg+xml")
-        {
-            return ContentType(kSvgXml);
-        }
-        if(media_type == "application/xml"
-            || media_type == "text/xml"
-            || (is_application_media && has_suffix("+xml")))
-        {
-            return ContentType(kXmlType);
-        }
-        if(media_type == "text/plain")
-        {
-            return ContentType(kPlainType);
-        }
-        if(media_type == "image/jpeg")
-        {
-            return ContentType(kImageJpgType);
-        }
-        if(media_type == "multipart/form-data")
-        {
-            return ContentType(kMultiForm);
-        }
-        if(media_type == "application/octet-stream")
-        {
-            return ContentType(kOctetStream);
-        }
-
-        return ContentType(kUnknowType);
-    }
-
-    bool operator==(const ContentType &rc) const { return m_content_type == rc.m_content_type; }
-
-private:
-    int32_t m_content_type{kUnknowType};
 };
 
 /**
@@ -234,73 +136,6 @@ private:
     std::string m_message;
 };
 
-
-/**
- * @brief HTTP协议Body结构
- */
-class Body
-{
-public:
-    explicit Body(ContentType contentType = ContentType(ContentType::kPlainType))
-        :_contentType(contentType)
-    {}
-
-    explicit Body(ContentType contentType, const std::vector<char>& data)
-        :_contentType(contentType)
-        ,_data(data)
-    {}
-    
-    ~Body() = default;
-
-    ContentType contentType() const { return _contentType; }
-
-    void setContentType(int32_t contentTypeVal)
-    {
-        _contentType.set(contentTypeVal);
-    }
-
-    void setContentType(const ContentType &contentType)
-    {
-        _contentType = contentType;
-    }
-
-    void appendData(const std::string &data)
-    {
-        // 注意: 考虑一下string末尾的 /0
-        appendData(data.data(), data.size());
-    }
-
-
-    void appendData(Buffer& buffer)
-    {
-        appendData(buffer.resetAllAsString());
-    }
-    
-    void appendData(const char *start, size_t len)
-    {
-        _data.insert(_data.end(), start, start + len);
-    }
-
-    void appendData(const std::vector<char> & data)
-    {
-        _data.insert(_data.end(), data.begin(), data.end());
-    }
-
-    void reset() { _data.clear(); }
-
-    const std::vector<char>& data() const { return _data; }
-    std::string toString() const
-    {
-        return std::string(_data.begin(), _data.end());
-    }
-
-
-private:
-    /// @brief Body格式
-    ContentType _contentType;
-    /// @brief Body原始数据
-    std::vector<char> _data;
-};
 
 }
 

@@ -182,7 +182,6 @@ void AuthService::BootstrapAdmin(kit_muduo::HttpContextPtr ctx)
         throw std::runtime_error("KIT_ADMIN_NOTE or KIT_ADMIN_PASSWORD invalid");
     }
 
-    SVCAUTH_F_DEBUG("============================note_env:[%s] password_env[%s]\n", note_env, password_env);
 
     User user;
     user.note_name = note;

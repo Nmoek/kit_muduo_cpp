@@ -8,6 +8,7 @@
  */
 #include "web/write_response.h"
 #include "nlohmann/json.hpp"
+#include "net/http/http_content.h"
 #include "net/http/http_context.h"
 #include "net/http/http_response.h"
 
@@ -128,7 +129,7 @@ void WriteOpResponseHelper(kit_muduo::HttpContextPtr ctx, const WriteOpResult &r
         func(root);
     }
 
-    ctx->response()->body().appendData(root.dump());
+    ctx->response()->setJson(root);
 }
 
 }

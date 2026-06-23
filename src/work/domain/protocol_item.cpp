@@ -7,7 +7,6 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/type.h"
-#include "net/http/http_util.h"
 #include "domain/domain_log.h"
 #include "domain/protocol_item.h"
 #include "domain/protocol.h"
@@ -16,11 +15,13 @@
 #include "domain/custom_tcp_protocol_item.h"
 
 using namespace kit_muduo;
-using namespace kit_muduo::http;
-
-
-
 namespace kit_domain {
+
+void ProtocolItemBodyView::setBody(ProtocolBodyType new_body_type, const std::vector<char>& new_body_data)
+{
+    body_type = new_body_type;
+    body_data = std::make_shared<const std::vector<char>>(new_body_data);
+}
 
 void ProtocolItem::setId(int64_t id)
 {
@@ -43,24 +44,19 @@ void ProtocolItem::initBase(const Protocol& p)
     project_id_ = p.m_projectId;
     is_endian_ = p.m_isEndian;
 
-    req_body_view_.body_type = ProtocolBodyTypeToContentType(p.m_reqBodyType);
-    req_body_view_.body_data = std::make_shared<const std::vector<char>>(p.m_reqBodyData);
-
-    resp_body_view_.body_type = ProtocolBodyTypeToContentType(p.m_respBodyType);
-    resp_body_view_.body_data = std::make_shared<const std::vector<char>>(p.m_respBodyData);
+    req_body_view_.setBody(p.m_reqBodyType, p.m_reqBodyData);
+    resp_body_view_.setBody(p.m_respBodyType, p.m_respBodyData);
 }
 
 
 void ProtocolItem::setReqBody(const ProtocolBodyType body_type, const std::vector<char> &body_data)
 {
-    req_body_view_.body_type = ProtocolBodyTypeToContentType(body_type);
-    req_body_view_.body_data = std::make_shared<const std::vector<char>>(body_data);
+    req_body_view_.setBody(body_type, body_data);
 }
 
 void ProtocolItem::setRespBody(const ProtocolBodyType body_type, const std::vector<char> &body_data)
 {
-    resp_body_view_.body_type = ProtocolBodyTypeToContentType(body_type);
-    resp_body_view_.body_data = std::make_shared<const std::vector<char>>(body_data);
+    resp_body_view_.setBody(body_type, body_data);
 }
 
 ProtocolItemBodyView ProtocolItem::getReqBodyView() const { return req_body_view_; }

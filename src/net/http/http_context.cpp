@@ -87,13 +87,12 @@ bool HttpContext::parseResponse(const std::string &data, TimeStamp receiveTime)
 }
 ContentView HttpContext::makeContentView() const
 {
-    const auto &body_data = _request->body().data();
-    const std::string &raw_content_type = _request->getHeader("Content-Type");
+    const auto &body_data = _request->bodyData();
     
     return {
-        .data = reinterpret_cast<const uint8_t* >(body_data.data()),
+        .data = body_data.data(),
         .size = body_data.size(),
-        .meta = ParseHttpContentType(raw_content_type),
+        .meta = _request->contentMeta(),
     };
 }
 

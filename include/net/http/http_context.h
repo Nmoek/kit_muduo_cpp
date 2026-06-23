@@ -83,13 +83,13 @@ public:
     template<typename T>
     kit_muduo::http::ContentCodecResult bindJson(T &obj)
     {
-        return kit_muduo::http::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::http::ContentFormat::kJson});
+        return kit_muduo::http::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::http::ContentCodecFormat::kJson});
     }
 
     template<typename T>
     kit_muduo::http::ContentCodecResult bindMultipart(T &obj)
     {
-        return kit_muduo::http::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::http::ContentFormat::kMultipartFormData});
+        return kit_muduo::http::ContentDecodePipeline<T>::Decode(makeContentView(), obj, {kit_muduo::http::ContentCodecFormat::kMultipartFormData});
     }
 
 

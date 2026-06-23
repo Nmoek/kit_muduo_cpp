@@ -11,6 +11,7 @@
 #include "domain/runtime_result.h"
 #include "net/call_backs.h"
 #include "net/event_loop.h"
+#include "net/http/http_content.h"
 #include "net/http/http_util.h"
 #include "net/inet_address.h"
 #include "net/socket.h"
@@ -53,6 +54,22 @@ inline static EventLoop* CheckLoop(EventLoop *loop)
         throw std::invalid_argument("loop* is null");
     }
     return loop;
+}
+
+ContentMeta ExpectedHttpContentMeta(kit_domain::ProtocolBodyType body_type)
+{
+    return kit_domain::ProtocolBodyTypeToHttpContentMeta(body_type);
+}
+
+bool IsContentTypeMatch(const ContentMeta& actual_meta, kit_domain::ProtocolBodyType expected_body_type)
+{
+    const auto expected_meta = ExpectedHttpContentMeta(expected_body_type);
+    if(expected_meta.media_type.empty())
+    {
+        return false;
+    }
+
+    return actual_meta.media_type == expected_meta.media_type;
 }
     
 }
@@ -567,46 +584,59 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
         2.3 分出响应类型
         2.2 实际数据转换  期望数据转换
     */
+    // TODO 请求校验模块尚未成型
+#if 0
     try {
         if(!req_body_view.body_data->empty())
         {
-            if(!req->body().data().empty()
-                && req->body().contentType() == req_body_view.body_type)
+            const ContentMeta& actual_meta = req->contentMeta();
+            const auto expected_meta = ExpectedHttpContentMeta(req_body_view.body_type);
+            if(req->bodyData().empty())
             {
-                // TODO 这里需要大量的模版方法模式
-                if(ContentType::kJsonType == req->body().contentType()())
-                {
-                    PJSERVER_F_DEBUG("protocol body type is json! \n");
-                    auto req_root = std::make_unique<nljson>(nljson::parse(req->body().data()));
-                    PJSERVER_DEBUG() << "req body: \n" << req_root->dump(4) << std::endl;
-                    auto req_cfg_root = std::make_unique<nljson>(nljson::parse(*req_body_view.body_data));
-                    PJSERVER_DEBUG() << "req_cfg body: \n" << req_cfg_root->dump(4) << std::endl;
+                PJSERVER_F_ERROR("protocol body is empty! expect_media_type[%s]\n",
+                    expected_meta.media_type.c_str());
 
-                    /************核心校验过程 DFS递归校验***********/
-                    PJSERVER_F_DEBUG("[%d][%s][%d] start match!\n", 
-                        http_item->getId(),
-                        http_item->getName().c_str(),
-                        http_item->getProjectId());
-                        
-                    if(!JsonDataVerifyHelper(*req_root, *req_cfg_root))
-                    {
-                        throw std::logic_error("protocol body is not match!");
-                    }
-    
-                }
-                else  
+                resp->setStateCode(StateCode::k200Ok);
+                resp->setJson({{"code", -200}, {"message", "body parse error!"}});
+                return;
+            }
+
+            if(!IsContentTypeMatch(actual_meta, req_body_view.body_type))
+            {
+                PJSERVER_F_ERROR("protocol content type mismatch! real[%s] - expect[%s] \n",
+                    actual_meta.media_type.c_str(),
+                    expected_meta.media_type.c_str());
+
+                resp->setStateCode(StateCode::k200Ok);
+                resp->setJson({{"code", -200}, {"message", "media type mismatch"}});
+                //TODO： websocket埋点
+                return;
+            }
+
+            // TODO 这里需要大量的模版方法模式
+            if(ProtocolBodyType::kJson == req_body_view.body_type)
+            {
+                PJSERVER_F_DEBUG("protocol body type is json! \n");
+                auto req_root = std::make_unique<nljson>(nljson::parse(req->bodyData()));
+                PJSERVER_DEBUG() << "req body: \n" << req_root->dump(4) << std::endl;
+                auto req_cfg_root = std::make_unique<nljson>(nljson::parse(*req_body_view.body_data));
+                PJSERVER_DEBUG() << "req_cfg body: \n" << req_cfg_root->dump(4) << std::endl;
+
+                /************核心校验过程 DFS递归校验***********/
+                PJSERVER_F_DEBUG("[%d][%s][%d] start match!\n",
+                    http_item->getId(),
+                    http_item->getName().c_str(),
+                    http_item->getProjectId());
+
+                if(!JsonDataVerifyHelper(*req_root, *req_cfg_root))
                 {
-                    // TODO 其他类型转换适配
+                    throw std::logic_error("protocol body is not match!");
                 }
+
             }
             else
             {
-                PJSERVER_F_ERROR("protocol body type is not match! real[%s] - expect[%s] \n", req->body().contentType().toStr(), req_body_view.body_type.toStr());
-
-                resp->body().appendData(R"({"code": -200, "message":"body type is not match!"})");
-                
-                //TODO： websocket埋点
-                return;
+                // TODO 其他类型转换适配
             }
         }
         else
@@ -617,18 +647,19 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
                 http_item->getName().c_str(),
                 http_item->getProjectId(),
                 req->path().c_str(), 
-                req_body_view.body_type.toStr());
+                ProtocolBodyTypeToString(req_body_view.body_type).c_str());
         }
     } catch (const std::exception& e) {
 
         PJSERVER_F_ERROR("protocol body parse exception! %s \n", e.what());
 
-        resp->body().appendData(R"({"code": -200, "message":"body parse error!"})");
+        resp->setStateCode(StateCode::k200Ok);
+        resp->setJson({{"code", -200}, {"message", "body parse error!"}});
         //TODO： websocket埋点
 
         return;
     }
-
+#endif
     PJSERVER_F_INFO("pjId[%d] pcId[%d] name[%s] match success!\n", 
         http_item->getProjectId(),
         http_item->getId(),
@@ -638,7 +669,8 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
     // 响应数据拷贝
     resp->setStateCode(resp_cfg.state_code);
     resp->setHeaders(resp_cfg.headers);
-    resp->setBody(Body{resp_body_view.body_type, *resp_body_view.body_data});
+    resp->setContentMeta(ProtocolBodyTypeToHttpContentMeta(resp_body_view.body_type));
+    resp->setBodyData(*resp_body_view.body_data);
 
     PJSERVER_DEBUG() << std::endl << resp->toString() << std::endl;
     return;

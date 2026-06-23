@@ -10,7 +10,6 @@
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_context.h"
-#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/tcp_connection.h"
 #include "net/http/http_router.h"
@@ -182,7 +181,8 @@ void HelloServlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 void HelloServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -220,7 +220,8 @@ void NotFound404Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 void NotFound404Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -242,7 +243,7 @@ void BadRequest400Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k400BadRequest);
     resp->setConnectionClosed(true);
-    resp->body().reset();
+    resp->resetBodyData();
 }
 
 void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -277,7 +278,8 @@ void ServerErr500Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -317,27 +319,13 @@ void ServiceUnavailable503Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr 
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 StaticFileServlet::StaticFileServlet()
     :HttpServlet("FileServlet", "kit_server")
 {}
-
-static int32_t GetStaticType(const std::string &suffix_type)
-{
-    if(suffix_type == "html")
-        return ContentType::kHtml;
-    else if(suffix_type == "jpg" || suffix_type == "jpeg")
-        return ContentType::kImageJpgType;
-    else if(suffix_type == "svg")
-        return ContentType::kSvgXml;
-    else if(suffix_type == "css")
-        return ContentType::kCss;
-    else if(suffix_type == "js")
-        return ContentType::kJavaScript;
-    return ContentType::kJsonType;
-}
 
 void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
@@ -351,13 +339,13 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     // 文件名全称
     auto pos = path.find_last_of("/");
     std::string file_name = path.substr(pos + 1);
-    // 文件类型
-    pos = file_name.find_last_of(".");
-    const std::string& suffix_type = file_name.substr(pos + 1);
-
-    resp->body().setContentType(GetStaticType(suffix_type));
-
     const std::string target_path = "web/" + path;
+    auto meta = MakeContentMetaFromMediaType(GuessMediaTypeFromExtension(target_path));
+    if(IsTextLikeContent(meta))
+    {
+        SetContentTypeParam(meta, "charset", "utf-8");
+    }
+    resp->setContentMeta(std::move(meta));
 
     /// TODO: 可使用sendfile优化 减少拷贝
     std::fstream tmp_f(target_path, std::ios::in | std::ios::binary);
@@ -375,7 +363,7 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     data.resize(file_size);
 
     tmp_f.read((char*)data.data(), file_size);
-    resp->body().appendData(data);
+    resp->appendBodyData(data);
 
 }
 

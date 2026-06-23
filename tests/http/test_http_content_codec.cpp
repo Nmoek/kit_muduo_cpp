@@ -79,12 +79,12 @@ void from_multiform(const MultiForm& form, CodecMultipartDto& out)
     ThrowIfFailed(DecodeMultiPartHelper(
         form.at("header"),
         out.header,
-        {ContentFormat::kJson}));
+        {ContentCodecFormat::kJson}));
 
     ThrowIfFailed(DecodeMultiPartHelper(
         form.at("raw_cfg"),
         out.raw_cfg,
-        {ContentFormat::kJson}));
+        {ContentCodecFormat::kJson}));
 
     ThrowIfFailed(DecodeMultiPartToRaw(
         form.at("payload"),
@@ -101,7 +101,7 @@ using http_content_codec_test::MultipartPartInput;
 
 /*
 测试思路：
-1. ContentDecodePipeline<T> 在 HTTP 层按 ContentFormat 分发。
+1. ContentDecodePipeline<T> 在 HTTP 层按 ContentCodecFormat 分发。
 2. application/json 请求体应复用 JsonCodec 绑定 DTO。
 3. 成功后 DTO 字段被填充。
 
@@ -116,7 +116,7 @@ TEST(HttpContentCodecTest, JsonDecodeBindsObject)
     const auto result = ContentDecodePipeline<CodecJsonDto>::Decode(
         MakeContentView("application/json", body),
         dto,
-        {ContentFormat::kJson});
+        {ContentCodecFormat::kJson});
 
     ASSERT_TRUE(result.ok) << result.message;
     EXPECT_EQ(dto.id, 7);
@@ -140,7 +140,7 @@ TEST(HttpContentCodecTest, JsonDecodeRejectsBrokenJson)
     const auto result = ContentDecodePipeline<CodecJsonDto>::Decode(
         MakeContentView("application/json", body),
         dto,
-        {ContentFormat::kJson});
+        {ContentCodecFormat::kJson});
 
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, ContentCodecErrorCode::kDecodeFailed);
@@ -148,7 +148,7 @@ TEST(HttpContentCodecTest, JsonDecodeRejectsBrokenJson)
 
 /*
 测试思路：
-1. plain text decoder 只允许 ContentFormat::kPlainText。
+1. plain text decoder 只允许 ContentCodecFormat::kText。
 2. 输出 string 应复制全部字节。
 3. 该用例覆盖 ContentDecoder<std::string, kPlainText> 特化。
 
@@ -163,7 +163,7 @@ TEST(HttpContentCodecTest, PlainTextDecodeCopiesString)
     const auto result = ContentDecodePipeline<std::string>::Decode(
         MakeContentView("text/plain", body),
         out,
-        {ContentFormat::kPlainText});
+        {ContentCodecFormat::kText});
 
     ASSERT_TRUE(result.ok) << result.message;
     EXPECT_EQ(out, body);
@@ -186,7 +186,7 @@ TEST(HttpContentCodecTest, OctetStreamDecodePreservesBinaryBytes)
     const auto result = ContentDecodePipeline<std::vector<uint8_t>>::Decode(
         MakeContentView("application/octet-stream", body),
         out,
-        {ContentFormat::kOctetStream});
+        {ContentCodecFormat::kBinary});
 
     ASSERT_TRUE(result.ok) << result.message;
     ASSERT_EQ(out.size(), body.size());
@@ -210,10 +210,35 @@ TEST(HttpContentCodecTest, DecodeRejectsFormatOutsideAllowedList)
     const auto result = ContentDecodePipeline<CodecJsonDto>::Decode(
         MakeContentView("text/plain", body),
         dto,
-        {ContentFormat::kJson});
+        {ContentCodecFormat::kJson});
 
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, ContentCodecErrorCode::kUnsupportedFormat);
+}
+
+/*
+测试思路：
+1. application/x-www-form-urlencoded 本轮只识别为 ContentCodecFormat::kFormUrlEncoded。
+2. 即使 handler 明确允许该 codec 格式，也不能落到 DTO 泛型 decoder 的 unsupported target。
+3. 返回信息应明确为 form-url-encoded decoder not enabled，避免业务误以为普通 HTML form 已支持自动绑定。
+
+示例：
+  Content-Type=application/x-www-form-urlencoded + allowed={kFormUrlEncoded}
+    -> kUnsupportedFormat + decoder not enabled
+*/
+TEST(HttpContentCodecTest, FormUrlEncodedDecodeReportsDecoderNotEnabled)
+{
+    const std::string body = "id=7&name=kit";
+    CodecJsonDto dto;
+
+    const auto result = ContentDecodePipeline<CodecJsonDto>::Decode(
+        MakeContentView("application/x-www-form-urlencoded", body),
+        dto,
+        {ContentCodecFormat::kFormUrlEncoded});
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(result.code, ContentCodecErrorCode::kUnsupportedFormat);
+    EXPECT_NE(result.message.find("form-url-encoded decoder not enabled"), std::string::npos);
 }
 
 /*
@@ -233,7 +258,7 @@ TEST(HttpContentCodecTest, MultipartDecodeRejectsMissingBoundary)
     const auto result = ContentDecodePipeline<CodecMultipartDto>::Decode(
         MakeContentView("multipart/form-data", body),
         dto,
-        {ContentFormat::kMultipartFormData});
+        {ContentCodecFormat::kMultipartFormData});
 
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, ContentCodecErrorCode::kInvalidContentType);
@@ -263,7 +288,7 @@ TEST(HttpContentCodecTest, MultipartDecodeBindsAdlDtoAndPreservesBinaryPayload)
     const auto result = ContentDecodePipeline<CodecMultipartDto>::Decode(
         MakeContentView("multipart/form-data; boundary=" + boundary, body),
         dto,
-        {ContentFormat::kMultipartFormData});
+        {ContentCodecFormat::kMultipartFormData});
 
     ASSERT_TRUE(result.ok) << result.message;
     EXPECT_EQ(dto.header.id, 9);
@@ -294,7 +319,7 @@ TEST(HttpContentCodecTest, MultipartDecodeReportsMissingRequiredPart)
     const auto result = ContentDecodePipeline<CodecMultipartDto>::Decode(
         MakeContentView("multipart/form-data; boundary=" + boundary, body),
         dto,
-        {ContentFormat::kMultipartFormData});
+        {ContentCodecFormat::kMultipartFormData});
 
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, ContentCodecErrorCode::kDecodeFailed);
@@ -321,7 +346,7 @@ TEST(HttpContentCodecTest, MultipartDecodeForUnsupportedDtoReportsUnsupportedTar
     const auto result = ContentDecodePipeline<CodecJsonDto>::Decode(
         MakeContentView("multipart/form-data; boundary=" + boundary, body),
         dto,
-        {ContentFormat::kMultipartFormData});
+        {ContentCodecFormat::kMultipartFormData});
 
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, ContentCodecErrorCode::kDecodeFailed);
@@ -352,7 +377,7 @@ TEST(HttpContentCodecTest, DecodeMultiPartHelperRejectsPartFormatMismatch)
     const auto result = DecodeMultiPartHelper(
         form.at("header"),
         dto,
-        {ContentFormat::kJson});
+        {ContentCodecFormat::kJson});
 
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(result.code, ContentCodecErrorCode::kUnsupportedFormat);

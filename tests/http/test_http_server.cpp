@@ -247,14 +247,14 @@ void testHttpCb(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
     auto resp = ctx->response();
-    TEST_INFO() << "req body= " << req->body().toString() << std::endl;
+    TEST_INFO() << "req body= " << req->bodyString() << std::endl;
     resp->setStateCode(StateCode::k200Ok);
     resp->setVersion(Version::kHttp11);
     resp->setConnectionClosed(true);
 
-    resp->body().appendData(req->body().data());
-    resp->body().appendData("\n");
-    conn->send(resp->toString());
+    resp->appendBodyData(req->bodyData());
+    resp->appendBodyData("\n");
+    conn->send(resp->toBytes());
 
 }
 
@@ -301,12 +301,12 @@ TEST(TestHttpServer, pipelined_requests_are_dispatched_separately)
             auto resp = ctx->response();
             resp->setVersion(Version::kHttp11);
             resp->setStateCode(StateCode::k200Ok);
-            resp->body().appendData(req->path());
+            resp->appendBodyData(req->path());
             if(req->path() == "/two")
             {
                 resp->setConnectionClosed(true);
             }
-            conn->send(resp->toString());
+            conn->send(resp->toBytes());
             if(resp->connectionClosed())
             {
                 conn->shutdown();
@@ -393,7 +393,7 @@ TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
             resp->setVersion(Version::kHttp11);
             resp->setStateCode(StateCode::k200Ok);
             resp->setConnectionClosed(true);
-            resp->body().appendData("ok");
+            resp->appendBodyData("ok");
         });
         server->start();
         started.set_value();
@@ -478,7 +478,7 @@ TEST(TestHttpServer, DISABLED_servlet)
         resp->addHeader("Content-Type", "text/plain");
 
         std::string body = "this is a custom servlet!!";
-        resp->body().appendData(body);
+        resp->appendBodyData(body);
     });
 
     server.setHttpCallback([dispatch = sd](TcpConnectionPtr conn, HttpContextPtr ctx){

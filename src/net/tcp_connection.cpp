@@ -92,8 +92,8 @@ void TcpConnection::send(const std::vector<uint8_t>& buf)
 
             TCP_F_DEBUG("TcpConnection::send queue fd[%d][%s] \n", fd(), _peerAddr.toIpPort().c_str());
 
-            _subLoop->queueInLoop([buf, this_ptr = shared_from_this()](){
-                this_ptr->sendInLoop(buf);
+            _subLoop->queueInLoop([msg = std::move(buf), this_ptr = shared_from_this()](){
+                this_ptr->sendInLoop(msg);
             });
 
         }
