@@ -442,7 +442,7 @@ RuntimeResult<void> HttpProjectServer::ReplaceReqCfgProtocolItem(const HttpRunti
 bool HttpProjectServer::isSameRoute(const HttpItemReqHeaderCfg &old_cfg, const HttpItemReqHeaderCfg &new_cfg)
 {
     return old_cfg.method.toInt() == new_cfg.method.toInt() 
-    && old_cfg.path == new_cfg.path;
+    && kit_muduo::http::NormalizeHttpPath(old_cfg.path) == kit_muduo::http::NormalizeHttpPath(new_cfg.path);
 }
 
 

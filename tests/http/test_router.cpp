@@ -133,6 +133,43 @@ TEST(TestRouter, ExactRoutesCanBindDifferentMethods)
     ASSERT_EQ(post_resp->bodyString(), "post");
 }
 
+TEST(TestRouter, ExactRouteNormalizesRepeatedSlash)
+{
+    DispatchFixture f;
+
+    // 测试思路：
+    // 1. Postman 中 base_url 末尾 / 和接口 path 开头 / 容易拼出双斜杠。
+    // 2. exact 路由注册和请求匹配需要使用同一套 path 归一化逻辑。
+    // 3. 例：注册 /securitycheck/v1/sctap/register，请求 //securitycheck/v1/sctap/register 也应命中。
+    ASSERT_TRUE(f.dispatch.addRoute(ExpectHttpMethods::Post, "/securitycheck/v1/sctap/register", Servlet("ok")).ok());
+
+    auto resp = f.Request("//securitycheck/v1/sctap/register", HttpRequest::Method::kPost);
+    ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(resp->bodyString(), "ok");
+}
+
+TEST(TestRouter, AddRouteNormalizesRepeatedSlashPattern)
+{
+    DispatchFixture f;
+
+    // 测试思路：
+    // 1. 配置侧也可能录入带重复 / 的 path，注册时要规整为标准 pattern。
+    // 2. 规整后 list/get/remove 都应使用统一 pattern，避免同一路由出现两个 key。
+    // 3. 例：注册 //api///items，实际保存和访问都按 /api/items 处理。
+    auto result = f.dispatch.addRoute(ExpectHttpMethods::Get, "//api///items", Servlet("items"));
+    ASSERT_TRUE(result.ok());
+
+    auto info = f.dispatch.getRoute(result.route_id);
+    ASSERT_EQ(info.pattern, "/api/items");
+
+    auto resp = f.Request("/api/items", HttpRequest::Method::kGet);
+    ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(resp->bodyString(), "items");
+
+    ASSERT_EQ(f.dispatch.removeRoute("//api/items"), 1u);
+    ASSERT_EQ(f.Request("/api/items", HttpRequest::Method::kGet)->stateCode().toInt(), StateCode::k404NotFound);
+}
+
 TEST(TestRouter, ExactRouteCanBindMethodMask)
 {
     DispatchFixture f;

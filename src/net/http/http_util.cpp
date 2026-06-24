@@ -13,6 +13,43 @@
 
 namespace kit_muduo::http {
 
+namespace {
+std::string Trim(std::string value)
+{
+    auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+    value.erase(value.begin(), std::find_if(value.begin(), value.end(), not_space));
+    value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(), value.end());
+    return value;
+}
+
+bool EqualIgnoreCase(const std::string &lhs, const std::string &rhs)
+{
+    return lhs.size() == rhs.size()
+        && std::equal(lhs.begin(), lhs.end(), rhs.begin(),
+            [](unsigned char a, unsigned char b) {
+                return std::tolower(a) == std::tolower(b);
+            });
+}
+
+}
+
+std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
+    {kUnknow, ""},
+    {k200Ok,                         "OK"},
+    {k204NoContent,                  "No Content"},
+    {k301MovedPermanently,           "Moved Permanently"},
+    {k302MoveTemporarily,            "Move temporarily"},
+    {k400BadRequest,                 "Bad Request"},
+    {k401Unauthorized,               "Unauthorized"},
+    {k403Forbidden,                  "Forbidden"},
+    {k404NotFound,                   "Not Found"},
+    {k405MethodNotAllowed,           "Method Not Allowed"},
+    {k454SessionNotFound, "Session Not Found"},
+    {k455MethodNotValid,             "Method Not Valid"},
+    {k500InternalServerError,        "Internal Server Error"},
+    {k503ServiceUnavailable, "Service Unavailable"}
+};
+
 bool IsHeaderName(const std::string& actual, const std::string& expected)
 {
     return actual.size() == expected.size()
@@ -84,22 +121,57 @@ void EraseHeader(std::unordered_map<std::string, std::string>& headers,
     }
 }
 
-std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
-    {kUnknow, ""},
-    {k200Ok,                         "OK"},
-    {k204NoContent,                  "No Content"},
-    {k301MovedPermanently,           "Moved Permanently"},
-    {k302MoveTemporarily,            "Move temporarily"},
-    {k400BadRequest,                 "Bad Request"},
-    {k401Unauthorized,               "Unauthorized"},
-    {k403Forbidden,                  "Forbidden"},
-    {k404NotFound,                   "Not Found"},
-    {k405MethodNotAllowed,           "Method Not Allowed"},
-    {k454SessionNotFound, "Session Not Found"},
-    {k455MethodNotValid,             "Method Not Valid"},
-    {k500InternalServerError,        "Internal Server Error"},
-    {k503ServiceUnavailable, "Service Unavailable"}
-};
+bool HeaderContainsToken(const std::string &header_value, const std::string &token)
+{
+    size_t start = 0;
+    while(start < header_value.size())
+    {
+        size_t pos = header_value.find(",");
+        size_t end = (pos == std::string::npos ? header_value.size() : pos);
+        if(EqualIgnoreCase(Trim(header_value.substr(0, end - start)), token))
+        {
+            return  true;
+        }
+        if(pos == std::string::npos)
+        {
+            break;
+        }
+        start = pos + 1;
+    }
+    return false;
+}
+
+std::string NormalizeHttpPath(const std::string &path)
+{
+    if(path.empty() || path[0] != '/')
+    {
+        return path;
+    }
+
+    std::string normalized;
+    normalized.reserve(path.size());
+
+    bool prev_slash = false;
+    for(char ch : path)
+    {
+        if(ch == '/')
+        {
+            if(prev_slash)
+            {
+                continue;
+            }
+            prev_slash = true;
+        }
+        else
+        {
+            prev_slash = false;
+        }
+        normalized.push_back(ch);
+    }
+
+    return normalized;
+}
+
 
 
 }

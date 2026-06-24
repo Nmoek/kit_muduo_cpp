@@ -10,6 +10,7 @@
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_context.h"
+#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/tcp_connection.h"
 #include "net/http/http_router.h"
@@ -411,7 +412,8 @@ void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string &pattern, HttpServlet::Ptr servlet)
 {
     RouteResult result;
-    if(pattern.empty())
+    const std::string route_pattern = NormalizeHttpPath(pattern);
+    if(route_pattern.empty())
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "route pattern is empty";
@@ -422,24 +424,24 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "route servlet is null";
-        HTTP_F_ERROR("addRoute failed: servlet is null, pattern[%s]\n", pattern.c_str());
+        HTTP_F_ERROR("addRoute failed: servlet is null, pattern[%s]\n", route_pattern.c_str());
         return result;
     }
     if((methods & ExpectHttpMethods::All) == ExpectHttpMethods::None || (methods & ~ExpectHttpMethods::All) != 0)
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "route method mask is invalid";
-        HTTP_F_ERROR("addRoute failed: invalid method mask[0x%x], pattern[%s]\n", methods, pattern.c_str());
+        HTTP_F_ERROR("addRoute failed: invalid method mask[0x%x], pattern[%s]\n", methods, route_pattern.c_str());
         return result;
     }
 
-    RouteKind kind = routeKind(pattern);
-    RouterMatcher::Ptr matcher = createMatcher(kind, pattern);
+    RouteKind kind = routeKind(route_pattern);
+    RouterMatcher::Ptr matcher = createMatcher(kind, route_pattern);
     if(kind != RouteKind::Exact && !matcher)
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "create route matcher failed";
-        HTTP_F_ERROR("addRoute failed: create matcher failed, pattern[%s]\n", pattern.c_str());
+        HTTP_F_ERROR("addRoute failed: create matcher failed, pattern[%s]\n", route_pattern.c_str());
         return result;
     }
 
@@ -448,20 +450,20 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
 
     if(kind == RouteKind::Exact)
     {
-        auto &routes = exact_routes_[pattern];
+        auto &routes = exact_routes_[route_pattern];
         if(hasMethodConflict(routes, methods, &conflict_methods))
         {
             result.status = RouteStatus::Conflict;
             result.message = "route method conflict";
             HTTP_F_ERROR("addRoute conflict: kind[%s], pattern[%s], new_methods[%s], conflict_methods[%s]\n",
-                         RouteKindName(kind).c_str(), pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
+                         RouteKindName(kind).c_str(), route_pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
             return result;
         }
 
         RouteEntry entry;
         entry.id = next_route_id_++;
         entry.kind = kind;
-        entry.pattern = pattern;
+        entry.pattern = route_pattern;
         entry.methods = methods;
         entry.servlet = std::move(servlet);
         entry.priority = next_priority_++;
@@ -473,7 +475,7 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
         std::vector<RouteEntry> same_pattern_routes;
         for(const auto &route : dynamic_routes_)
         {
-            if(route.pattern == pattern)
+            if(route.pattern == route_pattern)
             {
                 same_pattern_routes.emplace_back(route);
             }
@@ -483,14 +485,14 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
             result.status = RouteStatus::Conflict;
             result.message = "route method conflict";
             HTTP_F_ERROR("addRoute conflict: kind[%s], pattern[%s], new_methods[%s], conflict_methods[%s]\n",
-                         RouteKindName(kind).c_str(), pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
+                         RouteKindName(kind).c_str(), route_pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
             return result;
         }
 
         RouteEntry entry;
         entry.id = next_route_id_++;
         entry.kind = kind;
-        entry.pattern = pattern;
+        entry.pattern = route_pattern;
         entry.methods = methods;
         entry.matcher = std::move(matcher);
         entry.servlet = std::move(servlet);
@@ -502,7 +504,7 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
     HTTP_F_INFO("addRoute success: id[%llu], kind[%s], pattern[%s], methods[%s]\n",
                 static_cast<unsigned long long>(result.route_id),
                 RouteKindName(kind).c_str(),
-                pattern.c_str(),
+                route_pattern.c_str(),
                 BuildAllowHeader(methods).c_str());
     return result;
 }
@@ -552,7 +554,7 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
 {
     MatchResult result;
     auto req = ctx->request();
-    const std::string url = req->path();
+    const std::string url = NormalizeHttpPath(req->path());
 
     std::unique_lock<std::mutex> lock(route_mtx_);
 
@@ -666,9 +668,10 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern, MethodMask m
 {
     std::unique_lock<std::mutex> lock(route_mtx_);
     size_t removed = 0;
+    const std::string route_pattern = NormalizeHttpPath(pattern);
 
     // exact_routes_
-    auto exact_it = exact_routes_.find(pattern);
+    auto exact_it = exact_routes_.find(route_pattern);
     if (exact_it != exact_routes_.end())
     {
         auto &vec = exact_it->second;
@@ -693,7 +696,7 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern, MethodMask m
     // dynamic_routes_
     for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); )
     {
-        if (it->pattern == pattern && it->methods == methods)
+        if (it->pattern == route_pattern && it->methods == methods)
         {
             it = dynamic_routes_.erase(it);
             ++removed;
@@ -711,9 +714,10 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern)
 {
     std::unique_lock<std::mutex> lock(route_mtx_);
     size_t removed = 0;
+    const std::string route_pattern = NormalizeHttpPath(pattern);
 
     // exact_routes_
-    auto exact_it = exact_routes_.find(pattern);
+    auto exact_it = exact_routes_.find(route_pattern);
     if (exact_it != exact_routes_.end())
     {
         removed += exact_it->second.size();
@@ -723,7 +727,7 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern)
     // dynamic_routes_
     for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); )
     {
-        if (it->pattern == pattern)
+        if (it->pattern == route_pattern)
         {
             it = dynamic_routes_.erase(it);
             ++removed;
@@ -812,8 +816,9 @@ std::vector<RouteInfo> HttpServletDispatch::listRoutes(const std::string &patter
 {
     std::unique_lock<std::mutex> lock(route_mtx_);
     std::vector<RouteInfo> result;
+    const std::string route_pattern = NormalizeHttpPath(pattern);
 
-    auto exact_it = exact_routes_.find(pattern);
+    auto exact_it = exact_routes_.find(route_pattern);
     if (exact_it != exact_routes_.end())
     {
         for (const auto &route : exact_it->second)
@@ -830,7 +835,7 @@ std::vector<RouteInfo> HttpServletDispatch::listRoutes(const std::string &patter
 
     for (const auto &route : dynamic_routes_)
     {
-        if (route.pattern == pattern)
+        if (route.pattern == route_pattern)
         {
             RouteInfo info;
             info.id = route.id;

@@ -79,7 +79,7 @@ public:
 
 
     std::string path() const { return path_; }
-    void setPath(const std::string &path) { path_ = path; }
+    void setPath(const std::string &path) { path_ = NormalizeHttpPath(path); }
 
     std::string getQureyParam(const std::string &key) const
     { 

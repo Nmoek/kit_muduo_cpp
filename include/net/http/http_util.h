@@ -16,6 +16,7 @@
 
 namespace kit_muduo::http {
 
+/***********这几个接口 暂时这么用 后续进一步封装**********/
 bool IsHeaderName(const std::string& actual, const std::string& expected);
 
 std::string GetHeaderIgnoreCase(
@@ -28,6 +29,27 @@ void SetOrReplaceHeader(std::unordered_map<std::string, std::string>& headers,
 
 void EraseHeader(std::unordered_map<std::string, std::string>& headers,
                  const std::string& key);
+
+/***********这几个接口 暂时这么用 后续进一步封装**********/
+
+/**
+ * @brief 判断某个 HTTP header的值里是否包含指定 token
+ * @param header_value 
+ * @param token 
+ * @return true 
+ * @return false 
+ */
+bool HeaderContainsToken(const std::string &header_value, const std::string &token);
+
+/**
+ * @brief 规整 HTTP path 中连续的 /，用于路由注册和匹配。
+ *
+ * 示例：
+ *   //api///v1  -> /api/v1
+ *   /           -> /
+ */
+std::string NormalizeHttpPath(const std::string &path);
+
 
 struct Version
 {

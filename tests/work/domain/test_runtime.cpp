@@ -645,6 +645,44 @@ TEST(HttpProjectRuntimeSuite, UpdateReqHeadersKeepsRouteAndBodyViews)
 
 /*
 测试思路：
+1. 构造 HTTP 运行态协议项，初始路由为 GET /d9/http/slash。
+2. 只把 path 更新成带重复 / 的 //d9//http/slash，语义上仍是同一路由。
+3. 断言更新成功并只替换配置，不触发先 addRoute 后 removeRoute 的自冲突。
+
+示例：
+  GET /d9/http/slash
+          |
+          | UpdateReqCfg(GET //d9//http/slash)
+          v
+  GET /d9/http/slash 对外仍可按归一化路由命中
+*/
+TEST(HttpProjectRuntimeSuite, UpdateReqSameRouteWithRepeatedSlashDoesNotConflict)
+{
+    RuntimeLoopPool pool(1);
+    auto result = pool.acquire(9016LL);
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.val, nullptr);
+
+    auto server = std::make_shared<HttpProjectServer>(9016, result.val);
+    auto protocol = MakeHttpProtocol(151, 9016, "/d9/http/slash");
+
+    auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
+    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+
+    auto update_result = server->UpdateReqCfgProtocolItem(
+        151,
+        HttpReqCfg("GET", "//d9//http/slash", nljson{{"X-New", "slash"}}));
+
+    ASSERT_TRUE(update_result.ok()) << update_result.error.toMsg();
+    auto after = GetHttpRuntimeItem(server, 151);
+    ASSERT_NE(after, nullptr);
+    EXPECT_EQ(after->getReqCfg().path, "//d9//http/slash");
+    ASSERT_EQ(after->getReqCfg().headers.count("X-New"), 1u);
+    EXPECT_EQ(after->getReqCfg().headers.at("X-New"), "slash");
+}
+
+/*
+测试思路：
 1. 构造两个 HTTP 运行态协议项：
    - 协议 201: GET /d9/http/old
    - 协议 202: GET /d9/http/conflict
