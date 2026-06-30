@@ -35,6 +35,9 @@ bool EqualIgnoreCase(const std::string &lhs, const std::string &rhs)
 
 std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
     {kUnknow, ""},
+    {k100Continue, "Continue"},
+    {k101SwitchingProtocols, "Switching Protocols"},
+    {k102Processing, "Processing"},
     {k200Ok,                         "OK"},
     {k204NoContent,                  "No Content"},
     {k301MovedPermanently,           "Moved Permanently"},

@@ -107,6 +107,12 @@ bool CustomHttpParser::parse(Buffer &buf)
                     {
                         const std::string& content_type_str = response->getHeader("Content-Type");
                         response->setContentMeta(ParseHttpContentType(content_type_str));
+                        
+                        // 特殊处理 Upgrade
+                        if(HeaderContainsToken(request->getHeader("Connection"), "Upgrade"))
+                        {
+                            _context->setMaybeUpgrade(true);
+                        }
                     }
 
                     _context->setState(HttpContext::kExpectBody);

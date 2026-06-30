@@ -137,7 +137,7 @@ public:
      * @brief 报文序列化
      * @return std::string
      */
-    std::vector<uint8_t> toBytes() const;
+    std::vector<uint8_t> toBytes();
     std::string toString();
 
 private:

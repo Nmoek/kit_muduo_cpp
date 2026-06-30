@@ -12,9 +12,12 @@
 #include "domain/type.h"
 #include "net/call_backs.h"
 #include "nlohmann/json.hpp"
+#include "net/http/http_context.h"
 
+#include <cctype>
 #include <cstdint>
 #include <string>
+#include <type_traits>
 
 namespace kit_domain {
 
@@ -30,8 +33,69 @@ void WriteJsonError(kit_muduo::HttpContextPtr ctx,
                     bool include_empty_data = false);
 void WriteForbidden(kit_muduo::HttpContextPtr ctx);
 
-bool ParsePositiveInt64(const std::string& value, int64_t& out);
-bool ParseRouteInt64(kit_muduo::HttpContextPtr ctx, const std::string& name, int64_t& out);
+template<typename T, typename = std::enable_if_t< std::is_arithmetic_v<T>, bool>>
+bool ParsePositiveArithmetic(const std::string& value, T& out)
+{
+    if(value.empty())
+    {
+        return false;
+    }
+
+    try
+    {
+        T parsed{};
+        if constexpr (std::is_same_v<T, int>)
+        {
+            parsed = std::stoi(value);
+        }
+        else if constexpr (std::is_same_v<T, long>) 
+        {
+            parsed = std::stol(value);
+        }
+        else if constexpr (std::is_same_v<T, long long>)
+        {
+            parsed = std::stoll(value);
+        }
+        else if constexpr (std::is_same_v<T, unsigned long>)
+        {
+            parsed = std::stoul(value);
+        }
+        else if constexpr (std::is_same_v<T, unsigned long long>)
+        {
+            parsed = std::stoull(value);
+        }
+        else if constexpr (std::is_same_v<T, float>)
+        {
+            parsed = std::stof(value);
+        }
+        else if constexpr (std::is_same_v<T, double>)
+        {
+            parsed = std::stod(value);
+        }
+        else if constexpr (std::is_same_v<T, long double>)
+        {
+            parsed = std::stold(value);
+        }
+
+        if(parsed <= 0)
+        {
+            return false;
+        }
+        out = parsed;
+        return true;
+    }
+    catch(const std::exception&)
+    {
+        return false;
+    }
+}
+
+template<typename T, typename = std::enable_if_t< std::is_arithmetic_v<T>, bool>>
+bool ParseRouteArithmetic(kit_muduo::HttpContextPtr ctx, const std::string& name, T& out)
+{
+    return ParsePositiveArithmetic(ctx->routeParam(name), out);
+}
+
 bool ParseProtocolSide(const std::string& value, ProtocolSide& side);
 bool ParseProtocolSideFromQuery(kit_muduo::HttpContextPtr ctx, ProtocolSide& side);
 

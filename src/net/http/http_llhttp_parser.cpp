@@ -12,6 +12,7 @@
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/buffer.h"
+#include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/call_backs.h"
 
@@ -324,6 +325,11 @@ int LLhttpParser::onHeadersComplete(llhttp_t* parser)
     if(ReqType == parser_ptr->_type)
     {
         request->setHeaders(ctx.headers);
+        // 特殊处理 Upgrade
+        if(HeaderContainsToken(request->getHeader("Connection"), "Upgrade"))
+        {
+            parser_ptr->_context->setMaybeUpgrade(true);
+        }
     }
     else
     {

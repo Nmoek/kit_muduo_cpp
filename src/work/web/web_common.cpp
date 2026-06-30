@@ -61,38 +61,12 @@ void WriteForbidden(kit_muduo::HttpContextPtr ctx)
     });
 }
 
-bool ParsePositiveInt64(const std::string& value, int64_t& out)
-{
-    if(value.empty())
-    {
-        return false;
-    }
 
-    try
-    {
-        const int64_t parsed = std::stoll(value);
-        if(parsed <= 0)
-        {
-            return false;
-        }
-        out = parsed;
-        return true;
-    }
-    catch(const std::exception&)
-    {
-        return false;
-    }
-}
-
-bool ParseRouteInt64(kit_muduo::HttpContextPtr ctx, const std::string& name, int64_t& out)
-{
-    return ParsePositiveInt64(ctx->routeParam(name), out);
-}
 
 bool ParseProtocolSide(const std::string& value, ProtocolSide& side)
 {
     int64_t side_val = 0;
-    if(!ParsePositiveInt64(value, side_val))
+    if(!ParsePositiveArithmetic(value, side_val))
     {
         return false;
     }

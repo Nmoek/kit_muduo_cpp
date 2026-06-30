@@ -25,6 +25,7 @@ HttpResponse::HttpResponse()
     :state_code_(StateCode::kUnknow)
     ,version_(Version::kUnknow)
     ,connection_closed_(false)
+    ,is_upgrade_(false)
 {
     HTTP_DEBUG() << "HttpResponse::construct() " << this << std::endl;
 }
@@ -156,7 +157,7 @@ void HttpResponse::setOctetStream(std::vector<uint8_t> data)
     setContentMeta(MakeContentMeta(KnownMediaType::kApplicationOctetStream));
 }
 
-std::vector<uint8_t> HttpResponse::toBytes() const
+std::vector<uint8_t> HttpResponse::toBytes()
 {
     std::stringstream ss{""};
     ss << version_.toStr();
@@ -167,17 +168,24 @@ std::vector<uint8_t> HttpResponse::toBytes() const
     ss << kCRLF;
 
     auto headers = headers_;
-
-    if(Version::kHttp11 == version_() && !connection_closed_)
+    if(Version::kHttp11 == version_.toInt())
     {
-        SetOrReplaceHeader(headers, "Connection", "keep-alive");
-        //对keep-alive模式参数配置
-        SetOrReplaceHeader(headers, "Keep-Alive", "timeout=5, max=100");  // 连接保持5秒，最多100次请求
-
-    }
-    else
-    {
-        SetOrReplaceHeader(headers, "Connection", "close");
+        // 注意: Upgrade/close是互斥的
+        if(!connection_closed_ && !is_upgrade_)
+        {
+            //对keep-alive模式参数配置 连接保持5秒，最多100次请求
+            addHeader("Connection", "Keep-Alive; timeout=5, max=100");
+        }
+        else if(!connection_closed_ && is_upgrade_)
+        {
+            addHeader("Upgrade", "websocket");
+            addHeader("Connection", "Upgrade");
+        }
+        else
+        {
+            addHeader("Connection", "close");
+        }
+        
     }
 
     ContentMeta content_meta = content_meta_;

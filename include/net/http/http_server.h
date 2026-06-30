@@ -11,6 +11,8 @@
 
 
 #include "base/noncopyable.h"
+#include "base/time_stamp.h"
+#include "net/buffer.h"
 #include "net/inet_address.h"
 #include "net/tcp_server.h"
 #include "net/http/http_servlet.h"
@@ -24,10 +26,17 @@
 
 namespace kit_muduo::http {
 
+enum class HttpDispatchResult
+{
+    kContinueHttp,      // 普通 HTTP，请重置 HttpContext，继续处理后续 HTTP 请求
+    kProtocolUpgraded,  // 已切换协议，不要重置 HttpContext，不要继续 HTTP parse
+    kClose             // 已发送响应并准备关闭
+};
+
 class HttpServer: Noncopyable
 {
 public:
-    using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
+    using HttpCallBack = std::function<HttpDispatchResult(TcpConnectionPtr, HttpContextPtr)>;
     using StopCallBack = TcpServer::StopCb;
 
     struct AuthCheckResult
@@ -91,6 +100,8 @@ public:
     bool Delete(const std::string &url, HttpServlet::Ptr svl);
     bool Delete(const std::string &url, const FunctionServlet::CallBack &cb);
 
+    bool Ws(const std::string &url, WsOnCb cb);
+
     // ---- 删 ----
     bool removeRoute(uint64_t route_id);
     size_t removeRoute(const std::string &pattern, MethodMask methods);
@@ -107,10 +118,11 @@ private:
     void onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receiveTime);
 
     // http服务器默认处理函数
-    void handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx);
+    HttpDispatchResult handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx);
 
 private:
     TcpServer _server;
+    WebSocketServerPtr _ws_server;
     HttpCallBack _httpCallBack;
     AuthCallback _authCallBack;
     ThreadPool _businessThreadPool;// 注意: 这个是http业务额外的线程池，和处理网络连接evnet_loop的线程池侧重点不一样

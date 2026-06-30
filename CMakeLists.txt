@@ -67,7 +67,12 @@ option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
 option(MUDUO_TEST.BYTES_CODEC "build test_bytes_codec" OFF)
 option(MUDUO_TEST.MULTIFORM "build test_multiform" OFF)
- 
+option(MUDUO_TEST.WS_UTIL "build test_websocket_util" OFF)
+option(MUDUO_TEST.WS_FRAME "build test_websocket_frame" OFF)
+option(MUDUO_TEST.WS_CONTEXT "build test_websocket_context" OFF)
+option(MUDUO_TEST.WS_SESSION "build test_websocket_session" OFF)
+option(MUDUO_TEST.WS_SERVER "build test_websocket_server" OFF)
+
 
 option(WORK_TEST "build all work tests" OFF)
 option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
@@ -87,6 +92,10 @@ option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OFF)
 option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
 option(WORK_TEST.USER "build test_user_auth" OFF)
+
+option(EXAMPLE "build all example" OFF)
+option(EXAMPLE.HTTP "build example http_serverv" OFF)
+
 
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
@@ -167,6 +176,14 @@ set(NET_HTTP_SRC
     src/net/http/multiform.cpp
 )
 
+set(NET_WEBSOCKET_SRC
+    src/net/websocket/websocket_util.cpp
+    src/net/websocket/websocket_frame.cpp
+    src/net/websocket/websocket_context.cpp
+    src/net/websocket/websocket_session.cpp
+    src/net/websocket/websocket_server.cpp
+)
+
 
 set(NET_SRC
     src/net/inet_address.cpp
@@ -189,6 +206,7 @@ set(NET_SRC
     src/net/udp_server.cpp
     
     ${NET_HTTP_SRC}
+    ${NET_WEBSOCKET_SRC}
 )
 
 set(DB_SRC
@@ -425,6 +443,23 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTENT_CODEC test_http_content_codec te
 add_kit_test(MUDUO_TEST MUDUO_TEST.MULTIFORM test_multiform tests/http/test_multiform.cpp)
 
 
+# test_websocket_util websocket辅助工具测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_UTIL test_websocket_util tests/websocket/test_websocket_util.cpp)
+
+# test_websocket_util websocket帧数据测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_FRAME test_websocket_frame tests/websocket/test_websocket_frame.cpp)
+
+# test_websocket_context websocket客户端帧解析上下文测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_CONTEXT test_websocket_context tests/websocket/test_websocket_context.cpp)
+
+# test_websocket_session websocket会话状态和收发行为测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_SESSION test_websocket_session tests/websocket/test_websocket_session.cpp)
+
+# test_websocket_server websocket Upgrade接入测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_SERVER test_websocket_server tests/websocket/test_websocket_server.cpp)
+
+
+
 
 #sqlite3测试相关配置是否生效
 add_kit_test(WORK_TEST WORK_TEST.SQLITE3 test_sqlite3 tests/db/test_sqlite3.cpp ${WORK_SRC})
@@ -486,6 +521,17 @@ add_kit_test(WORK_TEST WORK_TEST.PROJECT_RUNTIME_MANAGER test_project_runtime_ma
 # 用户登录、会话和用户管理服务测试 test_user_auth
 add_kit_test(WORK_TEST WORK_TEST.USER test_user_auth tests/work/service/test_user_auth.cpp ${WORK_SRC})
 
+
+if(EXAMPLE.HTTP)
+
+# http服务器示例
+add_executable(example_http_server example/example_http_server.cpp ${WORK_SRC})
+add_dependencies(example_http_server ${DEPENDS})
+redefine_file_macro(example_http_server)   #重定义 __FILE__
+target_compile_definitions(example_http_server PRIVATE ${DEF})
+target_link_libraries(example_http_server ${LIB_LIB})
+
+endif()
 
 
 # app服务器实例

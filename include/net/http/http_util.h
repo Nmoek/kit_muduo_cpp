@@ -101,6 +101,10 @@ struct StateCode
     enum
     {
         kUnknow = 0,
+        //1xx
+        k100Continue = 100,
+        k101SwitchingProtocols,
+        k102Processing,
         //2XX
         k200Ok = 200,
         k204NoContent = 204, 

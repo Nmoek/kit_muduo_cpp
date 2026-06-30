@@ -51,6 +51,13 @@ public:
 
     void setConnectionClosed(bool on) { connection_closed_ = on; }
     bool connectionClosed() const { return connection_closed_; }
+    void setUpgrade(bool f) { is_upgrade_ = f;}
+    bool upgrade() const { return is_upgrade_; }
+    void setSecWebSocketAccept(const std::string &accept)
+    {
+        if(is_upgrade_) 
+        { addHeader("Sec-WebSocket-Accept", accept); }
+    }
 
     void setReceiveTime(TimeStamp receiveTime) { receive_time_ = receiveTime; }
     TimeStamp receiveTime() const { return receive_time_; }
@@ -78,7 +85,7 @@ public:
     void setText(const std::string& text);
     void setOctetStream(std::vector<uint8_t> data);
 
-    std::vector<uint8_t> toBytes() const;
+    std::vector<uint8_t> toBytes();
     std::string toString();
 
 protected:
@@ -90,6 +97,8 @@ protected:
     std::unordered_map<std::string, std::string> headers_;
     /// @brief 连接是否关闭
     bool connection_closed_;
+    /// @brief 连接是否升级
+    bool is_upgrade_;
     /// @brief Content-Type 元数据
     ContentMeta content_meta_;
     /// @brief Body原始字节

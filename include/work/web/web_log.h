@@ -59,3 +59,17 @@
 #define PC_F_ERROR(fmt, ...)     WEB_F_ERROR("protocol", fmt, ##__VA_ARGS__)
 #define PC_F_FATAL(fmt, ...)     WEB_F_FATAL("protocol", fmt, ##__VA_ARGS__)
 /*******protocol模块*********/
+
+/*******protocol interaction模块*********/
+#define PCINTERAC_DEBUG()     WEB_DEBUG("pc_interaction")
+#define PCINTERAC_INFO()      WEB_INFO("pc_interaction")
+#define PCINTERAC_WARN()      WEB_WARN("pc_interaction")
+#define PCINTERAC_ERROR()     WEB_ERROR("pc_interaction")
+#define PCINTERAC_FATAL()     WEB_FATAL("pc_interaction")
+
+#define PCINTERAC_F_DEBUG(fmt, ...)     WEB_F_DEBUG("pc_interaction", fmt, ##__VA_ARGS__)
+#define PCINTERAC_F_INFO(fmt, ...)      WEB_F_INFO("pc_interaction", fmt, ##__VA_ARGS__)
+#define PCINTERAC_F_WARN(fmt, ...)      WEB_F_WARN("pc_interaction", fmt, ##__VA_ARGS__)
+#define PCINTERAC_F_ERROR(fmt, ...)     WEB_F_ERROR("pc_interaction", fmt, ##__VA_ARGS__)
+#define PCINTERAC_F_FATAL(fmt, ...)     WEB_F_FATAL("pc_interaction", fmt, ##__VA_ARGS__)
+/*******protocol interaction模块*********/

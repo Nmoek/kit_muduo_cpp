@@ -163,3 +163,18 @@ net  info  DEBUG
 #define HTTP_F_ERROR(fmt, ...)     NET_F_ERROR("http", fmt, ##__VA_ARGS__)
 #define HTTP_F_FATAL(fmt, ...)     NET_F_FATAL("http", fmt, ##__VA_ARGS__)
 /*******Http模块*********/
+
+
+/*******websocket模块*********/
+#define WS_DEBUG()     NET_DEBUG("websocket")
+#define WS_INFO()      NET_INFO("websocket")
+#define WS_WARN()      NET_WARN("websocket")
+#define WS_ERROR()     NET_ERROR("websocket")
+#define WS_FATAL()     NET_FATAL("websocket")
+
+#define WS_F_DEBUG(fmt, ...)     NET_F_DEBUG("websocket", fmt, ##__VA_ARGS__)
+#define WS_F_INFO(fmt, ...)      NET_F_INFO("websocket", fmt, ##__VA_ARGS__)
+#define WS_F_WARN(fmt, ...)      NET_F_WARN("websocket", fmt, ##__VA_ARGS__)
+#define WS_F_ERROR(fmt, ...)     NET_F_ERROR("websocket", fmt, ##__VA_ARGS__)
+#define WS_F_FATAL(fmt, ...)     NET_F_FATAL("websocket", fmt, ##__VA_ARGS__)
+/*******websocket模块*********/

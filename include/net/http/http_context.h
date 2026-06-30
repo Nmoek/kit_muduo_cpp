@@ -56,6 +56,9 @@ public:
 
     bool gotAll() const { return kGotAll == _state; }
 
+    void setMaybeUpgrade(bool f) { _maybeUpgrade = f; }
+    bool maybeUpgrade() const { return _maybeUpgrade; }
+
     HttpRequestPtr request() { return _request; }
     HttpResponsePtr response() { return _response; }
 
@@ -106,6 +109,7 @@ private:
     /// @brief HTTP报文解析器
     std::shared_ptr<HttpParser> _parser;
     std::unordered_map<std::string, std::string> attributes_;
+    bool _maybeUpgrade{false};
 };
 
 

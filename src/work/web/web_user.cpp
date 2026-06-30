@@ -111,7 +111,7 @@ void UserHandler::Add(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 void UserHandler::Get(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
-    if(!ParseRouteInt64(ctx, "user_id", user_id))
+    if(!ParseRouteArithmetic(ctx, "user_id", user_id))
     {
         WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
         return;
@@ -130,7 +130,7 @@ void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     int64_t user_id = 0;
     UserEditReq request;
     auto bind_result = ctx->bindJson(request);
-    if(!ParseRouteInt64(ctx, "user_id", user_id) || !bind_result.ok)
+    if(!ParseRouteArithmetic(ctx, "user_id", user_id) || !bind_result.ok)
     {
         WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "request parse error"}, {"data", nljson::object()}});
         return;
@@ -147,7 +147,7 @@ void UserHandler::Update(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 void UserHandler::Disable(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
-    if(!ParseRouteInt64(ctx, "user_id", user_id))
+    if(!ParseRouteArithmetic(ctx, "user_id", user_id))
     {
         WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
         return;
@@ -159,7 +159,7 @@ void UserHandler::Disable(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 void UserHandler::Restore(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
 {
     int64_t user_id = 0;
-    if(!ParseRouteInt64(ctx, "user_id", user_id))
+    if(!ParseRouteArithmetic(ctx, "user_id", user_id))
     {
         WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "query param transform fail"}, {"data", nljson::object()}});
         return;

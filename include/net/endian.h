@@ -9,9 +9,10 @@
 #ifndef __KIT_ENDIAN_H__
 #define __KIT_ENDIAN_H__
 
-#include <vector>
+#include <endian.h>
+#include <netinet/in.h>
+#include <stdexcept>
 #include <stdint.h>
-#include <algorithm>
 
 #define KIT_LITTLE_ENDIAN   (1)
 #define KIT_BIG_ENDIAN      (2)
@@ -58,7 +59,63 @@ T SwapEndian(T& value)
 template<class T>
 T SwapToBigEndian(T& value)
 {
-    return SwapEndian(value);
+    throw std::invalid_argument("swap type invalid");
+}
+
+template<>
+inline uint8_t SwapToBigEndian(uint8_t& value)
+{
+    return value;
+}
+
+template<>
+inline int8_t SwapToBigEndian(int8_t& value)
+{
+    return value;
+}
+
+
+template<>
+inline uint16_t SwapToBigEndian(uint16_t& value)
+{
+    value = __bswap_16(value);
+    return value;
+}
+
+template<>
+inline int16_t SwapToBigEndian(int16_t& value)
+{
+    value = __bswap_16(value);
+    return value;
+}
+
+template<>
+inline uint32_t SwapToBigEndian(uint32_t& value)
+{
+    value = __bswap_32(value);
+    return value;
+}
+
+template<>
+inline int32_t SwapToBigEndian(int32_t& value)
+{
+    value = __bswap_32(value);
+    return value;
+}
+
+
+template<>
+inline uint64_t SwapToBigEndian(uint64_t& value)
+{
+    value = __bswap_64(value);
+    return value;
+}
+
+template<>
+inline int64_t SwapToBigEndian(int64_t& value)
+{
+    value = __bswap_64(value);
+    return value;
 }
 
 template<class T>
@@ -66,7 +123,6 @@ T SwapToLittleEndian(T& value)
 {
     return value;
 }
-
 
 
 #else  // 大端
@@ -81,7 +137,64 @@ T SwapToBigEndian(T& value)
 template<class T>
 T SwapToLittleEndian(T& value)
 {
-    return SwapEndian(value);
+    throw std::invalid_argument("swap type invalid");
+}
+
+
+template<>
+inline uint8_t SwapToLittleEndian(uint8_t& value)
+{
+    return value;
+}
+
+template<>
+inline int8_t SwapToLittleEndian(int8_t& value)
+{
+    return value;
+}
+
+
+template<>
+inline uint16_t SwapToLittleEndian(uint16_t& value)
+{
+    value = __bswap_16(value);
+    return value;
+}
+
+template<>
+inline int16_t SwapToLittleEndian(int16_t& value)
+{
+    value = __bswap_16(value);
+    return value;
+}
+
+template<>
+inline uint32_t SwapToLittleEndian(uint32_t& value)
+{
+    value = __bswap_32(value);
+    return value;
+}
+
+template<>
+inline int32_t SwapToLittleEndian(int32_t& value)
+{
+    value = __bswap_32(value);
+    return value;
+}
+
+
+template<>
+inline uint64_t SwapToLittleEndian(uint64_t& value)
+{
+    value = __bswap_64(value);
+    return value;
+}
+
+template<>
+inline int64_t SwapToLittleEndian(int64_t& value)
+{
+    value = __bswap_64(value);
+    return value;
 }
 
 

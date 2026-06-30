@@ -131,7 +131,7 @@ std::string HttpRequest::bodyString() const
     return std::string(body_data_.begin(), body_data_.end());
 }
 
-std::vector<uint8_t> HttpRequest::toBytes() const
+std::vector<uint8_t> HttpRequest::toBytes()
 {
     std::stringstream ss{""};
     // Line

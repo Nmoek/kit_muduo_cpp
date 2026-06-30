@@ -356,7 +356,7 @@ void ProtocolHandler::LaunchAndWithdrawsProtocol(kit_muduo::TcpConnectionPtr con
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
@@ -433,7 +433,7 @@ void ProtocolHandler::DelProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
     WriteOpResult write_result;
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -499,7 +499,7 @@ void ProtocolHandler::ReconfigProtocol(kit_muduo::TcpConnectionPtr conn, kit_mud
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;
@@ -571,7 +571,7 @@ void ProtocolHandler::SingleProtocol(kit_muduo::TcpConnectionPtr conn, kit_muduo
     PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param transform fail");
         return;
@@ -694,7 +694,7 @@ void ProtocolHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -752,7 +752,7 @@ void ProtocolHandler::DetailCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -823,7 +823,7 @@ void ProtocolHandler::DetailBody(kit_muduo::TcpConnectionPtr conn, kit_muduo::Ht
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param fail"));
         return;
@@ -884,7 +884,7 @@ void ProtocolHandler::ProtocolCnt(kit_muduo::TcpConnectionPtr conn, kit_muduo::H
 
 
     int64_t project_id = 0;
-    if(!ParseRouteInt64(ctx, "project_id", project_id))
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param transform fail");
         return;
@@ -930,7 +930,7 @@ void ProtocolHandler::GetCfg(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCo
     resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param error");
         return;
@@ -988,7 +988,7 @@ void ProtocolHandler::QueryCommonFields(kit_muduo::TcpConnectionPtr conn, kit_mu
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
@@ -1052,7 +1052,7 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
@@ -1116,7 +1116,7 @@ void ProtocolHandler::GetProtocolBodyData(kit_muduo::TcpConnectionPtr conn, kit_
     PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
@@ -1197,7 +1197,7 @@ void ProtocolHandler::GetProtocolBodyInfo(kit_muduo::TcpConnectionPtr conn, kit_
     }
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteProtocolJsonError(ctx, -200, "query param fail");
         return;
@@ -1268,7 +1268,7 @@ void ProtocolHandler::RestoreProtocol(kit_muduo::TcpConnectionPtr conn, kit_mudu
     WriteOpResult write_result;
 
     int64_t protocol_id = 0;
-    if(!ParseRouteInt64(ctx, "protocol_id", protocol_id))
+    if(!ParseRouteArithmetic(ctx, "protocol_id", protocol_id))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
         return;

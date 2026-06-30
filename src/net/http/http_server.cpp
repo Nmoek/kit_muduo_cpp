@@ -13,6 +13,9 @@
 #include "net/net_log.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
+#include "net/websocket/websocket_server.h"
+#include <exception>
+#include <memory>
 
 
 namespace kit_muduo {
@@ -21,6 +24,7 @@ namespace http {
 
 HttpServer::HttpServer(EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool, TcpServer::Option option)
     :_server(loop, addr, name, option)
+    ,_ws_server(std::make_shared<ws::WebSocketServer>())
     ,_httpCallBack(nullptr)
     ,_authCallBack(nullptr)
     ,_dispatch(std::make_shared<HttpServletDispatch>())
@@ -179,7 +183,20 @@ bool HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack 
         return false;
     }
 
-    return true;}
+    return true;
+}
+
+bool HttpServer::Ws(const std::string &url, WsOnCb cb)
+{
+    // 路由路径
+    return Get(url, [this, cb](auto &&arg1, auto &&arg2){
+        _ws_server->handleUpgrade(
+            std::forward<decltype(arg1)>(arg1), 
+            std::forward<decltype(arg2)>(arg2),
+            cb
+        );
+    });
+}
 
 bool HttpServer::removeRoute(uint64_t route_id)
 {
@@ -227,6 +244,7 @@ void HttpServer::onConnect(TcpConnectionPtr conn)
 
 void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receiveTime)
 {
+    bool is_exception = false;
     std::shared_ptr<HttpContext> context = std::static_pointer_cast<HttpContext>(conn->getContext());
     if(nullptr == context)
     {
@@ -256,10 +274,44 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
             break;
         }
 
-        _httpCallBack(conn, context);
+        try {
+
+            HttpDispatchResult dispatch_result = _httpCallBack(conn, context);
+            if(HttpDispatchResult::kProtocolUpgraded == dispatch_result)
+            {
+                HTTP_F_DEBUG("http upgrade succes\n");
+                // 兜底处理剩余字节
+                _ws_server->drainRemainingWebSocketBytes(conn, buf, receiveTime);
+                return;
+            }
+            else if(HttpDispatchResult::kClose == dispatch_result)
+            {
+                return;
+            }
+        } catch(const std::exception &e) {
+
+            HTTP_F_ERROR("http callback exception: %s \n", e.what());
+
+            is_exception = true;
+        } catch(...) {
+
+            HTTP_F_ERROR("http callback unknown exception\n");
+
+            is_exception = true;
+        }
+
         // 重置conn中的上下文
         context = std::make_shared<HttpContext>();
         conn->setContext(context);
+        if(is_exception)
+        {
+            ServerErr500Servlet::Handle(conn, context);
+            context->response()->setConnectionClosed(true);
+            context->response()->resetBodyData();
+            conn->send( context->response()->toBytes());
+            conn->shutdown();
+            return;
+        }
     }
 
 
@@ -267,56 +319,65 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
 
 
 #if 1
-void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
+HttpDispatchResult HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
-    auto work_func = [](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) {
+    auto work_func = [auth_cb = _authCallBack](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) {
 
-        auto req_ptr = ctx->request();
-        auto resp_ptr = ctx->response();
+        auto req = ctx->request();
+        auto resp = ctx->response();
 
-        HTTP_F_INFO("woker thread [%d]][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req_ptr->path().c_str());
+        HTTP_F_INFO("woker thread [%d][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req->path().c_str());
 
-        const std::string &connection = req_ptr->getHeader("Connection");
-        bool closed = (connection == "close")
-                || (Version::kHttp10 == req_ptr->version()() && connection != "keep-alive");
-        resp_ptr->setConnectionClosed(closed);
+        const std::string &connection = req->getHeader("Connection");
 
-        dispatch->handle(conn, ctx);
+        bool closed = HeaderContainsToken(connection, "close")
+                || (Version::kHttp10 == req->version()() && !HeaderContainsToken(connection, "keep-alive"));
+        resp->setConnectionClosed(closed);
+        AuthCheckResult auth_result;
+        // 权限校验
+        if(auth_cb)
+        {
+            auth_result = auth_cb(ctx);
+            if(!auth_result.ok)
+            {
+                resp->setVersion(Version::kHttp11);
+                resp->setStateCode(auth_result.redirect_to_login ? StateCode::k302MoveTemporarily : auth_result.http_status);
+                if(auth_result.redirect_to_login)
+                {
+                    resp->addHeader("Location", "/html/login.html");
+                    resp->setConnectionClosed(true);
+                }
+                else
+                {
+                    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+                    resp->appendBodyData(auth_result.message);
+                }
 
-        conn->send(resp_ptr->toBytes());
-        if(resp_ptr->connectionClosed())
+                HTTP_F_INFO("authentication fail [%d][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req->path().c_str());
+            }
+        }
+        if(!auth_cb || auth_result.ok)
+        {
+            dispatch->handle(conn, ctx);
+        }
+
+        conn->send(resp->toBytes());
+        if(resp->connectionClosed())
         {
             conn->shutdown();
+            return HttpDispatchResult::kClose;
         }
+
+        return resp->stateCode().toInt() == StateCode::k101SwitchingProtocols ? HttpDispatchResult::kProtocolUpgraded : HttpDispatchResult::kContinueHttp;
 
     };
 
     if(_isPool)
     {
-        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, [this, work_func](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) {
+        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, [work_func](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) -> HttpDispatchResult {
             auto resp_ptr = ctx->response();
-            if(_authCallBack)
-            {
-                auto auth_result = _authCallBack(ctx);
-                if(!auth_result.ok)
-                {
-                    resp_ptr->setVersion(Version::kHttp11);
-                    resp_ptr->setStateCode(auth_result.redirect_to_login ? StateCode::k302MoveTemporarily : auth_result.http_status);
-                    if(auth_result.redirect_to_login)
-                    {
-                        resp_ptr->addHeader("Location", "/html/login.html");
-                        resp_ptr->setConnectionClosed(true);
-                    }
-                    else
-                    {
-                        resp_ptr->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
-                        resp_ptr->appendBodyData(auth_result.message);
-                    }
-                    conn->send(resp_ptr->toBytes());
-                    return;
-                }
-            }
-            work_func(conn, ctx, dispatch);
+
+            return work_func(conn, ctx, dispatch);
         }, conn, ctx, _dispatch);
 
         if(!submit_result.ok())
@@ -326,35 +387,15 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
             ServiceUnavailable503Servlet::Handle(conn, ctx);
             conn->send(ctx->response()->toBytes());
             conn->shutdown();
-            return;
+            return HttpDispatchResult::kClose;
         }
 
+        return submit_result.result_future.get();
     }
     else
     {
-        if(_authCallBack)
-        {
-            auto auth_result = _authCallBack(ctx);
-            if(!auth_result.ok)
-            {
-                auto resp_ptr = ctx->response();
-                resp_ptr->setVersion(Version::kHttp11);
-                resp_ptr->setStateCode(auth_result.redirect_to_login ? StateCode::k302MoveTemporarily : auth_result.http_status);
-                if(auth_result.redirect_to_login)
-                {
-                    resp_ptr->addHeader("Location", "/html/login.html");
-                    resp_ptr->setConnectionClosed(true);
-                }
-                else
-                {
-                    resp_ptr->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
-                    resp_ptr->appendBodyData(auth_result.message);
-                }
-                conn->send(resp_ptr->toBytes());
-                return;
-            }
-        }
-        work_func(conn, ctx, _dispatch);
+
+        return work_func(conn, ctx, _dispatch);
     }
 
 }

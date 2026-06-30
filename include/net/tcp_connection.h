@@ -67,7 +67,7 @@ public:
     void connectEstablished();
     void connectDestroyed();
 
-    InetAddress peerAddr() const { return _peerAddr; }
+    const InetAddress& peerAddr() const { return _peerAddr; }
     int32_t fd() const { return _socket->fd(); }
 
     void setContext(std::shared_ptr<void> data) { _context = data; }
