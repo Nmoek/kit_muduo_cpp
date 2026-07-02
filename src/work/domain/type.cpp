@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/type.h"
+#include "domain/protocol_interaction.h"
 
 namespace kit_domain {
 
@@ -50,6 +51,22 @@ std::string ProtocolBodyTypeToString(ProtocolBodyType type)
     return "";
 }
 
+InteractionPayloadKind ProtocolBodyTypeToInterKind(ProtocolBodyType type)
+{
+    switch (type) 
+    {
+        case ProtocolBodyType::kJson: return InteractionPayloadKind::kJson;
+        case ProtocolBodyType::kText: return InteractionPayloadKind::kText;
+        case ProtocolBodyType::kXml: return InteractionPayloadKind::kXml;
+        case ProtocolBodyType::kMultiForm: return InteractionPayloadKind::kMultiForm;
+        case ProtocolBodyType::kBinary: return InteractionPayloadKind::kBinary;
+        // 注意：这里其他暂不支持配置的类型全部认为是二进制
+        // TODO 传入unknown 时也认为是二进制 暂时搁置
+        default:
+            return InteractionPayloadKind::kBinary;
+    }
+}
+
 kit_muduo::http::ContentCodecFormat ProtocolBodyTypeToContentCodecFormat(ProtocolBodyType type)
 {
     using kit_muduo::http::ContentCodecFormat;
@@ -87,6 +104,20 @@ kit_muduo::http::ContentMeta ProtocolBodyTypeToHttpContentMeta(ProtocolBodyType 
         default:
             return MakeContentMeta(KnownMediaType::kUnknown);
     }
+}
+
+
+std::string ProtocolSideToString(ProtocolSide side)
+{
+    if(ProtocolSide::kRequest == side)
+    {
+        return "request";
+    }
+    else if(ProtocolSide::kResponse == side)
+    {
+        return "response";
+    }
+    return "";
 }
 
 } // namespace kit_domain

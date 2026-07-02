@@ -92,3 +92,17 @@
 #define RUNTIME_F_ERROR(fmt, ...)     DOMAIN_F_ERROR("runtime", fmt, ##__VA_ARGS__)
 #define RUNTIME_F_FATAL(fmt, ...)     DOMAIN_F_FATAL("runtime", fmt, ##__VA_ARGS__)
 /*******runtime模块*********/
+
+/*******protocol interaction模块*********/
+#define INTERAC_DEBUG()     DOMAIN_DEBUG("pc_interaction")
+#define INTERAC_INFO()      DOMAIN_INFO("pc_interaction")
+#define INTERAC_WARN()      DOMAIN_WARN("pc_interaction")
+#define INTERAC_ERROR()     DOMAIN_ERROR("pc_interaction")
+#define INTERAC_FATAL()     DOMAIN_FATAL("pc_interaction")
+
+#define INTERAC_F_DEBUG(fmt, ...)     DOMAIN_F_DEBUG("pc_interaction", fmt, ##__VA_ARGS__)
+#define INTERAC_F_INFO(fmt, ...)      DOMAIN_F_INFO("pc_interaction", fmt, ##__VA_ARGS__)
+#define INTERAC_F_WARN(fmt, ...)      DOMAIN_F_WARN("pc_interaction", fmt, ##__VA_ARGS__)
+#define INTERAC_F_ERROR(fmt, ...)     DOMAIN_F_ERROR("pc_interaction", fmt, ##__VA_ARGS__)
+#define INTERAC_F_FATAL(fmt, ...)     DOMAIN_F_FATAL("pc_interaction", fmt, ##__VA_ARGS__)
+/*******protocol interaction模块*********/

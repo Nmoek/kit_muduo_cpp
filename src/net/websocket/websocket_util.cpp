@@ -8,7 +8,7 @@
  */
 #include "net/net_log.h"
 #include "net/websocket/websocket_util.h"
-#include "stduuid/uuid.h"
+
 
 #include <algorithm>
 #include "cppcodec/base64_rfc4648.hpp"
@@ -29,17 +29,7 @@ std::string Trim(std::string value)
     return value;
 }
 
-std::string Sha1BytesHelper(const std::string &data)
-{
-    uuids::detail::sha1 sha;
-    sha.process_bytes(data.data(), data.size());
 
-
-    uuids::detail::sha1::digest8_t digest;
-    sha.get_digest_bytes(digest);
-
-    return std::string(reinterpret_cast<const char*>(digest), sizeof(digest));
-}
 
 } // namesapce
 
@@ -49,9 +39,8 @@ std::string BuildWebSocketAcceptKey(const std::string &client_key)
     {
         return "";
     }
-    const std::string &digest_str = Sha1BytesHelper(client_key + kWebSocketGuid);
-
-    return cppcodec::base64_rfc4648::encode(reinterpret_cast<const uint8_t*>(digest_str.data()), digest_str.size());
+    
+    return Sha1BytesBase64Helper(client_key + kWebSocketGuid);
 }
 
 

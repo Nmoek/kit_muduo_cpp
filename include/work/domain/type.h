@@ -17,7 +17,7 @@
 
 namespace kit_domain {
 
-
+enum class InteractionPayloadKind;
 
 enum ProjectMode {
     ServerMode = 1,  //服务器模式
@@ -87,7 +87,8 @@ enum class ProtocolBodyType {
     kJson      = 1,    // json格式
     kXml       = 2,    // xml格式
     kText      = 3,    // 纯文本
-    kBinary    = 4,    // TCP 二进制数据流
+    kMultiForm = 5,    // multipart-form-data格式
+    kBinary    = 6,    // TCP 二进制数据流
     kMax,
 };
 NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolBodyType, {
@@ -142,10 +143,13 @@ std::string ProtocolTypeToString(ProtocolType type);
 
 ProtocolBodyType ProtocolBodyTypeFromString(const std::string &type);
 std::string ProtocolBodyTypeToString(ProtocolBodyType type);
+InteractionPayloadKind ProtocolBodyTypeToInterKind(ProtocolBodyType type);
 
 kit_muduo::http::ContentCodecFormat ProtocolBodyTypeToContentCodecFormat(ProtocolBodyType type);
 
 kit_muduo::http::ContentMeta ProtocolBodyTypeToHttpContentMeta(ProtocolBodyType type);
+
+std::string ProtocolSideToString(ProtocolSide side);
 
 }
 #endif // __KIT_DOMAIN_PROTOCOL_H__

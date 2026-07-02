@@ -158,8 +158,8 @@ TEST(TestProtocolBodyPipeline, XmlBodyRejectsMalformedOrMultiRootDocument)
 /**
  * 测试思路：
  * 1. text body 非空时必须是合法 UTF-8 文本。
- * 2. ASCII、中文 UTF-8，以及常见空白控制符 \r\n\t 都属于合法文本。
- * 3. pipeline 应接受这些内容，避免把普通文本接口误判为非法。
+ * 2. UTF-8 合法性由 base/util.cpp 中的 IsUtf8Safe 统一判断。
+ * 3. ASCII、中文 UTF-8，以及业务允许的空白控制符 \r\n\t 都应被接受。
  *
  * 示例：
  *
@@ -171,15 +171,15 @@ TEST(TestProtocolBodyPipeline, XmlBodyRejectsMalformedOrMultiRootDocument)
 TEST(TestProtocolBodyPipeline, TextBodyAcceptsUtf8AndAllowedWhitespace)
 {
     EXPECT_TRUE(Check(ProtocolBodyType::kText, Body("hello world")).ok);
-    EXPECT_TRUE(Check(ProtocolBodyType::kText, Body(u8"中文文本")).ok);
+    EXPECT_TRUE(Check(ProtocolBodyType::kText, Body(u8"中文文本🙂")).ok);
     EXPECT_TRUE(Check(ProtocolBodyType::kText, Body("line1\r\n\tline2")).ok);
 }
 
 /**
  * 测试思路：
- * 1. text body 不能接收二进制控制字节或非法 UTF-8。
- * 2. NUL 字节容易截断 C 字符串语义，非法 UTF-8 不能作为纯文本保存。
- * 3. pipeline 应拒绝这两类数据，把它们留给 binary body type。
+ * 1. text body 在 UTF-8 合法之外仍保留业务规则：拒绝 NUL。
+ * 2. NUL 字节容易截断 C 字符串语义，即使它本身是合法 UTF-8 码点也不能作为文本保存。
+ * 3. pipeline 应优先给出稳定的 nul byte 错误，避免 NUL 被公共 UTF-8 校验放行。
  *
  * 示例：
  *
@@ -188,10 +188,56 @@ TEST(TestProtocolBodyPipeline, TextBodyAcceptsUtf8AndAllowedWhitespace)
  *        v
  *   check failed
  */
-TEST(TestProtocolBodyPipeline, TextBodyRejectsNulAndInvalidUtf8)
+TEST(TestProtocolBodyPipeline, TextBodyRejectsNulBeforeUtf8Validation)
 {
-    EXPECT_FALSE(Check(ProtocolBodyType::kText, Body({'a', '\0', 'b'})).ok);
-    EXPECT_FALSE(Check(ProtocolBodyType::kText, Body({static_cast<char>(0xC3), static_cast<char>(0x28)})).ok);
+    const auto result = Check(ProtocolBodyType::kText, Body({'a', '\0', 'b'}));
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.message.find("nul byte"), std::string::npos);
+}
+
+/**
+ * 测试思路：
+ * 1. text body 除了 \t、\n、\r，不允许其它 C0 控制字符。
+ * 2. 0x01 是合法单字节 UTF-8，但不是业务允许的可读文本字符。
+ * 3. pipeline 应在调用公共 UTF-8 校验前拒绝它，保留原有文本业务规则。
+ *
+ * 示例：
+ *
+ *   body_type=text + body_data=['a', 0x01, 'b']
+ *        |
+ *        v
+ *   check failed: invalid control character
+ */
+TEST(TestProtocolBodyPipeline, TextBodyRejectsDisallowedControlCharacter)
+{
+    const auto result = Check(ProtocolBodyType::kText, Body({'a', static_cast<char>(0x01), 'b'}));
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.message.find("invalid control character"), std::string::npos);
+}
+
+/**
+ * 测试思路：
+ * 1. text body 的 UTF-8 合法性不再使用本文件手写状态机，而是交给 IsUtf8Safe。
+ * 2. 输入 0xC3 0x28 是典型非法 UTF-8 序列，且不涉及业务控制字符规则。
+ * 3. pipeline 应返回包含 valid utf-8 的错误，证明非法编码仍会被拒绝。
+ *
+ * 示例：
+ *
+ *   body_type=text + body_data=[0xC3, 0x28]
+ *        |
+ *        v
+ *   check failed: valid utf-8
+ */
+TEST(TestProtocolBodyPipeline, TextBodyRejectsInvalidUtf8BySharedValidator)
+{
+    const auto result = Check(
+        ProtocolBodyType::kText,
+        Body({static_cast<char>(0xC3), static_cast<char>(0x28)}));
+
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.message.find("valid utf-8"), std::string::npos);
 }
 
 /**

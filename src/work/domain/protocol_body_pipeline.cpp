@@ -6,6 +6,7 @@
  * @date 2026-06-16 16:46:39
  * @copyright Copyright (c) 2026 Kewin Li
  */
+#include "base/util.h"
 #include "domain/domain_log.h"
 #include "domain/project_server.h"
 #include "domain/type.h"
@@ -22,52 +23,40 @@ namespace kit_domain {
 namespace {
 
 constexpr unsigned char kAsciiControlEnd = 0x1F;
-constexpr unsigned char kAsciiMax = 0x7F;
 constexpr unsigned char kHorizontalTab = '\t';
 constexpr unsigned char kLineFeed = '\n';
 constexpr unsigned char kCarriageReturn = '\r';
-
-// UTF-8 后续字节固定是 10xxxxxx，也就是 0x80-0xBF。
-constexpr unsigned char kUtf8ContinuationMin = 0x80;
-constexpr unsigned char kUtf8ContinuationMax = 0xBF;
-
-// UTF-8 按序列长度划分的合法首字节范围。
-// 0xC0 和 0xC1 被故意排除，因为它们只能构造 ASCII 码点的 2 字节超长编码。
-constexpr unsigned char kUtf8TwoByteLeadMin = 0xC2;
-constexpr unsigned char kUtf8TwoByteLeadMax = 0xDF;
-constexpr unsigned char kUtf8ThreeByteLeadMin = 0xE0;
-constexpr unsigned char kUtf8ThreeByteLeadMax = 0xEF;
-constexpr unsigned char kUtf8FourByteLeadMin = 0xF0;
-constexpr unsigned char kUtf8FourByteLeadMax = 0xF4;
-
-// 掩码用于提取 UTF-8 字节中真正承载码点的有效位。
-// 后续字节贡献 6 个有效位：10xxxxxx -> xxxxxx。
-constexpr unsigned char kUtf8TwoByteLeadMask = 0x1F;
-constexpr unsigned char kUtf8ThreeByteLeadMask = 0x0F;
-constexpr unsigned char kUtf8FourByteLeadMask = 0x07;
-constexpr unsigned char kUtf8ContinuationMask = 0x3F;
-constexpr uint32_t kUtf8ContinuationPayloadBits = 6;
-
-// 不同长度 UTF-8 序列能表示的最小 Unicode 码点。
-// 解码后的码点如果小于对应阈值，说明它使用了超长编码，必须拒绝。
-constexpr uint32_t kUtf8TwoByteMinCodePoint = 0x80;
-constexpr uint32_t kUtf8ThreeByteMinCodePoint = 0x800;
-constexpr uint32_t kUtf8FourByteMinCodePoint = 0x10000;
-
-// UTF-8 只能表示 Unicode scalar value。
-// surrogate 码点是 UTF-16 的保留区间，不是 UTF-8 中的合法 Unicode scalar value。
-constexpr uint32_t kUnicodeSurrogateMin = 0xD800;
-constexpr uint32_t kUnicodeSurrogateMax = 0xDFFF;
-constexpr uint32_t kUnicodeMaxCodePoint = 0x10FFFF;
 
 inline bool IsBodyTypeValid(ProtocolBodyType body_type)
 {
     return body_type > ProtocolBodyType::kUnknown && body_type < ProtocolBodyType::kMax;
 }
 
-inline bool IsUtf8Continuation(unsigned char byte)
+ProtocolBodyCheckResult CheckTextAsciiControl(const std::vector<char> &data)
 {
-    return byte >= kUtf8ContinuationMin && byte <= kUtf8ContinuationMax;
+    for(const char item : data)
+    {
+        const auto byte = static_cast<unsigned char>(item);
+
+        // text body 是普通 UTF-8 文本，不是任意二进制数据。
+        // NUL 经常被当成 C 字符串终止符，必须显式拒绝。
+        if(byte == '\0')
+        {
+            return ProtocolBodyCheckResult::Failed("text body contains nul byte");
+        }
+
+        // C0 控制字符不是可打印文本。
+        // 纯文本中只保留用户自然会使用的三个空白控制符：TAB、LF、CR。
+        if(byte <= kAsciiControlEnd)
+        {
+            if(byte == kHorizontalTab || byte == kLineFeed || byte == kCarriageReturn)
+            {
+                continue;
+            }
+            return ProtocolBodyCheckResult::Failed("text body contains invalid control character");
+        }
+    }
+    return ProtocolBodyCheckResult::Success();
 }
 
 }
@@ -203,90 +192,19 @@ ProtocolBodyCheckResult XmlBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec 
 
 ProtocolBodyCheckResult TextBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
 {
-    const auto &data = spec.body_data;
-    size_t i = 0;
-    while(i < data.size())
+    const auto& data = spec.body_data;
+    auto result = CheckTextAsciiControl(data);
+    if(!result.ok)
     {
-        const auto first = static_cast<unsigned char>(data[i]);
+        RUNTIME_F_ERROR("body ascii control invalid: %s \n", result.message.c_str());
+        return result;
+    }
 
-        // text body 是普通 UTF-8 文本，不是任意二进制数据。
-        // NUL 经常被当成 C 字符串终止符，必须显式拒绝。
-        if(first == '\0')
-        {
-            return ProtocolBodyCheckResult::Failed("text body contains nul byte");
-        }
-
-        // C0 控制字符不是可打印文本。
-        // 纯文本中只保留用户自然会使用的三个空白控制符：TAB、LF、CR。
-        if(first <= kAsciiControlEnd)
-        {
-            if(first == kHorizontalTab || first == kLineFeed || first == kCarriageReturn)
-            {
-                ++i;
-                continue;
-            }
-            return ProtocolBodyCheckResult::Failed("text body contains invalid control character");
-        }
-
-        // 0x20-0x7F 是单字节 ASCII 码点。
-        if(first <= kAsciiMax)
-        {
-            ++i;
-            continue;
-        }
-
-        size_t need = 0;
-        uint32_t code_point = 0;
-        uint32_t min_code_point = 0;
-        if(first >= kUtf8TwoByteLeadMin && first <= kUtf8TwoByteLeadMax)
-        {
-            need = 2;
-            code_point = first & kUtf8TwoByteLeadMask;
-            min_code_point = kUtf8TwoByteMinCodePoint;
-        }
-        else if(first >= kUtf8ThreeByteLeadMin && first <= kUtf8ThreeByteLeadMax)
-        {
-            need = 3;
-            code_point = first & kUtf8ThreeByteLeadMask;
-            min_code_point = kUtf8ThreeByteMinCodePoint;
-        }
-        else if(first >= kUtf8FourByteLeadMin && first <= kUtf8FourByteLeadMax)
-        {
-            need = 4;
-            code_point = first & kUtf8FourByteLeadMask;
-            min_code_point = kUtf8FourByteMinCodePoint;
-        }
-        else
-        {
-            // 这里会拦住孤立的后续字节、已经不合法的 UTF-8 5/6 字节前缀，
-            // 以及 0xC0/0xC1 这类超长编码前缀。
-            return ProtocolBodyCheckResult::Failed("text body must be valid utf-8 text");
-        }
-
-        // 当前 UTF-8 序列声明需要更多后续字节，但 body 剩余长度不够。
-        if(i + need > data.size())
-        {
-            return ProtocolBodyCheckResult::Failed("text body must be valid utf-8 text");
-        }
-
-        for(size_t j = 1; j < need; ++j)
-        {
-            const auto next = static_cast<unsigned char>(data[i + j]);
-            if(!IsUtf8Continuation(next))
-            {
-                return ProtocolBodyCheckResult::Failed("text body must be valid utf-8 text");
-            }
-            code_point = (code_point << kUtf8ContinuationPayloadBits) | (next & kUtf8ContinuationMask);
-        }
-
-        if(code_point < min_code_point
-            || (code_point >= kUnicodeSurrogateMin && code_point <= kUnicodeSurrogateMax)
-            || code_point > kUnicodeMaxCodePoint)
-        {
-            return ProtocolBodyCheckResult::Failed("text body must be valid utf-8 text");
-        }
-
-        i += need;
+    std::string utf8_error;
+    if(!kit_muduo::IsUtf8Safe(data.data(), data.size(), utf8_error))
+    {
+        RUNTIME_F_ERROR("body utf8 invalid: %s \n", utf8_error.c_str());
+        return ProtocolBodyCheckResult::Failed("text body must be valid utf-8 text: " + utf8_error);
     }
 
     return ProtocolBodyCheckResult::Success();

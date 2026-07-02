@@ -86,6 +86,7 @@ option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
 option(WORK_TEST.PROTOCOL_RUNTIME_KEY "build test_protocol_runtime_key" OFF)
 option(WORK_TEST.PROTOCOL_CONFIG_PIPELINE "build test_protocol_config_pipeline" OFF)
 option(WORK_TEST.PROTOCOL_BODY_PIPELINE "build test_protocol_body_pipeline" OFF)
+option(WORK_TEST.PROTOCOL_INTERACTION "build test_protocol_interaction" OFF)
 option(WORK_TEST.RUNTIME "build test_runtime" OFF)
 option(WORK_TEST.PROJECT_RUNTIME_MANAGER "build test_project_runtime_manager" OFF)
 option(WORK_TEST.CUSTOM_TCP_FIELD "build test_custom_tcp_field" OFF)
@@ -122,6 +123,7 @@ enable_testing()
 set(PKG_LIB_PATH
     "pkg/llhttp/lib"
     "pkg/pugixml/lib"
+    "pkg/simdutf/lib"
 )
 
 link_directories(${PKG_LIB_PATH})
@@ -140,7 +142,8 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/pkg/
     ${PROJECT_SOURCE_DIR}/include/db/sqlite3/
     ${PROJECT_SOURCE_DIR}/pkg/nanoid_cpp/include/
-    ${PROJECT_SOURCE_DIR}pkg/pugixml/include
+    ${PROJECT_SOURCE_DIR}/pkg/pugixml/include
+    ${PROJECT_SOURCE_DIR}/pkg/simdutf/include
 )
 
 set(BASE_SRC
@@ -274,6 +277,8 @@ set(WORK_DOMAIN_SRC
     src/work/domain/custom_tcp_pattern_spec.cpp
     src/work/domain/custom_tcp_pattern.cpp
 
+    src/work/domain/protocol_interaction.cpp
+
 )
 
 set(WORK_RUNTIME_SRC
@@ -328,6 +333,7 @@ set(LIB_LIB
     llhttp
     crypt
     pugixml
+    simdutf
 )
 
 set(DEPENDS
@@ -502,6 +508,12 @@ add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_CONFIG_PIPELINE test_protocol_config_p
 add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_BODY_PIPELINE test_protocol_body_pipeline
     tests/work/domain/test_protocol_body_pipeline.cpp
     ${WORK_DOMAIN_SRC})
+
+# 协议项实时交互详情领域模型与 payload 捕获测试 test_protocol_interaction
+add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_INTERACTION test_protocol_interaction
+    tests/work/domain/test_protocol_interaction.cpp
+    src/work/domain/type.cpp
+    src/work/domain/protocol_interaction.cpp)
 
 # 自定义tcp字段测试 test_custom_tcp_field
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_FIELD test_custom_tcp_field tests/work/domain/test_custom_tcp_field.cpp ${WORK_SRC})

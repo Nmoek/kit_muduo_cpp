@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <sys/time.h>
 #include <string>
+#include <vector>
 
 namespace kit_muduo
 {
@@ -89,6 +90,37 @@ void DelSpaceHelper(std::string &str);
  * @return std::string 
  */
 std::string GenerateUuid();
+
+
+/**
+ * @brief 生成sha1算法加密数据后base64字符串
+ * @param data 
+ * @return std::string 
+ */
+std::string Sha1BytesBase64Helper(const std::vector<uint8_t> &data);
+
+std::string Sha1BytesBase64Helper(const std::vector<char> &data);
+
+std::string Sha1BytesBase64Helper(const std::string &data);
+
+/**
+ * @brief 检查文本utf-8安全
+ * @param data 
+ * @param size 
+ * @param utf8_error 
+ * @return true 
+ * @return false 
+ */
+bool IsUtf8Safe(const void *data, size_t size, std::string& utf8_error);
+
+/**
+ * @brief 按UTF-8字符边界截取前缀
+ * @param data 已确认或预期为UTF-8文本的数据
+ * @param size 数据字节数
+ * @param max_bytes 最大截取字节数
+ * @return std::string 不会截断在UTF-8多字节字符中间
+ */
+std::string Utf8SafePrefix(const void *data, size_t size, size_t max_bytes);
 
 } // namespace kit
 #endif

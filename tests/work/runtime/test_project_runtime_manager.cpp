@@ -1396,8 +1396,8 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidXmlBeforePersis
 
 /*
 测试思路：
-1. text body 只允许合法 UTF-8 文本，不能保存非法 UTF-8 字节。
-2. 输入 0xC3 0x28 是典型非法 UTF-8 序列，pipeline 应在 DB 前拒绝。
+1. text body 仍通过 ProtocolBodyPipeline 在 DB 前做文本校验。
+2. 输入 0xC3 0x28 是典型非法 UTF-8 序列，应被公共 IsUtf8Safe 校验拒绝。
 3. 断言 UpdateBody 不被调用，防止二进制数据误按 text 保存。
 
 示例：

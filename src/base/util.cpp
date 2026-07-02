@@ -8,7 +8,9 @@
  */
 #include "base/util.h"
 #include "base/base_log.h"
+#include "cppcodec/base64_rfc4648.hpp"
 #include "stduuid/uuid.h"
+#include "simdutf.h"
 
 #include <ctime>
 #include <unistd.h>
@@ -18,6 +20,7 @@
 #include <string>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
+#include <algorithm>
 
 namespace kit_muduo
 {
@@ -157,6 +160,72 @@ std::string GenerateUuid()
 
     uuids::uuid uuid = gen();
     return uuids::to_string(uuid);
+}
+
+std::string Sha1BytesBase64Helper(const std::vector<uint8_t> &data)
+{
+    uuids::detail::sha1 sha;
+    sha.process_bytes(data.data(), data.size());
+
+
+    uuids::detail::sha1::digest8_t digest;
+    sha.get_digest_bytes(digest);
+
+    return cppcodec::base64_rfc4648::encode(digest);
+}
+
+std::string Sha1BytesBase64Helper(const std::vector<char> &data)
+{
+    return Sha1BytesBase64Helper(std::vector<uint8_t>(data.begin(), data.end()));
+}
+
+std::string Sha1BytesBase64Helper(const std::string &data)
+{
+    return Sha1BytesBase64Helper(std::vector<uint8_t>(data.begin(), data.end()));
+}
+
+bool IsUtf8Safe(const void *data, size_t size, std::string& utf8_error)
+{
+    const char *text = reinterpret_cast<const char*>(data);
+    simdutf::result result = simdutf::validate_utf8_with_errors(text, size);
+    if(simdutf::error_code::SUCCESS != result.error)
+    {
+        utf8_error = "invalid utf-8 at byte offset " + std::to_string(result.count);
+        return false;
+    }
+
+    utf8_error.clear();
+    return true;
+}
+
+std::string Utf8SafePrefix(const void *data, size_t size, size_t max_bytes)
+{
+    if(data == nullptr || size == 0 || max_bytes == 0)
+    {
+        return {};
+    }
+
+    const char *text = reinterpret_cast<const char*>(data);
+    size_t prefix_size = std::min(size, max_bytes);
+    while(prefix_size > 0)
+    {
+        simdutf::result result = simdutf::validate_utf8_with_errors(text, prefix_size);
+        if(simdutf::error_code::SUCCESS == result.error)
+        {
+            break;
+        }
+
+        if(result.count < prefix_size)
+        {
+            prefix_size = result.count;
+        }
+        else
+        {
+            --prefix_size;
+        }
+    }
+
+    return std::string(text, prefix_size);
 }
 
 
