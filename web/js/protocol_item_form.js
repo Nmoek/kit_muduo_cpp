@@ -717,6 +717,7 @@
             ? KitProxy.bodySyntax.validateRequest
             : (KitProxy.bodySyntax ? KitProxy.bodySyntax.validate : undefined));
         pageState.bodyEditor.setContentHidden(shouldHideBodyContentForTab(tab));
+        applyBodySectionContentHiddenState(tab);
     }
 
     /**
@@ -726,6 +727,17 @@
      */
     function shouldHideBodyContentForTab(tab) {
         return tab === 'request' && HIDE_REQUEST_BODY_CONTENT_CONFIG;
+    }
+
+    /**
+     * 同步表单页 Body 区的临时隐藏状态，避免请求侧输入框在页面布局中残留占位。
+     * @param {'request' | 'response'} tab Body Tab。
+     */
+    function applyBodySectionContentHiddenState(tab) {
+        const section = document.querySelector('.protocol-body-section');
+        if (!section) return;
+
+        section.classList.toggle('is-request-body-content-hidden', shouldHideBodyContentForTab(tab));
     }
 
     /**
@@ -770,6 +782,7 @@
                 : undefined,
             placeholder: '输入 Body 内容...',
         });
+        applyBodySectionContentHiddenState('request');
     }
 
     /**

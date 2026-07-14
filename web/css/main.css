@@ -4016,6 +4016,16 @@ button.is-mutation-busy:disabled {
     min-height: 360px;
 }
 
+/* 请求侧 Body 内容输入框暂时隐藏，待请求校验模块完善后移除该状态样式。 */
+.protocol-body-section.is-request-body-content-hidden .body-editor-input-wrap,
+.protocol-body-section.is-request-body-content-hidden .body-editor-binary-wrap {
+    display: none !important;
+}
+
+.protocol-body-section.is-request-body-content-hidden .body-editor-toolbar {
+    border-bottom: 0;
+}
+
 .body-switcher {
     display: inline-flex;
     gap: 4px;

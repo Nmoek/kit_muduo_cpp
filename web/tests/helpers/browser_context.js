@@ -67,9 +67,11 @@ export function createProtocolItemFormContext(search) {
         <form id="protocol-item-form">
             <input id="protocol-item-name">
             <div id="protocol-type-fields"></div>
-            <button type="button" class="body-switch-btn is-active" data-body-tab="request">校验请求Body</button>
-            <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
-            <div id="protocol-body-editor-host"></div>
+            <section class="protocol-body-section">
+                <button type="button" class="body-switch-btn is-active" data-body-tab="request">校验请求Body</button>
+                <button type="button" class="body-switch-btn" data-body-tab="response">目标响应Body</button>
+                <div id="protocol-body-editor-host"></div>
+            </section>
             <button id="save-protocol-form" type="submit"></button>
             <button id="save-protocol-menu-toggle" type="button"></button>
             <div id="save-protocol-menu" hidden>

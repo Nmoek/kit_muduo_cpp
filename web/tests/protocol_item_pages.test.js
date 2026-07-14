@@ -633,6 +633,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(mainCss).toContain('line-height: 20px;');
         expect(mainCss).toContain('appearance: none;');
         expect(mainCss).toContain('.body-editor.is-text-collapsed .body-editor-input-wrap');
+        expect(mainCss).toContain('.protocol-body-section.is-request-body-content-hidden .body-editor-input-wrap');
+        expect(mainCss).toContain('.protocol-body-section.is-request-body-content-hidden .body-editor-binary-wrap');
         expect(mainCss).toContain('.body-editor-binary-wrap');
         expect(mainCss).not.toContain('.body-editor-binary-field-info .pattern-field-grid-labels');
         expect(mainCss).not.toContain('.body-editor-binary-field-info .pattern-field {');
@@ -1041,6 +1043,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         const state = context.KitProxy.protocolItemForm.pageState;
         const editor = state.bodyEditor;
+        expect(context.document.querySelector('.protocol-body-section').classList.contains('is-request-body-content-hidden')).toBe(true);
         expect(context.document.querySelector('.body-editor-type-label').textContent).toBe('期望Body类型');
         expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(true);
         expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(true);
@@ -1065,6 +1068,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap .pattern-field-grid-labels')).toBeNull();
         expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap .pattern-list')).toBeNull();
         context.KitProxy.protocolItemForm.setActiveBodyTab('response');
+        expect(context.document.querySelector('.protocol-body-section').classList.contains('is-request-body-content-hidden')).toBe(false);
         expect(context.document.querySelector('.body-editor-type-label').textContent).toBe('Body类型');
         expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(false);
         expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(false);
