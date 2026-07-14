@@ -7,6 +7,11 @@
 
     const REQ_BODY = 1;
     const RESP_BODY = 2;
+    /**
+     * 请求侧 Body 内容配置暂时隐藏，待请求校验模块支持完整 Body 配置后恢复为 false。
+     * @type {boolean}
+     */
+    const HIDE_REQUEST_BODY_CONTENT_CONFIG = true;
 
     const pageState = {
         projectId: -1,
@@ -291,18 +296,72 @@
     }
 
     /**
+     * @returns {number | string}
+     */
+    function getCurrentProtocolTypeForBody() {
+        return pageState.protocolType || (pageState.project && pageState.project.protocol_type) || ProtocolType.HTTP;
+    }
+
+    /**
+     * @param {'request' | 'response'} tab
      * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
      */
-    function getAllowedBodyTypes() {
-        if (KitProxy.protocolTypes && typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function') {
-            return KitProxy.protocolTypes.getBodyTypeOptions(pageState.protocolType || pageState.project.protocol_type);
-        }
+    function fallbackBodyTypes(tab) {
         return [
+            { value: 'none', label: 'None', enabled: true },
+            { value: 'empty', label: 'Empty', enabled: true },
             { value: 'json', label: 'JSON', enabled: true },
             { value: 'xml', label: 'XML', enabled: true },
             { value: 'text', label: 'Text', enabled: true },
-            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
+            { value: 'image', label: 'Image', enabled: true },
+            { value: 'binary', label: 'Binary', enabled: true },
         ];
+    }
+
+    /**
+     * @param {'request' | 'response'} tab
+     * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+     */
+    function getAllowedBodyTypes(tab) {
+        const protocolType = getCurrentProtocolTypeForBody();
+        if (KitProxy.protocolTypes) {
+            if (tab === 'request' && typeof KitProxy.protocolTypes.getRequestBodyTypeOptions === 'function') {
+                return KitProxy.protocolTypes.getRequestBodyTypeOptions(protocolType);
+            }
+            if (tab === 'response' && typeof KitProxy.protocolTypes.getResponseBodyTypeOptions === 'function') {
+                return KitProxy.protocolTypes.getResponseBodyTypeOptions(protocolType);
+            }
+            if (typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function') {
+                return KitProxy.protocolTypes.getBodyTypeOptions(protocolType, tab);
+            }
+        }
+        return fallbackBodyTypes(tab);
+    }
+
+    /**
+     * @param {string} content
+     * @param {string} bodyType
+     * @returns {string}
+     */
+    function normalizeRequestBodyContent(content, bodyType) {
+        if (KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeRequestBodyContent === 'function') {
+            return KitProxy.bodySyntax.normalizeRequestBodyContent(content, bodyType);
+        }
+        return ['none', 'empty', 'binary'].includes(String(bodyType || '').toLowerCase())
+            ? ''
+            : String(content == null ? '' : content);
+    }
+
+    /**
+     * @param {string} content
+     * @param {string} bodyType
+     * @returns {string}
+     */
+    function normalizeBodyContent(content, bodyType) {
+        if (KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeBodyContent === 'function') {
+            return KitProxy.bodySyntax.normalizeBodyContent(content, bodyType);
+        }
+        return normalizeRequestBodyContent(content, bodyType);
     }
 
     /**
@@ -636,10 +695,37 @@
     function syncActiveBodyFromEditor() {
         if (!pageState.bodyEditor) return;
         const activeTab = pageState.bodyState.activeTab;
+        const bodyType = pageState.bodyEditor.getType();
+        const content = pageState.bodyEditor.getValue();
         pageState.bodyState[activeTab] = {
-            content: pageState.bodyEditor.getValue(),
-            bodyType: pageState.bodyEditor.getType(),
+            content: normalizeBodyContent(content, bodyType),
+            bodyType,
         };
+    }
+
+    /**
+     * @param {'request' | 'response'} tab
+     * @param {string=} bodyType
+     */
+    function configureBodyEditorForTab(tab, bodyType) {
+        if (!pageState.bodyEditor) return;
+
+        const isRequest = tab === 'request';
+        pageState.bodyEditor.setAllowedTypes(getAllowedBodyTypes(tab), bodyType || 'json');
+        pageState.bodyEditor.setTypeLabel(isRequest ? '期望Body类型' : 'Body类型');
+        pageState.bodyEditor.setValidator(KitProxy.bodySyntax && typeof KitProxy.bodySyntax.validateRequest === 'function'
+            ? KitProxy.bodySyntax.validateRequest
+            : (KitProxy.bodySyntax ? KitProxy.bodySyntax.validate : undefined));
+        pageState.bodyEditor.setContentHidden(shouldHideBodyContentForTab(tab));
+    }
+
+    /**
+     * 判断当前 Body Tab 是否需要暂时隐藏内容输入/配置区。
+     * @param {'request' | 'response'} tab Body Tab。
+     * @returns {boolean}
+     */
+    function shouldHideBodyContentForTab(tab) {
+        return tab === 'request' && HIDE_REQUEST_BODY_CONTENT_CONFIG;
     }
 
     /**
@@ -651,8 +737,9 @@
         syncActiveBodyFromEditor();
         pageState.bodyState.activeTab = tab;
         const target = pageState.bodyState[tab];
-        pageState.bodyEditor.setType(target.bodyType || 'json');
+        configureBodyEditorForTab(tab, target.bodyType || 'json');
         pageState.bodyEditor.setValue(target.content || '');
+        pageState.bodyEditor.setType(target.bodyType || 'json');
 
         document.querySelectorAll('.body-switch-btn').forEach(button => {
             button.classList.toggle('is-active', button.dataset.bodyTab === tab);
@@ -675,7 +762,12 @@
             idPrefix: 'protocol-form-body',
             value: pageState.bodyState.request.content,
             bodyType: pageState.bodyState.request.bodyType,
-            allowedTypes: getAllowedBodyTypes(),
+            allowedTypes: getAllowedBodyTypes('request'),
+            typeLabel: '期望Body类型',
+            hideContent: shouldHideBodyContentForTab('request'),
+            validate: KitProxy.bodySyntax && typeof KitProxy.bodySyntax.validateRequest === 'function'
+                ? KitProxy.bodySyntax.validateRequest
+                : undefined,
             placeholder: '输入 Body 内容...',
         });
     }
@@ -687,7 +779,10 @@
     function validateBodyTab(tab) {
         const label = tab === 'request' ? '校验请求Body' : '目标响应Body';
         const body = pageState.bodyState[tab];
-        const validation = KitProxy.bodySyntax.validate(body.content, body.bodyType);
+        const validateFn = KitProxy.bodySyntax && typeof KitProxy.bodySyntax.validateRequest === 'function'
+            ? KitProxy.bodySyntax.validateRequest
+            : KitProxy.bodySyntax.validate;
+        const validation = validateFn(body.content, body.bodyType);
         if (!validation.valid) {
             return {
                 valid: false,
@@ -781,12 +876,16 @@
         const cfg = normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.CUSTOM_TCP
             ? collectTCPCfg()
             : collectHTTPCfg();
+        const requestBodyType = pageState.bodyState.request.bodyType;
+        const requestBody = normalizeBodyContent(pageState.bodyState.request.content.trim(), requestBodyType);
+        const responseBodyType = pageState.bodyState.response.bodyType;
+        const responseBody = normalizeBodyContent(pageState.bodyState.response.content.trim(), responseBodyType);
 
         return Object.assign({}, base, cfg, {
-            request_body: pageState.bodyState.request.content.trim(),
-            response_body: pageState.bodyState.response.content.trim(),
-            req_body_type: pageState.bodyState.request.bodyType,
-            resp_body_type: pageState.bodyState.response.bodyType,
+            request_body: requestBody,
+            response_body: responseBody,
+            req_body_type: requestBodyType,
+            resp_body_type: responseBodyType,
         });
     }
 

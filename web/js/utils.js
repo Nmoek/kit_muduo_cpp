@@ -298,6 +298,23 @@
         return closeModal;
     }
 
+    /**
+     * 创建文本或 Body 编辑器导入弹窗。
+     * @param {{
+     *   title?: string;
+     *   placeholder?: string;
+     *   value?: string;
+     *   bodyType?: string;
+     *   allowedTypes?: Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>;
+     *   typeLabel?: string;
+     *   hideContent?: boolean;
+     *   validate?: Function;
+     *   useBodyEditor?: boolean;
+     *   modalClassName?: string;
+     *   idPrefix?: string;
+     *   onConfirm?: Function;
+     * }} options
+     */
     function createTextImportModal(options) {
         // 用于 Body 导入等“textarea + 确定/取消”的轻量弹窗，业务状态由 onConfirm 回调处理。
         const modal = document.createElement('div');
@@ -329,6 +346,9 @@
                 value: options.value || '',
                 bodyType: options.bodyType || 'json',
                 allowedTypes: options.allowedTypes,
+                typeLabel: options.typeLabel,
+                hideContent: options.hideContent,
+                validate: options.validate,
                 placeholder: options.placeholder || '请在此输入内容...',
             });
         } else if (textarea) {

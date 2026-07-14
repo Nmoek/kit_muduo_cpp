@@ -1277,7 +1277,8 @@ function bindProtocolBodyEditor(protocolItem) {
                     return false;
                 }
         
-                if (newBody) {
+                const hasBodySetting = newBody || (req_or_resp === 1 && KitProxy.bodySyntax && typeof KitProxy.bodySyntax.isTextlessRequestBodyType === 'function' && KitProxy.bodySyntax.isTextlessRequestBodyType(newBodyType));
+                if (hasBodySetting) {
                     valueElement.textContent = '已设置';
                     bodyIndicator.classList.add('has');
                     bodyIndicator.classList.remove('no');
@@ -1289,6 +1290,7 @@ function bindProtocolBodyEditor(protocolItem) {
                 return true;
             }, {
                 protocolType: protocolItem.dataset.protocolType || 'HTTP',
+                side: req_or_resp,
                 placeholder: req_or_resp === 1 ? '输入校验请求Body内容...' : '输入目标响应Body内容...',
             });
         });

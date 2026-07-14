@@ -1616,7 +1616,6 @@ body {
 .form-group input,
 .form-group select,
 .form-group textarea,
-.body-editor-type,
 .body-editor-textarea {
     width: 100%;
     border: 1px solid var(--v13-border);
@@ -1628,8 +1627,7 @@ body {
 }
 
 .filter-field input,
-.filter-field select,
-.body-editor-type {
+.filter-field select {
     height: 36px;
     padding: 0 10px;
 }
@@ -1639,7 +1637,6 @@ body {
 .form-group input:focus,
 .form-group select:focus,
 .form-group textarea:focus,
-.body-editor-type:focus,
 .body-editor-textarea:focus {
     border-color: var(--v13-primary);
     box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.14);
@@ -2495,6 +2492,12 @@ button.is-mutation-busy:disabled {
     padding: 10px;
 }
 
+.details-grid.tcp {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px;
+}
+
 /* HTTP 卡片详情按请求/响应分两行，减少展开后的纵向空间占用。 */
 .http-details-row {
     display: grid;
@@ -2504,23 +2507,28 @@ button.is-mutation-busy:disabled {
     min-width: 0;
 }
 
-.details-grid.http .protocol-field {
+/* HTTP/TCP 详情子项固定同一套尺寸，隐藏或增减字段时避免剩余子项被拉伸变形。 */
+.details-grid.http .protocol-field,
+.details-grid.tcp .protocol-field {
     min-height: 72px;
     padding: 10px 12px;
     gap: 6px;
     border-radius: 6px;
 }
 
-.details-grid.http .protocol-field.http-empty-slot {
+.details-grid.http .protocol-field.http-empty-slot,
+.details-grid.tcp .protocol-field.tcp-empty-slot {
     visibility: hidden;
     pointer-events: none;
 }
 
-.details-grid.http .protocol-field label {
+.details-grid.http .protocol-field label,
+.details-grid.tcp .protocol-field label {
     font-size: 13px;
 }
 
-.details-grid.http .protocol-field .value {
+.details-grid.http .protocol-field .value,
+.details-grid.tcp .protocol-field .value {
     align-self: center;
     font-size: 14px;
 }
@@ -2742,9 +2750,42 @@ button.is-mutation-busy:disabled {
     align-self: center;
 }
 
-.body-editor-type {
+.body-editor .body-editor-type {
     width: 130px;
+    max-width: 100%;
     flex: 0 0 auto;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 10px 38px 10px 12px;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    color: var(--v13-text);
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 600;
+    appearance: none;
+    -webkit-appearance: none;
+    background-color: #ffffff;
+    background-image:
+        linear-gradient(45deg, transparent 50%, #667085 50%),
+        linear-gradient(135deg, #667085 50%, transparent 50%);
+    background-position:
+        calc(100% - 17px) 18px,
+        calc(100% - 12px) 18px;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    outline: none;
+    white-space: normal;
+}
+
+.body-editor .body-editor-type:focus {
+    border-color: var(--v13-primary);
+    box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.14);
+}
+
+.body-editor .body-editor-type option {
+    font-size: 14px;
+    line-height: 24px;
 }
 
 .body-editor-status {
@@ -2774,8 +2815,59 @@ button.is-mutation-busy:disabled {
 
     position: relative;
     min-height: var(--body-editor-min-height);
+    max-height: max(var(--body-editor-min-height), var(--body-editor-content-height));
     overflow: auto;
     background: #ffffff;
+    border-top: 0 solid transparent;
+    opacity: 1;
+    transition:
+        max-height 220ms ease,
+        min-height 220ms ease,
+        opacity 180ms ease,
+        border-color 180ms ease;
+}
+
+.body-editor.is-text-collapsed .body-editor-input-wrap {
+    height: 0 !important;
+    min-height: 0 !important;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.body-editor-binary-wrap {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    max-height: 920px;
+    overflow: hidden;
+    border-top: 1px solid var(--v13-border);
+    background: #ffffff;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+        max-height 240ms ease,
+        padding-top 220ms ease,
+        padding-bottom 220ms ease,
+        opacity 180ms ease,
+        transform 220ms ease;
+}
+
+.body-editor-binary-wrap.is-collapsed {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-top: 0;
+    opacity: 0;
+    transform: translateY(-4px);
+    pointer-events: none;
+}
+
+.body-editor-binary-count {
+    color: var(--v13-muted);
+    font-size: 12px;
+    font-weight: 700;
 }
 
 .body-editor-scroll-content {
@@ -3137,15 +3229,69 @@ button.is-mutation-busy:disabled {
 .pattern-field-value-container {
     display: flex;
     gap: 6px;
+    min-width: 0;
+}
+
+.pattern-wire-hex-input {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 1 1 auto;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: #ffffff;
+    overflow: hidden;
+}
+
+.pattern-wire-hex-input.is-readonly {
+    background: var(--v13-surface-soft);
+}
+
+.pattern-wire-hex-input.is-display-value .pattern-hex-prefix {
+    background: #eef4ff;
+    color: var(--v13-primary-strong);
+}
+
+.pattern-hex-prefix {
+    flex: 0 0 28px;
+    align-self: stretch;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--v13-border);
+    background: var(--v13-surface-soft);
+    color: var(--v13-muted);
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.pattern-cell .pattern-value-editor-input {
+    min-width: 0;
+    height: 32px;
+    border: 0;
+    border-radius: 0;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.pattern-cell .pattern-value-editor-input:focus {
+    outline: none;
+    box-shadow: none;
 }
 
 .pattern-field-value-display-btn {
     flex: 0 0 32px;
+    min-height: 34px;
     border: 1px solid var(--v13-border);
     border-radius: var(--v13-radius);
     background: var(--v13-surface-soft);
     color: var(--v13-muted);
     font-weight: 800;
+    cursor: pointer;
+}
+
+.pattern-field-value-display-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
 }
 
 .pattern-field-actions {
@@ -3361,13 +3507,16 @@ button.is-mutation-busy:disabled {
         align-items: stretch;
     }
 
-    .body-editor-type,
     .body-editor-format,
     .body-editor-clear {
         width: 100%;
     }
 
-.body-editor-status {
+    .body-editor .body-editor-type {
+        width: min(220px, 100%);
+    }
+
+    .body-editor-status {
         margin-left: 0;
     }
 }

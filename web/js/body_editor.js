@@ -3,11 +3,17 @@
     const utils = KitProxy.utils || {};
 
     const BODY_TYPE_OPTIONS = Object.freeze([
+        { value: 'none', label: 'None', enabled: true },
+        { value: 'empty', label: 'Empty', enabled: true },
         { value: 'json', label: 'JSON', enabled: true },
         { value: 'xml', label: 'XML', enabled: true },
         { value: 'text', label: 'Text', enabled: true },
-        { value: 'binary', label: 'Binary', enabled: false, reserved: true },
+        { value: 'image', label: 'Image', enabled: true },
+        { value: 'binary', label: 'Binary', enabled: true },
     ]);
+    const NO_CONTENT_BODY_TYPES = Object.freeze(['none', 'empty']);
+    const TEXT_INPUT_COLLAPSED_BODY_TYPES = Object.freeze(['none', 'empty', 'image', 'binary']);
+    const REQUEST_TEXTLESS_BODY_TYPES = TEXT_INPUT_COLLAPSED_BODY_TYPES;
     const HIGHLIGHT_SIZE_LIMIT = 100 * 1024;
     const EDITOR_LINE_HEIGHT = 20;
     const EDITOR_VERTICAL_PADDING = 24;
@@ -146,6 +152,24 @@
     function validate(text, bodyType) {
         const normalizedType = String(bodyType || 'text').toLowerCase();
 
+        if (NO_CONTENT_BODY_TYPES.includes(normalizedType)) {
+            return {
+                valid: true,
+                line: null,
+                column: null,
+                message: '该 Body 类型不需要文本内容',
+            };
+        }
+
+        if (normalizedType === 'binary') {
+            return {
+                valid: true,
+                line: null,
+                column: null,
+                message: 'Binary Body 使用二进制字段配置',
+            };
+        }
+
         if (normalizedType === 'json') {
             return validateJson(text);
         }
@@ -154,21 +178,60 @@
             return validateXml(text);
         }
 
-        if (normalizedType === 'binary') {
-            return {
-                valid: false,
-                line: null,
-                column: null,
-                message: 'Binary Body 暂不支持在线文本编辑',
-            };
-        }
-
         return {
             valid: true,
             line: null,
             column: null,
             message: text ? 'Text Body 不做语法校验' : '空 Body 将按未设置处理',
         };
+    }
+
+    /**
+     * 判断 Body 类型是否不需要普通文本输入。
+     * @param {string} bodyType Body 类型。
+     * @returns {boolean}
+     */
+    function isTextlessRequestBodyType(bodyType) {
+        return REQUEST_TEXTLESS_BODY_TYPES.includes(String(bodyType || '').toLowerCase());
+    }
+
+    /**
+     * 请求侧 Body 校验：None/Empty/Binary 不要求文本 Body。
+     * @param {string} text Body 文本内容。
+     * @param {string} bodyType Body 类型。
+     * @returns {{ valid: boolean; line: number | null; column: number | null; message: string; }}
+     */
+    function validateRequest(text, bodyType) {
+        if (isTextlessRequestBodyType(bodyType)) {
+            return {
+                valid: true,
+                line: null,
+                column: null,
+                message: '该 Body 类型不需要文本内容',
+            };
+        }
+
+        return validate(text, bodyType);
+    }
+
+    /**
+     * 特殊 Body 类型提交时统一清空文本内容。
+     * @param {string} text Body 文本内容。
+     * @param {string} bodyType Body 类型。
+     * @returns {string}
+     */
+    function normalizeBodyContent(text, bodyType) {
+        return isTextlessRequestBodyType(bodyType) ? '' : String(text == null ? '' : text);
+    }
+
+    /**
+     * 请求侧历史 API 名称保留，内部复用通用 Body 内容归一化。
+     * @param {string} text Body 文本内容。
+     * @param {string} bodyType Body 类型。
+     * @returns {string}
+     */
+    function normalizeRequestBodyContent(text, bodyType) {
+        return normalizeBodyContent(text, bodyType);
     }
 
     function format(text, bodyType) {
@@ -379,20 +442,81 @@
         };
     }
 
+    /**
+     * Body Binary 模式只复用 TCP 字段配置的普通字段形态，不开放特殊字段角色。
+     * @param {any} field 字段原始值。
+     * @param {number} index 字段下标。
+     * @returns {{ id: string; name: string; byte_pos: number | string; byte_len: number | string; type: string; role: string; value: string; }}
+     */
+    function normalizeBinaryField(field, index) {
+        const source = field && typeof field === 'object' ? field : {};
+        const type = String(source.type || '').trim();
+        const rawByteLen = source.byte_len ?? source.byteLen ?? '';
+
+        return {
+            id: String(source.id || `binary-field-${Date.now()}-${index}`),
+            name: String(source.name || ''),
+            byte_pos: source.byte_pos ?? source.bytePos ?? '',
+            byte_len: rawByteLen,
+            type,
+            role: 'common',
+            value: String(source.value ?? source.match ?? ''),
+        };
+    }
+
+    /**
+     * @param {Array<any>} fields 二进制字段配置。
+     * @returns {Array<{ id: string; name: string; byte_pos: number | string; byte_len: number | string; type: string; role: string; value: string; }>}
+     */
+    function normalizeBinaryFields(fields) {
+        return (Array.isArray(fields) ? fields : []).map(normalizeBinaryField);
+    }
+
+    /**
+     * @returns {{ id: string; name: string; byte_pos: string; byte_len: string; type: string; role: string; value: string; }}
+     */
+    function createEmptyBinaryField() {
+        return normalizeBinaryField({}, Math.floor(Math.random() * 100000));
+    }
+
+    /**
+     * @param {string} value 待解析内容。
+     * @returns {Array<any> | null}
+     */
+    function tryParseBinaryFields(value) {
+        const text = String(value || '').trim();
+        if (!text) return null;
+
+        try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed && Array.isArray(parsed.fields)) return parsed.fields;
+        } catch (error) {
+            return null;
+        }
+
+        return null;
+    }
+
     function create(container, options = {}) {
         if (!container) {
             throw new Error('Body 输入组件缺少挂载容器');
         }
 
         const idPrefix = options.idPrefix || `body-editor-${Date.now()}`;
-        const allowedTypes = resolveAllowedTypes(options);
-        const initialType = String(options.bodyType || allowedTypes[0]?.value || 'json').toLowerCase();
+        let allowedTypes = resolveAllowedTypes(options);
+        const defaultType = allowedTypes.some(option => option.value === 'json')
+            ? 'json'
+            : (allowedTypes[0]?.value || 'json');
+        const initialType = String(options.bodyType || defaultType).toLowerCase();
         const initialValue = decodeBodyData(options.value || '');
+        let contentHidden = Boolean(options.hideContent);
+        let validateFn = typeof options.validate === 'function' ? options.validate : validate;
 
         container.innerHTML = `
             <div class="body-editor" data-body-editor="${escapeHtml(idPrefix)}">
                 <div class="body-editor-toolbar">
-                    <label class="body-editor-type-label" for="${escapeHtml(idPrefix)}-type">Body类型</label>
+                    <label class="body-editor-type-label" for="${escapeHtml(idPrefix)}-type">${escapeHtml(options.typeLabel || 'Body类型')}</label>
                     <select id="${escapeHtml(idPrefix)}-type" class="body-editor-type"></select>
                     <button type="button" class="body-editor-format">格式化</button>
                     <button type="button" class="body-editor-clear">清空</button>
@@ -407,11 +531,13 @@
                         </div>
                     </div>
                 </div>
+                <div class="body-editor-binary-wrap body-editor-binary-pattern-scope config-pattern-modal is-collapsed" aria-hidden="true"></div>
                 <div class="body-editor-error" aria-live="polite"></div>
             </div>
         `;
 
         const root = container.querySelector('.body-editor');
+        const typeLabel = container.querySelector('.body-editor-type-label');
         const typeSelect = container.querySelector('.body-editor-type');
         const textarea = container.querySelector('.body-editor-textarea');
         const scrollViewport = container.querySelector('.body-editor-input-wrap');
@@ -421,26 +547,196 @@
         const clearButton = container.querySelector('.body-editor-clear');
         const statusElement = container.querySelector('.body-editor-status');
         const errorElement = container.querySelector('.body-editor-error');
+        const binaryConfigWrap = container.querySelector('.body-editor-binary-wrap');
+        let binaryFields = normalizeBinaryFields(
+            options.binaryFields || tryParseBinaryFields(initialValue) || [],
+        );
+        let binaryFieldEditor = null;
+        let binarySectionMounted = false;
 
-        allowedTypes.forEach(option => {
-            const optionElement = document.createElement('option');
-            optionElement.value = option.value;
-            optionElement.textContent = option.reserved ? `${option.label}（预留）` : option.label;
-            optionElement.disabled = option.enabled === false;
-            typeSelect.appendChild(optionElement);
-        });
+        /**
+         * 重新渲染类型下拉，供请求/响应 Tab 切换时复用同一个编辑器实例。
+         * @param {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>} nextAllowedTypes
+         * @param {string} preferredType
+         */
+        function renderTypeOptions(nextAllowedTypes, preferredType) {
+            allowedTypes = Array.isArray(nextAllowedTypes) && nextAllowedTypes.length
+                ? resolveAllowedTypes({ allowedTypes: nextAllowedTypes })
+                : resolveAllowedTypes({ allowedTypes: BODY_TYPE_OPTIONS });
+            typeSelect.innerHTML = '';
 
-        if (!Array.from(typeSelect.options).some(option => option.value === initialType)) {
-            const fallbackOption = document.createElement('option');
-            fallbackOption.value = initialType;
-            fallbackOption.textContent = initialType.toUpperCase();
-            typeSelect.appendChild(fallbackOption);
+            allowedTypes.forEach(option => {
+                const optionElement = document.createElement('option');
+                optionElement.value = option.value;
+                optionElement.textContent = option.reserved ? `${option.label}（预留）` : option.label;
+                optionElement.disabled = option.enabled === false;
+                typeSelect.appendChild(optionElement);
+            });
+
+            const normalizedType = String(preferredType || allowedTypes[0]?.value || 'json').toLowerCase();
+            if (!Array.from(typeSelect.options).some(option => option.value === normalizedType)) {
+                const fallbackOption = document.createElement('option');
+                fallbackOption.value = normalizedType;
+                fallbackOption.textContent = normalizedType.toUpperCase();
+                typeSelect.appendChild(fallbackOption);
+            }
+
+            typeSelect.value = normalizedType;
         }
 
-        typeSelect.value = initialType;
+        /**
+         * @returns {boolean}
+         */
+        function isBinaryMode() {
+            return String(typeSelect.value || '').toLowerCase() === 'binary';
+        }
+
+        /**
+         * @returns {boolean}
+         */
+        function shouldCollapseTextInput() {
+            const bodyType = String(typeSelect.value || '').toLowerCase();
+            return contentHidden || TEXT_INPUT_COLLAPSED_BODY_TYPES.includes(bodyType);
+        }
+
+        /**
+         * @returns {boolean}
+         */
+        function shouldShowContentActions() {
+            const bodyType = String(typeSelect.value || '').toLowerCase();
+            return !contentHidden && !TEXT_INPUT_COLLAPSED_BODY_TYPES.includes(bodyType);
+        }
+
+        /**
+         * Binary 配置区复用 TCP 格式编辑弹窗中的布局预览和字段配置 DOM。
+         * @param {any} tcpEditor TCP 字段编辑器命名空间。
+         * @returns {boolean}
+         */
+        function mountBinarySection(tcpEditor) {
+            if (binarySectionMounted) return true;
+            if (!tcpEditor || typeof tcpEditor.createPatternFieldEditorSectionHTML !== 'function') {
+                binaryConfigWrap.innerHTML = '<div class="pattern-layout-empty">TCP 字段编辑器未加载</div>';
+                return false;
+            }
+
+            binaryConfigWrap.innerHTML = tcpEditor.createPatternFieldEditorSectionHTML({
+                isProjectMode: false,
+                layoutSectionClass: 'body-editor-binary-layout-section',
+                previewClass: 'body-editor-binary-preview',
+                fieldInfoClass: 'body-editor-binary-field-info',
+                labelsClass: 'body-editor-binary-labels',
+                listClass: 'body-editor-binary-field-list',
+                countClass: 'body-editor-binary-count',
+                layoutTitle: '字节布局预览',
+                fieldTitle: '二进制普通字段',
+                countText: '0 个普通字段',
+                showAddButton: false,
+            });
+            binarySectionMounted = true;
+            return true;
+        }
+
+        /**
+         * Binary 模式复用 TCP 字段列表编辑器，保证字段行、值输入、Byte 长度计算来自同一套代码。
+         * @returns {any}
+         */
+        function ensureBinaryFieldEditor() {
+            if (binaryFieldEditor) return binaryFieldEditor;
+
+            const tcpEditor = KitProxy.tcpPatternEditor;
+            if (!tcpEditor || typeof tcpEditor.createPatternFieldListEditor !== 'function' || !mountBinarySection(tcpEditor)) {
+                return null;
+            }
+
+            binaryFieldEditor = tcpEditor.createPatternFieldListEditor(binaryConfigWrap, {
+                mode: 'body-binary',
+                isProjectMode: false,
+                fields: binaryFields,
+                fixedRole: 'common',
+                roleOptions: [{ value: 'common', label: '普通字段' }],
+                editableStructure: true,
+                editableValues: true,
+                autoRecalculateBytePositions: true,
+                showMoveActions: true,
+                fieldNamePlaceholder: '普通字段',
+                listSelector: '.body-editor-binary-field-list',
+                previewSelector: '.body-editor-binary-preview',
+                countSelector: '.body-editor-binary-count',
+                emptyPreviewText: '暂无二进制普通字段',
+                countLabel: '普通字段',
+                onChange: function(fields) {
+                    binaryFields = normalizeBinaryFields(fields);
+                },
+            });
+            return binaryFieldEditor;
+        }
+
+        /**
+         * 控制内容区及内容操作按钮显示状态。内容区保留 DOM，通过 class 做折叠动画。
+         * @param {boolean} hidden 是否强制隐藏内容输入区。
+         */
+        function applyContentVisibility(hidden) {
+            contentHidden = Boolean(hidden);
+            const textCollapsed = shouldCollapseTextInput();
+            const binaryVisible = !contentHidden && isBinaryMode();
+
+            root.classList.toggle('is-content-hidden', contentHidden);
+            root.classList.toggle('is-text-collapsed', textCollapsed);
+            root.classList.toggle('is-binary-mode', binaryVisible);
+            root.classList.toggle('is-no-content-mode', NO_CONTENT_BODY_TYPES.includes(String(typeSelect.value || '').toLowerCase()));
+            binaryConfigWrap.classList.toggle('is-collapsed', !binaryVisible);
+            binaryConfigWrap.setAttribute('aria-hidden', binaryVisible ? 'false' : 'true');
+            formatButton.hidden = !shouldShowContentActions();
+            clearButton.hidden = !shouldShowContentActions();
+
+            if (binaryVisible && binaryFields.length === 0) {
+                binaryFields = [createEmptyBinaryField()];
+            }
+            if (binaryVisible) {
+                const editor = ensureBinaryFieldEditor();
+                if (editor) editor.setFields(binaryFields);
+            }
+        }
+
+        function syncBinaryFieldsFromDOM() {
+            if (binaryFieldEditor) {
+                binaryFields = normalizeBinaryFields(binaryFieldEditor.getFields());
+            }
+        }
+
+        /**
+         * 清除 Binary Body 字段内容后保留一条默认普通字段，和 TCP 格式框保持同一类占位体验。
+         */
+        function clearBinaryFields() {
+            binaryFields = [createEmptyBinaryField()];
+            if (binaryFieldEditor && typeof binaryFieldEditor.resetFields === 'function') {
+                binaryFieldEditor.resetFields(binaryFields[0]);
+            } else if (binaryFieldEditor) {
+                binaryFieldEditor.setFields(binaryFields);
+            }
+        }
+
+        function updateTextInputMode() {
+            textarea.readOnly = Boolean(options.readonly || isBinaryMode());
+            textarea.placeholder = isBinaryMode()
+                ? 'Binary Body 使用二进制字段配置'
+                : (options.placeholder || '输入 Body 内容...');
+        }
+
+        /**
+         * 通知外层弹窗当前 Body 类型，方便外层按 Binary 等特殊类型调整尺寸。
+         */
+        function notifyTypeChange() {
+            if (typeof options.onTypeChange === 'function') {
+                options.onTypeChange(typeSelect.value);
+            }
+        }
+
+        renderTypeOptions(allowedTypes, initialType);
+
         textarea.value = initialValue;
-        textarea.placeholder = options.placeholder || '输入 Body 内容...';
-        textarea.readOnly = Boolean(options.readonly || typeSelect.value === 'binary');
+        updateTextInputMode();
+        applyContentVisibility(contentHidden);
 
         function updateEditorMetrics() {
             const metrics = getEditorMetrics(textarea.value);
@@ -561,7 +857,7 @@
         }
 
         function runValidation() {
-            return renderValidation(validate(textarea.value, typeSelect.value));
+            return renderValidation(validateFn(textarea.value, typeSelect.value));
         }
 
         const debouncedValidate = debounce(runValidation, 180);
@@ -590,10 +886,9 @@
         textarea.addEventListener('focus', scheduleCaretSync);
 
         typeSelect.addEventListener('change', function() {
-            textarea.readOnly = Boolean(options.readonly || typeSelect.value === 'binary');
-            textarea.placeholder = typeSelect.value === 'binary'
-                ? 'Binary Body 暂不支持在线文本编辑'
-                : (options.placeholder || '输入 Body 内容...');
+            updateTextInputMode();
+            applyContentVisibility(contentHidden);
+            notifyTypeChange();
             updateEditorMetrics();
             updateHighlight();
             runValidation();
@@ -627,13 +922,19 @@
         updateEditorMetrics();
         updateHighlight();
         runValidation();
+        notifyTypeChange();
 
         return {
             getValue: function() {
-                return textarea.value;
+                return normalizeBodyContent(textarea.value, typeSelect.value);
             },
             setValue: function(value) {
                 textarea.value = decodeBodyData(value || '');
+                const parsedBinaryFields = tryParseBinaryFields(textarea.value);
+                if (parsedBinaryFields) {
+                    binaryFields = normalizeBinaryFields(parsedBinaryFields);
+                    if (binaryFieldEditor) binaryFieldEditor.setFields(binaryFields);
+                }
                 updateEditorMetrics();
                 updateHighlight();
                 return runValidation();
@@ -642,14 +943,41 @@
                 return typeSelect.value;
             },
             setType: function(type) {
-                typeSelect.value = String(type || 'text').toLowerCase();
+                const nextType = String(type || 'text').toLowerCase();
+                if (!Array.from(typeSelect.options).some(option => option.value === nextType)) {
+                    renderTypeOptions(allowedTypes, nextType);
+                }
+                typeSelect.value = nextType;
                 typeSelect.dispatchEvent(new Event('change'));
+            },
+            setAllowedTypes: function(nextAllowedTypes, preferredType) {
+                renderTypeOptions(nextAllowedTypes, preferredType || typeSelect.value);
+                typeSelect.dispatchEvent(new Event('change'));
+            },
+            setTypeLabel: function(label) {
+                typeLabel.textContent = label || 'Body类型';
+            },
+            setContentHidden: function(hidden) {
+                applyContentVisibility(hidden);
+                return runValidation();
+            },
+            setValidator: function(nextValidateFn) {
+                validateFn = typeof nextValidateFn === 'function' ? nextValidateFn : validate;
+                return runValidation();
             },
             validate: runValidation,
             focus: function() {
                 textarea.focus();
             },
+            getBinaryFields: function() {
+                syncBinaryFieldsFromDOM();
+                return binaryFields.map(field => Object.assign({}, field, { role: 'common' }));
+            },
+            clearBinaryFields,
             destroy: function() {
+                if (binaryFieldEditor && typeof binaryFieldEditor.destroy === 'function') {
+                    binaryFieldEditor.destroy();
+                }
                 container.innerHTML = '';
             },
         };
@@ -657,11 +985,18 @@
 
     KitProxy.bodySyntax = {
         BODY_TYPE_OPTIONS,
+        NO_CONTENT_BODY_TYPES,
+        TEXT_INPUT_COLLAPSED_BODY_TYPES,
+        REQUEST_TEXTLESS_BODY_TYPES,
         HIGHLIGHT_SIZE_LIMIT,
         validate,
+        validateRequest,
         format,
         highlight,
         decodeBodyData,
+        isTextlessRequestBodyType,
+        normalizeBodyContent,
+        normalizeRequestBodyContent,
     };
 
     KitProxy.bodyEditor = {

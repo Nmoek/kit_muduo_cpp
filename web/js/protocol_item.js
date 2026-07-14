@@ -1,4 +1,10 @@
 /**
+ * 协议项卡片请求侧 Body 内容配置暂时隐藏，待请求校验模块支持完整 Body 配置后恢复为 false。
+ * @type {boolean}
+ */
+const PROTOCOL_ITEM_HIDE_REQUEST_BODY_CONTENT_CONFIG = true;
+
+/**
  * 生成不同协议项配置子类网格
  * @param {派生子类} item 
  * @param {协议项信息} protocol 
@@ -332,14 +338,11 @@ var httpProtocolItemGrids = {
                     <label><span class="field-label-text">请求路径</span><span class="field-edit-hint">编辑</span></label>
                     <div class="value" title="${escape(requestPath)}">${escape(requestPath)}</div>
                 </div>
-                <div class="protocol-field req-cfg http-headers editable-field" data-field-name="headers" data-http-headers-side="request" title="点击配置请求 Headers">
-                    <label><span class="field-label-main"><span class="header-fields-indicator no"></span><span class="field-label-text">请求 Headers</span></span><span class="field-edit-hint">配置</span></label>
-                    <div class="value">未设置</div>
-                </div>
                 <div class="protocol-field request-body" data-field-name="request-body">
                     <label><span class="field-label-main"><span class="body-indicator ${protocol.req_body_status === 1 ? 'has' : 'no'}"></span><span class="field-label-text">校验请求Body</span></span></label>
                     <div class="value">${protocol.req_body_status === 1 ? '已设置' : '未设置'}</div>
                 </div>
+                <div class="protocol-field http-empty-slot" aria-hidden="true"></div>
             </div>
             <div class="http-details-row http-response-config" aria-label="响应类配置">
                 <div class="protocol-field resp-cfg editable-field status" data-field-name="status_code" title="点击编辑响应码">
@@ -358,7 +361,6 @@ var httpProtocolItemGrids = {
             </div>
         `;
         if (KitProxy.httpHeaders) {
-            KitProxy.httpHeaders.updateFieldState(grids.querySelector('[data-http-headers-side="request"]'), reqCfg.headers);
             KitProxy.httpHeaders.updateFieldState(grids.querySelector('[data-http-headers-side="response"]'), respCfg.headers);
         }
         return grids;
@@ -481,13 +483,31 @@ var customTcpProtocolItemGrids = {
  * @param {*} body_data 
  */
 function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {}) {
+    const isRequest = Number(options.side) === 1 || options.side === 'request';
+    const shouldHideRequestBodyContent = isRequest && PROTOCOL_ITEM_HIDE_REQUEST_BODY_CONTENT_CONFIG;
+    const protocolType = options.protocolType || 'HTTP';
+    const allowedTypes = KitProxy.protocolTypes
+        ? (
+            isRequest && typeof KitProxy.protocolTypes.getRequestBodyTypeOptions === 'function'
+                ? KitProxy.protocolTypes.getRequestBodyTypeOptions(protocolType)
+                : (
+                    !isRequest && typeof KitProxy.protocolTypes.getResponseBodyTypeOptions === 'function'
+                        ? KitProxy.protocolTypes.getResponseBodyTypeOptions(protocolType)
+                        : (
+                            typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function'
+                                ? KitProxy.protocolTypes.getBodyTypeOptions(protocolType, isRequest ? 'request' : 'response')
+                                : undefined
+                        )
+                )
+        )
+        : undefined;
 
     let currentBody = KitProxy.bodySyntax
         ? KitProxy.bodySyntax.decodeBodyData(body_data)
         : new TextDecoder().decode(body_data || new Uint8Array());
 
     try {
-        if(currentBody && KitProxy.bodySyntax) {
+        if(currentBody && KitProxy.bodySyntax && !isRequest) {
             currentBody = KitProxy.bodySyntax.format(currentBody, body_type);
         }
     } catch(error) {
@@ -495,11 +515,11 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {
     }
     
     const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
+    modal.className = 'modal-overlay edit-body-modal-overlay';
     modal.innerHTML = `
         <div class="edit-body-modal">
             <div class="modal-header">
-                <h3>编辑Body</h3>
+                <h3>${isRequest ? '编辑校验请求Body' : '编辑目标响应Body'}</h3>
                 <button class="close-modal">&times;</button>
             </div>
             <div class="modal-body">
@@ -508,6 +528,7 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {
                     <div id="body-editor-host"></div>
                 </div>
                 <div class="form-actions">
+                    <button type="button" class="clear-btn body-binary-clear-fields" hidden>清除字段</button>
                     <button type="button" class="cancel-btn">取消</button>
                     <button type="button" class="confirm-btn">确定修改</button>
                 </div>
@@ -517,16 +538,41 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {
     
     document.body.appendChild(modal);
 
+    const bodyDialog = modal.querySelector('.edit-body-modal');
+    const clearFieldsButton = modal.querySelector('.body-binary-clear-fields');
     const bodyEditor = KitProxy.bodyEditor.create(modal.querySelector('#body-editor-host'), {
         idPrefix: 'protocol-body',
-        value: currentBody,
+        value: isRequest && KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeRequestBodyContent === 'function'
+            ? KitProxy.bodySyntax.normalizeRequestBodyContent(currentBody, body_type)
+            : currentBody,
         bodyType: body_type,
-        allowedTypes: KitProxy.protocolTypes && typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function'
-            ? KitProxy.protocolTypes.getBodyTypeOptions(options.protocolType || 'HTTP')
+        allowedTypes,
+        typeLabel: isRequest ? '期望Body类型' : 'Body类型',
+        hideContent: shouldHideRequestBodyContent,
+        validate: KitProxy.bodySyntax && typeof KitProxy.bodySyntax.validateRequest === 'function'
+            ? KitProxy.bodySyntax.validateRequest
             : undefined,
         placeholder: options.placeholder || '输入 Body 内容...',
+        onTypeChange: function(nextType) {
+            const isBinaryBody = !shouldHideRequestBodyContent && String(nextType || '').toLowerCase() === 'binary';
+            bodyDialog.classList.toggle('is-binary-body-mode', isBinaryBody);
+            bodyDialog.classList.toggle('config-pattern-modal', isBinaryBody);
+            bodyDialog.classList.toggle('is-item-pattern', isBinaryBody);
+            if (clearFieldsButton) clearFieldsButton.hidden = !isBinaryBody;
+        },
     });
+    const initialBinaryBody = !shouldHideRequestBodyContent && bodyEditor.getType() === 'binary';
+    bodyDialog.classList.toggle('is-binary-body-mode', initialBinaryBody);
+    bodyDialog.classList.toggle('config-pattern-modal', initialBinaryBody);
+    bodyDialog.classList.toggle('is-item-pattern', initialBinaryBody);
+    if (clearFieldsButton) clearFieldsButton.hidden = !initialBinaryBody;
 
+    clearFieldsButton?.addEventListener('click', function(event) {
+        event.stopPropagation();
+        if (typeof bodyEditor.clearBinaryFields === 'function') {
+            bodyEditor.clearBinaryFields();
+        }
+    });
     
     // 处理确定按钮
     modal.querySelector('.confirm-btn').addEventListener('click', async function(e) {
@@ -543,7 +589,12 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {
         }
 
         const newBodyType = bodyEditor.getType();
-        const newBody = bodyEditor.getValue().trim();
+        const rawBody = bodyEditor.getValue().trim();
+        const newBody = KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeBodyContent === 'function'
+            ? KitProxy.bodySyntax.normalizeBodyContent(rawBody, newBodyType)
+            : (isRequest && KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeRequestBodyContent === 'function'
+            ? KitProxy.bodySyntax.normalizeRequestBodyContent(rawBody, newBodyType)
+            : rawBody);
 
         confirmButton.disabled = true;
 

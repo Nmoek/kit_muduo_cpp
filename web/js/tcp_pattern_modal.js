@@ -79,6 +79,15 @@
         return `role-${String(role || 'common').replaceAll('_', '-').replace(/[^a-zA-Z0-9-]/g, '') || 'common'}`;
     }
 
+    /**
+     * 字段行按钮使用 CSS mask 加载 assets/icons 下的 SVG，按钮文本只保留在 aria-label/title 中。
+     * @param {string} name 图标名称。
+     * @returns {string} 图标 HTML。
+     */
+    function patternActionIconHTML(name) {
+        return `<span class="pattern-action-icon pattern-action-icon-${escapeHTML(name)}" aria-hidden="true"></span>`;
+    }
+
     function wireHexByteLength(value) {
         const text = String(value || '').trim();
         if (!/^H[0-9a-fA-F]*$/.test(text) || (text.length - 1) % 2 !== 0) return null;
@@ -509,8 +518,9 @@
         return options.join('');
     }
 
-    function roleOptionsHTML(selectedRole) {
-        return FIELD_ROLES.map(role => {
+    function roleOptionsHTML(selectedRole, roles = FIELD_ROLES) {
+        const normalizedRoles = Array.isArray(roles) && roles.length ? roles : FIELD_ROLES;
+        return normalizedRoles.map(role => {
             return `<option value="${role.value}" ${String(selectedRole || 'common') === role.value ? 'selected' : ''}>${escapeHTML(role.label)}</option>`;
         }).join('');
     }
@@ -653,10 +663,12 @@
         const wireInput = fieldNode.querySelector('.pattern-wire-hex-input');
         const displayButton = fieldNode.querySelector('.pattern-field-value-display-btn');
         const fixedValueButton = fieldNode.querySelector('.pattern-fixed-value-btn');
+        const roleCell = fieldNode.querySelector('.pattern-cell-role');
         const label = fieldNode.querySelector('.pattern-cell-value label');
 
         if (isProjectMode) {
             const enabled = role === 'start_magic';
+            if (roleCell) roleCell.classList.toggle('has-fixed-value-control', enabled);
             valueInput.disabled = !enabled;
             if (valueEditor) valueEditor.disabled = !enabled;
             if (!enabled) {
@@ -666,9 +678,12 @@
             }
             displayButton.disabled = !enabled;
             if (fixedValueButton) {
+                const hasFixedValue = Boolean(enabled && valueInput.value);
                 fixedValueButton.hidden = !enabled;
                 fixedValueButton.disabled = !enabled;
-                fixedValueButton.classList.toggle('has-fixed-value', Boolean(enabled && valueInput.value));
+                fixedValueButton.classList.toggle('has-fixed-value', hasFixedValue);
+                fixedValueButton.title = hasFixedValue ? '固定值已配置' : '固定值未配置';
+                fixedValueButton.setAttribute('aria-label', fixedValueButton.title);
             }
             if (label) label.textContent = '固定值';
         } else {
@@ -678,6 +693,7 @@
             if (wireInput) wireInput.classList.toggle('is-readonly', !enabled);
             displayButton.disabled = !enabled;
             if (fixedValueButton) fixedValueButton.hidden = true;
+            if (roleCell) roleCell.classList.remove('has-fixed-value-control');
             if (label) label.textContent = '字段值';
         }
         syncValueEditorFromHidden(fieldNode);
@@ -692,9 +708,54 @@
         };
     }
 
+    function createBlankPatternFieldInfo() {
+        return {
+            byte_pos: 0,
+            byte_len: '',
+            type: '',
+            role: 'common',
+            value: '',
+            match: '',
+        };
+    }
+
     function patternFieldRows(patternList) {
         return Array.from(patternList?.children || [])
             .filter(child => child.classList && child.classList.contains('pattern-field-container'));
+    }
+
+    function activePatternFieldRows(patternList) {
+        return patternFieldRows(patternList).filter(fieldNode => {
+            return fieldNode.dataset.deleting !== 'true'
+                && !fieldNode.classList.contains('is-delete-marked')
+                && !fieldNode.classList.contains('is-deleting');
+        });
+    }
+
+    function canRemovePatternField(patternList) {
+        return activePatternFieldRows(patternList).length > 1;
+    }
+
+    /**
+     * 字段列表至少保留一条占位字段，删除按钮状态由列表统一刷新，避免 TCP 和 Body Binary 出现不同步。
+     * @param {HTMLElement} patternList 字段列表容器。
+     */
+    function updatePatternFieldDeleteButtonStates(patternList) {
+        if (!patternList) return;
+
+        const rows = patternFieldRows(patternList);
+        const disableDelete = activePatternFieldRows(patternList).length <= 1;
+        rows.forEach(fieldNode => {
+            const deleteButton = fieldNode.querySelector('.del-field-btn');
+            if (!deleteButton) return;
+
+            const structureEditable = fieldNode.dataset.structureEditable !== 'false' && !deleteButton.hidden;
+            const deleting = fieldNode.dataset.deleting === 'true'
+                || fieldNode.classList.contains('is-delete-marked')
+                || fieldNode.classList.contains('is-deleting');
+            deleteButton.disabled = !structureEditable || deleting || disableDelete;
+            deleteButton.title = disableDelete ? '至少保留一个字段' : '删除字段';
+        });
     }
 
     function scheduleAnimationFrame(callback) {
@@ -790,7 +851,7 @@
 
         let byteCursor = 0;
         patternList.querySelectorAll('.pattern-field-container').forEach(fieldNode => {
-            if (fieldNode.classList.contains('is-deleting')) return;
+            if (fieldNode.dataset.deleting === 'true' || fieldNode.classList.contains('is-deleting')) return;
             const bytePosInput = fieldNode.querySelector('.pattern-field-byte-pos');
             const byteLen = toFiniteNumber(fieldNode.querySelector('.pattern-field-byte-len')?.value, 0);
             if (bytePosInput) bytePosInput.value = String(byteCursor);
@@ -832,7 +893,7 @@
                 <div class="pattern-cell pattern-cell-actions">
                     <label>操作</label>
                     <div class="pattern-field-actions">
-                        <button type="button" class="add-field-btn" title="新增字段" ${isProjectMode ? '' : 'hidden disabled'}>新增</button>
+                        <button type="button" class="add-field-btn" title="新增字段" aria-label="新增字段" ${isProjectMode ? '' : 'hidden disabled'}>${patternActionIconHTML('add')}</button>
                     </div>
                 </div>
             </div>
@@ -871,11 +932,12 @@
         return fieldNode;
     }
 
-    function createPatternField(namePlaceholder = '', specialName = '', fieldInfo = null) {
+    function createPatternField(namePlaceholder = '', specialName = '', fieldInfo = null, options = {}) {
         const field = cloneField(fieldInfo || {});
         if (specialName && (!field.role || field.role === 'common')) {
             field.role = roleFromLegacySpecialKey(specialName);
         }
+        const roleOptions = options.roleOptions || FIELD_ROLES;
 
         const fieldDiv = document.createElement('div');
         fieldDiv.className = 'pattern-field-container';
@@ -905,7 +967,10 @@
                 </div>
                 <div class="pattern-cell pattern-cell-role">
                     <label>角色</label>
-                    <select class="pattern-field-role" required>${roleOptionsHTML(field.role)}</select>
+                    <div class="pattern-role-control">
+                        <select class="pattern-field-role" required>${roleOptionsHTML(field.role, roleOptions)}</select>
+                        <button type="button" class="pattern-fixed-value-btn" title="固定值未配置" aria-label="固定值未配置" hidden>固</button>
+                    </div>
                 </div>
                 <div class="pattern-cell pattern-cell-value">
                     <label>字段值</label>
@@ -921,11 +986,10 @@
                 <div class="pattern-cell pattern-cell-actions">
                     <label>操作</label>
                     <div class="pattern-field-actions">
-                        <button type="button" class="pattern-fixed-value-btn" title="填写固定值" hidden>固定值</button>
-                        <button type="button" class="add-field-btn" title="在下方新增字段">新增</button>
-                        <button type="button" class="pattern-field-move-up" title="上移">上移</button>
-                        <button type="button" class="pattern-field-move-down" title="下移">下移</button>
-                        <button type="button" class="del-field-btn" title="删除字段">删除</button>
+                        <button type="button" class="add-field-btn" title="在下方新增字段" aria-label="在下方新增字段">${patternActionIconHTML('add')}</button>
+                        <button type="button" class="pattern-field-move-up" title="上移" aria-label="上移">${patternActionIconHTML('move-up')}</button>
+                        <button type="button" class="pattern-field-move-down" title="下移" aria-label="下移">${patternActionIconHTML('move-down')}</button>
+                        <button type="button" class="del-field-btn" title="删除字段" aria-label="删除字段">${patternActionIconHTML('delete')}</button>
                     </div>
                 </div>
             </div>
@@ -1002,7 +1066,7 @@
     function readPatternInfoFromDOM(modal, isProjectMode) {
         const fields = [];
         modal.querySelectorAll('.pattern-field-container').forEach(fieldNode => {
-            if (fieldNode.classList.contains('is-deleting')) return;
+            if (fieldNode.dataset.deleting === 'true' || fieldNode.classList.contains('is-deleting')) return;
             const field = fieldFromNode(fieldNode);
             const value = readFieldValueInput(fieldNode);
             field.byte_pos = Number(field.byte_pos);
@@ -1112,6 +1176,7 @@
     }
 
     function refreshPatternModal(modal, isProjectMode) {
+        updatePatternFieldDeleteButtonStates(modal?.querySelector('.pattern-list'));
         const model = readPatternInfoFromDOM(modal, isProjectMode);
         const isHeaderValueMode = modal.dataset.itemValueScope === 'header';
         const validation = isProjectMode
@@ -1124,10 +1189,19 @@
         return { model, validation };
     }
 
-    function bindValueDisplayToggle(fieldNode, modal, isProjectMode) {
+    function bindValueDisplayToggle(fieldNode, modal, isProjectMode, options = {}) {
         const input = fieldNode.querySelector('.pattern-field-value');
         const button = fieldNode.querySelector('.pattern-field-value-display-btn');
         const typeSelect = fieldNode.querySelector('.pattern-field-type');
+        const onRefresh = typeof options.onRefresh === 'function'
+            ? options.onRefresh
+            : () => refreshPatternModal(modal, isProjectMode);
+        const onError = typeof options.onError === 'function'
+            ? options.onError
+            : error => renderErrors(modal, {
+                valid: false,
+                errors: [error.message],
+            });
         if (!input || !button || !typeSelect) return;
 
         button.addEventListener('click', function(event) {
@@ -1150,12 +1224,9 @@
                 }
                 updateByteLenByType(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
-                refreshPatternModal(modal, isProjectMode);
+                onRefresh();
             } catch (error) {
-                renderErrors(modal, {
-                    valid: false,
-                    errors: [error.message],
-                });
+                onError(error);
             }
         });
     }
@@ -1175,6 +1246,11 @@
         modal.querySelectorAll('.pattern-fixed-value-popover').forEach(popover => {
             if (popover !== exceptPopover) popover.remove();
         });
+        modal.querySelectorAll('.pattern-field-container.is-fixed-value-popover-open').forEach(fieldNode => {
+            if (!exceptPopover || fieldNode.querySelector('.pattern-fixed-value-popover') !== exceptPopover) {
+                fieldNode.classList.remove('is-fixed-value-popover-open');
+            }
+        });
     }
 
     function bindFixedValuePopover(fieldNode, patternList, modal, isProjectMode) {
@@ -1190,6 +1266,7 @@
             const existing = fieldNode.querySelector('.pattern-fixed-value-popover');
             closeFixedValuePopovers(modal, existing);
             if (existing) {
+                fieldNode.classList.remove('is-fixed-value-popover-open');
                 existing.remove();
                 return;
             }
@@ -1212,8 +1289,9 @@
                 </div>
             `;
 
-            const actions = fieldNode.querySelector('.pattern-cell-actions');
-            actions.appendChild(popover);
+            const popoverHost = button.closest('.pattern-cell-role') || fieldNode.querySelector('.pattern-cell-actions');
+            popoverHost.appendChild(popover);
+            fieldNode.classList.add('is-fixed-value-popover-open');
             const input = popover.querySelector('.pattern-fixed-value-hex-digits');
             input.focus();
             if (typeof input.select === 'function') input.select();
@@ -1234,12 +1312,14 @@
                 syncValueEditorFromHidden(fieldNode);
                 syncValueAvailability(fieldNode, isProjectMode);
                 popover.remove();
+                fieldNode.classList.remove('is-fixed-value-popover-open');
                 recalculatePatternFieldBytePositions(patternList);
                 refreshPatternModal(modal, isProjectMode);
             });
             popover.querySelector('.pattern-fixed-value-cancel').addEventListener('click', function(cancelEvent) {
                 cancelEvent.preventDefault();
                 cancelEvent.stopPropagation();
+                fieldNode.classList.remove('is-fixed-value-popover-open');
                 popover.remove();
             });
             input.addEventListener('keydown', function(keyEvent) {
@@ -1248,20 +1328,26 @@
                     popover.querySelector('.pattern-fixed-value-save').click();
                 } else if (keyEvent.key === 'Escape') {
                     keyEvent.preventDefault();
+                    fieldNode.classList.remove('is-fixed-value-popover-open');
                     popover.remove();
                 }
             });
         });
     }
 
-    function animatePatternFieldRemoval(fieldNode, patternList, modal, isProjectMode) {
-        if (!fieldNode || fieldNode.dataset.deleting === 'true') return;
+    function animatePatternFieldRemovalCore(fieldNode, patternList, options = {}) {
+        if (!fieldNode || !patternList || fieldNode.dataset.deleting === 'true') return false;
+        if (!canRemovePatternField(patternList)) {
+            updatePatternFieldDeleteButtonStates(patternList);
+            return false;
+        }
 
         fieldNode.dataset.deleting = 'true';
-        closeFixedValuePopovers(modal);
+        closeFixedValuePopovers(options.popoverRoot || patternList);
         fieldNode.querySelectorAll('button, input, select').forEach(control => {
             control.disabled = true;
         });
+        updatePatternFieldDeleteButtonStates(patternList);
         clearPatternFieldFeedback(fieldNode);
         cancelPatternFieldAnimations(fieldNode);
         fieldNode.style.transform = '';
@@ -1290,9 +1376,10 @@
             if (fieldNode.parentNode === patternList) {
                 fieldNode.remove();
             }
-            recalculatePatternFieldBytePositions(patternList);
-            syncPatternListEmptyState(patternList, modal, isProjectMode);
-            refreshPatternModal(modal, isProjectMode);
+            if (typeof options.onFinish === 'function') {
+                options.onFinish(fieldNode);
+            }
+            updatePatternFieldDeleteButtonStates(patternList);
         }
 
         global.setTimeout(() => {
@@ -1333,46 +1420,79 @@
             });
             global.setTimeout(finishRemoval, collapseMs + 40);
         }, holdMs);
+
+        return true;
     }
 
-    function bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode) {
-        syncValueAvailability(fieldNode, isProjectMode);
-        bindValueDisplayToggle(fieldNode, modal, isProjectMode);
+    function animatePatternFieldRemoval(fieldNode, patternList, modal, isProjectMode) {
+        animatePatternFieldRemovalCore(fieldNode, patternList, {
+            popoverRoot: modal,
+            onFinish: function() {
+                recalculatePatternFieldBytePositions(patternList);
+                syncPatternListEmptyState(patternList, modal, isProjectMode);
+                refreshPatternModal(modal, isProjectMode);
+            },
+        });
+    }
+
+    function bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode, options = {}) {
+        const canEditStructure = options.canEditStructure !== false && Boolean(isProjectMode);
+        const autoRecalculateBytePositions = options.autoRecalculateBytePositions !== false && canEditStructure;
+        const valueAvailabilityProjectMode = options.valueAvailabilityProjectMode != null
+            ? Boolean(options.valueAvailabilityProjectMode)
+            : Boolean(isProjectMode);
+        const onRefresh = typeof options.onRefresh === 'function'
+            ? options.onRefresh
+            : () => refreshPatternModal(modal, isProjectMode);
+        const onAddAfter = typeof options.onAddAfter === 'function'
+            ? options.onAddAfter
+            : () => insertNewPatternFieldAfter(patternList, fieldNode, modal, isProjectMode);
+        const onDelete = typeof options.onDelete === 'function'
+            ? options.onDelete
+            : () => animatePatternFieldRemoval(fieldNode, patternList, modal, isProjectMode);
+
+        syncValueAvailability(fieldNode, valueAvailabilityProjectMode);
+        bindValueDisplayToggle(fieldNode, modal, isProjectMode, options);
         bindFixedValuePopover(fieldNode, patternList, modal, isProjectMode);
 
         fieldNode.querySelector('.add-field-btn')?.addEventListener('click', function() {
-            insertNewPatternFieldAfter(patternList, fieldNode, modal, isProjectMode);
+            if (!canEditStructure) return;
+            onAddAfter(fieldNode);
         });
 
         fieldNode.querySelector('.del-field-btn')?.addEventListener('click', function() {
-            if (!isProjectMode) return;
-            animatePatternFieldRemoval(fieldNode, patternList, modal, isProjectMode);
+            if (!canEditStructure) return;
+            if (!canRemovePatternField(patternList)) {
+                updatePatternFieldDeleteButtonStates(patternList);
+                return;
+            }
+            onDelete(fieldNode);
         });
 
         fieldNode.querySelector('.pattern-field-move-up')?.addEventListener('click', function() {
-            if (!isProjectMode) return;
+            if (!canEditStructure) return;
             const previous = fieldNode.previousElementSibling;
-            if (previous) {
+            if (previous && previous.classList.contains('pattern-field-container')) {
                 closeFixedValuePopovers(modal);
                 animatePatternListReorder(patternList, () => {
                     patternList.insertBefore(fieldNode, previous);
                 });
-                recalculatePatternFieldBytePositions(patternList);
-                refreshPatternModal(modal, isProjectMode);
+                if (autoRecalculateBytePositions) recalculatePatternFieldBytePositions(patternList);
+                onRefresh();
                 markPatternFieldChanged(fieldNode, 'moved');
             }
         });
 
         fieldNode.querySelector('.pattern-field-move-down')?.addEventListener('click', function() {
-            if (!isProjectMode) return;
+            if (!canEditStructure) return;
             const next = fieldNode.nextElementSibling;
-            if (next) {
+            if (next && next.classList.contains('pattern-field-container')) {
                 closeFixedValuePopovers(modal);
                 animatePatternListReorder(patternList, () => {
                     patternList.insertBefore(next, fieldNode);
                 });
-                recalculatePatternFieldBytePositions(patternList);
-                refreshPatternModal(modal, isProjectMode);
+                if (autoRecalculateBytePositions) recalculatePatternFieldBytePositions(patternList);
+                onRefresh();
                 markPatternFieldChanged(fieldNode, 'moved');
             }
         });
@@ -1382,11 +1502,11 @@
                 syncHiddenValueFromEditor(fieldNode);
                 updateByteLenByType(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
-                if (isProjectMode) {
+                if (autoRecalculateBytePositions) {
                     recalculatePatternFieldBytePositions(patternList);
                 }
             }
-            refreshPatternModal(modal, isProjectMode);
+            onRefresh();
         });
 
         fieldNode.addEventListener('change', function(event) {
@@ -1398,22 +1518,32 @@
                 input.dataset.displayMode = 'H';
                 updateByteLenByType(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
-                if (isProjectMode) {
+                if (autoRecalculateBytePositions) {
                     recalculatePatternFieldBytePositions(patternList);
                 }
             }
             if (event.target.classList.contains('pattern-field-role')) {
-                syncValueAvailability(fieldNode, isProjectMode);
+                syncValueAvailability(fieldNode, valueAvailabilityProjectMode);
             }
-            refreshPatternModal(modal, isProjectMode);
+            onRefresh();
         });
     }
 
-    function appendFieldNode(patternList, fieldNode, modal, isProjectMode, afterNode = null) {
-        fieldNode.querySelector('.pattern-field-byte-pos').readOnly = Boolean(isProjectMode);
-        fieldNode.querySelector('.pattern-field-byte-len').readOnly = true;
+    function appendFieldNode(patternList, fieldNode, modal, isProjectMode, afterNode = null, options = {}) {
+        const canEditStructure = options.canEditStructure !== false && Boolean(isProjectMode);
+        const canEditValues = options.canEditValues !== false;
+        const lockRole = options.lockRole === true;
+        const shouldOverrideValueEditable = Object.prototype.hasOwnProperty.call(options, 'canEditValues');
 
-        if (!isProjectMode) {
+        fieldNode.dataset.structureEditable = canEditStructure ? 'true' : 'false';
+        fieldNode.querySelector('.pattern-field-byte-pos').readOnly = Boolean(options.autoRecalculateBytePositions !== false && canEditStructure);
+        const byteLenInput = fieldNode.querySelector('.pattern-field-byte-len');
+        if (byteLenInput) {
+            byteLenInput.readOnly = true;
+            byteLenInput.disabled = true;
+        }
+
+        if (!canEditStructure) {
             setFieldMetadataReadonly(fieldNode, true);
             fieldNode.querySelector('.add-field-btn').hidden = true;
             fieldNode.querySelector('.add-field-btn').disabled = true;
@@ -1421,15 +1551,282 @@
             fieldNode.querySelector('.pattern-field-move-up').disabled = true;
             fieldNode.querySelector('.pattern-field-move-down').disabled = true;
         }
+        if (canEditStructure && options.showMoveActions === false) {
+            fieldNode.querySelector('.pattern-field-move-up').hidden = true;
+            fieldNode.querySelector('.pattern-field-move-down').hidden = true;
+        }
+        if (lockRole) {
+            const roleSelect = fieldNode.querySelector('.pattern-field-role');
+            if (roleSelect) {
+                roleSelect.value = options.role || 'common';
+                roleSelect.disabled = true;
+            }
+        }
+        if (shouldOverrideValueEditable) {
+            setFieldValueEditable(fieldNode, canEditValues);
+        }
 
-        bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode);
+        bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode, options);
         if (afterNode && afterNode.parentNode === patternList) {
             patternList.insertBefore(fieldNode, afterNode.nextElementSibling);
         } else {
             patternList.appendChild(fieldNode);
         }
         syncPatternListEmptyState(patternList, modal, isProjectMode);
+        updatePatternFieldDeleteButtonStates(patternList);
         return fieldNode;
+    }
+
+    /**
+     * 创建可嵌入的 TCP 字段列表编辑器，供 TCP 弹窗以外的控件复用同一套字段行和值编辑逻辑。
+     * @param {HTMLElement} root 字段列表所在根容器。
+     * @param {Object} options 编辑器配置。
+     * @returns {{ setFields: Function; getFields: Function; addField: Function; resetFields: Function; refresh: Function; destroy: Function; }}
+     */
+    function createPatternFieldListEditor(root, options = {}) {
+        if (!root || typeof root.querySelector !== 'function') {
+            throw new Error('TCP 字段列表编辑器缺少挂载容器');
+        }
+
+        const fieldList = root.querySelector(options.listSelector || '.pattern-list');
+        const preview = root.querySelector(options.previewSelector || '.pattern-byte-layout');
+        const countElement = root.querySelector(options.countSelector || '');
+        const addButtonSelector = options.addButtonSelector || '';
+        const addButton = addButtonSelector ? root.querySelector(addButtonSelector) : null;
+        if (!fieldList) {
+            throw new Error('TCP 字段列表编辑器缺少字段列表容器');
+        }
+
+        const editorRoot = root;
+        const mode = options.mode || 'project';
+        const isProjectMode = options.isProjectMode != null
+            ? Boolean(options.isProjectMode)
+            : mode === 'project';
+        const roleOptions = options.roleOptions || FIELD_ROLES;
+        const fixedRole = options.fixedRole || null;
+        const editableStructure = options.editableStructure !== false;
+        const editableValues = options.editableValues !== false;
+        const autoRecalculateBytePositions = options.autoRecalculateBytePositions !== false;
+        const showMoveActions = options.showMoveActions !== false;
+        const emptyPreviewText = options.emptyPreviewText || '暂无字段';
+        const countLabel = options.countLabel || '字段';
+        const fieldNamePlaceholder = options.fieldNamePlaceholder || '字段名称';
+        let destroyed = false;
+
+        function normalizeEditorFields(fields) {
+            return (Array.isArray(fields) ? fields : []).map(field => {
+                const nextField = cloneField(field);
+                if (fixedRole) nextField.role = fixedRole;
+                if (!nextField.role) nextField.role = 'common';
+                return nextField;
+            });
+        }
+
+        function getFieldValue(fieldNode) {
+            try {
+                return readFieldValueInput(fieldNode);
+            } catch (error) {
+                return fieldNode.querySelector('.pattern-field-value')?.value || '';
+            }
+        }
+
+        function getFields() {
+            const fields = [];
+            fieldList.querySelectorAll('.pattern-field-container').forEach((fieldNode, index) => {
+                if (fieldNode.dataset.deleting === 'true' || fieldNode.classList.contains('is-deleting')) return;
+                const field = fieldFromNode(fieldNode);
+                field.role = fixedRole || field.role || 'common';
+                field.byte_pos = toFiniteNumber(field.byte_pos, index);
+                field.byte_len = toFiniteNumber(field.byte_len, null);
+                field.value = getFieldValue(fieldNode);
+                field.match = '';
+                fields.push(field);
+            });
+            return fields;
+        }
+
+        function renderEmbeddedPreview(fields) {
+            if (!preview) return;
+            const normalized = normalizePatternInfo({ fields }, { onlyCommon: fixedRole === 'common' }).fields;
+
+            if (!normalized.length) {
+                preview.innerHTML = `<div class="pattern-layout-empty">${escapeHTML(emptyPreviewText)}</div>`;
+                return;
+            }
+
+            preview.innerHTML = normalized.map((field, index) => {
+                const valid = String(field.name || '').trim()
+                    && Number.isFinite(field.byte_pos)
+                    && Number.isFinite(field.byte_len)
+                    && field.byte_len > 0
+                    && String(field.type || '').trim();
+                const byteLen = Math.max(1, Number(field.byte_len) || 1);
+                const roleClass = roleClassName(field.role || 'common');
+                const offsetText = Number.isFinite(field.byte_pos) ? field.byte_pos : '?';
+                const name = field.name || `字段${index + 1}`;
+                return `
+                    <div class="pattern-byte-block ${roleClass} ${valid ? '' : 'is-error'}" data-role="${escapeHTML(field.role || 'common')}" style="--pattern-span:${byteLen}">
+                        <span class="pattern-byte-offset">offset ${escapeHTML(offsetText)}</span>
+                        <strong>${escapeHTML(name)}</strong>
+                        <span>${escapeHTML(previewFieldValueText(field, isProjectMode))}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function refresh() {
+            if (destroyed) {
+                return {
+                    fields: [],
+                    validation: { valid: true, errors: [] },
+                };
+            }
+            updatePatternFieldDeleteButtonStates(fieldList);
+            const fields = getFields();
+            if (countElement) countElement.textContent = `${fields.length} 个${countLabel}`;
+            renderEmbeddedPreview(fields);
+            if (typeof options.onChange === 'function') {
+                options.onChange(fields);
+            }
+            return {
+                fields,
+                validation: { valid: true, errors: [] },
+            };
+        }
+
+        function createFieldNode(field) {
+            const normalizedField = normalizeEditorFields([field || createDefaultPatternFieldInfo()])[0];
+            const fieldNode = createPatternField(fieldNamePlaceholder, '', normalizedField, { roleOptions });
+            updatePatternField(fieldNode, normalizedField, isProjectMode);
+            if (fixedRole) {
+                fieldNode.querySelector('.pattern-field-role').value = fixedRole;
+            }
+            return fieldNode;
+        }
+
+        function removeFieldNode(fieldNode) {
+            animatePatternFieldRemovalCore(fieldNode, fieldList, {
+                popoverRoot: editorRoot,
+                onFinish: function() {
+                    if (autoRecalculateBytePositions) recalculatePatternFieldBytePositions(fieldList);
+                    refresh();
+                },
+            });
+        }
+
+        function appendEditorField(field, afterNode = null) {
+            const fieldNode = createFieldNode(field);
+            appendFieldNode(fieldList, fieldNode, editorRoot, true, afterNode, {
+                canEditStructure: editableStructure,
+                canEditValues: editableValues,
+                autoRecalculateBytePositions,
+                showMoveActions,
+                lockRole: Boolean(fixedRole),
+                role: fixedRole || undefined,
+                roleOptions,
+                valueAvailabilityProjectMode: isProjectMode,
+                onRefresh: refresh,
+                onAddAfter: function(anchorNode) {
+                    appendEditorField(createDefaultPatternFieldInfo(), anchorNode);
+                    if (autoRecalculateBytePositions) recalculatePatternFieldBytePositions(fieldList);
+                    refresh();
+                    markPatternFieldChanged(anchorNode.nextElementSibling, 'added');
+                },
+                onDelete: removeFieldNode,
+            });
+            if (autoRecalculateBytePositions) recalculatePatternFieldBytePositions(fieldList);
+            refresh();
+            return fieldNode;
+        }
+
+        function setFields(fields) {
+            fieldList.innerHTML = '';
+            const normalizedFields = normalizeEditorFields(fields);
+            normalizedFields.forEach(field => appendEditorField(field));
+            refresh();
+        }
+
+        function resetFields(defaultField) {
+            fieldList.innerHTML = '';
+            return appendEditorField(defaultField || createDefaultPatternFieldInfo());
+        }
+
+        if (addButton) {
+            addButton.addEventListener('click', function() {
+                const fieldNode = appendEditorField(createDefaultPatternFieldInfo());
+                markPatternFieldChanged(fieldNode, 'added');
+                const nameInput = fieldNode.querySelector('.pattern-field-name');
+                if (nameInput && typeof nameInput.focus === 'function') {
+                    nameInput.focus();
+                }
+            });
+        }
+
+        setFields(options.fields || []);
+
+        return {
+            setFields,
+            getFields,
+            addField: function(field) {
+                return appendEditorField(field || createDefaultPatternFieldInfo());
+            },
+            resetFields,
+            refresh,
+            destroy: function() {
+                destroyed = true;
+                fieldList.innerHTML = '';
+                if (preview) preview.innerHTML = '';
+            },
+        };
+    }
+
+    /**
+     * 创建 TCP 字节布局预览和字段列表区 HTML。TCP 弹窗和 Body Binary 共用这段结构，避免两边维护两套控件。
+     * @param {Object} options 渲染配置。
+     * @returns {string} 字段编辑区 HTML。
+     */
+    function createPatternFieldEditorSectionHTML(options = {}) {
+        const isProjectMode = Boolean(options.isProjectMode);
+        const fieldInfoId = options.fieldInfoId ? ` id="${escapeHTML(options.fieldInfoId)}"` : '';
+        const layoutSectionClass = options.layoutSectionClass ? ` ${escapeHTML(options.layoutSectionClass)}` : '';
+        const previewClass = options.previewClass ? ` ${escapeHTML(options.previewClass)}` : '';
+        const fieldInfoClass = options.fieldInfoClass ? ` ${escapeHTML(options.fieldInfoClass)}` : '';
+        const labelsClass = options.labelsClass ? ` ${escapeHTML(options.labelsClass)}` : '';
+        const listClass = options.listClass ? ` ${escapeHTML(options.listClass)}` : '';
+        const addButtonClass = options.addButtonClass ? ` ${escapeHTML(options.addButtonClass)}` : '';
+        const countClass = options.countClass ? ` ${escapeHTML(options.countClass)}` : '';
+        const titleText = options.layoutTitle || '字节布局预览';
+        const fieldTitle = options.fieldTitle || '字段配置';
+        const countText = options.countText || '';
+        const showAddButton = Boolean(options.showAddButton);
+        const addButtonText = options.addButtonText || '新增字段';
+        const fieldValueLabel = options.fieldValueLabel || '字段值';
+
+        return `
+            <div class="pattern-layout-section${layoutSectionClass}">
+                <div class="pattern-section-title">
+                    <span>${escapeHTML(titleText)}</span>
+                    ${countText ? `<span class="${countClass || 'pattern-section-count'}">${escapeHTML(countText)}</span>` : ''}
+                </div>
+                <div class="pattern-byte-layout${previewClass}"></div>
+            </div>
+            <div class="pattern-field-info${fieldInfoClass}"${fieldInfoId}>
+                <div class="pattern-field-info-header">
+                    <label>${escapeHTML(fieldTitle)}</label>
+                    ${showAddButton ? `<button type="button" class="add-field-btn${addButtonClass}">${escapeHTML(addButtonText)}</button>` : ''}
+                </div>
+                <div class="pattern-field-grid-labels${labelsClass}" aria-hidden="true">
+                    <span>Byte起始</span>
+                    <span>名称</span>
+                    <span>Byte长度</span>
+                    <span>类型</span>
+                    <span>角色</span>
+                    ${isProjectMode ? '' : `<span>${escapeHTML(fieldValueLabel)}</span>`}
+                    <span>操作</span>
+                </div>
+                <div class="pattern-list${listClass}"></div>
+            </div>
+        `;
     }
 
     function createLengthPolicyControlHTML(normalized, isProjectMode) {
@@ -1481,25 +1878,11 @@
                     <form id="config-pattern-modal-form" class="config-pattern-modal-form">
                         ${createLengthPolicyControlHTML(normalized, isProjectMode)}
                         <div class="pattern-summary" aria-live="polite"></div>
-                        <div class="pattern-layout-section">
-                            <div class="pattern-section-title">字节布局预览</div>
-                            <div class="pattern-byte-layout"></div>
-                        </div>
-                        <div class="pattern-field-info" id="special-pattern-fields">
-                            <div class="pattern-field-info-header">
-                                <label>${escapeHTML(fieldTitle || '字段配置')}</label>
-                            </div>
-                            <div class="pattern-field-grid-labels" aria-hidden="true">
-                                <span>Byte起始</span>
-                                <span>名称</span>
-                                <span>Byte长度</span>
-                                <span>类型</span>
-                                <span>角色</span>
-                                ${isProjectMode ? '' : '<span>字段值</span>'}
-                                <span>操作</span>
-                            </div>
-                            <div class="pattern-list"></div>
-                        </div>
+                        ${createPatternFieldEditorSectionHTML({
+                            isProjectMode,
+                            fieldInfoId: 'special-pattern-fields',
+                            fieldTitle: fieldTitle || '字段配置',
+                        })}
                         <div class="pattern-validation-errors" aria-live="polite"></div>
                         <div class="form-actions">
                             <button type="button" class="clear-btn" ${isProjectMode ? '' : 'hidden'}>清除字段</button>
@@ -1523,6 +1906,16 @@
 
         refreshPatternModal(configModal, isProjectMode);
 
+        function resetPatternModalFields() {
+            patternList.innerHTML = '';
+            const blankField = createBlankPatternFieldInfo();
+            const fieldNode = createPatternField('字段名称', '', blankField);
+            updatePatternField(fieldNode, blankField, isProjectMode);
+            appendFieldNode(patternList, fieldNode, configModal, isProjectMode);
+            markPatternFieldChanged(fieldNode, 'added');
+            return fieldNode;
+        }
+
         configModal.querySelector('.pattern-length-policy')?.addEventListener('change', function() {
             configModal.dataset.lengthPolicy = this.value;
             refreshPatternModal(configModal, isProjectMode);
@@ -1536,14 +1929,13 @@
             event.stopPropagation();
             if (!confirm('确定要清除当前全部字段吗？')) return;
 
-            patternList.innerHTML = '';
+            resetPatternModalFields();
             if (resolvedTargetElement && resolvedTargetElement.dataset) {
                 delete resolvedTargetElement.dataset.patternInfos;
             }
             if (resolvedStatusElement) {
                 resolvedStatusElement.style.display = 'none';
             }
-            syncPatternListEmptyState(patternList, configModal, isProjectMode);
             refreshPatternModal(configModal, isProjectMode);
         });
 
@@ -1737,6 +2129,8 @@
         buildTcpHeaderValueCfg,
         findFunctionCodeField,
         validateTcpItemCfg,
+        createPatternFieldEditorSectionHTML,
+        createPatternFieldListEditor,
         isWireHex,
         wireHexByteLength,
         displayFromWireHex,

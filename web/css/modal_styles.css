@@ -1156,7 +1156,7 @@
 }
 
 .edit-body-modal {
-    width: min(820px, 96vw);
+    width: min(1080px, 96vw);
     max-width: 96vw;
 }
 
@@ -1479,11 +1479,18 @@
     min-width: 0;
 }
 
-.edit-body-modal,
+.edit-body-modal {
+    position: static;
+    transform: none;
+    width: min(1080px, 96vw);
+    max-width: 96vw;
+    padding: 0;
+}
+
 .import-modal {
     position: static;
     transform: none;
-    width: min(820px, 96vw);
+    width: min(760px, 96vw);
     max-width: 96vw;
     padding: 0;
 }
@@ -1620,7 +1627,8 @@
 }
 
 .config-pattern-modal .pattern-field-toolbar button,
-.config-pattern-modal .pattern-field-actions button {
+.config-pattern-modal .pattern-field-actions button,
+.config-pattern-modal .pattern-fixed-value-btn {
     min-height: 32px;
     padding: 0 10px;
     border: 1px solid var(--v13-border, #d9e6f5);
@@ -1635,7 +1643,8 @@
 }
 
 .config-pattern-modal .pattern-field-toolbar button:hover,
-.config-pattern-modal .pattern-field-actions button:hover {
+.config-pattern-modal .pattern-field-actions button:hover,
+.config-pattern-modal .pattern-fixed-value-btn:hover {
     border-color: #9cc5f2;
     background: #f8fbff;
     color: #1f6ed4;
@@ -1866,12 +1875,57 @@
 
 /* Final TCP Pattern editor grid. Keep this block last so legacy modal rules cannot split field rows. */
 .config-pattern-modal {
-    --pattern-field-grid: 70px minmax(130px, 1.1fr) 100px 84px minmax(108px, 0.84fr) minmax(150px, 1.18fr) 132px;
-    width: min(1120px, 96vw);
+    --pattern-modal-safe-space: 48px;
+    --pattern-scrollbar-width: 8px;
+    --pattern-byte-pos-col: 70px;
+    --pattern-name-col: minmax(130px, 1.1fr);
+    --pattern-byte-len-col: 100px;
+    --pattern-type-col: 84px;
+    --pattern-role-col: minmax(108px, 0.84fr);
+    --pattern-value-col: minmax(150px, 1.18fr);
+    --pattern-actions-col: 160px;
+    --pattern-field-grid: var(--pattern-byte-pos-col) var(--pattern-name-col) var(--pattern-byte-len-col) var(--pattern-type-col) var(--pattern-role-col) var(--pattern-value-col) var(--pattern-actions-col);
+
+    box-sizing: border-box;
+    width: min(1120px, calc(100vw - var(--pattern-modal-safe-space)));
+    max-width: calc(100vw - var(--pattern-modal-safe-space));
+}
+
+.config-pattern-modal .pattern-layout-section {
+    min-width: 0;
+    overflow: hidden;
+}
+
+.config-pattern-modal .pattern-byte-layout {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #b9c7d8 #f3f7fc;
+}
+
+.config-pattern-modal .pattern-byte-layout::-webkit-scrollbar {
+    height: var(--pattern-scrollbar-width);
+}
+
+.config-pattern-modal .pattern-byte-layout::-webkit-scrollbar-track {
+    background: #f3f7fc;
+}
+
+.config-pattern-modal .pattern-byte-layout::-webkit-scrollbar-thumb {
+    border: 2px solid #f3f7fc;
+    border-radius: 999px;
+    background: #b9c7d8;
 }
 
 .config-pattern-modal.is-project-pattern {
-    --pattern-field-grid: 70px minmax(130px, 1.1fr) 100px 84px minmax(108px, 0.84fr) 250px;
+    --pattern-actions-col: 160px;
+    --pattern-field-grid: var(--pattern-byte-pos-col) var(--pattern-name-col) var(--pattern-byte-len-col) var(--pattern-type-col) var(--pattern-role-col) var(--pattern-actions-col);
 }
 
 .config-pattern-modal.is-project-pattern .pattern-cell-value {
@@ -1887,7 +1941,8 @@
     grid-template-columns: var(--pattern-field-grid);
     gap: 8px;
     align-items: center;
-    padding: 8px 14px;
+    box-sizing: border-box;
+    padding: 8px calc(14px + var(--pattern-scrollbar-width)) 8px 14px;
     border-bottom: 1px solid var(--v13-border, #d9e6f5);
     background: #f8fbff;
 }
@@ -1909,8 +1964,13 @@
 
 .config-pattern-modal .pattern-field-info .pattern-list {
     max-height: min(420px, 48vh);
-    overflow-y: auto;
+    overflow-y: scroll;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
+}
+
+.config-pattern-modal .pattern-field-info .pattern-list:not(:has(> :nth-child(4))) {
+    overflow-y: scroll;
 }
 
 .config-pattern-modal .pattern-empty-field-row {
@@ -1932,6 +1992,7 @@
     align-items: end;
     width: 100%;
     min-width: 0;
+    box-sizing: border-box;
     padding: 10px 14px;
     border: 0;
     border-radius: 0;
@@ -1945,6 +2006,11 @@
 
 .config-pattern-modal .pattern-field-container.is-moved .pattern-field {
     animation: pattern-field-moved-pulse 820ms ease-out;
+}
+
+.config-pattern-modal .pattern-field-container.is-fixed-value-popover-open {
+    position: relative;
+    z-index: 5;
 }
 
 .config-pattern-modal .pattern-field-container.is-delete-marked .pattern-field {
@@ -2008,6 +2074,30 @@
     min-width: 0;
     height: 34px;
     box-sizing: border-box;
+}
+
+.config-pattern-modal .pattern-cell-role {
+    position: relative;
+    z-index: 1;
+}
+
+.config-pattern-modal .pattern-role-control {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+}
+
+.config-pattern-modal .pattern-cell-role.has-fixed-value-control .pattern-role-control {
+    grid-template-columns: minmax(0, 1fr) 34px;
+    gap: 6px;
+    width: 100%;
+}
+
+.config-pattern-modal .pattern-cell-role.has-fixed-value-control {
+    z-index: 3;
 }
 
 .config-pattern-modal .pattern-field-value-container {
@@ -2141,15 +2231,10 @@
     min-width: 0;
 }
 
-.config-pattern-modal.is-project-pattern .pattern-field-actions {
-    justify-content: flex-start;
-}
-
 .config-pattern-modal .pattern-fixed-value-btn {
-    flex: 0 0 58px;
-    border-color: #b7d7ff;
-    background: #f0f7ff;
-    color: #1f6ed4;
+    border-color: #fca5a5;
+    background: #fff1f2;
+    color: #dc2626;
 }
 
 .config-pattern-modal .pattern-fixed-value-btn.has-fixed-value {
@@ -2162,11 +2247,15 @@
     position: relative;
 }
 
+.config-pattern-modal .pattern-fixed-value-btn[hidden] {
+    display: none;
+}
+
 .config-pattern-modal .pattern-fixed-value-popover {
     position: absolute;
     right: 0;
     top: calc(100% + 8px);
-    z-index: 8;
+    z-index: 40;
     width: min(320px, 72vw);
     padding: 12px;
     border: 1px solid var(--v13-border, #d9e6f5);
@@ -2236,27 +2325,48 @@
 }
 
 .config-pattern-modal .pattern-field-actions button,
-.config-pattern-modal .pattern-field-container .del-field-btn {
+.config-pattern-modal .pattern-field-container .del-field-btn,
+.config-pattern-modal .pattern-fixed-value-btn {
     display: inline-flex;
-    flex: 0 0 40px;
+    flex: 0 0 34px;
     align-items: center;
     justify-content: center;
     min-width: 0;
-    width: 40px;
+    width: 34px;
     height: 34px;
-    padding: 0 8px;
+    padding: 0;
     font-size: 12px;
     font-weight: 700;
     line-height: 1;
     white-space: nowrap;
 }
 
-.config-pattern-modal .pattern-field-actions .pattern-fixed-value-btn {
-    width: 58px;
+.config-pattern-modal .pattern-action-icon {
+    display: block;
+    width: 17px;
+    height: 17px;
+    background-color: currentColor;
+    pointer-events: none;
 }
 
-.config-pattern-modal .pattern-field-actions .pattern-fixed-value-btn[hidden] {
-    display: none;
+.config-pattern-modal .pattern-action-icon-add {
+    mask: url("../assets/icons/plus.svg") center / contain no-repeat;
+    -webkit-mask: url("../assets/icons/plus.svg") center / contain no-repeat;
+}
+
+.config-pattern-modal .pattern-action-icon-move-up {
+    mask: url("../assets/icons/arrow-up.svg") center / contain no-repeat;
+    -webkit-mask: url("../assets/icons/arrow-up.svg") center / contain no-repeat;
+}
+
+.config-pattern-modal .pattern-action-icon-move-down {
+    mask: url("../assets/icons/arrow-down.svg") center / contain no-repeat;
+    -webkit-mask: url("../assets/icons/arrow-down.svg") center / contain no-repeat;
+}
+
+.config-pattern-modal .pattern-action-icon-delete {
+    mask: url("../assets/icons/trash-2.svg") center / contain no-repeat;
+    -webkit-mask: url("../assets/icons/trash-2.svg") center / contain no-repeat;
 }
 
 .config-pattern-modal .pattern-field-container.is-readonly .pattern-field {
@@ -2342,7 +2452,7 @@
     }
 }
 
-@media (max-width: 920px) {
+@media (max-width: 1020px) {
     .config-pattern-modal .pattern-field-grid-labels,
     .config-pattern-modal .pattern-field-labels {
         display: none;
@@ -2375,17 +2485,141 @@
         white-space: normal;
     }
 
-    .config-pattern-modal .pattern-field-actions {
-        flex-wrap: wrap;
-    }
-
-    .config-pattern-modal.is-project-pattern .pattern-field-actions {
-        flex-wrap: wrap;
-    }
-
     .config-pattern-modal .pattern-fixed-value-popover {
         left: 0;
         right: auto;
         width: min(320px, 86vw);
+    }
+}
+
+/* Body Binary 使用 TCP 格式弹窗的字段编辑结构，仅保留 Body 弹窗容器差异。 */
+.body-editor-binary-pattern-scope.config-pattern-modal {
+    width: auto;
+    max-width: none;
+    max-height: 920px;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
+}
+
+.body-editor-binary-pattern-scope.config-pattern-modal.is-collapsed {
+    max-height: 0;
+}
+
+.edit-body-modal-overlay {
+    --pattern-modal-safe-space: 48px;
+
+    align-items: center;
+    padding: 36px 24px;
+}
+
+.edit-body-modal {
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+    max-height: calc(100vh - 72px);
+}
+
+.edit-body-modal.is-binary-body-mode {
+    height: min(920px, calc(100vh - 72px));
+}
+
+.edit-body-modal .modal-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.edit-body-modal .modal-body > .form-group {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.edit-body-modal.is-binary-body-mode .modal-body > .form-group {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.edit-body-modal.is-binary-body-mode .modal-body > .form-group > label {
+    flex: 0 0 auto;
+}
+
+.edit-body-modal.is-binary-body-mode .modal-body > .form-group > #body-editor-host {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.edit-body-modal.is-binary-body-mode .body-editor {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    height: 100%;
+    max-height: 100%;
+    min-height: 0;
+}
+
+.edit-body-modal .form-actions {
+    flex: 0 0 auto;
+    margin-top: 0;
+    background: #ffffff;
+}
+
+.edit-body-modal .body-editor-binary-wrap:not(.is-collapsed) {
+    min-height: 0;
+    overflow: hidden;
+}
+
+.edit-body-modal.is-binary-body-mode .body-editor-binary-wrap:not(.is-collapsed) {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    flex: 1 1 auto;
+    max-height: none;
+}
+
+.edit-body-modal .body-editor-binary-wrap.is-collapsed {
+    overflow: hidden;
+}
+
+.edit-body-modal.is-binary-body-mode .body-editor-binary-field-info {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.edit-body-modal.is-binary-body-mode .body-editor-binary-field-info .pattern-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    padding-bottom: 12px;
+    box-sizing: border-box;
+    scroll-padding-bottom: 12px;
+}
+
+.edit-body-modal.is-binary-body-mode .body-editor-binary-preview {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+@media (max-width: 900px) {
+    .edit-body-modal-overlay {
+        --pattern-modal-safe-space: 24px;
+
+        padding-right: 12px;
+        padding-left: 12px;
+    }
+
+    .edit-body-modal:not(.config-pattern-modal) {
+        width: calc(100vw - 24px);
+        max-width: calc(100vw - 24px);
     }
 }

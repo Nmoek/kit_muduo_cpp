@@ -1,9 +1,116 @@
 /**
+ * 旧新增协议弹窗请求侧 Body 内容导入暂时隐藏，待请求校验模块支持完整 Body 配置后恢复为 false。
+ * @type {boolean}
+ */
+const ADD_PROTOCOL_HIDE_REQUEST_BODY_CONTENT_CONFIG = true;
+
+/**
  * @param {{ create: (arg0: any) => any; }} modal
  * @param {HTMLDivElement} serviceCard
  */
 function createAddProtocolModal(modal, serviceCard) {
     return modal.create(serviceCard);
+}
+
+/**
+ * @param {any} value
+ * @returns {string}
+ */
+function escapeBodyOptionHTML(value) {
+    if (KitProxy.utils && typeof KitProxy.utils.escapeHTML === 'function') {
+        return KitProxy.utils.escapeHTML(value);
+    }
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
+ * @param {'request' | 'response'} side
+ * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+ */
+function fallbackAddModalBodyTypeOptions(side) {
+    return [
+        { value: 'none', label: 'None', enabled: true },
+        { value: 'empty', label: 'Empty', enabled: true },
+        { value: 'json', label: 'JSON', enabled: true },
+        { value: 'xml', label: 'XML', enabled: true },
+        { value: 'text', label: 'Text', enabled: true },
+        { value: 'image', label: 'Image', enabled: true },
+        { value: 'binary', label: 'Binary', enabled: true },
+    ];
+}
+
+/**
+ * @param {number | string} projectProtocolType
+ * @param {'request' | 'response'} side
+ * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+ */
+function getAddModalBodyTypeOptions(projectProtocolType, side) {
+    if (KitProxy.protocolTypes) {
+        if (side === 'request' && typeof KitProxy.protocolTypes.getRequestBodyTypeOptions === 'function') {
+            return KitProxy.protocolTypes.getRequestBodyTypeOptions(projectProtocolType);
+        }
+        if (side === 'response' && typeof KitProxy.protocolTypes.getResponseBodyTypeOptions === 'function') {
+            return KitProxy.protocolTypes.getResponseBodyTypeOptions(projectProtocolType);
+        }
+        if (typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function') {
+            return KitProxy.protocolTypes.getBodyTypeOptions(projectProtocolType, side);
+        }
+    }
+    return fallbackAddModalBodyTypeOptions(side);
+}
+
+/**
+ * @param {number | string} projectProtocolType
+ * @param {'request' | 'response'} side
+ * @returns {string}
+ */
+function renderAddModalBodyTypeOptions(projectProtocolType, side) {
+    return getAddModalBodyTypeOptions(projectProtocolType, side)
+        .map(option => {
+            const label = option.reserved ? `${option.label}（预留）` : option.label;
+            return `<option value="${escapeBodyOptionHTML(option.value)}" ${option.enabled === false ? 'disabled' : ''}>${escapeBodyOptionHTML(label)}</option>`;
+        })
+        .join('');
+}
+
+/**
+ * @param {string} bodyType
+ * @returns {boolean}
+ */
+function isAddModalTextlessRequestBodyType(bodyType) {
+    if (KitProxy.bodySyntax && typeof KitProxy.bodySyntax.isTextlessRequestBodyType === 'function') {
+        return KitProxy.bodySyntax.isTextlessRequestBodyType(bodyType);
+    }
+    return ['none', 'empty', 'binary'].includes(String(bodyType || '').toLowerCase());
+}
+
+/**
+ * @param {string} content
+ * @param {string} bodyType
+ * @returns {string}
+ */
+function normalizeAddModalRequestBodyContent(content, bodyType) {
+    if (KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeBodyContent === 'function') {
+        return KitProxy.bodySyntax.normalizeBodyContent(content, bodyType);
+    }
+    if (KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeRequestBodyContent === 'function') {
+        return KitProxy.bodySyntax.normalizeRequestBodyContent(content, bodyType);
+    }
+    return isAddModalTextlessRequestBodyType(bodyType) ? '' : String(content == null ? '' : content);
+}
+
+/**
+ * @param {string} content
+ * @param {string} bodyType
+ * @returns {string}
+ */
+function normalizeAddModalBodyContent(content, bodyType) {
+    return normalizeAddModalRequestBodyContent(content, bodyType);
 }
 
 /**
@@ -54,14 +161,19 @@ function bindBodyImportButtons(modal) {
             const targetField = document.getElementById(targetId);
             if (!targetField) return;
 
-            const bodyName = targetId.includes('request') ? '请求' : '响应';
+            const isRequest = targetId.includes('request');
+            if (isRequest && ADD_PROTOCOL_HIDE_REQUEST_BODY_CONTENT_CONFIG) return;
+
+            const bodyName = isRequest ? '请求' : '响应';
             KitProxy.utils.createTextImportModal({
                 title: `导入${bodyName}Body内容`,
                 placeholder: `请在此输入${bodyName}Body内容...`,
                 value: targetField.dataset.importedContent || '',
                 bodyType: targetField.value || 'json',
-                allowedTypes: KitProxy.protocolTypes && typeof KitProxy.protocolTypes.getBodyTypeOptions === 'function'
-                    ? KitProxy.protocolTypes.getBodyTypeOptions(modal.dataset.projectProtocolType)
+                allowedTypes: getAddModalBodyTypeOptions(modal.dataset.projectProtocolType, isRequest ? 'request' : 'response'),
+                typeLabel: isRequest ? '期望Body类型' : 'Body类型',
+                validate: KitProxy.bodySyntax && typeof KitProxy.bodySyntax.validateRequest === 'function'
+                    ? KitProxy.bodySyntax.validateRequest
                     : undefined,
                 useBodyEditor: true,
                 modalClassName: 'add-protocol-item-modal import-modal',
@@ -69,10 +181,28 @@ function bindBodyImportButtons(modal) {
                     if (bodyType && targetField.querySelector(`option[value="${bodyType}"]`)) {
                         targetField.value = bodyType;
                     }
-                    updateBodyImportState(targetField, targetId, content);
+                    updateBodyImportState(
+                        targetField,
+                        targetId,
+                        normalizeAddModalBodyContent(content, bodyType || targetField.value),
+                    );
                 },
             });
         });
+    });
+}
+
+/**
+ * 暂时隐藏旧新增弹窗中的请求侧 Body 内容导入口；类型选择仍保留，响应侧不受影响。
+ * @param {HTMLElement} modal 新增协议项弹窗。
+ */
+function applyAddModalRequestBodyContentHidden(modal) {
+    if (!ADD_PROTOCOL_HIDE_REQUEST_BODY_CONTENT_CONFIG) return;
+
+    modal.querySelectorAll('.import-btn[data-target="request-body-type"]').forEach(button => {
+        button.hidden = true;
+        button.disabled = true;
+        button.title = '请求侧 Body 内容配置暂时隐藏，待校验模块完善后恢复';
     });
 }
 
@@ -118,14 +248,12 @@ var httpProtocolModal = {
                             
                             <div class="form-group">
                                 <div class="body-type-header">
-                                    <label for="request-body-type">校验请求Body</label>
+                                    <label for="request-body-type">期望Body类型</label>
                                     <scan class="import-status" style="display: none">内容已导入</scan>
                                 </div>
                                 <div class="body-type-container">
                                     <select id="request-body-type">
-                                        <option value="json">JSON</option>
-                                        <option value="xml">XML</option>
-                                        <option value="text">Text</option>
+                                        ${renderAddModalBodyTypeOptions(ProtocolType.HTTP, 'request')}
                                     </select>
                                     <button type="button" class="import-btn" data-target="request-body-type">导入</button>
                                 </div>
@@ -138,9 +266,7 @@ var httpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="response-body-type">
-                                        <option value="json">JSON</option>
-                                        <option value="xml">XML</option>
-                                        <option value="text">Text</option>
+                                        ${renderAddModalBodyTypeOptions(ProtocolType.HTTP, 'response')}
                                     </select>
                                     <button type="button" class="import-btn" data-target="response-body-type">导入</button>
                                 </div>
@@ -155,6 +281,7 @@ var httpProtocolModal = {
             </div>
         `;
 
+        applyAddModalRequestBodyContentHidden(modal);
         bindBodyImportButtons(modal);
 
         // 处理表单提交
@@ -173,8 +300,8 @@ var httpProtocolModal = {
                 // 获取导入的Body内容
                 const requestBodyType = document.getElementById('request-body-type').value;
                 const responseBodyType = document.getElementById('response-body-type').value;
-                const requestBody = document.getElementById('request-body-type').dataset.importedContent || '';
-                const responseBody = document.getElementById('response-body-type').dataset.importedContent || '';
+                const requestBody = normalizeAddModalBodyContent(document.getElementById('request-body-type').dataset.importedContent || '', requestBodyType);
+                const responseBody = normalizeAddModalBodyContent(document.getElementById('response-body-type').dataset.importedContent || '', responseBodyType);
                 
                 // 等价级前端校验：提前拦截明显错误，不改变后端 payload 结构。
                 if(!itemName.trim()) {
@@ -194,7 +321,7 @@ var httpProtocolModal = {
                 }
 
                 const requestValidation = KitProxy.bodySyntax
-                    ? KitProxy.bodySyntax.validate(requestBody, requestBodyType)
+                    ? KitProxy.bodySyntax.validateRequest(requestBody, requestBodyType)
                     : { valid: KitProxy.utils.validateJsonText(requestBody), message: '校验请求Body不是合法 JSON' };
                 if(!requestValidation.valid) {
                     throw new Error(`校验请求Body格式错误：${requestValidation.message}`);
@@ -305,14 +432,12 @@ var customTcpProtocolModal = {
                             
                             <div class="form-group">
                                 <div class="body-type-header">
-                                    <label for="request-body-type">校验请求Body</label>
+                                    <label for="request-body-type">期望Body类型</label>
                                     <scan class="import-status" style="display: none">内容已导入</scan>
                                 </div>
                                 <div class="body-type-container">
                                     <select id="request-body-type">
-                                        <option value="json">JSON</option>
-                                        <option value="xml">XML</option>
-                                        <option value="text">Text</option>
+                                        ${renderAddModalBodyTypeOptions(ProtocolType.CUSTOM_TCP, 'request')}
                                     </select>
                                     <button type="button" class="import-btn" data-target="request-body-type">导入</button>
                                 </div>
@@ -325,9 +450,7 @@ var customTcpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="response-body-type">
-                                        <option value="json">JSON</option>
-                                        <option value="xml">XML</option>
-                                        <option value="text">Text</option>
+                                        ${renderAddModalBodyTypeOptions(ProtocolType.CUSTOM_TCP, 'response')}
                                     </select>
                                     <button type="button" class="import-btn" data-target="response-body-type">导入</button>
                                 </div>
@@ -425,6 +548,7 @@ var customTcpProtocolModal = {
         // 关闭模态框（注意:关闭时需要将当前网络请求也取消）
         KitProxy.utils.bindModalCloseActions(modal);
 
+        applyAddModalRequestBodyContentHidden(modal);
         bindBodyImportButtons(modal);
 
         // 处理表单提交
@@ -442,8 +566,8 @@ var customTcpProtocolModal = {
                 // 获取导入的Body内容
                 const requestBodyType = document.getElementById('request-body-type').value;
                 const responseBodyType = document.getElementById('response-body-type').value;
-                const requestBody = document.getElementById('request-body-type').dataset.importedContent || '';
-                const responseBody = document.getElementById('response-body-type').dataset.importedContent || '';
+                const requestBody = normalizeAddModalBodyContent(document.getElementById('request-body-type').dataset.importedContent || '', requestBodyType);
+                const responseBody = normalizeAddModalBodyContent(document.getElementById('response-body-type').dataset.importedContent || '', responseBodyType);
 
                 // TCP 协议项仍复用 addHTTPProtocol 这条添加链路，差异体现在 cfg_header.type 和 req/resp cfg。
                 if(!itemName.trim()) {
@@ -459,7 +583,7 @@ var customTcpProtocolModal = {
                 }
 
                 const requestValidation = KitProxy.bodySyntax
-                    ? KitProxy.bodySyntax.validate(requestBody, requestBodyType)
+                    ? KitProxy.bodySyntax.validateRequest(requestBody, requestBodyType)
                     : { valid: KitProxy.utils.validateJsonText(requestBody), message: '校验请求Body不是合法 JSON' };
                 if(!requestValidation.valid) {
                     throw new Error(`校验请求Body格式错误：${requestValidation.message}`);

@@ -479,16 +479,17 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(tcpGrid.querySelector('[data-field-name="function_code"]')).toBeNull();
         expect(tcpGrid.textContent).toContain('请求头部字段值');
         expect(tcpGrid.textContent).toContain('响应头部字段值');
+        expect(tcpGrid.querySelectorAll('.protocol-field')).toHaveLength(4);
         expect(tcpGrid.querySelectorAll('[data-field-name="fields"]').length).toBe(2);
         tcpGrid.querySelector('[data-field-name="fields"]').click();
         expect(context.document.querySelector('.modal-overlay')).toBeNull();
     });
 
     /**
-     * 测试思路：协议项卡片层绑定 Body 编辑行为，点击 Body 字段应加载详情并打开 Body Editor 弹窗。
-     * 示例：req_body_status=1 的 request-body 字段点击后，应出现 edit-body-modal 和 body-editor-textarea。
+     * 测试思路：请求侧 Body 内容配置暂时隐藏，响应侧 BodyEditor 保持完整可编辑。
+     * 示例：请求 Body 弹窗只保留类型选择；响应 Body 选择 Binary 后仍显示普通字段配置。
      */
-    it('协议项 Body 字段点击会重新弹出编辑 modal', async () => {
+    it('协议项请求 Body 字段点击会弹出隐藏内容区的 BodyEditor modal', async () => {
         const context = createBrowserContext('?apiMode=mock&projectId=1');
         loadCoreScripts(context);
         [
@@ -525,17 +526,163 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         expect(context.document.querySelector('.edit-body-modal')).toBeTruthy();
         expect(context.document.querySelector('.body-editor-textarea')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-type-label').textContent).toBe('期望Body类型');
+        expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(true);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(true);
+        expect(context.document.querySelector('.body-editor-format').hidden).toBe(true);
+        expect(context.document.querySelector('.body-editor-clear').hidden).toBe(true);
+        expect(Array.from(context.document.querySelector('.body-editor-type').options).map(option => option.value)).toEqual([
+            'none',
+            'empty',
+            'json',
+            'xml',
+            'text',
+            'image',
+            'binary',
+        ]);
+        expect(context.document.querySelector('.body-editor-type option[value="binary"]').disabled).toBe(false);
+        expect(context.document.querySelector('.body-binary-clear-fields')).toBeTruthy();
+        expect(context.document.querySelector('.body-binary-clear-fields').hidden).toBe(true);
+
+        const editorType = context.document.querySelector('.body-editor-type');
+        editorType.value = 'none';
+        editorType.dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(true);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(true);
+
+        editorType.value = 'image';
+        editorType.dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(true);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(true);
+
+        editorType.value = 'binary';
+        editorType.dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(context.document.querySelector('.edit-body-modal').classList.contains('is-binary-body-mode')).toBe(false);
+        expect(context.document.querySelector('.edit-body-modal').classList.contains('config-pattern-modal')).toBe(false);
+        expect(context.document.querySelector('.edit-body-modal').classList.contains('is-item-pattern')).toBe(false);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-binary-mode')).toBe(false);
+        expect(context.document.querySelector('.body-binary-clear-fields').hidden).toBe(true);
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-layout-section')).toBeNull();
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-info')).toBeNull();
+
+        context.document.querySelector('.edit-body-modal .close-modal').click();
+        await flushPromises(4);
+
+        protocolItem.querySelector('.response-body').click();
+        await flushPromises(12);
+
+        expect(context.document.querySelector('.edit-body-modal')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-type-label').textContent).toBe('Body类型');
+        expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(false);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(false);
+        expect(context.document.querySelector('.body-editor-format').hidden).toBe(false);
+        expect(context.document.querySelector('.body-editor-clear').hidden).toBe(false);
+
+        const responseEditorType = context.document.querySelector('.body-editor-type');
+        responseEditorType.value = 'binary';
+        responseEditorType.dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(context.document.querySelector('.edit-body-modal').classList.contains('is-binary-body-mode')).toBe(true);
+        expect(context.document.querySelector('.edit-body-modal').classList.contains('config-pattern-modal')).toBe(true);
+        expect(context.document.querySelector('.edit-body-modal').classList.contains('is-item-pattern')).toBe(true);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-binary-mode')).toBe(true);
+        expect(context.document.querySelector('.body-binary-clear-fields').hidden).toBe(false);
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-layout-section')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-info')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-binary-wrap .body-editor-binary-add-field')).toBeNull();
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-section-title').textContent).toContain('字节布局预览');
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).toContain('名称');
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).toContain('类型');
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).toContain('角色');
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-wire-hex-input')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-value-editor-input')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-value-display-btn')).toBeTruthy();
+        const binaryActionButtons = Array.from(context.document.querySelectorAll('.body-editor-binary-wrap .pattern-cell-actions button'));
+        expect(binaryActionButtons).toHaveLength(4);
+        expect(binaryActionButtons.map(button => button.textContent.trim())).toEqual(['', '', '', '']);
+        expect(binaryActionButtons.every(button => button.querySelector('.pattern-action-icon'))).toBe(true);
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-cell-role .pattern-fixed-value-btn').hidden).toBe(true);
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-cell-actions .pattern-fixed-value-btn')).toBeNull();
+        expect(Array.from(context.document.querySelector('.body-editor-binary-wrap .pattern-field-role').options).map(option => option.value)).toEqual(['common']);
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-cell-byte-pos label').textContent).toBe('Byte起始位置');
+        expect(context.document.querySelector('.body-editor-binary-wrap .pattern-field-byte-len').disabled).toBe(true);
+        expect(context.document.querySelectorAll('.body-editor-binary-wrap .pattern-field-container').length).toBeGreaterThan(0);
+
+        context.document.querySelector('.body-binary-clear-fields').click();
+        const resetBodyFields = context.document.querySelectorAll('.body-editor-binary-wrap .pattern-field-container');
+        expect(resetBodyFields).toHaveLength(1);
+        expect(resetBodyFields[0].querySelector('.pattern-field-name').value).toBe('');
+        expect(resetBodyFields[0].querySelector('.pattern-field-byte-pos').value).toBe('0');
+        expect(resetBodyFields[0].querySelector('.pattern-field-byte-len').value).toBe('');
+        expect(resetBodyFields[0].querySelector('.pattern-field-type').value).toBe('');
+        expect(resetBodyFields[0].querySelector('.pattern-field-role').value).toBe('common');
+        expect(context.document.querySelector('.body-editor-binary-count').textContent).toBe('1 个普通字段');
+        expect(context.document.querySelector('.body-editor-binary-preview').textContent).toContain('字段1');
     });
 
     /**
-     * 测试思路：协议卡片 Body 弹窗和独立协议项表单应使用同一套 BodyEditor 字体变量。
-     * 示例：protocol-body-content 不能被普通弹窗 textarea 的 monospace/resize 样式覆盖，应和 protocol-form-body-content 一样使用 --body-editor-font-size、--body-editor-line-height。
+     * 测试思路：协议卡片 Body 弹窗和独立协议项表单应使用同一套 BodyEditor 控件尺寸。
+     * 示例：BodyEditor textarea 不能被普通弹窗样式覆盖，Body 类型 select 闭合状态要有稳定高度和行高，避免选中文字被裁切。
      */
     it('协议卡片 Body 弹窗字体样式和表单页 BodyEditor 对齐', () => {
         const mainCss = readRepoFile('css/main.css');
         const modalCss = readRepoFile('css/modal_styles.css');
 
         expect(mainCss).toContain('.protocol-body-section .body-editor-input-wrap');
+        expect(mainCss).toContain('.body-editor .body-editor-type');
+        expect(mainCss).toContain('min-height: 44px;');
+        expect(mainCss).toContain('line-height: 20px;');
+        expect(mainCss).toContain('appearance: none;');
+        expect(mainCss).toContain('.body-editor.is-text-collapsed .body-editor-input-wrap');
+        expect(mainCss).toContain('.body-editor-binary-wrap');
+        expect(mainCss).not.toContain('.body-editor-binary-field-info .pattern-field-grid-labels');
+        expect(mainCss).not.toContain('.body-editor-binary-field-info .pattern-field {');
+        expect(mainCss).toContain('.pattern-wire-hex-input');
+        expect(mainCss).toContain('.pattern-value-editor-input');
+        expect(readRepoFile('js/tcp_pattern_modal.js')).toContain('function createPatternFieldEditorSectionHTML');
+        expect(readRepoFile('js/tcp_pattern_modal.js')).toContain('createPatternFieldEditorSectionHTML({');
+        expect(readRepoFile('js/body_editor.js')).toContain('tcpEditor.createPatternFieldEditorSectionHTML');
+        expect(modalCss).toContain('.edit-body-modal-overlay');
+        expect(modalCss).toContain('padding: 36px 24px;');
+        expect(modalCss).toContain('.edit-body-modal .modal-body > .form-group');
+        expect(modalCss).toContain('.edit-body-modal.is-binary-body-mode .modal-body > .form-group');
+        expect(modalCss).toContain('.edit-body-modal.is-binary-body-mode .body-editor-binary-field-info');
+        expect(modalCss).toContain('.edit-body-modal .form-actions');
+        expect(modalCss).toContain('overflow: hidden;');
+        expect(modalCss).toContain('flex: 0 0 auto;');
+        expect(modalCss).toContain('--pattern-actions-col: 160px;');
+        expect(modalCss).toContain('--pattern-field-grid: var(--pattern-byte-pos-col) var(--pattern-name-col) var(--pattern-byte-len-col) var(--pattern-type-col) var(--pattern-role-col) var(--pattern-value-col) var(--pattern-actions-col);');
+        expect(modalCss).toContain('.config-pattern-modal .pattern-cell-role.has-fixed-value-control .pattern-role-control');
+        expect(modalCss).toContain('grid-template-columns: minmax(0, 1fr) 34px;');
+        expect(modalCss).not.toContain('width: calc(100% + 40px);');
+        expect(modalCss).toContain('mask: url("../assets/icons/plus.svg")');
+        expect(modalCss).toContain('mask: url("../assets/icons/arrow-up.svg")');
+        expect(modalCss).toContain('mask: url("../assets/icons/arrow-down.svg")');
+        expect(modalCss).toContain('mask: url("../assets/icons/trash-2.svg")');
+        expect(modalCss).not.toContain('mask: url("../assets/icons/fixed-value.svg")');
+        expect(modalCss).toContain('.config-pattern-modal .pattern-field-toolbar button,\n.config-pattern-modal .pattern-field-actions button,\n.config-pattern-modal .pattern-fixed-value-btn');
+        expect(modalCss).toContain('.config-pattern-modal .pattern-field-actions button,\n.config-pattern-modal .pattern-field-container .del-field-btn,\n.config-pattern-modal .pattern-fixed-value-btn');
+        expect(modalCss).toContain('.config-pattern-modal .pattern-fixed-value-btn.has-fixed-value');
+        expect(modalCss).toContain('color: #dc2626;');
+        expect(modalCss).toContain('color: #087443;');
+        expect(modalCss).toContain('.config-pattern-modal .pattern-field-container.is-fixed-value-popover-open');
+        expect(modalCss).toContain('z-index: 40;');
+        expect(modalCss).toContain('--pattern-modal-safe-space: 48px;');
+        expect(modalCss).toContain('--pattern-scrollbar-width: 8px;');
+        expect(modalCss).toContain('width: min(1120px, calc(100vw - var(--pattern-modal-safe-space)));');
+        expect(modalCss).toContain('padding: 8px calc(14px + var(--pattern-scrollbar-width)) 8px 14px;');
+        expect(modalCss).toContain('overflow-y: scroll;');
+        expect(modalCss).toContain('scrollbar-gutter: stable;');
+        expect(modalCss).toContain('.config-pattern-modal .pattern-byte-layout');
+        expect(modalCss).toContain('height: var(--pattern-scrollbar-width);');
+        expect(modalCss).toContain('@media (max-width: 1020px)');
+        expect(modalCss).toContain('.edit-body-modal:not(.config-pattern-modal)');
+        expect(modalCss).not.toContain('.edit-body-modal.is-binary-body-mode {\n    --pattern-field-grid');
+        expect(modalCss).toContain('.edit-body-modal .body-editor-binary-wrap:not(.is-collapsed)');
+        expect(modalCss).toContain('height: min(920px, calc(100vh - 72px));');
+        expect(modalCss).toContain('.edit-body-modal.is-binary-body-mode .modal-body > .form-group > #body-editor-host');
+        expect(modalCss).toContain('scroll-padding-bottom: 12px;');
+        expect(modalCss).toContain('.edit-body-modal.is-binary-body-mode .body-editor-binary-preview');
+        expect(modalCss).toContain('overflow-x: auto;');
         expect(modalCss).toContain('.edit-body-modal .body-editor-input-wrap');
         expect(modalCss).toContain('--body-editor-font-size: 14px;');
         expect(modalCss).toContain('--body-editor-line-height: 20px;');
@@ -603,10 +750,10 @@ describe('V1.5 protocol item form page and compact cards', () => {
     });
 
     /**
-     * 测试思路：HTTP 卡片详情应复用表单页 Headers 配置能力，并按请求/响应分两行展示。
-     * 示例：请求行包含 method/path/请求 Headers/请求 Body，响应行包含 status/响应 Headers/响应 Body；点击请求 Headers 保存后只更新 req_cfg.headers。
+     * 测试思路：HTTP 卡片详情只隐藏请求 Headers，响应 Headers 仍复用配置弹窗。
+     * 示例：请求行只保留 method/path/请求 Body，响应行包含 status/响应 Headers/响应 Body；点击响应 Headers 保存后只更新 resp_cfg.headers。
      */
-    it('协议项 HTTP 卡片展示并保存请求和响应 Headers', async () => {
+    it('协议项 HTTP 卡片隐藏请求 Headers 并保留响应 Headers 配置', async () => {
         const context = createBrowserContext('?apiMode=mock&projectId=1');
         loadCoreScripts(context);
         [
@@ -647,34 +794,38 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(grid.querySelectorAll('.http-details-row')).toHaveLength(2);
         expect(grid.querySelector('.http-details-row-title')).toBeNull();
         expect(grid.querySelector('.http-request-config').querySelectorAll('.protocol-field')).toHaveLength(4);
+        expect(grid.querySelector('.http-request-config .http-empty-slot')).toBeTruthy();
         expect(grid.querySelector('.http-response-config').querySelectorAll('.protocol-field')).toHaveLength(4);
         expect(grid.querySelector('.http-response-config .http-empty-slot')).toBeTruthy();
-        expect(grid.querySelector('.http-request-config').textContent).toContain('请求 Headers');
+        expect(grid.querySelector('.http-request-config').textContent).not.toContain('请求 Headers');
         expect(grid.querySelector('.http-response-config').textContent).toContain('响应 Headers');
         const mainCss = readRepoFile('css/main.css');
         expect(mainCss).toContain('.http-details-row');
         expect(mainCss).toContain('grid-template-columns: repeat(4, minmax(0, 1fr));');
+        expect(mainCss).toContain('.details-grid.tcp');
+        expect(mainCss).toContain('.details-grid.tcp .protocol-field');
         expect(mainCss).toContain('.details-grid.http .protocol-field.http-empty-slot');
+        expect(mainCss).not.toContain('.http-details-row.http-request-config');
         expect(mainCss).not.toContain('.http-details-row-title');
-        expect(grid.querySelector('[data-http-headers-side="request"] .value').textContent).toBe('已设置 1 条');
+        expect(grid.querySelector('[data-http-headers-side="request"]')).toBeNull();
         expect(grid.querySelector('[data-http-headers-side="response"] .value').textContent).toBe('已设置 1 条');
 
-        grid.querySelector('[data-http-headers-side="request"]').click();
+        grid.querySelector('[data-http-headers-side="response"]').click();
         const modal = context.document.querySelector('.http-headers-modal');
         expect(modal).toBeTruthy();
-        expect(modal.querySelector('.modal-header').textContent).toContain('配置请求 Headers');
-        modal.querySelector('.http-header-name').value = 'X-Req-New';
+        expect(modal.querySelector('.modal-header').textContent).toContain('配置响应 Headers');
+        modal.querySelector('.http-header-name').value = 'X-Resp-New';
         modal.querySelector('.http-header-value').value = 'new';
         modal.querySelector('.confirm-btn').click();
         await flushPromises(8);
 
-        expect(updateCfg).toHaveBeenCalledWith(1, 1, 1, {
-            headers: { 'X-Req-New': 'new' },
+        expect(updateCfg).toHaveBeenCalledWith(1, 1, 2, {
+            headers: { 'X-Resp-New': 'new' },
         });
         expect(context.document.querySelector('.http-headers-modal')).toBeNull();
-        expect(grid.querySelector('[data-http-headers-side="request"] .value').textContent).toBe('已设置 1 条');
-        expect(JSON.parse(grid.querySelector('[data-http-headers-side="request"]').dataset.headers)).toEqual({
-            'X-Req-New': 'new',
+        expect(grid.querySelector('[data-http-headers-side="response"] .value').textContent).toBe('已设置 1 条');
+        expect(JSON.parse(grid.querySelector('[data-http-headers-side="response"]').dataset.headers)).toEqual({
+            'X-Resp-New': 'new',
         });
     });
 
@@ -862,6 +1013,153 @@ describe('V1.5 protocol item form page and compact cards', () => {
             expect(payload.request_body).toBe('{"req":true}');
             expect(payload.response_body).toBe('ok');
         });
+    });
+
+    /**
+     * 测试思路：协议项表单页请求侧暂时隐藏 Body 内容配置，响应侧仍保持可编辑。
+     * 示例：请求 Body 选 Binary 不展示字段配置但仍提交空内容，切到响应 Tab 后可正常输入文本。
+     */
+    it('表单页请求 Body Binary 提交空内容且响应侧保持可编辑', async () => {
+        const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
+
+        loadCoreScripts(context);
+        await loginMockUser(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitProtocolItemForm = true;
+        runScript(context, 'js/protocol_item_form.js');
+
+        await context.KitProxy.protocolItemForm.initPage();
+        await flushPromises(8);
+
+        context.document.getElementById('protocol-item-name').value = '新增HTTP特殊请求Body';
+        context.document.querySelector('input[name="request-method"][value="POST"]').checked = true;
+        context.document.getElementById('request-path').value = '/api/special';
+
+        const state = context.KitProxy.protocolItemForm.pageState;
+        const editor = state.bodyEditor;
+        expect(context.document.querySelector('.body-editor-type-label').textContent).toBe('期望Body类型');
+        expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(true);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(true);
+        expect(context.document.querySelector('.body-editor-format').hidden).toBe(true);
+        expect(context.document.querySelector('.body-editor-clear').hidden).toBe(true);
+        expect(Array.from(context.document.querySelector('.body-editor-type').options).map(option => option.value)).toEqual([
+            'none',
+            'empty',
+            'json',
+            'xml',
+            'text',
+            'image',
+            'binary',
+        ]);
+
+        editor.setType('binary');
+        editor.setValue('旧请求内容');
+        expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap').classList.contains('config-pattern-modal')).toBe(true);
+        expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap').classList.contains('body-editor-binary-pattern-scope')).toBe(true);
+        expect(context.document.querySelector('#protocol-body-editor-host .body-editor').classList.contains('is-binary-mode')).toBe(false);
+        expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap').classList.contains('is-collapsed')).toBe(true);
+        expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap .pattern-field-grid-labels')).toBeNull();
+        expect(context.document.querySelector('#protocol-body-editor-host .body-editor-binary-wrap .pattern-list')).toBeNull();
+        context.KitProxy.protocolItemForm.setActiveBodyTab('response');
+        expect(context.document.querySelector('.body-editor-type-label').textContent).toBe('Body类型');
+        expect(context.document.querySelector('.body-editor').classList.contains('is-content-hidden')).toBe(false);
+        expect(context.document.querySelector('.body-editor').classList.contains('is-text-collapsed')).toBe(false);
+        expect(context.document.querySelector('.body-editor-format').hidden).toBe(false);
+        expect(context.document.querySelector('.body-editor-clear').hidden).toBe(false);
+        expect(Array.from(context.document.querySelector('.body-editor-type').options).map(option => option.value)).toEqual([
+            'none',
+            'empty',
+            'json',
+            'xml',
+            'text',
+            'image',
+            'binary',
+        ]);
+        editor.setType('text');
+        editor.setValue('ok');
+
+        const data = context.KitProxy.protocolItemForm.collectFormData();
+        const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
+
+        expect(payload.cfg_header.req_body_type).toBe('binary');
+        expect(payload.request_body).toBe('');
+        expect(payload.cfg_header.resp_body_type).toBe('text');
+        expect(payload.response_body).toBe('ok');
+    });
+
+    /**
+     * 测试思路：旧新增协议弹窗暂时隐藏请求侧 Body 内容导入入口，响应侧不受影响。
+     * 示例：HTTP 弹窗请求 Body 仍可选择 Binary 并提交空内容，响应 Body 仍可导入文本。
+     */
+    it('旧 HTTP 新增协议弹窗请求 Body 隐藏导入入口并提交空内容', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/add_protocol_modal.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+
+        let submittedProtocol = null;
+        context.addHTTPProtocol = vi.fn((serviceCard, protocol) => {
+            submittedProtocol = protocol;
+            return Promise.resolve({ id: 99 });
+        });
+
+        const serviceCard = context.document.createElement('div');
+        serviceCard.id = 'service-card-1';
+        context.document.body.appendChild(serviceCard);
+
+        const modal = context.httpProtocolModal.create(serviceCard);
+        context.document.body.appendChild(modal);
+
+        expect(modal.querySelector('label[for="request-body-type"]').textContent).toBe('期望Body类型');
+        expect(modal.querySelector('.import-btn[data-target="request-body-type"]').hidden).toBe(true);
+        expect(modal.querySelector('.import-btn[data-target="request-body-type"]').disabled).toBe(true);
+        expect(modal.querySelector('.import-btn[data-target="response-body-type"]').hidden).toBe(false);
+        expect(modal.querySelector('.import-btn[data-target="response-body-type"]').disabled).toBe(false);
+        expect(Array.from(modal.querySelector('#request-body-type').options).map(option => option.value)).toEqual([
+            'none',
+            'empty',
+            'json',
+            'xml',
+            'text',
+            'image',
+            'binary',
+        ]);
+        expect(modal.querySelector('#request-body-type option[value="binary"]').disabled).toBe(false);
+        expect(Array.from(modal.querySelector('#response-body-type').options).map(option => option.value)).toEqual([
+            'none',
+            'empty',
+            'json',
+            'xml',
+            'text',
+            'image',
+            'binary',
+        ]);
+        expect(modal.querySelector('#response-body-type option[value="binary"]').disabled).toBe(false);
+
+        modal.querySelector('#protocol-item-name').value = '旧弹窗HTTP';
+        modal.querySelector('input[name="request-method"][value="POST"]').checked = true;
+        modal.querySelector('#request-path').value = '/api/legacy';
+        modal.querySelector('#response-status-code').value = '200';
+        modal.querySelector('#request-body-type').value = 'binary';
+        modal.querySelector('#response-body-type').value = 'text';
+        modal.querySelector('#response-body-type').dataset.importedContent = 'ok';
+        modal.querySelector('#add-protocol-item-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(8);
+
+        expect(context.addHTTPProtocol).toHaveBeenCalledTimes(1);
+        expect(submittedProtocol.cfg_header.req_body_type).toBe('binary');
+        expect(submittedProtocol.cfg_header.resp_body_type).toBe('text');
+        expect(submittedProtocol.request_body).toBe('');
+        expect(submittedProtocol.response_body).toBe('ok');
     });
 
     /**

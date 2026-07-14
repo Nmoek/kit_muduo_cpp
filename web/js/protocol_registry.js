@@ -2,6 +2,16 @@
     const KitProxy = global.KitProxy || (global.KitProxy = {});
     const registry = {};
     const protocolItemTypeIndex = {};
+    const REQUEST_BODY_TYPE_OPTIONS = Object.freeze([
+        { value: 'none', label: 'None', enabled: true },
+        { value: 'empty', label: 'Empty', enabled: true },
+        { value: 'json', label: 'JSON', enabled: true },
+        { value: 'xml', label: 'XML', enabled: true },
+        { value: 'text', label: 'Text', enabled: true },
+        { value: 'image', label: 'Image', enabled: true },
+        { value: 'binary', label: 'Binary', enabled: true },
+    ]);
+    const RESPONSE_BODY_TYPE_OPTIONS = REQUEST_BODY_TYPE_OPTIONS;
 
     /**
      * 注册一种测试服务协议类型的页面能力。
@@ -15,6 +25,8 @@
      *   renderAddServiceExtraControl?: Function;
      *   collectAddServiceExtraPayload?: Function;
      *   bodyTypeOptions?: Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>;
+     *   requestBodyTypeOptions?: Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>;
+     *   responseBodyTypeOptions?: Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>;
      * }} options
      */
     function register(projectProtocolType, options) {
@@ -119,44 +131,61 @@
 
     /**
      * @param {number | string} projectProtocolType
+     * @param {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>} options
      * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
      */
-    function getBodyTypeOptions(projectProtocolType) {
-        const entry = getByProjectProtocolType(projectProtocolType) || getByProtocolItemType(projectProtocolType);
-        const defaultOptions = [
-            { value: 'json', label: 'JSON', enabled: true },
-            { value: 'xml', label: 'XML', enabled: true },
-            { value: 'text', label: 'Text', enabled: true },
-            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
-        ];
+    function cloneBodyTypeOptions(options) {
+        return options.map(option => Object.assign({}, option));
+    }
 
-        return entry && Array.isArray(entry.bodyTypeOptions)
-            ? entry.bodyTypeOptions
-            : defaultOptions;
+    /**
+     * @param {number | string} projectProtocolType
+     * @param {'request' | 'response'=} side
+     * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+     */
+    function getBodyTypeOptions(projectProtocolType, side) {
+        if (side === 'request') return getRequestBodyTypeOptions(projectProtocolType);
+        return getResponseBodyTypeOptions(projectProtocolType);
+    }
+
+    /**
+     * @param {number | string} projectProtocolType
+     * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+     */
+    function getRequestBodyTypeOptions(projectProtocolType) {
+        const entry = getByProjectProtocolType(projectProtocolType) || getByProtocolItemType(projectProtocolType);
+        const options = entry && Array.isArray(entry.requestBodyTypeOptions)
+            ? entry.requestBodyTypeOptions
+            : REQUEST_BODY_TYPE_OPTIONS;
+        return cloneBodyTypeOptions(options);
+    }
+
+    /**
+     * @param {number | string} projectProtocolType
+     * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
+     */
+    function getResponseBodyTypeOptions(projectProtocolType) {
+        const entry = getByProjectProtocolType(projectProtocolType) || getByProtocolItemType(projectProtocolType);
+        const options = entry && Array.isArray(entry.responseBodyTypeOptions)
+            ? entry.responseBodyTypeOptions
+            : (entry && Array.isArray(entry.bodyTypeOptions) ? entry.bodyTypeOptions : RESPONSE_BODY_TYPE_OPTIONS);
+        return cloneBodyTypeOptions(options);
     }
 
     register(ProtocolType.HTTP, {
         protocolItemType: 'HTTP',
         addProtocolModal: global.httpProtocolModal,
         protocolItemGrid: global.httpProtocolItemGrids,
-        bodyTypeOptions: [
-            { value: 'json', label: 'JSON', enabled: true },
-            { value: 'xml', label: 'XML', enabled: true },
-            { value: 'text', label: 'Text', enabled: true },
-            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
-        ],
+        requestBodyTypeOptions: cloneBodyTypeOptions(REQUEST_BODY_TYPE_OPTIONS),
+        responseBodyTypeOptions: cloneBodyTypeOptions(RESPONSE_BODY_TYPE_OPTIONS),
     });
 
     register(ProtocolType.CUSTOM_TCP, {
         protocolItemType: 'TCP',
         addProtocolModal: global.customTcpProtocolModal,
         protocolItemGrid: global.customTcpProtocolItemGrids,
-        bodyTypeOptions: [
-            { value: 'json', label: 'JSON', enabled: true },
-            { value: 'xml', label: 'XML', enabled: true },
-            { value: 'text', label: 'Text', enabled: true },
-            { value: 'binary', label: 'Binary', enabled: false, reserved: true },
-        ],
+        requestBodyTypeOptions: cloneBodyTypeOptions(REQUEST_BODY_TYPE_OPTIONS),
+        responseBodyTypeOptions: cloneBodyTypeOptions(RESPONSE_BODY_TYPE_OPTIONS),
         serviceExtraFieldsHTML: function(project) {
             const escape = KitProxy.utils && KitProxy.utils.escapeHTML
                 ? KitProxy.utils.escapeHTML
@@ -264,6 +293,8 @@
         renderAddServiceExtraControl,
         collectAddServiceExtraPayload,
         getBodyTypeOptions,
+        getRequestBodyTypeOptions,
+        getResponseBodyTypeOptions,
     };
 
     global.ProtocolTypeRegistry = KitProxy.protocolTypes;

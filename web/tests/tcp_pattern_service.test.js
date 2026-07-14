@@ -94,9 +94,9 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
 
     /**
      * 测试思路：config-pattern-modal 内部承担长度策略选择和 V2 字段编辑。
-     * 示例：弹窗应有 length_policy 下拉框，不再有“最小解析长度”；固定值不单开输入列，而是在操作列冒泡填写。
+     * 示例：弹窗应有 length_policy 下拉框，不再有“最小解析长度”；固定值按钮放在角色列并通过冒泡框填写。
      */
-    it('config-pattern-modal 内置长度策略、移除最小解析长度并用操作列填写固定值', () => {
+    it('config-pattern-modal 内置长度策略、移除最小解析长度并用角色列填写固定值', () => {
         const target = context.document.createElement('button');
         context.document.body.appendChild(target);
 
@@ -124,9 +124,21 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         const byteLenInput = firstField.querySelector('.pattern-field-byte-len');
         const typeSelect = firstField.querySelector('.pattern-field-type');
         const fixedValueButton = firstField.querySelector('.pattern-fixed-value-btn');
+        const actionButtons = Array.from(firstField.querySelectorAll('.pattern-cell-actions button'));
         expect(bytePosInput.readOnly).toBe(true);
         expect(byteLenInput.readOnly).toBe(true);
+        expect(byteLenInput.disabled).toBe(true);
         expect(fixedValueButton.hidden).toBe(false);
+        expect(firstField.querySelector('.pattern-cell-role .pattern-fixed-value-btn')).toBe(fixedValueButton);
+        expect(firstField.querySelector('.pattern-cell-role').classList.contains('has-fixed-value-control')).toBe(true);
+        expect(firstField.querySelector('.pattern-cell-actions .pattern-fixed-value-btn')).toBeNull();
+        expect(actionButtons).toHaveLength(4);
+        expect(actionButtons.map(button => button.textContent.trim())).toEqual(['', '', '', '']);
+        expect(actionButtons.every(button => button.querySelector('.pattern-action-icon'))).toBe(true);
+        expect(fixedValueButton.textContent.trim()).toBe('固');
+        expect(fixedValueButton.querySelector('.pattern-action-icon-fixed-value')).toBeNull();
+        expect(fixedValueButton.classList.contains('has-fixed-value')).toBe(true);
+        expect(fixedValueButton.getAttribute('aria-label')).toBe('固定值已配置');
         expect(firstField.querySelector('.pattern-field-value').value).toBe('H23232323');
         expect(firstField.querySelector('.pattern-hex-prefix').textContent).toBe('H');
         expect(firstField.querySelector('.pattern-value-editor-input').value).toBe('23 23 23 23');
@@ -134,6 +146,7 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         fixedValueButton.click();
         const popover = firstField.querySelector('.pattern-fixed-value-popover');
         expect(popover).toBeTruthy();
+        expect(firstField.classList.contains('is-fixed-value-popover-open')).toBe(true);
         expect(popover.querySelector('label').textContent).toBe('固定值');
         expect(popover.querySelector('.pattern-hex-prefix').textContent).toBe('H');
         expect(popover.querySelector('.pattern-fixed-value-hex-digits').placeholder).toBe('00 00 00 00');
@@ -143,10 +156,43 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         expect(firstField.querySelector('.pattern-field-value').value).toBe('H01020304');
         expect(firstField.querySelector('.pattern-value-editor-input').value).toBe('01 02 03 04');
         expect(firstField.querySelector('.pattern-fixed-value-popover')).toBeNull();
+        expect(firstField.classList.contains('is-fixed-value-popover-open')).toBe(false);
+        expect(fixedValueButton.classList.contains('has-fixed-value')).toBe(true);
+        expect(fixedValueButton.getAttribute('aria-label')).toBe('固定值已配置');
 
         typeSelect.value = 'UINT16';
         typeSelect.dispatchEvent(new context.Event('change', { bubbles: true }));
         expect(byteLenInput.value).toBe('2');
+
+        firstField.querySelector('.pattern-field-role').value = 'common';
+        firstField.querySelector('.pattern-field-role').dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(fixedValueButton.hidden).toBe(true);
+        expect(firstField.querySelector('.pattern-cell-role').classList.contains('has-fixed-value-control')).toBe(false);
+
+        firstField.querySelector('.pattern-field-role').value = 'start_magic';
+        firstField.querySelector('.pattern-field-role').dispatchEvent(new context.Event('change', { bubbles: true }));
+        expect(fixedValueButton.hidden).toBe(false);
+        expect(fixedValueButton.classList.contains('has-fixed-value')).toBe(false);
+        expect(fixedValueButton.getAttribute('aria-label')).toBe('固定值未配置');
+
+        context.confirm = () => true;
+        modal.querySelector('.clear-btn').click();
+        const resetFields = modal.querySelectorAll('.pattern-field-container');
+        expect(resetFields).toHaveLength(1);
+        expect(modal.querySelector('.pattern-empty-field-row')).toBeNull();
+        expect(resetFields[0].querySelector('.pattern-field-name').value).toBe('');
+        expect(resetFields[0].querySelector('.pattern-field-byte-pos').value).toBe('0');
+        expect(resetFields[0].querySelector('.pattern-field-byte-len').value).toBe('');
+        expect(resetFields[0].querySelector('.pattern-field-type').value).toBe('');
+        expect(resetFields[0].querySelector('.pattern-field-role').value).toBe('common');
+        expect(resetFields[0].querySelector('.del-field-btn').disabled).toBe(true);
+        resetFields[0].querySelector('.del-field-btn').click();
+        expect(modal.querySelectorAll('.pattern-field-container')).toHaveLength(1);
+
+        resetFields[0].querySelector('.add-field-btn').click();
+        const twoFields = Array.from(modal.querySelectorAll('.pattern-field-container'));
+        expect(twoFields).toHaveLength(2);
+        expect(twoFields.every(field => field.querySelector('.del-field-btn').disabled === false)).toBe(true);
     });
 
     /**
@@ -177,6 +223,8 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         expect(modal.querySelector('.pattern-field-info-header .add-field-btn')).toBeNull();
         expect(modal.querySelector('.sort-field-btn')).toBeNull();
         expect(readFields()[0].querySelector('.pattern-cell-actions .add-field-btn')).toBeTruthy();
+        expect(readFields()[0].querySelector('.pattern-cell-actions .add-field-btn').textContent.trim()).toBe('');
+        expect(readFields()[0].querySelector('.pattern-cell-actions .add-field-btn .pattern-action-icon-add')).toBeTruthy();
         expect(readFields().every(field => field.querySelector('.pattern-field-byte-pos').readOnly)).toBe(true);
 
         readFields()[0].querySelector('.add-field-btn').click();
