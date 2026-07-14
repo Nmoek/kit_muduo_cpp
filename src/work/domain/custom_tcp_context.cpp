@@ -13,22 +13,36 @@
 #include "domain/custom_tcp_context.h"
 #include "domain/custom_tcp_message.h"
 #include "domain/custom_tcp_pattern.h"
-#include "domain/project_server.h"
-#include "domain/protocol_item.h"
+#include "domain/custom_tcp_project_server.h"
+#include <stdexcept>
 
 using namespace kit_muduo;
 
 namespace kit_domain {
 
-CustomTcpContext::CustomTcpContext(CustomTcpProjectServer *server)
-    :server_(server)
-    ,state_(kExpectHeader)
-    ,remain_bytes_len_(0)
-    ,request_(std::make_shared<CustomTcpMessage>())
-    ,response_(std::make_shared<CustomTcpMessage>())
-{
-    assert(server_);
+namespace {
 
+inline CustomTcpProjectServer *CheckServerNull(CustomTcpProjectServer *server)
+{
+    if(!server)
+    {
+        std::invalid_argument("custom tcp context construct failed: server null!");
+    }
+    return server;
+}
+}
+
+CustomTcpContext::CustomTcpContext(CustomTcpProjectServer *server)
+    :server_(CheckServerNull(server))
+    ,state_(kExpectHeader)
+    ,result_(CustomTcpParseResult{
+        .status = CustomTcpParseStatus::kOk,
+        .message = "parse ok",
+    })
+    ,remain_bytes_len_(0)
+{
+    request_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
+    response_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
 
     CUSTOM_F_DEBUG("CustomTcpContext::construct() %p\n", this);
 }
@@ -38,7 +52,7 @@ CustomTcpContext::~CustomTcpContext()
     CUSTOM_F_DEBUG("CustomTcpContext::~CustomTcpContext() %p\n", this);
 }
 
-bool CustomTcpContext::parseRequest(const std::vector<char> &data, kit_muduo::TimeStamp receiveTime)
+CustomTcpParseResult CustomTcpContext::parseRequest(const std::vector<char> &data, kit_muduo::TimeStamp receiveTime)
 {
     Buffer buf;
     buf.append(data.data(), data.size());
@@ -52,7 +66,7 @@ inline static void ShowField(const FieldValue& field_value)
         spec.name.c_str(), FieldTypeToString(spec.type).c_str(), spec.byte_pos, spec.byte_len, field_value.hex().c_str());
 }
 
-bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp receiveTime)
+CustomTcpParseResult CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp receiveTime)
 {
     // 这里只是查看 TcpConnect上的缓冲区数据 并没有进行读取操作
     const auto& tmp =  buf.lookAllAsData();
@@ -72,24 +86,35 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
                 if(CustomTcpPattern::ParseHeaderResult::kNonMinLength == parse_result.status)
                 {
                     CUSTOM_F_INFO("tcp data is not complete: %ld \n", complete_data.size());
-                    return true;
+                    return CustomTcpParseResult{
+                        .status = CustomTcpParseStatus::kOk,
+                        .message = "need more data",
+                    };
                 }
                 else
                 {
                     CUSTOM_F_INFO("tcp data parse error: %d \n", parse_result.status);
-                    return false;
+                    return CustomTcpParseResult{
+                        .status = CustomTcpParseStatus::kParseError,
+                        .message = "parse error",
+                    };
                 }
 
             }
 
-
-            if(!server_->findByFuncCode(parse_result.function_code))
+            const auto& cb = server_->findCBByFuncCode(parse_result.function_code);
+            if(nullptr == cb)
             {
-                CUSTOM_F_ERROR("FuncCode not found! %s \n", parse_result.function_code.c_str());
-                return false;
+                CUSTOM_F_ERROR("func code not found! %s \n", parse_result.function_code.c_str());
+                return CustomTcpParseResult{
+                    .status = CustomTcpParseStatus::kFuncCodeNotFound,
+                    .message = "func code not found",
+                };
             }
             request_->setFunctionCodeHex(parse_result.function_code);
-            
+            // 待执行业务函数回调
+            result_.cb = std::move(cb);
+
             // 2. 字段赋值
             for(auto &field_value : parse_result.fields_value)
             {
@@ -112,6 +137,7 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
             }
             else  // 说明是不带body的类型
             {
+                request_->setRecordTime(receiveTime);
                 remain_bytes_len_ = 0;
                 state_ = TcpParseState::kGotAll;
             }
@@ -121,26 +147,32 @@ bool CustomTcpContext::parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp
             if(remain_bytes_len_ < 0)
             {
                 CUSTOM_F_ERROR("remain_bytes_len invalid\n");
-                return false;
+                return CustomTcpParseResult{
+                    .status = CustomTcpParseStatus::kInternalError,
+                    .message = "body length invalid",
+                };
             }
 
             if(buf.readableBytes() < remain_bytes_len_)
             {
                 CUSTOM_F_DEBUG("buffer data not enough! readableBytes[%ld]  < remain_bytes_len[%ld]\n", buf.readableBytes(), remain_bytes_len_);
-                return true;
+                return CustomTcpParseResult{
+                    .status = CustomTcpParseStatus::kOk,
+                    .message = "need more data",
+                };
             }
             // 注意: buffer里可能还有残余数据 不能全部清除 需要保留下来给下一个请求使用
             request_->appendBodyData(buf.peek(), remain_bytes_len_);
             // 减去剩余body长度
             buf.reset(remain_bytes_len_);
 
+            request_->setRecordTime(receiveTime);
             remain_bytes_len_ = 0;
             state_ = TcpParseState::kGotAll;
-
         }
     }
 
-    return true;
+    return result_;
 }
 
 bool CustomTcpContext::parseResponse(const std::string &data, const CustomPatternInfo& parse_pattern_info, kit_muduo::TimeStamp receiveTime)
@@ -160,8 +192,9 @@ void CustomTcpContext::reset()
     state_ = kExpectHeader;
     request_.reset();
     response_.reset();
-    request_ = std::make_shared<CustomTcpMessage>();
-    response_ = std::make_shared<CustomTcpMessage>();
+    result_ = CustomTcpParseResult{};
+    request_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
+    response_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
 }
 
 

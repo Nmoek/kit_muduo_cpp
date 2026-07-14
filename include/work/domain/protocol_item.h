@@ -26,7 +26,7 @@ class Protocol;
 
 struct ProtocolItemBodyView
 {
-    ProtocolBodyType body_type{ProtocolBodyType::kUnknown};
+    ProtocolBodyType body_type{ProtocolBodyType::kNone};
     std::shared_ptr<const std::vector<char>> body_data{std::make_shared<const std::vector<char>>()};
 
     ProtocolItemBodyView() = default;

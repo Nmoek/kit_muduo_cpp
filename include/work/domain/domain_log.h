@@ -106,3 +106,18 @@
 #define INTERAC_F_ERROR(fmt, ...)     DOMAIN_F_ERROR("pc_interaction", fmt, ##__VA_ARGS__)
 #define INTERAC_F_FATAL(fmt, ...)     DOMAIN_F_FATAL("pc_interaction", fmt, ##__VA_ARGS__)
 /*******protocol interaction模块*********/
+
+
+/*******protocol interaction publisher模块*********/
+#define PUBLISHER_DEBUG()     DOMAIN_DEBUG("publisher")
+#define PUBLISHER_INFO()      DOMAIN_INFO("publisher")
+#define PUBLISHER_WARN()      DOMAIN_WARN("publisher")
+#define PUBLISHER_ERROR()     DOMAIN_ERROR("publisher")
+#define PUBLISHER_FATAL()     DOMAIN_FATAL("publisher")
+
+#define PUBLISHER_F_DEBUG(fmt, ...)     DOMAIN_F_DEBUG("publisher", fmt, ##__VA_ARGS__)
+#define PUBLISHER_F_INFO(fmt, ...)      DOMAIN_F_INFO("publisher", fmt, ##__VA_ARGS__)
+#define PUBLISHER_F_WARN(fmt, ...)      DOMAIN_F_WARN("publisher", fmt, ##__VA_ARGS__)
+#define PUBLISHER_F_ERROR(fmt, ...)     DOMAIN_F_ERROR("publisher", fmt, ##__VA_ARGS__)
+#define PUBLISHER_F_FATAL(fmt, ...)     DOMAIN_F_FATAL("publisher", fmt, ##__VA_ARGS__)
+/*******protocol interaction publisher模块*********/

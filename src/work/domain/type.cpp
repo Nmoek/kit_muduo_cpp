@@ -38,7 +38,7 @@ ProtocolBodyType ProtocolBodyTypeFromString(const std::string &type)
     else if("xml" == type) return ProtocolBodyType::kXml;
     else if("text" == type) return ProtocolBodyType::kText;
     else if("binary" == type) return ProtocolBodyType::kBinary;
-    return ProtocolBodyType::kUnknown;
+    return ProtocolBodyType::kNone;
 }
 
 std::string ProtocolBodyTypeToString(ProtocolBodyType type)
@@ -55,15 +55,22 @@ InteractionPayloadKind ProtocolBodyTypeToInterKind(ProtocolBodyType type)
 {
     switch (type) 
     {
-        case ProtocolBodyType::kJson: return InteractionPayloadKind::kJson;
-        case ProtocolBodyType::kText: return InteractionPayloadKind::kText;
-        case ProtocolBodyType::kXml: return InteractionPayloadKind::kXml;
-        case ProtocolBodyType::kMultiForm: return InteractionPayloadKind::kMultiForm;
-        case ProtocolBodyType::kBinary: return InteractionPayloadKind::kBinary;
-        // 注意：这里其他暂不支持配置的类型全部认为是二进制
-        // TODO 传入unknown 时也认为是二进制 暂时搁置
-        default:
+        case ProtocolBodyType::kEmpty: 
+            return InteractionPayloadKind::kEmpty;
+        case ProtocolBodyType::kJson:
+            return InteractionPayloadKind::kJson;
+        case ProtocolBodyType::kText:
+            return InteractionPayloadKind::kText;
+        case ProtocolBodyType::kXml:
+            return InteractionPayloadKind::kXml;
+        case ProtocolBodyType::kMultiForm:
+            return InteractionPayloadKind::kMultiForm;
+        case ProtocolBodyType::kImage:
+            return InteractionPayloadKind::kImage;
+        case ProtocolBodyType::kBinary:
             return InteractionPayloadKind::kBinary;
+        default:
+            return InteractionPayloadKind::kUnknown;
     }
 }
 

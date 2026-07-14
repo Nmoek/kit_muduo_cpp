@@ -32,8 +32,8 @@ namespace kit_domain {
 class ProjectServer;
 class ProjectSvcInterface;
 class ProtocolSvcInterface;
-
 struct Protocol;
+class ProtocolInteractionPublisher;
 
 /// @brief 运行态操作类型
 enum class RuntimeOperationKind
@@ -291,6 +291,7 @@ public:
 
     ProjectRuntimeManager(std::shared_ptr<ProjectSvcInterface> project_svc,
         std::shared_ptr<ProtocolSvcInterface> protocol_svc,
+        std::shared_ptr<ProtocolInteractionPublisher> publisher,
         size_t runtime_loop_capacity = 100);
 
     ~ProjectRuntimeManager() override = default;
@@ -376,6 +377,8 @@ private:
     std::mutex locks_mtx_;
     /// @brief 全局测试服务器-按项目串行化锁集合
     std::unordered_map<int64_t, std::shared_ptr<std::mutex>> project_locks_;
+
+    std::shared_ptr<ProtocolInteractionPublisher> publisher_;
 
 };
 

@@ -19,15 +19,15 @@ struct Protocol;
 
 struct ProtocolBodySpec 
 {
-    ProtocolBodyType body_type{ProtocolBodyType::kUnknown};
+    ProtocolBodyType body_type{ProtocolBodyType::kNone};
     const std::vector<char> &body_data;
 };
 
 struct ProtocolFullBodySpec
 {
-    ProtocolBodyType req_body_type{ProtocolBodyType::kUnknown};
+    ProtocolBodyType req_body_type{ProtocolBodyType::kNone};
     const std::vector<char> &req_body_data;
-    ProtocolBodyType resp_body_type{ProtocolBodyType::kUnknown};
+    ProtocolBodyType resp_body_type{ProtocolBodyType::kNone};
     const std::vector<char> &resp_body_data;
 
     ProtocolBodySpec toReqSpec() const

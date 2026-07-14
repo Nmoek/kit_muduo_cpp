@@ -7,12 +7,20 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/project_server.h"
+#include "base/time_stamp.h"
+#include "base/util.h"
+#include "domain/protocol_interaction.h"
 #include "domain/runtime_loop_pool.h"
 #include "domain/domain_log.h"
+#include "domain/protocol_interaction_hub.h"
+#include "domain/type.h"
+#include "web/web_common.h"
 
 #include <chrono>
 #include <future>
 
+
+using namespace kit_muduo;
 
 namespace kit_domain {
 
@@ -55,6 +63,30 @@ bool WaitRuntimeStopDone(const char *name,
     return true;
 
 }
+
+
+void ProjectServer::emitObserve(ProtocolInteractionObservation obs)
+{
+
+    try {
+
+        if(observe_cb_)
+        {
+            observe_cb_(std::move(obs));
+        }
+        else
+        {
+            PJSERVER_F_WARN("project observe callback function null \n");
+        }
+
+    } catch(const std::exception &e) {
+        PJSERVER_F_ERROR("project observe callback exception: %s\n", e.what());
+
+    } catch(...) {
+        PJSERVER_F_ERROR("project observe callback unknown exception\n");
+    }
+}
+
 
 
 }

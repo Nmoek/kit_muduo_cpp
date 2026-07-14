@@ -92,7 +92,7 @@ void WebSocketServer::removeSession(uint64_t session_id)
     }
 }
 
-void WebSocketServer::handleUpgrade(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx, WsOnCb on_cb) 
+void WebSocketServer::handleUpgrade(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx, WsPrepareCb prepare_cb) 
 {
     auto req = ctx->request();
     auto resp = ctx->response();
@@ -128,14 +128,22 @@ void WebSocketServer::handleUpgrade(kit_muduo::TcpConnectionPtr conn, kit_muduo:
     });
 
     // 4. 执行用户业务的准备操作
-    if(on_cb)
+    if(prepare_cb)
     {
         try {
-            if(!on_cb(session, ctx))
+            if(!prepare_cb(session, ctx))
             {
                 WS_F_ERROR("websocket session on callback error!\n");
-                ServerErr500Servlet::Handle(nullptr, ctx);
-                resp->resetBodyData();
+                if(resp->stateCode().toInt() == StateCode::k200Ok
+                    && resp->bodyData().empty())
+                {
+                    ServerErr500Servlet::Handle(nullptr, ctx);
+                    resp->resetBodyData();
+                }
+                else
+                {
+                    resp->setConnectionClosed(true);
+                }
                 return;
             }
         } catch (const std::exception &e) {
@@ -144,7 +152,6 @@ void WebSocketServer::handleUpgrade(kit_muduo::TcpConnectionPtr conn, kit_muduo:
             resp->resetBodyData();
             return;
         }
-
     }
 
     // 5. 替换TcpContext 
@@ -162,10 +169,11 @@ void WebSocketServer::handleUpgrade(kit_muduo::TcpConnectionPtr conn, kit_muduo:
 
     addSession(session);
 
-    // 101响应返回
+    // 6. 101响应返回
     const std::string accept = BuildWebSocketAcceptKey(
         req->getHeader("Sec-WebSocket-Key"));
 
+    resp->setConnectionClosed(false);
     resp->setUpgrade(true);
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k101SwitchingProtocols);
@@ -186,6 +194,28 @@ void WebSocketServer::drainRemainingWebSocketBytes(TcpConnectionPtr &conn,
     }
 }
 
+void WebSocketServer::onOpen(TcpConnectionPtr conn)
+{
+    std::shared_ptr<WebSocketContext> context = std::static_pointer_cast<WebSocketContext>(conn->getContext());
+    if(nullptr == context)
+    {
+        WS_F_ERROR("websocket context is null!\n");
+        return;
+    }
+
+    auto session = context->lockSession();
+    if(!session)
+    {
+        WS_F_ERROR("websocket session is null!\n");
+        return;
+    }
+    conn->getLoop()->queueInLoop([session](){
+        session->onOpen();
+    });
+
+}
+
+
 void WebSocketServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive_time)
 {
     std::shared_ptr<WebSocketContext> context = std::static_pointer_cast<WebSocketContext>(conn->getContext());
@@ -198,6 +228,7 @@ void WebSocketServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp re
     auto session = context->lockSession();
     if(!session)
     {
+        WS_F_ERROR("websocket session is null!\n");
         if(conn->connected())
         {
             conn->shutdown();

@@ -379,19 +379,35 @@ HttpServletDispatch::HttpServletDispatch()
 
 void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
+    (void)handleWithOutcome(conn, ctx);
+}
+
+HttpDispatchOutcome HttpServletDispatch::handleWithOutcome(TcpConnectionPtr conn, HttpContextPtr ctx, bool is_auto)
+{
     auto req = ctx->request();
     MatchResult result = match(ctx);
 
-    if(result.status == MatchStatus::Found && result.servlet)
+    if(result.status == MatchStatus::kFound && result.servlet)
     {
         HTTP_F_DEBUG("conn[%s], path[%s] HttpServlet[%s] handling...... \n", conn->name().c_str(), req->path().c_str(), result.servlet->name().c_str());
         
-        result.servlet->handle(conn, ctx);
-        return;
+        if(is_auto)
+        {
+            result.servlet->handle(conn, ctx);
+        }
+        
+        return HttpDispatchOutcome{
+            .status = result.status,
+            .route_id = result.id,
+            .route_pattern = result.servlet->pattern(),
+            .allowed_methods = result.allowed_methods,
+            .servlet = is_auto ? nullptr : result.servlet,
+            .servlet_name = result.servlet->name(),
+        };
     }
 
 
-    if(result.status == MatchStatus::PathFoundMethodNotAllowed)
+    if(result.status == MatchStatus::kPathFoundMethodNotAllowed)
     {
         auto resp = ctx->response();
         resp->setVersion(Version::kHttp11);
@@ -402,11 +418,17 @@ void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 
         HTTP_F_WARN("http method not allowed! path[%s], method[%s], allow[%s]\n", req->path().c_str(), req->method().toStr(), BuildAllowHeader(result.allowed_methods).c_str());
         
-        return;
+        return HttpDispatchOutcome{
+            .status = result.status,
+            .allowed_methods = result.allowed_methods,
+        };
     }
 
-    HTTP_DEBUG() << req->path() << " default svl handle!" << std::endl;
-    _defaultSvl->handle(conn, ctx);
+    NotFound404Servlet::Handle(conn, ctx);
+
+    return HttpDispatchOutcome{
+        .status = MatchStatus::kNotFound,
+    };
 }
 
 RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string &pattern, HttpServlet::Ptr servlet)
@@ -566,14 +588,15 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
             result.allowed_methods |= route.methods;
             if(MethodAllowed(route.methods, req->method()))
             {
-                result.status = MatchStatus::Found;
+                result.id = route.id;
+                result.status = MatchStatus::kFound;
                 result.servlet = route.servlet;
                 result.allowed_methods = route.methods;
                 return result;
             }
         }
 
-        result.status = MatchStatus::PathFoundMethodNotAllowed;
+        result.status = MatchStatus::kPathFoundMethodNotAllowed;
         return result;
     }
 
@@ -593,7 +616,8 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
         if(MethodAllowed(route.methods, req->method()))
         {
             route.matcher->Match(ctx);
-            result.status = MatchStatus::Found;
+            result.id = route.id;
+            result.status = MatchStatus::kFound;
             result.servlet = route.servlet;
             result.allowed_methods = route.methods;
             return result;
@@ -602,7 +626,7 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
 
     if(result.allowed_methods != ExpectHttpMethods::None)
     {
-        result.status = MatchStatus::PathFoundMethodNotAllowed;
+        result.status = MatchStatus::kPathFoundMethodNotAllowed;
     }
 
     return result;

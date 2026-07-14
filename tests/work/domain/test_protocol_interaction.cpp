@@ -5,12 +5,21 @@
 
 #include "base/util.h"
 #include "domain/protocol_interaction.h"
+#include "domain/protocol_interaction_hub.h"
+#include "domain/protocol_interaction_observation.h"
+#include "domain/protocol_interaction_publisher.h"
 
 #include "gtest/gtest.h"
 
+#include <chrono>
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -45,6 +54,180 @@ InteractionCaptureOptions Options(size_t max_text_bytes = 64 * 1024,
         .max_hex_bytes = max_hex_bytes,
         .max_binary_attachment_bytes = max_attachment_bytes,
     };
+}
+
+ProtocolInteractionRecord MakeRecord(uint64_t seq,
+                                     InteractionScope scope,
+                                     int64_t project_id,
+                                     int64_t protocol_id,
+                                     InteractionResult result = InteractionResult::kMatched)
+{
+    ProtocolInteractionRecord record;
+    record.seq = seq;
+    record.scope = scope;
+    record.project_id = project_id;
+    record.protocol_id = protocol_id;
+    record.protocol_type = ProtocolType::kHttp;
+    record.time_ms = 1780000000000 + static_cast<int64_t>(seq);
+    record.peer_addr = "127.0.0.1:53001";
+    record.result = result;
+    return record;
+}
+
+class CollectingInteractionSink : public ProtocolInteractionSink
+{
+public:
+    void publish(ProtocolInteractionRecord record) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            records_.push_back(std::move(record));
+        }
+        cv_.notify_all();
+    }
+
+    void clearProtocol(int64_t project_id, int64_t protocol_id) override
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        cleared_protocols_.push_back({project_id, protocol_id});
+    }
+
+    void clearProject(int64_t project_id) override
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        cleared_projects_.push_back(project_id);
+    }
+
+    bool WaitForRecordCount(size_t expected_count,
+                            std::chrono::milliseconds timeout = std::chrono::milliseconds(3000))
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        return cv_.wait_for(lock, timeout, [this, expected_count]() {
+            return records_.size() >= expected_count;
+        });
+    }
+
+    std::vector<ProtocolInteractionRecord> Records() const
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return records_;
+    }
+
+private:
+    mutable std::mutex mtx_;
+    std::condition_variable cv_;
+    std::vector<ProtocolInteractionRecord> records_;
+    std::vector<std::pair<int64_t, int64_t>> cleared_protocols_;
+    std::vector<int64_t> cleared_projects_;
+};
+
+class BlockingInteractionSink : public ProtocolInteractionSink
+{
+public:
+    void publish(ProtocolInteractionRecord record) override
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        records_.push_back(std::move(record));
+        cv_.notify_all();
+
+        if(records_.size() == 1U)
+        {
+            cv_.wait(lock, [this]() {
+                return unblocked_;
+            });
+        }
+    }
+
+    void clearProtocol(int64_t, int64_t) override {}
+
+    void clearProject(int64_t) override {}
+
+    bool WaitForRecordCount(size_t expected_count,
+                            std::chrono::milliseconds timeout = std::chrono::milliseconds(1000))
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        return cv_.wait_for(lock, timeout, [this, expected_count]() {
+            return records_.size() >= expected_count;
+        });
+    }
+
+    void Unblock()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            unblocked_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    std::vector<ProtocolInteractionRecord> Records() const
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return records_;
+    }
+
+private:
+    mutable std::mutex mtx_;
+    std::condition_variable cv_;
+    std::vector<ProtocolInteractionRecord> records_;
+    bool unblocked_{false};
+};
+
+class ThrowingInteractionSink : public ProtocolInteractionSink
+{
+public:
+    void publish(ProtocolInteractionRecord) override
+    {
+        ++publish_count_;
+        throw std::runtime_error("sink publish failed");
+    }
+
+    void clearProtocol(int64_t, int64_t) override {}
+
+    void clearProject(int64_t) override {}
+
+    int publishCount() const
+    {
+        return publish_count_.load();
+    }
+
+private:
+    std::atomic_int publish_count_{0};
+};
+
+ProtocolInteractionObservation MakeHttpObservation(
+    int64_t project_id,
+    int64_t protocol_id,
+    const std::string &path,
+    const std::string &request_body = R"({"ok":true})",
+    const std::string &response_body = R"({"accepted":true})")
+{
+    ProtocolInteractionObservation obs;
+    obs.scope = InteractionScope::kProtocol;
+    obs.project_id = project_id;
+    obs.protocol_id = protocol_id;
+    obs.protocol_type = ProtocolType::kHttp;
+    obs.time_ms = 1780000010000 + protocol_id;
+    obs.peer_addr = "127.0.0.1:53010";
+    obs.result = InteractionResult::kMatched;
+    obs.request.meta = {
+        {"method", "POST"},
+        {"path", path},
+    };
+    obs.request.head_text = "POST " + path + " HTTP/1.1\r\n"
+        "Content-Type: application/json\r\n\r\n";
+    obs.request.body_bytes = Bytes(request_body);
+    obs.request.expect_body_type = ProtocolBodyType::kJson;
+    obs.request.media_type = "application/json";
+    obs.response.meta = {
+        {"status_code", 200},
+    };
+    obs.response.head_text = "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n\r\n";
+    obs.response.body_bytes = Bytes(response_body);
+    obs.response.expect_body_type = ProtocolBodyType::kJson;
+    obs.response.media_type = "application/json";
+    return obs;
 }
 
 } // namespace
@@ -112,7 +295,7 @@ TEST(TestProtocolInteraction, ProtocolRecordJsonContainsContractFieldsAndOmitsPr
     EXPECT_EQ(json["scope"], "protocol");
     EXPECT_EQ(json["project_id"], 1);
     EXPECT_EQ(json["protocol_id"], 12);
-    EXPECT_EQ(json["protocol_type"], "HTTP");
+    EXPECT_EQ(json["protocol_type"], "http");
     EXPECT_EQ(json["time_ms"], 1780000000000);
     EXPECT_EQ(json["peer_addr"], "127.0.0.1:53001");
     EXPECT_EQ(json["result"], "matched");
@@ -492,4 +675,812 @@ TEST(TestProtocolInteraction, RawPacketCapturesHexPrefixAndSerializesWhenPresent
     EXPECT_EQ(json["raw_packet"]["kind"], "binary");
     EXPECT_EQ(json["raw_packet"]["raw_hex"], "H42 41 44 01");
     EXPECT_EQ(json["raw_packet"]["truncated"], true);
+}
+
+/**
+ * 测试思路：
+ * 1. 先发布一条历史记录，让 Hub 的 currentSeq 前进到 10。
+ * 2. 订阅 project=1/protocol=12 后，只应该收到订阅之后且协议项匹配的记录。
+ * 3. 同项目但其他协议项、其他项目、订阅前序号的记录都不能推给该订阅者。
+ *
+ * 示例：
+ *
+ *   publish(seq=10, pc=12) -> subscribe(start=11)
+ *        |
+ *        +-- publish(seq=10, pc=12)  不推送
+ *        +-- publish(seq=11, pc=13)  不推送
+ *        +-- publish(seq=12, pc=12)  推送
+ */
+TEST(TestProtocolInteraction, HubOnlyPushesMatchingProtocolRecordsAfterSubscribe)
+{
+    ProtocolInteractionHub hub;
+    hub.publish(MakeRecord(10, InteractionScope::kProtocol, 1, 12));
+    ASSERT_EQ(hub.currentSeq(), 10U);
+
+    std::vector<ProtocolInteractionRecord> received;
+    auto subscription = hub.subscribe(
+        ProtocolInteractionSubscribeFilter{
+            .project_id = 1,
+            .protocol_id = 12,
+            .include_project_notice = false,
+        },
+        [&received](const ProtocolInteractionRecord &record) {
+            received.push_back(record);
+        });
+
+    ASSERT_NE(subscription.subscriber_id, 0U);
+    EXPECT_EQ(subscription.start_record_seq, 11U);
+
+    hub.publish(MakeRecord(10, InteractionScope::kProtocol, 1, 12));
+    hub.publish(MakeRecord(11, InteractionScope::kProtocol, 1, 13));
+    hub.publish(MakeRecord(12, InteractionScope::kProtocol, 2, 12));
+    hub.publish(MakeRecord(13, InteractionScope::kProtocol, 1, 12));
+
+    ASSERT_EQ(received.size(), 1U);
+    EXPECT_EQ(received.front().seq, 13U);
+    EXPECT_EQ(received.front().project_id, 1);
+    EXPECT_EQ(received.front().protocol_id, 12);
+}
+
+/**
+ * 测试思路：
+ * 1. 建立两个订阅者：一个只看协议项记录，一个同时包含项目级 notice。
+ * 2. 发布同项目 route_not_found 这类项目级记录时，只有 include_project_notice=true 的订阅者收到。
+ * 3. 取消订阅后，再发布匹配协议项记录，被取消订阅者不应继续收到。
+ *
+ * 示例：
+ *
+ *   protocol-only subscriber     + project-notice subscriber
+ *        |                                  |
+ *   publish(scope=project)             只第二个收到
+ *   unsubscribe(second)
+ *   publish(scope=protocol)            只有第一个收到
+ */
+TEST(TestProtocolInteraction, HubProjectNoticeRequiresOptInAndUnsubscribeStopsDelivery)
+{
+    ProtocolInteractionHub hub;
+    std::vector<ProtocolInteractionRecord> protocol_only_records;
+    std::vector<ProtocolInteractionRecord> with_notice_records;
+
+    auto protocol_only = hub.subscribe(
+        ProtocolInteractionSubscribeFilter{
+            .project_id = 1,
+            .protocol_id = 12,
+            .include_project_notice = false,
+        },
+        [&protocol_only_records](const ProtocolInteractionRecord &record) {
+            protocol_only_records.push_back(record);
+        });
+
+    auto with_notice = hub.subscribe(
+        ProtocolInteractionSubscribeFilter{
+            .project_id = 1,
+            .protocol_id = 12,
+            .include_project_notice = true,
+        },
+        [&with_notice_records](const ProtocolInteractionRecord &record) {
+            with_notice_records.push_back(record);
+        });
+
+    hub.publish(MakeRecord(
+        1,
+        InteractionScope::kProject,
+        1,
+        0,
+        InteractionResult::kRouteNotFound));
+
+    EXPECT_TRUE(protocol_only_records.empty());
+    ASSERT_EQ(with_notice_records.size(), 1U);
+    EXPECT_EQ(with_notice_records.front().scope, InteractionScope::kProject);
+    EXPECT_EQ(with_notice_records.front().protocol_id, 0);
+    EXPECT_EQ(with_notice_records.front().result, InteractionResult::kRouteNotFound);
+
+    hub.unsubcribe(with_notice.subscriber_id);
+    hub.publish(MakeRecord(2, InteractionScope::kProtocol, 1, 12));
+
+    ASSERT_EQ(protocol_only_records.size(), 1U);
+    EXPECT_EQ(protocol_only_records.front().seq, 2U);
+    EXPECT_EQ(with_notice_records.size(), 1U);
+
+    hub.unsubcribe(protocol_only.subscriber_id);
+}
+
+/**
+ * 测试思路：
+ * 1. 使用真实 Publisher 工作线程，把 Observation 转换成 Record 后投递到内存 Sink。
+ * 2. 协议项 scope 的 protocol_id 必须保留，seq 从 1 开始递增。
+ * 3. request/response 的 meta、head_text、body 类型和文本要从 Observation 稳定转换。
+ *
+ * 示例：
+ *
+ *   Observation(scope=protocol, protocol_id=12, body="{\"ok\":true}")
+ *        |
+ *        v
+ *   Sink 收到 Record(seq=1, protocol_id=12, request.body.kind=json)
+ */
+TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
+{
+    auto sink = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+
+    ProtocolInteractionObservation obs;
+    obs.scope = InteractionScope::kProtocol;
+    obs.project_id = 1;
+    obs.protocol_id = 12;
+    obs.protocol_type = ProtocolType::kHttp;
+    obs.time_ms = 1780000000100;
+    obs.peer_addr = "127.0.0.1:53001";
+    obs.result = InteractionResult::kMatched;
+    obs.request.meta = {
+        {"method", "POST"},
+        {"path", "/api/create"},
+    };
+    obs.request.head_text = "POST /api/create HTTP/1.1\r\nContent-Type: application/json\r\n\r\n";
+    obs.request.body_bytes = Bytes(R"({"ok":true})");
+    obs.request.expect_body_type = ProtocolBodyType::kJson;
+    obs.request.media_type = "application/json";
+    obs.response.meta = {
+        {"status_code", 200},
+    };
+    obs.response.head_text = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n";
+    obs.response.body_bytes = Bytes("ok");
+    obs.response.expect_body_type = ProtocolBodyType::kText;
+    obs.response.media_type = "text/plain";
+
+    publisher.publish(std::move(obs));
+
+    ASSERT_TRUE(sink->WaitForRecordCount(1));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 1U);
+    const auto &record = records.front();
+
+    EXPECT_EQ(record.seq, 1U);
+    EXPECT_EQ(publisher.CurrentSeq(), 1U);
+    EXPECT_EQ(record.scope, InteractionScope::kProtocol);
+    EXPECT_EQ(record.project_id, 1);
+    EXPECT_EQ(record.protocol_id, 12);
+    EXPECT_EQ(record.protocol_type, ProtocolType::kHttp);
+    EXPECT_EQ(record.time_ms, 1780000000100);
+    EXPECT_EQ(record.peer_addr, "127.0.0.1:53001");
+    EXPECT_EQ(record.result, InteractionResult::kMatched);
+
+    EXPECT_EQ(record.request.meta["method"], "POST");
+    EXPECT_EQ(record.request.head_text, "POST /api/create HTTP/1.1\r\nContent-Type: application/json\r\n\r\n");
+    EXPECT_EQ(record.request.body.kind, InteractionPayloadKind::kJson);
+    EXPECT_EQ(record.request.body.expect_kind, InteractionPayloadKind::kJson);
+    EXPECT_EQ(record.request.body.text, R"({"ok":true})");
+
+    EXPECT_EQ(record.response.meta["status_code"], 200);
+    EXPECT_EQ(record.response.body.kind, InteractionPayloadKind::kText);
+    EXPECT_EQ(record.response.body.expect_kind, InteractionPayloadKind::kText);
+    EXPECT_EQ(record.response.body.text, "ok");
+}
+
+/**
+ * 测试思路：
+ * 1. 项目级异常 Observation 没有具体协议项归属，即使上游误传 protocol_id 也不能泄漏到 Record。
+ * 2. request.raw_bytes 要进入 raw_packet，方便前端查看无法解析的原始报文前缀。
+ * 3. result/error_message 保持项目 notice 语义，供订阅端展示路由未命中等异常。
+ *
+ * 示例：
+ *
+ *   Observation(scope=project, protocol_id=99, raw="BAD")
+ *        |
+ *        v
+ *   Record(scope=project, protocol_id=0, request.raw_packet.raw_hex="H42 41 44")
+ */
+TEST(TestProtocolInteraction, PublisherNormalizesProjectNoticeProtocolIdAndRawPacket)
+{
+    auto sink = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(64 * 1024, 3, 10 * 1024 * 1024),
+        });
+
+    publisher.start();
+
+    ProtocolInteractionObservation obs;
+    obs.scope = InteractionScope::kProject;
+    obs.project_id = 1;
+    obs.protocol_id = 99;
+    obs.protocol_type = ProtocolType::kHttp;
+    obs.time_ms = 1780000000200;
+    obs.peer_addr = "127.0.0.1:53002";
+    obs.result = InteractionResult::kRouteNotFound;
+    obs.error_message = "route not found";
+    obs.request.meta = {
+        {"method", "GET"},
+        {"path", "/missing"},
+    };
+    obs.request.raw_bytes = std::vector<uint8_t>{'B', 'A', 'D', 0x01};
+
+    publisher.publish(std::move(obs));
+
+    ASSERT_TRUE(sink->WaitForRecordCount(1));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 1U);
+    const auto &record = records.front();
+
+    EXPECT_EQ(record.seq, 1U);
+    EXPECT_EQ(record.scope, InteractionScope::kProject);
+    EXPECT_EQ(record.project_id, 1);
+    EXPECT_EQ(record.protocol_id, 0);
+    EXPECT_EQ(record.result, InteractionResult::kRouteNotFound);
+    EXPECT_EQ(record.error_message, "route not found");
+    EXPECT_EQ(record.request.meta["path"], "/missing");
+    ASSERT_TRUE(record.request.raw_packet.has_value());
+    EXPECT_EQ(record.request.raw_packet->size, 4U);
+    EXPECT_EQ(record.request.raw_packet->captured_size, 3U);
+    EXPECT_TRUE(record.request.raw_packet->truncated);
+    EXPECT_EQ(record.request.raw_packet->raw_hex, "H42 41 44");
+}
+
+/**
+ * 测试思路：
+ * 1. Publisher 是运行态异步发布管道，队列满时必须丢弃新 observation，而不是阻塞协议响应线程。
+ * 2. 构造 queue_capacity=2，并让 sink 阻塞第一条记录，使 worker 暂时不能继续消费队列。
+ * 3. 再连续 publish 三条 observation，第二、第三条进入队列，第四条触发队列满被丢弃。
+ * 4. 放开 sink 后只应投递前三条记录，CurrentSeq 也只能推进到 3，避免丢弃数据错误占用 seq。
+ *
+ * 示例：
+ *
+ *   queue_capacity=2, worker blocked in sink("/first")
+ *        + publish(path="/second")  -> queued
+ *        + publish(path="/third")   -> queued
+ *        + publish(path="/dropped") -> dropped
+ *        v
+ *   unblock sink -> sink 只收到 "/first"、"/second" 和 "/third"
+ */
+TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvancingSeq)
+{
+    auto sink = std::make_shared<BlockingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 2,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    ProtocolInteractionObservation first;
+    first.scope = InteractionScope::kProtocol;
+    first.project_id = 1;
+    first.protocol_id = 12;
+    first.protocol_type = ProtocolType::kHttp;
+    first.time_ms = 1780000000300;
+    first.peer_addr = "127.0.0.1:53003";
+    first.result = InteractionResult::kMatched;
+    first.request.meta = {{"path", "/first"}};
+    first.request.body_bytes = Bytes("first");
+    first.request.expect_body_type = ProtocolBodyType::kText;
+    first.request.media_type = "text/plain";
+
+    ProtocolInteractionObservation second = first;
+    second.time_ms = 1780000000400;
+    second.request.meta = {{"path", "/second"}};
+    second.request.body_bytes = Bytes("second");
+
+    ProtocolInteractionObservation third = first;
+    third.time_ms = 1780000000500;
+    third.request.meta = {{"path", "/third"}};
+    third.request.body_bytes = Bytes("third");
+
+    ProtocolInteractionObservation dropped = first;
+    dropped.time_ms = 1780000000600;
+    dropped.request.meta = {{"path", "/dropped"}};
+    dropped.request.body_bytes = Bytes("dropped");
+
+    publisher.start();
+
+    publisher.publish(std::move(first));
+    ASSERT_TRUE(sink->WaitForRecordCount(1));
+    publisher.publish(std::move(second));
+    publisher.publish(std::move(third));
+    publisher.publish(std::move(dropped));
+
+    sink->Unblock();
+    ASSERT_TRUE(sink->WaitForRecordCount(3));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 3U);
+    EXPECT_EQ(records[0].seq, 1U);
+    EXPECT_EQ(records[0].request.meta["path"], "/first");
+    EXPECT_EQ(records[0].request.body.text, "first");
+    EXPECT_EQ(records[1].seq, 2U);
+    EXPECT_EQ(records[1].request.meta["path"], "/second");
+    EXPECT_EQ(records[1].request.body.text, "second");
+    EXPECT_EQ(records[2].seq, 3U);
+    EXPECT_EQ(records[2].request.meta["path"], "/third");
+    EXPECT_EQ(records[2].request.body.text, "third");
+    EXPECT_EQ(publisher.CurrentSeq(), 3U);
+}
+
+/**
+ * 测试思路：
+ * 1. 连续发布三条 observation，真实 Publisher worker 负责转换并分配 record.seq。
+ * 2. record.seq 必须在进程内单调递增，不能因为异步 worker 或 body 转换改变顺序。
+ * 3. CurrentSeq() 最终应等于最后一条已发布 record 的 seq。
+ *
+ * 示例：
+ *
+ *   publish("/one"), publish("/two"), publish("/three")
+ *        |
+ *        v
+ *   sink records seq = [1, 2, 3], CurrentSeq() = 3
+ */
+TEST(TestProtocolInteraction, PublisherAssignsMonotonicSeqForContinuousObservations)
+{
+    auto sink = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 8,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+    publisher.publish(MakeHttpObservation(1, 12, "/one"));
+    publisher.publish(MakeHttpObservation(1, 12, "/two"));
+    publisher.publish(MakeHttpObservation(1, 12, "/three"));
+
+    ASSERT_TRUE(sink->WaitForRecordCount(3));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 3U);
+    EXPECT_EQ(records[0].seq, 1U);
+    EXPECT_EQ(records[0].request.meta["path"], "/one");
+    EXPECT_EQ(records[1].seq, 2U);
+    EXPECT_EQ(records[1].request.meta["path"], "/two");
+    EXPECT_EQ(records[2].seq, 3U);
+    EXPECT_EQ(records[2].request.meta["path"], "/three");
+    EXPECT_EQ(publisher.CurrentSeq(), 3U);
+}
+
+/**
+ * 测试思路：
+ * 1. 第一条 observation 进入 sink 后阻塞，让 worker 暂停在 publishRecord 阶段。
+ * 2. 第二条 observation 已经入队但还没被 worker 转成 record。
+ * 3. CurrentSeq() 不能因为“已入队”提前前进，只能在 buildRecord 时递增。
+ *
+ * 示例：
+ *
+ *   publish(first) -> worker build seq=1 -> sink 阻塞
+ *   publish(second) -> queued
+ *        |
+ *        v
+ *   unblock 前 CurrentSeq()==1，unblock 后第二条变成 seq=2
+ */
+TEST(TestProtocolInteraction, PublisherCurrentSeqDoesNotAdvanceBeforeQueuedObservationIsBuilt)
+{
+    auto sink = std::make_shared<BlockingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+    publisher.publish(MakeHttpObservation(1, 12, "/blocked-first"));
+    ASSERT_TRUE(sink->WaitForRecordCount(1));
+
+    publisher.publish(MakeHttpObservation(1, 12, "/queued-second"));
+    EXPECT_EQ(publisher.CurrentSeq(), 1U);
+
+    sink->Unblock();
+    ASSERT_TRUE(sink->WaitForRecordCount(2));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 2U);
+    EXPECT_EQ(records[0].seq, 1U);
+    EXPECT_EQ(records[0].request.meta["path"], "/blocked-first");
+    EXPECT_EQ(records[1].seq, 2U);
+    EXPECT_EQ(records[1].request.meta["path"], "/queued-second");
+    EXPECT_EQ(publisher.CurrentSeq(), 2U);
+}
+
+/**
+ * 测试思路：
+ * 1. 同一个 Publisher 挂两个 sink，模拟同时投递给 Hub 和旁路记录器。
+ * 2. 每个 sink 应收到同一份 record 语义，尤其 seq 必须一致。
+ * 3. 这样才能保证多个实时消费端看到的是同一条交互记录，而不是各自重新编号。
+ *
+ * 示例：
+ *
+ *   Publisher -> sinkA
+ *             -> sinkB
+ *        |
+ *        v
+ *   sinkA[0].seq == sinkB[0].seq == 1
+ */
+TEST(TestProtocolInteraction, PublisherDeliversSameSeqToMultipleSinks)
+{
+    auto sink_a = std::make_shared<CollectingInteractionSink>();
+    auto sink_b = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink_a, sink_b},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+    publisher.publish(MakeHttpObservation(1, 12, "/multi-sink"));
+
+    ASSERT_TRUE(sink_a->WaitForRecordCount(1));
+    ASSERT_TRUE(sink_b->WaitForRecordCount(1));
+    publisher.stop();
+
+    const auto records_a = sink_a->Records();
+    const auto records_b = sink_b->Records();
+    ASSERT_EQ(records_a.size(), 1U);
+    ASSERT_EQ(records_b.size(), 1U);
+    EXPECT_EQ(records_a.front().seq, 1U);
+    EXPECT_EQ(records_b.front().seq, 1U);
+    EXPECT_EQ(records_a.front().request.meta["path"], "/multi-sink");
+    EXPECT_EQ(records_b.front().request.meta["path"], "/multi-sink");
+}
+
+/**
+ * 测试思路：
+ * 1. 第一个 sink 故意抛异常，模拟 Hub 或旁路落库失败。
+ * 2. Publisher 应捕获异常并继续投递给后续 sink。
+ * 3. 后续 observation 也要继续处理，不能因为一次 sink 异常让 worker 停掉。
+ *
+ * 示例：
+ *
+ *   throwingSink.publish(seq=1) throws
+ *        |
+ *        +-- collectingSink 仍收到 seq=1
+ *   publish(seq=2) 后 collectingSink 继续收到 seq=2
+ */
+TEST(TestProtocolInteraction, PublisherCatchesSinkExceptionAndContinues)
+{
+    auto throwing_sink = std::make_shared<ThrowingInteractionSink>();
+    auto collecting_sink = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {throwing_sink, collecting_sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+    publisher.publish(MakeHttpObservation(1, 12, "/throw-on-first"));
+    publisher.publish(MakeHttpObservation(1, 12, "/still-works"));
+
+    ASSERT_TRUE(collecting_sink->WaitForRecordCount(2));
+    publisher.stop();
+
+    const auto records = collecting_sink->Records();
+    ASSERT_EQ(records.size(), 2U);
+    EXPECT_EQ(records[0].seq, 1U);
+    EXPECT_EQ(records[0].request.meta["path"], "/throw-on-first");
+    EXPECT_EQ(records[1].seq, 2U);
+    EXPECT_EQ(records[1].request.meta["path"], "/still-works");
+    EXPECT_EQ(throwing_sink->publishCount(), 2);
+}
+
+/**
+ * 测试思路：
+ * 1. Publisher 没有任何 sink 时也允许运行，运行态线程不应因此阻塞或崩溃。
+ * 2. 发布两条 observation 后等待 CurrentSeq 前进到 2。
+ * 3. 这固定“空 sinks 只记录 warning，worker 继续处理后续 observation”的边界。
+ *
+ * 示例：
+ *
+ *   Publisher(sinks=[])
+ *        + publish("/empty-a")
+ *        + publish("/empty-b")
+ *        v
+ *   CurrentSeq() 最终到 2
+ */
+TEST(TestProtocolInteraction, PublisherWithEmptySinksStillProcessesLaterObservations)
+{
+    ProtocolInteractionPublisher publisher(
+        {},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+    publisher.publish(MakeHttpObservation(1, 12, "/empty-a"));
+    publisher.publish(MakeHttpObservation(1, 12, "/empty-b"));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while(publisher.CurrentSeq() < 2U && std::chrono::steady_clock::now() < deadline)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    publisher.stop();
+
+    EXPECT_EQ(publisher.CurrentSeq(), 2U);
+}
+
+/**
+ * 测试思路：
+ * 1. 发布 observation 后立即 stop，不显式等待 sink。
+ * 2. stop() 会通知 worker 停止，并执行 best-effort drain。
+ * 3. 队列中已经入队的 observation 应在 stop 返回前尽量被转换并投递。
+ *
+ * 示例：
+ *
+ *   publish("/drain-on-stop")
+ *   stop()
+ *        |
+ *        v
+ *   sink 收到 seq=1
+ */
+TEST(TestProtocolInteraction, PublisherStopDrainsQueuedObservationBestEffort)
+{
+    auto sink = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    publisher.start();
+    publisher.publish(MakeHttpObservation(1, 12, "/drain-on-stop"));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_EQ(records.front().seq, 1U);
+    EXPECT_EQ(records.front().request.meta["path"], "/drain-on-stop");
+}
+
+/**
+ * 测试思路：
+ * 1. body 期望 XML，实际内容是安全 UTF-8，但 XML 语法不合法。
+ * 2. 这种错误应和 broken JSON 一样降级为 text 展示，不升级成 raw_packet。
+ * 3. 错误原因进入 body.error_message，attachments 和 sidecar 都应为空。
+ *
+ * 示例：
+ *
+ *   expect=xml + "<root><id></root>"
+ *        |
+ *        v
+ *   body.kind=text, body.error_message!=空, raw_packet 不出现
+ */
+TEST(TestProtocolInteraction, BrokenXmlBodyFallsBackToTextAndDoesNotNeedRawPacket)
+{
+    const auto data = Bytes("<root><id></root>");
+    std::vector<BinarySidecar> sidecars;
+
+    InteractionSide side;
+    side.body = InteractionBody::BuildFromBytes(
+        data,
+        Hint(ProtocolType::kHttp, ProtocolBodyType::kXml, "application/xml"),
+        ProtocolSide::kRequest,
+        Options(),
+        sidecars);
+
+    const nlohmann::json json = side;
+
+    EXPECT_EQ(side.body.kind, InteractionPayloadKind::kText);
+    EXPECT_EQ(side.body.expect_kind, InteractionPayloadKind::kXml);
+    EXPECT_EQ(side.body.text, "<root><id></root>");
+    EXPECT_FALSE(side.body.error_message.empty());
+    EXPECT_TRUE(side.body.attachments.empty());
+    EXPECT_TRUE(sidecars.empty());
+    EXPECT_FALSE(json.contains("raw_packet"));
+}
+
+/**
+ * 测试思路：
+ * 1. HTTP body 配置为 binary 时，Content-Type 决定前端展示大类。
+ * 2. audio/video/archive/form-data/未知二进制都应走附件路径，避免原始 bytes 进入 JSON text。
+ * 3. 每种类型都应生成一个 attachment，并在未截断时生成对应 sidecar bytes。
+ *
+ * 示例：
+ *
+ *   audio/mpeg              -> kind=audio
+ *   video/mp4               -> kind=video
+ *   application/zip         -> kind=archive
+ *   multipart/form-data     -> kind=form_data
+ *   application/x-custom    -> kind=binary
+ */
+TEST(TestProtocolInteraction, HttpBinaryMediaTypesBuildExpectedAttachmentKinds)
+{
+    struct Case
+    {
+        std::string media_type;
+        InteractionPayloadKind expected_kind;
+    };
+
+    const std::vector<Case> cases = {
+        {"audio/mpeg", InteractionPayloadKind::kAudio},
+        {"video/mp4", InteractionPayloadKind::kVideo},
+        {"application/zip", InteractionPayloadKind::kArchive},
+        {"multipart/form-data; boundary=kit", InteractionPayloadKind::kMultiForm},
+        {"application/x-custom-binary", InteractionPayloadKind::kBinary},
+    };
+
+    const std::vector<uint8_t> data{0x01, 0x02, 0x03, 0x04};
+    for(const auto &c : cases)
+    {
+        SCOPED_TRACE(c.media_type);
+        std::vector<BinarySidecar> sidecars;
+
+        const auto body = InteractionBody::BuildFromBytes(
+            data,
+            Hint(ProtocolType::kHttp, ProtocolBodyType::kBinary, c.media_type),
+            ProtocolSide::kResponse,
+            Options(),
+            sidecars);
+
+        EXPECT_EQ(body.kind, c.expected_kind);
+        EXPECT_EQ(body.expect_kind, InteractionPayloadKind::kBinary);
+        ASSERT_EQ(body.attachments.size(), 1U);
+        EXPECT_EQ(body.attachments.front().kind, c.expected_kind);
+        EXPECT_TRUE(body.attachments.front().binary_available);
+        ASSERT_EQ(sidecars.size(), 1U);
+        ASSERT_NE(sidecars.front().bytes, nullptr);
+        EXPECT_EQ(*sidecars.front().bytes, data);
+    }
+}
+
+/**
+ * 测试思路：
+ * 1. attachment ref 是给前端匹配二进制帧的轻量元数据。
+ * 2. expect_kind 和 media_type 属于 body 分类输入，不应重复出现在 attachment JSON。
+ * 3. 该用例固定附件 JSON 字段边界，避免前端误依赖内部分类细节。
+ *
+ * 示例：
+ *
+ *   body.attachments[0]
+ *        |
+ *        v
+ *   包含 attachment_id/kind/size/sha1，不包含 expect_kind/media_type
+ */
+TEST(TestProtocolInteraction, AttachmentJsonOmitsExpectKindAndMediaType)
+{
+    const std::vector<uint8_t> data{0x89, 'P', 'N', 'G'};
+    std::vector<BinarySidecar> sidecars;
+
+    const auto body = InteractionBody::BuildFromBytes(
+        data,
+        Hint(ProtocolType::kHttp, ProtocolBodyType::kBinary, "image/png"),
+        ProtocolSide::kRequest,
+        Options(),
+        sidecars);
+
+    const nlohmann::json json = body;
+    ASSERT_TRUE(json.contains("attachments"));
+    ASSERT_EQ(json["attachments"].size(), 1U);
+
+    const auto &attachment_json = json["attachments"][0];
+    EXPECT_TRUE(attachment_json.contains("attachment_id"));
+    EXPECT_TRUE(attachment_json.contains("kind"));
+    EXPECT_TRUE(attachment_json.contains("size"));
+    EXPECT_TRUE(attachment_json.contains("sha1"));
+    EXPECT_FALSE(attachment_json.contains("expect_kind"));
+    EXPECT_FALSE(attachment_json.contains("media_type"));
+}
+
+/**
+ * 测试思路：
+ * 1. raw_packet 在 V1 只用于展示无法解析报文的 hex 前缀。
+ * 2. raw_packet.attachments[] 固定为空，也不能额外产生 BinarySidecar。
+ * 3. 这样前端不会把 parser error 的原始包误当作可下载附件。
+ *
+ * 示例：
+ *
+ *   raw bytes=[0xBA,0xD0]
+ *        |
+ *        v
+ *   raw_packet.raw_hex="HBA D0", attachments=[], sidecars=[]
+ */
+TEST(TestProtocolInteraction, RawPacketAttachmentsStayEmptyAndDoNotCreateSidecar)
+{
+    const std::vector<uint8_t> data{0xBA, 0xD0};
+    std::vector<BinarySidecar> sidecars;
+
+    const auto raw_packet = InteractionRawPacket::BuildRawPacketFromBytes(
+        data,
+        ProtocolSide::kRequest,
+        Options(),
+        sidecars);
+    const nlohmann::json json = raw_packet;
+
+    EXPECT_EQ(raw_packet.raw_hex, "HBA D0");
+    EXPECT_TRUE(raw_packet.attachments.empty());
+    EXPECT_TRUE(sidecars.empty());
+    ASSERT_TRUE(json.contains("attachments"));
+    EXPECT_TRUE(json["attachments"].empty());
+}
+
+/**
+ * 测试思路：
+ * 1. 不只直接测 InteractionBody，还要从 Publisher observation 侧覆盖 HTTP 二进制 body。
+ * 2. request 使用 image/png，response 使用 application/zip。
+ * 3. Publisher 输出的 record 应带两个 sidecar，且 request/response body 各自有附件元数据。
+ *
+ * 示例：
+ *
+ *   Observation(request image bytes, response zip bytes)
+ *        |
+ *        v
+ *   Record.request.body.kind=image
+ *   Record.response.body.kind=archive
+ *   Record.binary_sidecars.size()==2
+ */
+TEST(TestProtocolInteraction, PublisherBuildsHttpBinaryBodySidecarsFromObservation)
+{
+    auto sink = std::make_shared<CollectingInteractionSink>();
+    ProtocolInteractionPublisher publisher(
+        {sink},
+        ProtocolInteractionPublisherConfig{
+            .queue_capacity = 4,
+            .stop_drain_timeout = 1000,
+            .capture_options = Options(),
+        });
+
+    ProtocolInteractionObservation obs;
+    obs.scope = InteractionScope::kProtocol;
+    obs.project_id = 1;
+    obs.protocol_id = 12;
+    obs.protocol_type = ProtocolType::kHttp;
+    obs.time_ms = 1780000020000;
+    obs.peer_addr = "127.0.0.1:53020";
+    obs.result = InteractionResult::kMatched;
+    obs.request.meta = {{"method", "POST"}, {"path", "/upload"}};
+    obs.request.head_text = "POST /upload HTTP/1.1\r\nContent-Type: image/png\r\n\r\n";
+    obs.request.body_bytes = std::vector<uint8_t>{0x89, 'P', 'N', 'G'};
+    obs.request.expect_body_type = ProtocolBodyType::kBinary;
+    obs.request.media_type = "image/png";
+    obs.response.meta = {{"status_code", 200}};
+    obs.response.head_text = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\n\r\n";
+    obs.response.body_bytes = std::vector<uint8_t>{'P', 'K', 0x03, 0x04};
+    obs.response.expect_body_type = ProtocolBodyType::kBinary;
+    obs.response.media_type = "application/zip";
+
+    publisher.start();
+    publisher.publish(std::move(obs));
+
+    ASSERT_TRUE(sink->WaitForRecordCount(1));
+    publisher.stop();
+
+    const auto records = sink->Records();
+    ASSERT_EQ(records.size(), 1U);
+    const auto &record = records.front();
+
+    EXPECT_EQ(record.request.body.kind, InteractionPayloadKind::kImage);
+    ASSERT_EQ(record.request.body.attachments.size(), 1U);
+    EXPECT_EQ(record.request.body.attachments.front().flag, "request.body");
+    EXPECT_EQ(record.response.body.kind, InteractionPayloadKind::kArchive);
+    ASSERT_EQ(record.response.body.attachments.size(), 1U);
+    EXPECT_EQ(record.response.body.attachments.front().flag, "response.body");
+    ASSERT_EQ(record.binary_sidecars.size(), 2U);
+    ASSERT_NE(record.binary_sidecars[0].bytes, nullptr);
+    ASSERT_NE(record.binary_sidecars[1].bytes, nullptr);
+    EXPECT_EQ(*record.binary_sidecars[0].bytes, (std::vector<uint8_t>{0x89, 'P', 'N', 'G'}));
+    EXPECT_EQ(*record.binary_sidecars[1].bytes, (std::vector<uint8_t>{'P', 'K', 0x03, 0x04}));
 }

@@ -157,7 +157,7 @@ void HttpResponse::setOctetStream(std::vector<uint8_t> data)
     setContentMeta(MakeContentMeta(KnownMediaType::kApplicationOctetStream));
 }
 
-std::vector<uint8_t> HttpResponse::toBytes()
+std::string HttpResponse::toHeaderString() const
 {
     std::stringstream ss{""};
     ss << version_.toStr();
@@ -174,16 +174,16 @@ std::vector<uint8_t> HttpResponse::toBytes()
         if(!connection_closed_ && !is_upgrade_)
         {
             //对keep-alive模式参数配置 连接保持5秒，最多100次请求
-            addHeader("Connection", "Keep-Alive; timeout=5, max=100");
+            SetOrReplaceHeader(headers, "Connection", "Keep-Alive; timeout=5, max=100");
         }
         else if(!connection_closed_ && is_upgrade_)
         {
-            addHeader("Upgrade", "websocket");
-            addHeader("Connection", "Upgrade");
+            SetOrReplaceHeader(headers, "Upgrade", "websocket");
+            SetOrReplaceHeader(headers, "Connection", "Upgrade");
         }
         else
         {
-            addHeader("Connection", "close");
+            SetOrReplaceHeader(headers, "Connection", "close");
         }
         
     }
@@ -212,16 +212,22 @@ std::vector<uint8_t> HttpResponse::toBytes()
         ss << kCRLF;
     }
     ss << kCRLF;
-    const std::string header = ss.str();
+    return ss.str();
+}
+
+std::vector<uint8_t> HttpResponse::toBytes() const
+{
+    const std::string& header = toHeaderString();
 
     std::vector<uint8_t> out;
     out.reserve(header.size() + body_data_.size());
+
     out.insert(out.end(), header.begin(), header.end());
     out.insert(out.end(), body_data_.begin(), body_data_.end());
     return out;
 }
 
-std::string HttpResponse::toString()
+std::string HttpResponse::toString() const
 {
     const auto bytes = toBytes();
     return std::string(bytes.begin(), bytes.end());

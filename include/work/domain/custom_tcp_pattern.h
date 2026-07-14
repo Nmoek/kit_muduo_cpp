@@ -13,6 +13,7 @@
 #include "domain/custom_tcp_field_codec.h"
 #include "domain/custom_tcp_field_model.h"
 #include "domain/custom_tcp_field_type_traits.h"
+#include "domain/custom_tcp_message.h"
 #include "domain/domain_log.h"
 #include "domain/custom_tcp_pattern_spec.h"
 #include "domain/custom_tcp_protocol_item.h"
@@ -59,10 +60,11 @@ public:
 
     virtual CustomTcpPatternType getPatternType() const = 0;
     virtual const CustomTcpPatternSpec& spec() const = 0;
-    virtual ParseHeaderResult parseHeader(const std::vector<uint8_t> &data) = 0;
     virtual std::optional<std::vector<uint8_t>> serialize(const CustomTcpItemCfg &item_cfg, const std::vector<uint8_t> &body_data) const = 0;
+    virtual ParseHeaderResult parseHeader(const std::vector<uint8_t> &data) = 0;
+    virtual bool assembleMessageFromCfg(CustomTcpMessagePtr message, const CustomTcpItemCfg &item_cfg) = 0;
+    virtual bool writeLengthByPatch(std::vector<uint8_t> &headers_data, size_t body_length) = 0;
 
-protected:
     int32_t checkStartMagic(const std::vector<FieldValue>& fields_value);
 
     int32_t checkFunctionCode(const std::vector<FieldValue>& fields_value, std::string& func_code);
@@ -247,6 +249,57 @@ public:
             CUSTOM_F_ERROR("serialize exception: %s \n", e.what());
             return std::nullopt;
         }
+    }
+
+    bool assembleMessageFromCfg(CustomTcpMessagePtr message, const CustomTcpItemCfg &item_cfg) override
+    {
+        if(!message)
+        {
+            CUSTOM_F_ERROR("input param error\n");
+            return false;
+        }
+        const CustomTcpPatternSpec& pattern_spec = derived().spec();
+
+        // 将格式与配置的值对应组合起来
+        for(auto &cfg_field_spec : pattern_spec.fields)
+        {
+            FieldValue field;
+            field.spec = cfg_field_spec;
+
+            auto it = item_cfg.field_values_by_byte_pos.find(cfg_field_spec.byte_pos);
+
+            if(it != item_cfg.field_values_by_byte_pos.end())
+            {
+                if(it->second.size() != cfg_field_spec.byte_len)
+                {
+                    CUSTOM_F_ERROR("Field mismatched: name[%s], byte_pos[%d], byte_len[%d], role_tag[%s] --> real byte_len[%d]\n",
+                        cfg_field_spec.name.c_str(), 
+                        cfg_field_spec.byte_pos, 
+                        cfg_field_spec.byte_len, 
+                        RoleTag(cfg_field_spec.role).c_str(), 
+                        it->second.size());
+                    return false;
+                }
+
+                field.bytes.assign(it->second.begin(), it->second.end());
+            }
+            CUSTOM_F_DEBUG("Field matched: name[%s], byte_pos[%d], byte_len[%d], role_tag[%s], bytes[%s]\n",
+                cfg_field_spec.name.c_str(), cfg_field_spec.byte_pos, cfg_field_spec.byte_len, RoleTag(cfg_field_spec.role).c_str(),
+                field.hex().c_str());
+            message->addField(field);
+        }
+        message->setFunctionCodeHex(item_cfg.function_code);
+        return true;
+    }
+
+    bool writeLengthByPatch(std::vector<uint8_t> &headers_data, size_t body_length) override
+    {
+        if(!derived().patchLength(headers_data, body_length))
+        {
+            CUSTOM_F_ERROR("policy '%s' patchLength error\n",  LengthPolicyToString(derived().spec().length_policy).c_str());
+            return false;
+        }
+        return true;
     }
 
 private:

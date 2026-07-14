@@ -61,10 +61,10 @@ enum class ProtocolType {
     kMax,
 };
 NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolType, {
-    {ProtocolType::kUnknown,    "UNKNOWN"},
-    {ProtocolType::kHttp,       "HTTP"},
-    {ProtocolType::kCustomTcp,  "TCP"},
-    {ProtocolType::kHttps,      "HTTPS"},
+    {ProtocolType::kUnknown,    "unknown"},
+    {ProtocolType::kHttp,       "http"},
+    {ProtocolType::kCustomTcp,  "custom_tcp"},
+    {ProtocolType::kHttps,      "https"},
 })
 inline bool CheckProtocolType(ProtocolType type)
 {
@@ -83,20 +83,25 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolSide, {
 
 ///  @brief 业务上Body类型
 enum class ProtocolBodyType {
-    kUnknown   = 0,     //未知格式(没有设置)
-    kJson      = 1,    // json格式
-    kXml       = 2,    // xml格式
-    kText      = 3,    // 纯文本
+    kNone      = 0,     //不关心
+    kEmpty     = 1,    // 空
+    kJson      = 2,    // json格式
+    kXml       = 3,    // xml格式
+    kText      = 4,    // 纯文本
     kMultiForm = 5,    // multipart-form-data格式
-    kBinary    = 6,    // TCP 二进制数据流
+    kImage     = 6,    // 可见图像(jpg/jpeg/png等)
+    kBinary    = 7,    // 二进制数据流
     kMax,
 };
 NLOHMANN_JSON_SERIALIZE_ENUM(ProtocolBodyType, {
-    {ProtocolBodyType::kUnknown, "unknown"},
-    {ProtocolBodyType::kJson,    "json"},
-    {ProtocolBodyType::kXml,     "xml"},
-    {ProtocolBodyType::kText,    "text"},
-    {ProtocolBodyType::kBinary,  "binary"},
+    {ProtocolBodyType::kNone,       "none"},
+    {ProtocolBodyType::kEmpty,      "empty"},
+    {ProtocolBodyType::kJson,       "json"},
+    {ProtocolBodyType::kXml,        "xml"},
+    {ProtocolBodyType::kText,       "text"},
+    {ProtocolBodyType::kMultiForm,  "multiform"},
+    {ProtocolBodyType::kImage,      "image"},
+    {ProtocolBodyType::kBinary,     "binary"},
 })
 
 enum class ProtocolStatus {

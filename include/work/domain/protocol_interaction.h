@@ -12,13 +12,17 @@
 
 #include "domain/type.h"
 #include "nlohmann/json.hpp"
-#include <optional>
 
+#include <optional>
 
 namespace kit_domain {
 
+enum class HttpObserveResult;
+
+
 enum class InteractionPayloadKind
 {
+    kUnknown,
     kEmpty,
     kJson,
     kXml,
@@ -32,6 +36,7 @@ enum class InteractionPayloadKind
     kBinary,
 };
 NLOHMANN_JSON_SERIALIZE_ENUM(InteractionPayloadKind, {
+    {InteractionPayloadKind::kUnknown, "unknown"},
     {InteractionPayloadKind::kEmpty, "empty"},
     {InteractionPayloadKind::kJson, "json"},
     {InteractionPayloadKind::kXml, "xml"},
@@ -59,24 +64,26 @@ NLOHMANN_JSON_SERIALIZE_ENUM(InteractionScope, {
 
 enum class InteractionResult
 {
+    // 大类Matched 小类错误 scope=protocol
     kMatched,
     kRequestMismatch,
-    kParseError,
     kProtocolNotFound,
+    kSerializeError,
+
+    // 大类非Matched scope=project
+    kParseError,
     kRouteNotFound,
     kMethodNotAllowed,
-    kSerializeError,
     kInternalError,
 };
 NLOHMANN_JSON_SERIALIZE_ENUM(InteractionResult, {
     {InteractionResult::kMatched, "matched"},
     {InteractionResult::kRequestMismatch, "request_mismatch"},
+    {InteractionResult::kProtocolNotFound, "protocol_not_found"},
+    {InteractionResult::kSerializeError, "serialize_error"},
     {InteractionResult::kParseError, "parse_error"},
-    {InteractionResult::kProtocolNotFound, "protocol_not_found"},
-    {InteractionResult::kProtocolNotFound, "protocol_not_found"},
     {InteractionResult::kRouteNotFound, "route_not_found"},
     {InteractionResult::kMethodNotAllowed, "method_not_allowed"},
-    {InteractionResult::kSerializeError, "serialize_error"},
     {InteractionResult::kInternalError, "internal_error"},
 })
 
@@ -112,7 +119,7 @@ struct InteractionPayloadHint
     ProtocolType protocol_type{ProtocolType::kUnknown};
 
     /// @brief 协议项配置里的期望 body 类型，最终写入 body.expect_kind。
-    ProtocolBodyType expect_body_type{ProtocolBodyType::kUnknown};
+    ProtocolBodyType expect_body_type{ProtocolBodyType::kNone};
 
     // HTTP Content-Type 去掉参数后的 media type。
     // 仅用于分类，不在 InteractionBody 里重复输出；原始 header 仍只在 head_text 中展示。
@@ -214,7 +221,7 @@ struct InteractionRawPacket
 struct InteractionSide
 {
     /// @brief 不同测试协议项的关键元数据信息
-    nlohmann::json meta{nlohmann::json::object()};
+    nlohmann::json meta = nlohmann::json::object();
     std::string head_text;
     InteractionBody body;
     std::optional<InteractionRawPacket> raw_packet;
@@ -264,6 +271,8 @@ struct ProtocolInteractionRecord
     std::vector<BinarySidecar> binary_sidecars;
 
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProtocolInteractionRecord, seq, scope, project_id, protocol_id, protocol_type, time_ms, peer_addr, result, error_message, request, response)
+
+    static InteractionResult ToInteractionResult(HttpObserveResult obs_result);
 };
 
 

@@ -9,6 +9,9 @@
 #ifndef __KIT_CUSTOM_TCP_CONTEXT_H__
 #define __KIT_CUSTOM_TCP_CONTEXT_H__
 
+#include "net/call_backs.h"
+#include "protocol_interaction.h"
+
 #include <string>
 #include <memory>
 #include <vector>
@@ -29,6 +32,43 @@ class CustomTcpProjectServer;
 class CustomTcpPattern;
 class CustomTcpMessage;
 struct CustomPatternInfo;
+class CustomTcpProtocolItem;
+class CustomTcpContext;
+
+enum class CustomTcpParseStatus
+{
+    kOk,
+    kParseError,
+    kFuncCodeNotFound,
+    kInternalError,
+};
+
+using ProcessCallback = std::function<void(kit_muduo::TcpConnectionPtr, std::shared_ptr<CustomTcpContext>)>;
+
+
+struct CustomTcpParseResult
+{
+    CustomTcpParseStatus status{CustomTcpParseStatus::kOk};
+    ProcessCallback cb{nullptr};
+    std::string message{"parse ok"};
+
+    bool ok() const { return status == CustomTcpParseStatus::kOk; }
+
+    InteractionResult toInterResult() const
+    {
+        switch (status) 
+        {
+            case CustomTcpParseStatus::kOk:
+                return InteractionResult::kMatched;
+            case CustomTcpParseStatus::kParseError:
+                return InteractionResult::kParseError;
+            case CustomTcpParseStatus::kFuncCodeNotFound:
+                return InteractionResult::kRouteNotFound;
+            default:
+                return InteractionResult::kInternalError;
+        }
+    }
+};
 
 class CustomTcpContext 
 {
@@ -47,9 +87,9 @@ public:
     ~CustomTcpContext();
 
 
-    bool parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp receiveTime);
+    CustomTcpParseResult parseRequest(kit_muduo::Buffer &buf, kit_muduo::TimeStamp receiveTime);
 
-    bool parseRequest(const std::vector<char> &data, kit_muduo::TimeStamp receiveTime);
+    CustomTcpParseResult parseRequest(const std::vector<char> &data, kit_muduo::TimeStamp receiveTime);
 
     bool parseResponse(const std::string &data, const CustomPatternInfo& parse_pattern_info, kit_muduo::TimeStamp receiveTime);
     bool parseResponse(kit_muduo::Buffer &buf, const CustomPatternInfo& parse_pattern_info, kit_muduo::TimeStamp receiveTime);
@@ -68,12 +108,16 @@ public:
      */
     void reset();
 
+    std::vector<uint8_t>& rawCapture() { return raw_capture_; }
+    const std::vector<uint8_t>& rawCapture() const { return raw_capture_; }
 
 private:
     /// @brief 这里需要通过功能码反查到配置的格式字段
     CustomTcpProjectServer* server_;
     /// @brief tcp请求解析状态
     TcpParseState  state_{kExpectHeader};
+    /// @brief 最后的解析结果
+    CustomTcpParseResult result_;
     /// @brief 剩余应收长度
     int64_t remain_bytes_len_;
     /*注意: 这里请求/响应报文生成的时间点 应该是实际解析到功能的时候 */
@@ -81,7 +125,10 @@ private:
     std::shared_ptr<CustomTcpMessage> request_;
     /// @brief tcp响应报文
     std::shared_ptr<CustomTcpMessage> response_;
+    /// @brief 用于解析失败捕获raw bytes
+    std::vector<uint8_t> raw_capture_;
 };
+using CustomTcpContextPtr = std::shared_ptr<CustomTcpContext>;
 
 } // namespace kit_domain
 #endif //__KIT_CUSTOM_TCP_CONTEXT_H__

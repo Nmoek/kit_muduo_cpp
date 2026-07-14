@@ -7,13 +7,16 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "net/http/http_content.h"
-
 #include "net/net_log.h"
+#include "domain/type.h"
 
 #include <algorithm>
 #include <cctype>
 #include <sstream>
 #include <vector>
+
+
+using namespace kit_domain;
 
 namespace kit_muduo::http {
 
@@ -666,6 +669,25 @@ std::string GuessMediaTypeFromExtension(const std::string& path_or_extension)
     }
 
     return "application/octet-stream";
+}
+
+ProtocolBodyType GuessProtocolBodyTypeFromContentMeta(const ContentMeta& meta)
+{
+    const auto codec_type = ResolveContentCodecFormat(meta);
+    switch (codec_type) 
+    {
+        case ContentCodecFormat::kNone:
+            return ProtocolBodyType::kEmpty;
+        case ContentCodecFormat::kJson:
+            return ProtocolBodyType::kJson;
+        case ContentCodecFormat::kXml:
+            return ProtocolBodyType::kXml;
+        case ContentCodecFormat::kText:
+        case ContentCodecFormat::kFormUrlEncoded:
+            return ProtocolBodyType::kText;
+        default:
+            return ProtocolBodyType::kBinary;
+    }
 }
 
 const std::unordered_map<std::string, std::string>& BuiltinMimeTypesByExtension()

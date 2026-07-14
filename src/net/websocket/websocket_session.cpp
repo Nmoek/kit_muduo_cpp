@@ -43,6 +43,7 @@ inline bool ChechkControlFrame(WebSocketOpcode opcode)
 WebSocketSession::WebSocketSession(uint64_t seesion_id, TcpConnectionPtr conn)
     :session_id_(seesion_id)
     ,conn_(std::move(conn))
+    ,state_(WebSocketSessionState::kOpening)
 {
 
 }
@@ -52,6 +53,21 @@ const InetAddress& WebSocketSession::peerAddr() const
 { 
     return conn_->peerAddr();
 }
+
+kit_muduo::EventLoop *WebSocketSession::getLoop() const 
+{ 
+    return conn_->getLoop();
+}
+
+
+void WebSocketSession::onOpen()
+{
+    if(on_open_cb_)
+    {
+        on_open_cb_(shared_from_this());
+    }
+}
+
 
 void WebSocketSession::onMessage(WebSocketContextPtr context, Buffer *buf, TimeStamp receive_time)
 {

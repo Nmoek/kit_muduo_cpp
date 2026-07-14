@@ -16,6 +16,10 @@
 #include <string>
 #include <unordered_map>
 
+namespace kit_domain {
+enum class ProtocolBodyType;
+}
+
 namespace kit_muduo::http {
 
 struct MediaType
@@ -144,6 +148,8 @@ bool IsJsonLikeContent(const ContentMeta& meta);
 bool IsXmlLikeContent(const ContentMeta& meta);
 
 std::string GuessMediaTypeFromExtension(const std::string& path_or_extension);
+
+kit_domain::ProtocolBodyType GuessProtocolBodyTypeFromContentMeta(const ContentMeta& meta);
 
 const std::unordered_map<std::string, std::string>& BuiltinMimeTypesByExtension();
 

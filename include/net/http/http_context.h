@@ -51,25 +51,22 @@ public:
 
     bool parseResponse(const std::string &data, TimeStamp receiveTime);
     bool parseResponse(Buffer &buf, TimeStamp receiveTime);
-    HttpParseState state() const { return _state; }
-    void setState(HttpParseState state) { _state = state; }
+    HttpParseState state() const { return state_; }
+    void setState(HttpParseState state) { state_ = state; }
 
-    bool gotAll() const { return kGotAll == _state; }
+    bool gotAll() const { return kGotAll == state_; }
 
-    void setMaybeUpgrade(bool f) { _maybeUpgrade = f; }
-    bool maybeUpgrade() const { return _maybeUpgrade; }
-
-    HttpRequestPtr request() { return _request; }
-    HttpResponsePtr response() { return _response; }
+    HttpRequestPtr request() { return request_; }
+    HttpResponsePtr response() { return response_; }
 
     std::string routeParam(const std::string& key) const
     {
-       return _request->getRouteParam(key);
+       return request_->getRouteParam(key);
     }
 
     std::string queryParam(const std::string& key) const
     {
-       return _request->getQureyParam(key);
+       return request_->getQureyParam(key);
     }
 
     void setAttribute(const std::string &key, const std::string &value)
@@ -82,6 +79,12 @@ public:
         auto it = attributes_.find(key);
         return it == attributes_.end() ? "" : it->second;
     }
+
+    const std::vector<uint8_t>& rawCapture() const { return raw_capture_; }
+    std::vector<uint8_t>& rawCapture() { return raw_capture_; }
+
+    void setMaybeUpgrade(bool flag) { maybeUpgrade_ = flag; }
+    bool maybeUpgrade() const { return maybeUpgrade_; }
 
     template<typename T>
     kit_muduo::http::ContentCodecResult bindJson(T &obj)
@@ -101,15 +104,18 @@ private:
 
 private:
     /// @brief HTTP请求解析状态
-    HttpParseState  _state{kExpectRequestLine};
+    HttpParseState  state_{kExpectRequestLine};
     /// @brief HTTP请求报文
-    HttpRequestPtr _request;
+    HttpRequestPtr request_;
     /// @brief  HTTP响应报文
-    HttpResponsePtr _response;
+    HttpResponsePtr response_;
     /// @brief HTTP报文解析器
-    std::shared_ptr<HttpParser> _parser;
+    std::shared_ptr<HttpParser> parser_;
     std::unordered_map<std::string, std::string> attributes_;
-    bool _maybeUpgrade{false};
+    /// @brief 简单判断是否应该走upgrade路径
+    bool maybeUpgrade_{false};
+    /// @brief 用于解析失败捕获raw bytes
+    std::vector<uint8_t> raw_capture_;
 };
 
 

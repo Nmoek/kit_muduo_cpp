@@ -7,32 +7,32 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 
-#include "base/thread.h"
+#include "base/time_stamp.h"
+#include "domain/protocol_interaction_observation.h"
 #include "domain/runtime_result.h"
 #include "net/call_backs.h"
 #include "net/event_loop.h"
+#include "net/http/http_servlet.h"
+#include "net/tcp_server.h"
 #include "net/http/http_content.h"
 #include "net/http/http_util.h"
 #include "net/inet_address.h"
 #include "net/socket.h"
 #include "domain/domain_log.h"
-#include "domain/project_server.h"
-#include "net/http/http_server.h"
+#include "domain/http_project_server.h"
 #include "net/http/http_context.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
-#include "domain/protocol.h"
 #include "domain/protocol_item.h"
 #include "domain/http_protocol_item.h"
+#include "net/tcp_server.h"
 #include "nlohmann/json.hpp"
 #include "domain/type.h"
-#include "service/svc_protocol.h"
 #include "domain/runtime_loop_pool.h"
+#include "domain/protocol_interaction.h"
 
-#include <chrono>
 #include <cstdint>
 #include <functional>
-#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -44,6 +44,7 @@ using namespace kit_muduo::http;
 using nljson = nlohmann::json;
 
 
+namespace kit_domain {
 
 namespace {
 
@@ -58,7 +59,7 @@ inline static EventLoop* CheckLoop(EventLoop *loop)
 
 ContentMeta ExpectedHttpContentMeta(kit_domain::ProtocolBodyType body_type)
 {
-    return kit_domain::ProtocolBodyTypeToHttpContentMeta(body_type);
+    return ProtocolBodyTypeToHttpContentMeta(body_type);
 }
 
 bool IsContentTypeMatch(const ContentMeta& actual_meta, kit_domain::ProtocolBodyType expected_body_type)
@@ -71,23 +72,60 @@ bool IsContentTypeMatch(const ContentMeta& actual_meta, kit_domain::ProtocolBody
 
     return actual_meta.media_type == expected_meta.media_type;
 }
-    
+
+void AttachHttpRequestCaptureFromContext(
+    ProtocolInteractionObservation &obs,
+    const HttpRequestPtr &req,
+    ProtocolBodyType expect_body_type)
+{
+    obs.request.meta = {
+        {"method", req->method().toString()},
+        {"url", req->url()},
+        {"path", req->path()},
+        {"version", req->version().toString()}
+    };
+
+    obs.request.head_text = req->toHeaderString();
+    obs.request.body_bytes = req->bodyData();
+    obs.request.expect_body_type = expect_body_type;
+    obs.request.media_type = req->contentMeta().media_type;
+    obs.request.prefer_hex_text_for_binary = false;
+
+}
+
+void AttachHttpResponseCaptureFromContext(
+    ProtocolInteractionObservation &obs,
+    const HttpResponsePtr &resp,
+    ProtocolBodyType expect_body_type)
+{
+    obs.response.meta = {
+        {"version", resp->version().toString()},
+        {"status_code", resp->stateCode().toInt()},
+    };
+
+    obs.response.head_text = resp->toHeaderString();
+    obs.response.body_bytes = resp->bodyData();
+    obs.response.expect_body_type = expect_body_type;
+    obs.response.media_type = resp->contentMeta().media_type;
+    obs.response.prefer_hex_text_for_binary = false;
+}
+
 }
 
 
-namespace kit_domain {
-
 HttpProjectServer::HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop)
     :ProjectServer(project_id, lease_loop)
-    ,http_server_(std::make_shared<http::HttpServer>(
+    ,tcp_server_(
         CheckLoop(lease_loop->loop()), 
         InetAddress(0, "0.0.0.0"), 
         "pj" + std::to_string(project_id_) + "http", 
-        false, 
         kit_muduo::TcpServer::KReusePort
-    ))
+    )
+    ,dispatch_(std::make_shared<HttpServletDispatch>())
 {
+    tcp_server_.setConnectionCallback(std::bind(&HttpProjectServer::onConnect, this, std::placeholders::_1));
 
+    tcp_server_.setMessageCallback(std::bind(&HttpProjectServer::onMessage, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 }
 
 HttpProjectServer::~HttpProjectServer()
@@ -97,8 +135,8 @@ HttpProjectServer::~HttpProjectServer()
 
 void HttpProjectServer::start()
 {
-    http_server_->setThreadNum(0); // 使用单线程模式
-    http_server_->start();
+    tcp_server_.setThreadNum(0); // 使用单线程模式
+    tcp_server_.start();
 }
 
 bool HttpProjectServer::stop()
@@ -109,14 +147,8 @@ bool HttpProjectServer::stop()
         return true;
     }
 
-    if(!http_server_)
-    {
-        lease_loop_->release();
-        return true;
-    }
-
     bool ok = WaitRuntimeStopDone("HttpProjectServer", project_id_, [this](std::function<void()> done){
-        http_server_->stopAsync(std::move(done));
+        tcp_server_.stopAsync(std::move(done));
     });
 
     if(!ok)
@@ -131,7 +163,7 @@ bool HttpProjectServer::stop()
 
 const kit_muduo::InetAddress& HttpProjectServer::getBindAddr() const 
 {
-    return http_server_->getBindAddr(); 
+    return tcp_server_.getBindAddr(); 
 }
 
 
@@ -151,7 +183,21 @@ RuntimeResult<void> HttpProjectServer::AddProtocolItem(std::shared_ptr<ProtocolI
     // 1. 路由注册 
     const auto& req_cfg = http_item->getReqCfg();
 
-    auto route_result = http_server_->addRoute(req_cfg.method, req_cfg.path,  std::bind(&HttpProjectServer::HttpProjectProcess, this, item->getId(), std::placeholders::_1, std::placeholders::_2));
+    std::weak_ptr<HttpProtocolItem> weak_http_item = http_item;
+
+    auto route_result = dispatch_->addRoute(ToMethodMask(req_cfg.method), req_cfg.path,  [this, 
+        weak_http_item,
+        pcId = http_item->getId()](kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx){
+
+        auto http_item = weak_http_item.lock();
+        if(!http_item)
+        {
+            PJSERVER_F_INFO("http protocol item null! pcId[%ld]\n", pcId);
+            return;
+        }
+    
+        HttpProjectProcess(http_item, conn, ctx);
+    }); 
 
     if(!route_result.ok())
     {
@@ -200,7 +246,7 @@ RuntimeResult<void> HttpProjectServer::DelProtocolItem(int64_t protocol_id)
     }
 
     // 1. 删路由
-    if(!http_server_->removeRoute(route_id))
+    if(!dispatch_->removeRoute(route_id))
     {
         result.error.set(RuntimeError::kRouteNotFound);
         return result;
@@ -393,6 +439,8 @@ RuntimeResult<void> HttpProjectServer::ReplaceReqCfgProtocolItem(const HttpRunti
 {
     RuntimeResult<void> result;
     auto http_item = http_run_item.item;
+    std::weak_ptr<HttpProtocolItem> weak_http_item{http_item};
+
     const auto& old_req_cfg = http_item->getReqCfg();
     uint64_t old_route_id = http_run_item.route_id;
     
@@ -404,9 +452,20 @@ RuntimeResult<void> HttpProjectServer::ReplaceReqCfgProtocolItem(const HttpRunti
     }
 
     // 路由Key{method, path}发生变化则需要更新路由
-
     // 先添加新路由
-    auto route_result = http_server_->addRoute(new_req_cfg.method, new_req_cfg.path, std::bind(&HttpProjectServer::HttpProjectProcess, this, http_item->getId(), std::placeholders::_1, std::placeholders::_2));
+    auto route_result = dispatch_->addRoute(ToMethodMask(new_req_cfg.method), new_req_cfg.path, [this, 
+        weak_http_item,
+        pcId = http_item->getId()](kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx){
+            
+        auto http_item = weak_http_item.lock();
+        if(!http_item)
+        {
+            PJSERVER_F_INFO("http protocol item null! pcId[%ld]\n", pcId);
+            return;
+        }
+    
+        HttpProjectProcess(http_item, conn, ctx);
+    });
     if(!route_result.ok())
     {
         PJSERVER_F_ERROR("add route failed! pjId[%d], pcId[%d], path[%s], method[%s] \n", project_id_,http_item->getId(), new_req_cfg.path.c_str(), new_req_cfg.method.toStr());
@@ -416,11 +475,11 @@ RuntimeResult<void> HttpProjectServer::ReplaceReqCfgProtocolItem(const HttpRunti
     }
 
     // 先删旧路由
-    if(!http_server_->removeRoute(old_route_id))
+    if(!dispatch_->removeRoute(old_route_id))
     {
 
         // 回滚新增加的路由
-        if(!http_server_->removeRoute(route_result.route_id))
+        if(!dispatch_->removeRoute(route_result.route_id))
         {
             PJSERVER_F_ERROR("remove new route error! route_id[%lu], path[%s] \n", route_result.route_id, new_req_cfg.path.c_str());
         }
@@ -445,9 +504,221 @@ bool HttpProjectServer::isSameRoute(const HttpItemReqHeaderCfg &old_cfg, const H
     && kit_muduo::http::NormalizeHttpPath(old_cfg.path) == kit_muduo::http::NormalizeHttpPath(new_cfg.path);
 }
 
+std::shared_ptr<HttpProtocolItem> HttpProjectServer::findRuntimeItem(int64_t protocol_id) const
+{
+    auto it = http_items_.find(protocol_id);
+
+    return it == http_items_.end() ? nullptr : it->second.item;
+}
+
+void HttpProjectServer::onConnect(kit_muduo::TcpConnectionPtr conn)
+{
+    if(conn->connected())
+    {
+        PJSERVER_F_INFO("==> new connection fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
+
+        conn->setContext(std::make_shared<HttpContext>());
+    }
+    else
+    {
+        PJSERVER_F_INFO("==> disconnected connection  fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
+    }
+}
+
+void HttpProjectServer::onMessage(kit_muduo::TcpConnectionPtr conn, kit_muduo::Buffer *buf, kit_muduo::TimeStamp receiveTime)
+{
+    bool is_exception = false;
+    std::shared_ptr<HttpContext> context = std::static_pointer_cast<HttpContext>(conn->getContext());
+    if(nullptr == context)
+    {
+        PJSERVER_ERROR() << "http context is null!" << std::endl;
+        return;
+    }
+
+    while(buf->readableBytes() > 0)
+    {
+        size_t before_len = buf->readableBytes();
+
+        if(!context->parseRequest(*buf, receiveTime))
+        {
+            PJSERVER_ERROR() << "http request parse error! " << std::endl;
+            BadRequest400Servlet::Handle(conn, context);
+            sendAndObserve(conn,
+                context,
+                nullptr,
+                InteractionResult::kParseError,
+                "http request parse error",
+                true);
+            return;
+        }
+
+        // 未解析完 等待更多数据
+        if(!context->gotAll())
+        {
+            PJSERVER_F_DEBUG("http data not complete! %lu --> %lu \n", before_len, buf->readableBytes());
+            break;
+        }
+
+        try {
+
+            handleRequest(conn, context);
+  
+        } catch(const std::exception &e) {
+
+            PJSERVER_F_ERROR("http callback exception: %s \n", e.what());
+
+            is_exception = true;
+        } catch(...) {
+
+            PJSERVER_F_ERROR("http callback unknown exception\n");
+
+            is_exception = true;
+        }
+
+        if(is_exception)
+        {
+            ServerErr500Servlet::Handle(conn, context);
+            context->response()->setConnectionClosed(true);
+            context->response()->resetBodyData();
+
+            sendAndObserve(conn,
+                context,
+                nullptr,
+                InteractionResult::kInternalError,
+                "http callback exception",
+                true);
+            return;
+        }
+        // 重置conn中的上下文
+        context = std::make_shared<HttpContext>();
+        conn->setContext(context);
+
+    }
+
+
+}
+
+void HttpProjectServer::handleRequest(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx)
+{
+    auto req = ctx->request();
+    auto resp = ctx->response();
+
+    PJSERVER_F_INFO("woker thread [%d][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req->path().c_str());
+
+    const std::string &connection = req->getHeader("Connection");
+
+    bool closed = HeaderContainsToken(connection, "close")
+            || (Version::kHttp10 == req->version().toInt() && !HeaderContainsToken(connection, "keep-alive"));
+    resp->setConnectionClosed(closed);
+
+    // 注意 这里只需要匹配结果 而并不需要直接进行对应的业务执行
+    auto outcome = dispatch_->handleWithOutcome(conn, ctx);
+
+    // 不匹配需要走 project notice
+    if(MatchStatus::kFound != outcome.status)
+    {
+        sendAndObserve(conn, 
+            ctx,
+            nullptr, 
+            ProtocolInteractionObservation::ToInterResult(outcome.status), 
+            "", 
+            resp->connectionClosed());
+    }
+}
+
+void HttpProjectServer::sendAndObserve(TcpConnectionPtr conn,
+    HttpContextPtr ctx,
+    std::shared_ptr<HttpProtocolItem> http_item,
+    InteractionResult result,
+    const std::string &message,
+    bool close_after_send)
+{
+    auto resp = ctx->response();
+    auto response_bytes =
+        std::make_shared<std::vector<uint8_t>>(resp->toBytes());
+
+    ProtocolInteractionObservation obs = buildHttpObservation(ctx,
+        conn->peerAddr().toIpPort(),
+        result,
+        http_item,
+        message);
+
+    emitObserve(std::move(obs));
+
+    conn->send(*response_bytes);
+
+    if(close_after_send)
+    {
+        conn->shutdown();
+    }
+
+}
+
+ProtocolInteractionObservation HttpProjectServer::buildHttpObservation(HttpContextPtr ctx,
+    const std::string &peer_addr,
+    InteractionResult result,
+    std::shared_ptr<HttpProtocolItem> http_item,
+    const std::string &message)
+{
+    auto req = ctx->request();
+    auto resp = ctx->response();
+
+    ProtocolInteractionObservation obs;
+    obs.project_id = project_id_;
+    obs.protocol_id = http_item ? http_item->getId() : 0;
+    obs.scope = http_item ? InteractionScope::kProtocol : InteractionScope::kProject;
+    obs.protocol_type = ProtocolType::kHttp;
+    obs.time_ms = req->receiveTime().millSeconds();
+    obs.peer_addr = std::move(peer_addr);
+    obs.result = result;
+    obs.error_message = std::move(message);
+
+    if(InteractionScope::kProtocol == obs.scope)
+    {
+        const auto &req_body_view = http_item->getReqBodyView();
+        const auto &resp_body_view = http_item->getRespBodyView();
+
+        AttachHttpRequestCaptureFromContext(
+            obs,
+            req,
+            req_body_view.body_type);
+
+        AttachHttpResponseCaptureFromContext(
+            obs,
+            resp,
+            resp_body_view.body_type);
+    }
+    else
+    {
+        // 解析上下文状态 >=kExpectBody 说明请求头已经解析完
+        if(ctx->state() >= HttpContext::kExpectBody)
+        {
+            AttachHttpRequestCaptureFromContext(
+                obs, 
+                req, 
+                GuessProtocolBodyTypeFromContentMeta(req->contentMeta()));
+        }
+        // 解析上下文状态 <kExpectBody  说明请求头就是出错的
+        else if(ctx->state() < HttpContext::kExpectBody)
+        {
+            obs.request.raw_bytes = ctx->rawCapture();
+        }
+
+        AttachHttpResponseCaptureFromContext(
+            obs, 
+            resp, 
+            ProtocolBodyType::kNone);
+    }
+    
+    return obs;
+
+}
+
+
+
 
 /**
- * @brief json数据比对辅助(只比对key值是否正确)
+ * @brief (校验功能暂时弃用)json数据比对辅助(只比对key值是否正确)
  * @param root 
  * @param cfg_root 
  * @return true 
@@ -549,29 +820,30 @@ static bool JsonDataVerifyHelper(const nljson& root, const nljson& cfg_root)
 }
 
 
-void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr conn, HttpContextPtr ctx)
+void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> http_item, TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
     auto resp = ctx->response();
     resp->setVersion(Version::kHttp11);
 
+#if 0
     // 可以无锁 因为所有协议项增删改查都是成队列形式
-    auto it = http_items_.find(protocol_id);
-    
-    if(it == http_items_.end() || !it->second.item)
+    auto http_item = findRuntimeItem(protocol_id);
+    if(!http_item)
     {
         PJSERVER_F_ERROR("url[%s] protocol item is nullptr! \n", req->path().c_str());
         
+        ctx->setAttribute(kAttrInteractionResult, "protocol_not_found");
+        ctx->setAttribute(kAttrInteractionErrorMessage, "protocol item not found");
         resp->setStateCode(StateCode::k404NotFound);
         return;
     }
-    auto http_item = it->second.item;
-
-  
+#endif
+    
     auto req_cfg = http_item->getReqCfg();
     auto resp_cfg = http_item->getRespCfg();
-    const auto& req_body_view = http_item->getReqBodyView();
-    const auto& resp_body_view = http_item->getRespBodyView();
+    const auto& req_cfg_body_view = http_item->getReqBodyView();
+    const auto& resp_cfg_body_view = http_item->getRespBodyView();
     
 
     // 1.TODO 建立websocket 进行协议收发实时推送
@@ -585,7 +857,9 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
         2.2 实际数据转换  期望数据转换
     */
     // TODO 请求校验模块尚未成型
+{
 #if 0
+
     try {
         if(!req_body_view.body_data->empty())
         {
@@ -659,7 +933,10 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
 
         return;
     }
+
 #endif
+}
+
     PJSERVER_F_INFO("pjId[%d] pcId[%d] name[%s] match success!\n", 
         http_item->getProjectId(),
         http_item->getId(),
@@ -669,12 +946,18 @@ void HttpProjectServer::HttpProjectProcess(int32_t protocol_id, TcpConnectionPtr
     // 响应数据拷贝
     resp->setStateCode(resp_cfg.state_code);
     resp->setHeaders(resp_cfg.headers);
-    resp->setContentMeta(ProtocolBodyTypeToHttpContentMeta(resp_body_view.body_type));
-    resp->setBodyData(*resp_body_view.body_data);
+    resp->setContentMeta(ProtocolBodyTypeToHttpContentMeta(resp_cfg_body_view.body_type));
+    resp->setBodyData(*resp_cfg_body_view.body_data);
 
     PJSERVER_DEBUG() << std::endl << resp->toString() << std::endl;
+
+    sendAndObserve(conn, 
+        ctx, 
+        http_item,
+        InteractionResult::kMatched, 
+        "service handle ok", 
+        resp->connectionClosed());
     return;
 }
-
 
 }

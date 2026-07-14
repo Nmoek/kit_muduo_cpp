@@ -7,6 +7,8 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "base/time_stamp.h"
+#include "domain/custom_tcp_project_server.h"
+#include "domain/http_project_server.h"
 #include "domain/project.h"
 #include "domain/project_server.h"
 #include "domain/project_server_factory.h"

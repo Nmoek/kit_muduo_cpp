@@ -102,17 +102,18 @@ bool CustomHttpParser::parse(Buffer &buf)
                     {
                         const std::string& content_type_str = request->getHeader("Content-Type");
                         request->setContentMeta(ParseHttpContentType(content_type_str));
-                    }
-                    else if(RespType == _type)
-                    {
-                        const std::string& content_type_str = response->getHeader("Content-Type");
-                        response->setContentMeta(ParseHttpContentType(content_type_str));
-                        
+
                         // 特殊处理 Upgrade
                         if(HeaderContainsToken(request->getHeader("Connection"), "Upgrade"))
                         {
                             _context->setMaybeUpgrade(true);
                         }
+                    }
+                    else if(RespType == _type)
+                    {
+                        const std::string& content_type_str = response->getHeader("Content-Type");
+                        response->setContentMeta(ParseHttpContentType(content_type_str));
+
                     }
 
                     _context->setState(HttpContext::kExpectBody);

@@ -7,6 +7,8 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "application.h"
+#include "domain/protocol_interaction_hub.h"
+#include "domain/protocol_interaction_publisher.h"
 #include "net/http/http_server.h"
 #include "net/event_loop.h"
 #include "web/web_project.h"
@@ -15,6 +17,7 @@
 #include "dao/dao_project.h"
 
 #include "web/web_auth.h"
+#include "web/web_protocol_interaction.h"
 #include "web/web_user.h"
 #include "service/svc_auth.h"
 #include "service/svc_user.h"
@@ -30,10 +33,17 @@
 #include "dao/sqlite_orm_pool.h"
 
 #include "runtime/runtime_controller.h"
+#include "net/http/http_context.h"
+#include "net/http/http_request.h"
+#include "net/http/http_server.h"
+#include "service/svc_auth.h"
+#include "domain/protocol_interaction_publisher.h"
 
 #include "dao/init.h"
 #include "ioc/web.h"
 
+#include <memory>
+#include <vector>
 #include <signal.h>
 #if defined(__SANITIZE_ADDRESS__) || defined(__has_feature)
  #if defined(__has_feature)
@@ -66,8 +76,8 @@ static void InitLog(void)
     l->addAppender(std::make_shared<FileAppender>("log/base.log"));
     l2->addAppender(std::make_shared<FileAppender>("log/net.log"));
     l3->addAppender(std::make_shared<FileAppender>("log/web.log"));
-    l->setLevel(LogLevel::INFO);
-    l2->setLevel(LogLevel::INFO);
+    // l->setLevel(LogLevel::INFO);
+    // l2->setLevel(LogLevel::INFO);
     // l3->setLevel(LogLevel::INFO);
 
 }
@@ -97,20 +107,98 @@ static std::shared_ptr<Application> InitApp()
     auto userSvc = std::make_shared<UserService>(userRepo, sessionRepo);
     authSvc->BootstrapAdmin();
 
-    std::shared_ptr<RuntimeControllerInterface> project_runtime_manager = std::make_shared<ProjectRuntimeManager>(projSvc, protocSvc);
+
+    // 全局协议交互详情订阅器
+    std::shared_ptr<ProtocolInteractionHub> hub = std::make_shared<ProtocolInteractionHub>();
+
+    // 全局协议交互详情发布器
+    auto publisher = std::make_shared<ProtocolInteractionPublisher>(
+        std::vector<std::shared_ptr<ProtocolInteractionSink>>{hub}
+    );
+    publisher->start();
+    
+    // 全局运行态管理器
+    std::shared_ptr<RuntimeControllerInterface> runtime_controller = std::make_shared<ProjectRuntimeManager>(projSvc, protocSvc, publisher);
+
+    
 
     // 需要将app句柄放到Handler中
     static std::shared_ptr<ProtocolHandler> protocHdl;
     static std::shared_ptr<ProjectHandler> projHdl;
     static std::shared_ptr<AuthHandler> authHdl;
     static std::shared_ptr<UserHandler> userHdl;
-    protocHdl = std::make_shared<ProtocolHandler>(protocSvc, projSvc, project_runtime_manager);
-    projHdl = std::make_shared<ProjectHandler>(projSvc, protocSvc,project_runtime_manager);
+    static std::shared_ptr<ProtocolInteractionHandler> interHdl;
+
+    protocHdl = std::make_shared<ProtocolHandler>(protocSvc, projSvc, runtime_controller);
+    projHdl = std::make_shared<ProjectHandler>(projSvc, protocSvc,runtime_controller);
     authHdl = std::make_shared<AuthHandler>(authSvc);
     userHdl = std::make_shared<UserHandler>(userSvc);
-    auto server = InitWebServer(&loop, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), authSvc);
+    interHdl = std::make_shared<ProtocolInteractionHandler>(protocSvc, runtime_controller, hub);
 
-    auto app = std::make_shared<Application>(server, project_runtime_manager);
+    auto server = InitWebServer(&loop, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), interHdl.get());
+
+    server->setAuthCallback([authSvc](HttpContextPtr ctx) {
+        const std::string path = ctx->request()->path();
+
+        const std::vector<std::string> allow_paths_no_auth{
+            "/html/login.html",
+            "/css/login.css",
+            "/js/namespace.js",
+            "/js/config.js",
+            "/js/utils.js",
+            "/js/mock_data.js",
+            "/js/api.js",
+            "/js/auth.js",
+            "/js/login.js",
+            "/auth/login",
+        };
+
+        bool is_login_asset = false;
+        
+        for(auto &allow_path : allow_paths_no_auth)
+        {
+            if(allow_path == path)
+            {
+                is_login_asset = true;
+                break;
+            }
+        }
+
+        if(is_login_asset
+            || path.find("/assets/") == 0)
+        {
+            return HttpServer::AuthCheckResult{};
+        }
+
+        const std::string cookie = ExtractCookieValue(ctx->request()->getHeader("Cookie"), "kit_session");
+        auto current_user = authSvc->Authenticate(ctx, cookie);
+        if(!current_user.has_value())
+        {
+            return HttpServer::AuthCheckResult{
+                false,
+                StateCode::k401Unauthorized,
+                R"({"code":-401,"message":"unauthorized","data":{}})",
+                path.find("/html/") == 0
+            };
+        }
+
+        const bool is_admin_path = path.find("/users/") == 0
+            || path == "/users/list"
+            || path == "/users/add";
+        if(is_admin_path && !current_user->IsAdmin())
+        {
+            return HttpServer::AuthCheckResult{
+                false,
+                StateCode::k403Forbidden,
+                R"({"code":-403,"message":"forbidden","data":{}})",
+                false
+            };
+        }
+
+        return HttpServer::AuthCheckResult{};
+    });
+
+    auto app = std::make_shared<Application>(server, runtime_controller);
 
 
     // 先恢复当前库上正在运行的服务器, 恢复服务器的同时需要重新添加协议

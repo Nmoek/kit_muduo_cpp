@@ -9,28 +9,19 @@
 #ifndef __KIT_DOMAIN_PROJECT_SERVER_H__
 #define __KIT_DOMAIN_PROJECT_SERVER_H__
 
-#include "base/event_loop_thread.h"
 #include "domain/runtime_result.h"
 #include "net/call_backs.h"
 #include "work/domain/type.h"
 #include "net/inet_address.h"
-#include "net/buffer.h"
 #include "nlohmann/json.hpp"
+#include "protocol_interaction.h"
+#include "protocol_interaction_observation.h"
 
 #include <memory>
-#include <mutex>
-#include <string>
-#include <unordered_map>
 #include <vector>
 
 using nljson = nlohmann::json;
 
-namespace kit_muduo{
-class EventLoop;
-class HttpServer;
-class TcpServer;
-
-}
 
 namespace kit_domain {
 
@@ -45,9 +36,10 @@ class CustomTcpMessage;
 struct CustomTcpItemCfg;
 class RuntimeLease;
 
-class ProjectServer
+class ProjectServer: public std::enable_shared_from_this<ProjectServer>
 {
 public:
+    using ObserveCallback = std::function<void(ProtocolInteractionObservation)>;
 
     ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop);
 
@@ -59,6 +51,8 @@ public:
     bool isActive() const;
 
     kit_muduo::EventLoop *getLoop();
+
+    void setObserveCallback(ObserveCallback cb) { observe_cb_ = std::move(cb); }
 
 
     virtual void start() = 0;
@@ -86,149 +80,22 @@ public:
     virtual std::shared_ptr<CustomTcpPattern> GetPatternInfo() = 0;
 
 protected:
+
+    void emitObserve(ProtocolInteractionObservation obs);
+
+protected:
     /// @brief 测试服务id
     int64_t project_id_;
     /// @brief 租赁Loop
     std::shared_ptr<RuntimeLease> lease_loop_;
     std::atomic_bool stopped_{false};
+    ObserveCallback observe_cb_;
+
 };
 
 bool WaitRuntimeStopDone(const char *name,
     int64_t project_id,
     const std::function<void(std::function<void()>)> &start_stop);
-
-
-class HttpProjectServer: 
-    public ProjectServer, public std::enable_shared_from_this<ProjectServer>
-{
-public:
-    struct HttpRuntimeItem
-    {
-        std::shared_ptr<HttpProtocolItem> item{nullptr};
-        uint64_t route_id;
-    };
-
-    HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop);
-
-    ~HttpProjectServer() override;
-
-    void start() override;
-
-    bool stop() override;
-
-    const kit_muduo::InetAddress& getBindAddr() const override;
-
-    RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
-
-    RuntimeResult<void> DelProtocolItem(int64_t protocol_id) override;
-
-    RuntimeResult<std::shared_ptr<ProtocolItem>> GetProtocolItem(int64_t protocol_id) override;
-
-    RuntimeResult<void> UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson& req_cfg_json) override;
-
-    RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson& resp_cfg_json) override;
-
-    RuntimeResult<void> UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
-
-    RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &req_body_data) override;
-
-    RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char> &resp_body_data) override;
-
-    std::shared_ptr<CustomTcpPattern> GetPatternInfo() override;
-
-private:
-
-    RuntimeResult<void> ReplaceReqCfgProtocolItem(const HttpRuntimeItem& http_run_item,  const HttpItemReqHeaderCfg &new_req_cfg);
-
-    inline bool isSameRoute(const HttpItemReqHeaderCfg &old_cfg, const HttpItemReqHeaderCfg &new_cfg);
-
-
-    void HttpProjectProcess(int32_t protocol_id,kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx);
-
-
-private:
-    kit_muduo::HttpServerPtr http_server_;
-
-    /// @brief 测试服务上依附的配置好的测试项
-    std::unordered_map<int64_t, HttpRuntimeItem> http_items_;
-    std::mutex mtx_;
-
-};
-
-
-class CustomTcpProjectServer : public ProjectServer 
-{
-public:
-    struct CustomTcpRuntimeItem
-    {
-        std::shared_ptr<CustomTcpProtocolItem> item{nullptr};
-        std::string function_code_value;
-    };
-
-    /**
-     * @brief 构造函数
-     * @param project_id 项目ID
-     * @param tcp_server TCP服务器指针
-     */
-    CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop);
-
-    ~CustomTcpProjectServer() override;
-
-    void start() override;
-
-    bool stop() override;
-
-    const kit_muduo::InetAddress& getBindAddr() const override;
-
-    RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
-
-    RuntimeResult<void> DelProtocolItem(int64_t protocol_id) override;
-
-    RuntimeResult<std::shared_ptr<ProtocolItem>> GetProtocolItem(int64_t protocol_id) override;
-
-    RuntimeResult<void> UpdateReqCfgProtocolItem(int64_t protocol_id, const nljson &req_cfg_json) override;
-
-    RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t protocol_id, const nljson &resp_cfg_json) override;
-
-    RuntimeResult<void> UpdateBodyProtocolItem(int64_t protocol_id, ProtocolSide side, const ProtocolBodyType body_type, const std::vector<char> &body_data) override;
-
-    RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& req_body_data) override;
-
-    RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t protocol_id, const ProtocolBodyType body_type, const std::vector<char>& resp_body_data) override;
-
-    std::shared_ptr<CustomTcpPattern> GetPatternInfo() override;
-
-    RuntimeResult<void> setPatternInfo(const std::shared_ptr<CustomTcpPattern> pattern);
-
-    // 通过请求的功能码来反向索引 配置的数据
-    std::shared_ptr<CustomTcpProtocolItem> findByFuncCode(const std::string&func_code);
-
-private:
-    void onConnect(kit_muduo::TcpConnectionPtr conn);
-    void onMessage(kit_muduo::TcpConnectionPtr conn, kit_muduo::Buffer *buf, kit_muduo::TimeStamp receiveTime);
-
-    RuntimeResult<void> ReplaceReqCfgProtocolItem(const CustomTcpRuntimeItem& tcp_run_item,  const CustomTcpItemCfg &new_req_cfg);
-
-    // 自定义TCP服务器完整消息处理函数 
-    void handleRequest(kit_muduo::TcpConnectionPtr conn, std::shared_ptr<CustomTcpMessage> req);
-
-private:
-    /// @brief 实际运行TCP服务器
-    kit_muduo::TcpServerPtr tcp_server_;
-    /// @brief 格式信息
-    std::shared_ptr<CustomTcpPattern> pattern_info_;
-    /// @brief 格式信息锁
-    std::mutex pattern_info_mtx_;
-
-
-    /// @brief tcp 协议项列表
-    std::unordered_map<int64_t, CustomTcpRuntimeItem> tcp_items_;
-    /// @brief 基于请求功能码的协议项映射表
-    // 和协议列表共用一把锁
-    std::unordered_map<std::string, int64_t> func_codes2ids_;
-    std::mutex mtx_;
-
-};
 
 }
 #endif

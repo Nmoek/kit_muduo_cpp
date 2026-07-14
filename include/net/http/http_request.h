@@ -77,6 +77,8 @@ public:
     void setMethod(int32_t methodVal) { method_.set(methodVal); }
     void setMethod(Method method) { method_ = std::move(method); }
 
+    std::string url() const { return url_; }
+    void setUrl(const std::string &url) { url_ = NormalizeHttpPath(url); }
 
     std::string path() const { return path_; }
     void setPath(const std::string &path) { path_ = NormalizeHttpPath(path); }
@@ -134,6 +136,12 @@ public:
     std::string bodyString() const;
 
     /**
+     * @brief 仅请求头序列化
+     * @return std::string 
+     */
+    std::string toHeaderString();
+
+    /**
      * @brief 报文序列化
      * @return std::string
      */
@@ -147,9 +155,11 @@ private:
     
 protected:
     using ParamMap = std::unordered_map<std::string, std::string>;
+    /// @brief 完整Url
+    std::string url_;
     /// @brief 请求路径
     std::string path_;
-    /// @brief 请求参数
+    /// @brief 路径上的请求参数
     ParamMap query_params_;
     /// @brief 动态路由参数
     ParamMap route_params_;

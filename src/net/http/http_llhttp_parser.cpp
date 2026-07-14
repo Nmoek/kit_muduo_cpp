@@ -103,6 +103,7 @@ bool LLhttpParser::parse(Buffer &buf)
 {
     const char *data = buf.peek();
     const size_t len = buf.readableBytes();
+    auto &raw_capture = _context->rawCapture();
 
     if(is_paused_)
     {
@@ -139,6 +140,11 @@ bool LLhttpParser::parse(Buffer &buf)
 
     // 解析错误时是否 reset consumed 要谨慎。当前上层会 400+shutdown，
     // 可以消费已解析部分，也可以保留给日志。最小改动建议先不保留。
+
+    // http捕获 解析失败的原始bytes
+    raw_capture.insert(raw_capture.end(), buf.peek(), buf.peek() + std::min(static_cast<size_t>(1*1024), buf.readableBytes()));
+
+
     buf.reset(consumed_len);
     return false;
 }
@@ -254,6 +260,7 @@ int LLhttpParser::onUrlComplete(llhttp_t* parser)
     HttpRequestPtr request = parser_ptr->_context->request();
     HeaderContext &ctx = parser_ptr->_headerCtx;
 
+    request->setUrl(ctx.url);
     parser_ptr->parseUrl(ctx.url, request);
     return 0;
 }

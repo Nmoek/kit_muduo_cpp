@@ -294,7 +294,7 @@ TEST(TestHttpReq, content_type_header_is_case_insensitive)
 3. 验证序列化和反序列化在 method/path/header/body 上闭环。
 
 示例：
-  HttpRequest(body="12345678") -> toString -> parseRequest
+  HttpRequest(url="/main.html", body="12345678") -> toString -> parseRequest
         |
         v
   parsed body == "12345678"
@@ -304,6 +304,7 @@ TEST(TestHttpReq, create_data)
     HttpRequest orireq;
 
     orireq.setMethod(HttpRequest::Method::kGet);
+    orireq.setUrl("/main.html");
     orireq.setPath("/main.html");
     orireq.setVersion(Version::kHttp11);
     orireq.addHeader("Host", "www.kit.com");

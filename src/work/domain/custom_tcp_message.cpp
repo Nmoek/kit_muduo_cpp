@@ -7,20 +7,19 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/domain_log.h"
-#include "domain/custom_tcp_message.h"
 #include "domain/custom_tcp_pattern.h"
+#include "domain/custom_tcp_message.h"
 #include "domain/custom_tcp_context.h"
+#include <optional>
 
 
 namespace kit_domain {
 
 
-
-CustomTcpMessage::CustomTcpMessage()
+CustomTcpMessage::CustomTcpMessage(std::shared_ptr<CustomTcpPattern> pattern)
     :recordTime_(0)
+    ,weak_pattern_(pattern)
 {
-
-
     CUSTOM_F_DEBUG("CustomTcpRequest::construct() %p\n", this);
 }
 
@@ -56,14 +55,8 @@ void CustomTcpMessage::appendBodyData(const std::vector<uint8_t>& data)
     body_data_.insert(body_data_.end(), data.begin(), data.end());
 }
 
-std::string CustomTcpMessage::bodyString() const
-{
-    return std::string(body_data_.begin(), body_data_.end());
-}
 
-
-
-uint64_t CustomTcpMessage::getHeaderBytes() const
+uint64_t CustomTcpMessage::getHeaderLen() const
 {
     uint64_t res = 0;
     for(auto &it : header_fields_by_byte_pos_)
@@ -73,6 +66,135 @@ uint64_t CustomTcpMessage::getHeaderBytes() const
     return res;
 }
 
+std::string CustomTcpMessage::toHeaderString() const
+{
+    std::string data;
+    for(auto &field : header_fields_by_byte_pos_)
+    {
+        data += field.second.hex() + " ";
+    }
+    return data;
+}
+
+
+std::optional<std::vector<uint8_t>> CustomTcpMessage::toBytes()const 
+{
+    auto pattern = weak_pattern_.lock();
+    if(!pattern)
+    {
+        CUSTOM_F_INFO("custom tcp pattern null\n");
+        return std::nullopt;
+    }
+    uint64_t header_len = getHeaderLen();
+    if(header_len <= 0)
+    {
+        CUSTOM_F_ERROR("custom tcp pattern info not asseble\n");
+        return std::nullopt;
+    }
+
+    std::vector<uint8_t> headers_data(header_len, 0x00);
+
+    try
+    {
+        for(auto &it : header_fields_by_byte_pos_)
+        {
+            const auto& field = it.second;
+            const auto &field_spec = field.spec;
+            switch(WriteKindOf(field_spec.role))
+            {
+                case FieldWriteKind::kZeroFill:
+                {
+                    // 什么都不做保持填充0
+                    break;
+                }
+                case FieldWriteKind::kFixedMatch:
+                {
+                    if(!field_spec.match.has_value() || !CustomTcpPattern::WriteAt(headers_data, field_spec, field_spec.match.value()))
+                    {
+                        CUSTOM_F_ERROR("write match error! name[%s] pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+                        return std::nullopt;
+                    }
+
+                    break;
+                }
+                case FieldWriteKind::kItemFunctionCode:
+                {
+                    const auto& bytes = CustomTcpPattern::ParseFromHex(field_spec, function_code_hex_);
+
+                    if(!CustomTcpPattern::WriteAt(headers_data, field_spec, bytes))
+                    {
+                        CUSTOM_F_ERROR("write item function code error! name[%s] pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+                        return std::nullopt;
+                    }
+
+                    break;
+                }
+                case FieldWriteKind::kItemFieldOverride:
+                {
+                    if(field.bytes.empty())
+                    {
+                        CUSTOM_F_DEBUG("item override not set! name[%s] byte_pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+
+                        break;                    
+                    }
+
+                    if(!CustomTcpPattern::WriteAt(headers_data, field_spec, field.bytes))
+                    {
+                        CUSTOM_F_ERROR("write item override error! name[%s] byte_pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+                        return std::nullopt;
+                    }
+
+                    break;
+                }
+                case FieldWriteKind::kAutoPatch:
+                {
+                    // 什么都不做后续 根据长度策略自动填充
+                    break;
+                }
+                case FieldWriteKind::kUnsupported:
+                {
+                    CUSTOM_F_ERROR("write field unsupport! name[%s] byte_pos[%ld] role_tag[%s]\n", field_spec.name.c_str(), field_spec.byte_pos, RoleTag(field_spec.role).c_str());
+                    return std::nullopt;
+                }
+                default:
+                    CUSTOM_F_ERROR("undefine write kind\n");
+                    return std::nullopt;
+            }
+        }
+
+        // TODO 这里的强依赖是否能去掉？
+        if(!pattern->writeLengthByPatch(headers_data, body_data_.size()))
+        {
+            return std::nullopt;
+        }
+
+        std::vector<uint8_t> data;
+        // 预留空间避免扩容
+        data.reserve(headers_data.size() + body_data_.size());
+        // 填充头部字段数据
+        data.insert(data.end(), headers_data.begin(), headers_data.end());
+        // 填充Body数据
+        data.insert(data.end(), body_data_.begin(), body_data_.end());
+
+        return data;
+    }
+    catch(const std::exception &e)
+    {
+        CUSTOM_F_ERROR("serialize exception: %s \n", e.what());
+        return std::nullopt;
+    }
+
+}
+
+std::string CustomTcpMessage::toString() const
+{
+    const auto &data = toBytes();
+    if(!data.has_value())
+    {
+        return "";
+    }
+    return std::string(data->begin(), data->end());
+}
 
 
 

@@ -13,11 +13,12 @@
 #include "net/http/http_content.h"
 #include "net/net_data_converter.h"
 #include "domain/protocol_interaction.h"
+#include "domain/http_project_server.h"
 
 using namespace kit_muduo;
+using namespace kit_muduo::http;
 
 namespace kit_domain {
-
 
 namespace {
 

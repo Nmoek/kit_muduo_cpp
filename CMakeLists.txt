@@ -66,6 +66,7 @@ option(MUDUO_TEST.ASAN "build test_asan" OFF)
 option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
 option(MUDUO_TEST.BYTES_CODEC "build test_bytes_codec" OFF)
+option(MUDUO_TEST.BOUNDED_LOCK_FREE_QUEUE "build test_bounded_lock_free_queue" OFF)
 option(MUDUO_TEST.MULTIFORM "build test_multiform" OFF)
 option(MUDUO_TEST.WS_UTIL "build test_websocket_util" OFF)
 option(MUDUO_TEST.WS_FRAME "build test_websocket_frame" OFF)
@@ -80,6 +81,7 @@ option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
 option(WORK_TEST.SQLITE_ORM_POOL "build test_sqlite_orm_pool" OFF)
 option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
 option(WORK_TEST.WEB_PROTOCOL "build test_web_protocol" OFF)
+option(WORK_TEST.WEB_PROTOCOL_INTERACTION "build test_web_protocol_interaction" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
@@ -278,7 +280,8 @@ set(WORK_DOMAIN_SRC
     src/work/domain/custom_tcp_pattern.cpp
 
     src/work/domain/protocol_interaction.cpp
-
+    src/work/domain/protocol_interaction_hub.cpp
+    src/work/domain/protocol_interaction_publisher.cpp
 )
 
 set(WORK_RUNTIME_SRC
@@ -291,10 +294,12 @@ set(WORK_WEB_SRC
     src/work/web/web_protocol.cpp
     src/work/web/web_auth.cpp
     src/work/web/web_user.cpp
+    src/work/web/web_protocol_interaction.cpp
     src/work/web/web_common.cpp
     src/work/web/project_vo.cpp
     src/work/web/protocol_vo.cpp
     src/work/web/write_response.cpp
+
 )
 
 set(IOC_SRC
@@ -439,6 +444,9 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache
 # test_bytes_codec 纯字节格式 codec 测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.BYTES_CODEC test_bytes_codec tests/test_bytes_codec.cpp)
 
+# test_bounded_lock_free_queue 有界无锁队列测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.BOUNDED_LOCK_FREE_QUEUE test_bounded_lock_free_queue tests/test_bounded_lock_free_queue.cpp)
+
 # test_http_content HTTP content meta 解析测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTENT test_http_content tests/http/test_http_content.cpp)
 
@@ -485,6 +493,11 @@ add_kit_test(WORK_TEST WORK_TEST.WEB_PROJECT test_web_project tests/work/web/tes
 # web端协议项接口测试 test_web_protocol
 add_kit_test(WORK_TEST WORK_TEST.WEB_PROTOCOL test_web_protocol tests/work/web/test_web_protocol.cpp ${WORK_SRC})
 
+# 协议项实时交互详情 WebSocket 接口测试 test_web_protocol_interaction
+add_kit_test(WORK_TEST WORK_TEST.WEB_PROTOCOL_INTERACTION test_web_protocol_interaction
+    tests/work/web/test_web_protocol_interaction.cpp
+    ${WORK_SRC})
+
 # custom_tcp服务器实例 test_custom_project_server
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})
 
@@ -513,7 +526,9 @@ add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_BODY_PIPELINE test_protocol_body_pipel
 add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_INTERACTION test_protocol_interaction
     tests/work/domain/test_protocol_interaction.cpp
     src/work/domain/type.cpp
-    src/work/domain/protocol_interaction.cpp)
+    src/work/domain/protocol_interaction.cpp
+    src/work/domain/protocol_interaction_hub.cpp
+    src/work/domain/protocol_interaction_publisher.cpp)
 
 # 自定义tcp字段测试 test_custom_tcp_field
 add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_FIELD test_custom_tcp_field tests/work/domain/test_custom_tcp_field.cpp ${WORK_SRC})

@@ -23,6 +23,7 @@ class Buffer;
 class TimeStamp;
 class TcpServer;
 class InetAddress;
+class EventLoop;
 
 class Timer;
 
@@ -31,6 +32,8 @@ class HttpRequest;
 class HttpResponse;
 class HttpContext;
 class HttpServer;
+struct HttpExchangeObservation;
+
 };
 
 namespace ws{
@@ -81,7 +84,8 @@ using UdpMessageCb = std::function<void(const std::vector<uint8_t>&, const InetA
 using UdpWriteCompleteCb = std::function<void()>;
 using UdpErrorCb = std::function<void(int32_t, const InetAddress&)>;
 
-using WsOnCb = std::function<bool(WebSocketSessionPtr, HttpContextPtr)>;
+using WsPrepareCb = std::function<bool(WebSocketSessionPtr, HttpContextPtr)>;
+using WsOnOpenCb = std::function<void(WebSocketSessionPtr)>;
 using WSTextMessageCb = std::function<void(WebSocketSessionPtr,const std::string&)>;
 using WSClosedCb = std::function<void(WebSocketSessionPtr)>;
 using WSErrorCb = std::function<void(WebSocketSessionPtr, ws::CloseCode, const std::string&)>;

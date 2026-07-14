@@ -277,7 +277,7 @@ TEST(TestProtocolBodyPipeline, BinaryBodyAcceptsAnyBytes)
  */
 TEST(TestProtocolBodyPipeline, UnknownOrOutOfRangeBodyTypeFails)
 {
-    EXPECT_FALSE(Check(ProtocolBodyType::kUnknown, Body("{}")).ok);
+    EXPECT_FALSE(Check(ProtocolBodyType::kNone, Body("{}")).ok);
     EXPECT_FALSE(Check(static_cast<ProtocolBodyType>(static_cast<int>(ProtocolBodyType::kMax)), Body("{}")).ok);
 }
 

@@ -9,16 +9,15 @@
 #ifndef __KIT_IOC_WEB_H__
 #define __KIT_IOC_WEB_H__
 
-#include<memory>
+#include <memory>
 
 namespace kit_muduo {
 class EventLoop;
 
 namespace http {
-
 class HttpServer;
+};// namespace http
 
-};// namespace kit_muduo
 }; // namespace kit_muduo
 
 namespace kit_domain {
@@ -26,7 +25,7 @@ class AuthHandler;
 class ProjectHandler;
 class ProtocolHandler;
 class UserHandler;
-class AuthService;
+class ProtocolInteractionHandler;
 }
 
 
@@ -37,7 +36,7 @@ std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop 
     kit_domain::ProtocolHandler *protocHdl,
     kit_domain::AuthHandler *authHdl,
     kit_domain::UserHandler *userHdl,
-    std::shared_ptr<kit_domain::AuthService> authSvc);
+    kit_domain::ProtocolInteractionHandler *interHdl);
     
 } // namespace kit_app
 #endif

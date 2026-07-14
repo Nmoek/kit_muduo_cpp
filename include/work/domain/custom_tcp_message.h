@@ -16,23 +16,22 @@
 
 #include "base/time_stamp.h"
 #include "domain/custom_tcp_field_model.h"
-#include "nlohmann/json.hpp"
 
 namespace kit_domain {
 
 class CustomTcpContext;
+class CustomTcpPattern;
 
 class CustomTcpMessage
 {
 public:
 
     /// byte_pos <---> FieldValue
-    using HeadersValueMap = std::unordered_map<size_t, FieldValue>;
+    using HeadersValueMap = std::map<size_t, FieldValue>;
 
-    CustomTcpMessage();
+    explicit CustomTcpMessage(std::shared_ptr<CustomTcpPattern> pattern);
 
     ~CustomTcpMessage();
-
 
     CustomTcpMessage(CustomTcpMessage&&) = default;
 
@@ -56,23 +55,23 @@ public:
 
     const std::vector<uint8_t>& bodyData() const { return body_data_; }
     std::vector<uint8_t>& bodyData() { return body_data_; }
+    void setBodyData(const std::vector<char> &data) { body_data_.assign(data.begin(), data.end()); }
     void setBodyData(const std::vector<uint8_t>& data) { body_data_ = data; }
     void setBodyData(std::vector<uint8_t>&& data) { body_data_ = std::move(data); }
     void appendBodyData(const char* start, size_t len);
     void appendBodyData(const std::vector<uint8_t>& data);
-    std::string bodyString() const;
-
+ 
     /**
      * @brief 获取头部的总长度
-     * @return int64_t 
+     * @return uint64_t 
      */
-    uint64_t getHeaderBytes() const;
+    uint64_t getHeaderLen() const;
 
-
+    std::string toHeaderString() const;
+    std::optional<std::vector<uint8_t>> toBytes() const;
+    std::string toString() const;
 
 private:
-
-
     /// @brief 功能码十六进制表示值
     std::string function_code_hex_;
     /// @brief 按 byte_pos 索引的报文头字段表
@@ -81,9 +80,10 @@ private:
     std::vector<uint8_t> body_data_;
     /// @brief 收发时间点
     kit_muduo::TimeStamp recordTime_;
-
+    /// @brief 当前受控的格式弱指针
+    std::weak_ptr<CustomTcpPattern> weak_pattern_;
 };
-
+using CustomTcpMessagePtr = std::shared_ptr<CustomTcpMessage>;
 
 
 

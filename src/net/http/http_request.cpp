@@ -131,13 +131,13 @@ std::string HttpRequest::bodyString() const
     return std::string(body_data_.begin(), body_data_.end());
 }
 
-std::vector<uint8_t> HttpRequest::toBytes()
+std::string HttpRequest::toHeaderString()
 {
     std::stringstream ss{""};
     // Line
     ss << method_.toStr();
     ss << kSpace;
-    ss << path_;
+    ss << url_;
     ss << kSpace;
     ss << version_.toStr();
     ss << kCRLF;
@@ -164,10 +164,16 @@ std::vector<uint8_t> HttpRequest::toBytes()
         ss << kCRLF;
     }
     ss << kCRLF;
-    const std::string header = ss.str();
+    return ss.str();
+}
+
+std::vector<uint8_t> HttpRequest::toBytes()
+{
+    const std::string& header = toHeaderString();
 
     std::vector<uint8_t> out;
     out.reserve(header.size() + body_data_.size());
+
     out.insert(out.end(), header.begin(), header.end());
     out.insert(out.end(), body_data_.begin(), body_data_.end());
     return out;

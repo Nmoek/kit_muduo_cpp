@@ -9,9 +9,11 @@
 
 #include "domain/project.h"
 #include "base/time_stamp.h"
+#include "domain/http_project_server.h"
 #include "domain/http_protocol_item.h"
 #include "domain/project_server.h"
 #include "domain/protocol.h"
+#include "domain/protocol_interaction_publisher.h"
 #include "domain/protocol_item.h"
 #include "domain/runtime_loop_pool.h"
 #include "domain/runtime_result.h"
@@ -211,7 +213,9 @@ protected:
     {
         mock_ = std::make_shared<testing::NiceMock<MockProtocolSvc>>();
         project_mock_ = std::make_shared<testing::NiceMock<MockProjectSvc>>();
-        runtime_manager_ = std::make_shared<ProjectRuntimeManager>(project_mock_, mock_, 1);
+        publisher_ = std::make_shared<ProtocolInteractionPublisher>(
+            std::vector<std::shared_ptr<ProtocolInteractionSink>>{});
+        runtime_manager_ = std::make_shared<ProjectRuntimeManager>(project_mock_, mock_, publisher_, 1);
         handler_ = std::make_unique<ProtocolHandler>(mock_, project_mock_, runtime_manager_);
     }
 
@@ -223,6 +227,7 @@ protected:
 
     std::shared_ptr<testing::NiceMock<MockProtocolSvc>> mock_;
     std::shared_ptr<testing::NiceMock<MockProjectSvc>> project_mock_;
+    std::shared_ptr<ProtocolInteractionPublisher> publisher_;
     std::shared_ptr<ProjectRuntimeManager> runtime_manager_;
     std::unique_ptr<ProtocolHandler> handler_;
 };

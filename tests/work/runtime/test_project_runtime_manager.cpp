@@ -11,6 +11,7 @@
 #include "domain/project_server.h"
 #include "domain/protocol.h"
 #include "domain/http_protocol_item.h"
+#include "domain/protocol_interaction_publisher.h"
 #include "domain/protocol_item.h"
 #include "domain/runtime_result.h"
 #include "runtime/runtime_controller.h"
@@ -370,6 +371,20 @@ static std::shared_ptr<FakeProjectServer> MakeFakeRuntimeServer(int64_t project_
     return server;
 }
 
+static std::shared_ptr<ProjectRuntimeManager> MakeRuntimeManagerForTest(
+        std::shared_ptr<ProjectSvcInterface> project_svc,
+        std::shared_ptr<ProtocolSvcInterface> protocol_svc,
+        size_t runtime_loop_capacity = 2)
+{
+    auto publisher = std::make_shared<ProtocolInteractionPublisher>(
+        std::vector<std::shared_ptr<ProtocolInteractionSink>>{});
+    return std::make_shared<ProjectRuntimeManager>(
+        std::move(project_svc),
+        std::move(protocol_svc),
+        std::move(publisher),
+        runtime_loop_capacity);
+}
+
 } // namespace
 
 /*
@@ -393,7 +408,7 @@ TEST(ProjectRuntimeManagerSuite, StartProjectHydratesRuntimeEnabledProtocols)
     constexpr int64_t protocol_id = 960101;
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -439,7 +454,7 @@ TEST(ProjectRuntimeManagerSuite, StartProjectRouteConflictDoesNotPersistRunningO
     constexpr int64_t project_id = 9602;
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -480,7 +495,7 @@ TEST(ProjectRuntimeManagerSuite, StartProjectMovesRuntimeKeyMismatchProtocolToRe
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -530,7 +545,7 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolOffPersistsOnlyAndGeneratesRuntimeKe
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -575,7 +590,7 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolRejectsInvalidRequestJsonBodyBeforeP
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -608,7 +623,7 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolOnRejectsStoppedProjectBeforePersist
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -641,7 +656,7 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolOnPersistsAndAppliesRuntime)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     runtime_manager->addServer(project_id, server);
 
@@ -690,7 +705,7 @@ TEST(ProjectRuntimeManagerSuite, AddProtocolOnRuntimeFailureRollsBackInsertedPro
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     server->failNextAdd();
     runtime_manager->addServer(project_id, server);
@@ -738,7 +753,7 @@ TEST(ProjectRuntimeManagerSuite, EnableProtocolRejectsReConfigBeforeDbAndRuntime
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     runtime_manager->addServer(project_id, server);
 
@@ -777,7 +792,7 @@ TEST(ProjectRuntimeManagerSuite, EnableProtocolOffUpdatesDbThenAddsRuntime)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     runtime_manager->addServer(project_id, server);
 
@@ -825,7 +840,7 @@ TEST(ProjectRuntimeManagerSuite, EnableProtocolRuntimeFailureRollsBackConfigStat
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     server->failNextAdd();
     runtime_manager->addServer(project_id, server);
@@ -876,7 +891,7 @@ TEST(ProjectRuntimeManagerSuite, DisableProtocolOffIsIdempotentWithoutDbOrRuntim
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     runtime_manager->addServer(project_id, server);
 
@@ -914,7 +929,7 @@ TEST(ProjectRuntimeManagerSuite, DisableProtocolOnUpdatesDbThenDeletesRuntime)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     auto protocol_item = std::make_shared<HttpProtocolItem>();
     protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
@@ -960,7 +975,7 @@ TEST(ProjectRuntimeManagerSuite, DelProtocolOnRunningPersistsAndDeletesRuntime)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     auto protocol_item = std::make_shared<HttpProtocolItem>();
     protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
@@ -1005,7 +1020,7 @@ TEST(ProjectRuntimeManagerSuite, DelProtocolRuntimeFailureRecoversDeletedProtoco
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     auto protocol_item = std::make_shared<HttpProtocolItem>();
     protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
@@ -1054,7 +1069,7 @@ TEST(ProjectRuntimeManagerSuite, DelProtocolReConfigPersistsOnly)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1090,7 +1105,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolCfgRejectsReConfigBeforeReadAndWr
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1133,7 +1148,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolCfgOffPersistsMergedCfgAndRuntime
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     {
         InSequence seq;
@@ -1179,7 +1194,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolCfgOnRunningPersistsAndUpdatesRun
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     auto protocol_item = std::make_shared<HttpProtocolItem>();
     protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
@@ -1238,7 +1253,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolCfgRuntimeFailureRollsBackDbCfgAn
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     auto protocol_item = std::make_shared<HttpProtocolItem>();
     protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
@@ -1298,7 +1313,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyReConfigPersistsOnly)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1338,7 +1353,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidJsonBeforePersi
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1377,7 +1392,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidXmlBeforePersis
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1416,7 +1431,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidTextBeforePersi
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1460,7 +1475,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyBinaryPersistsAnyBytes)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
@@ -1500,7 +1515,7 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRuntimeFailureRollsBackDbBody
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
     auto server = MakeFakeRuntimeServer(project_id);
     auto protocol_item = std::make_shared<HttpProtocolItem>();
     protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
@@ -1570,7 +1585,7 @@ TEST(ProjectRuntimeManagerSuite, ReconfigProtocolUpdatesExistingProtocolToOffWit
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(access_protocol, ProjectRuntimeState::kStopped)),
@@ -1618,7 +1633,7 @@ TEST(ProjectRuntimeManagerSuite, ReconfigProtocolRejectsNonReConfigProtocol)
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(input, ProjectRuntimeState::kStopped)),
@@ -1658,7 +1673,7 @@ TEST(ProjectRuntimeManagerSuite, ReconfigProtocolRejectsInvalidResponseJsonBodyB
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(input, ProjectRuntimeState::kStopped)),
@@ -1690,7 +1705,7 @@ TEST(ProjectRuntimeManagerSuite, RepeatedStartAndStopAreIdempotent)
     constexpr int64_t project_id = 9603;
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .Times(2)
@@ -1746,7 +1761,7 @@ TEST(ProjectRuntimeManagerSuite, RuntimeManagerShutdownStopsServersAndClearsRegi
     constexpr int64_t project_id = 9651;
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -1793,7 +1808,7 @@ TEST(ProjectRuntimeManagerSuite, RecoverKeepsFailedProjectIdAndContinuesOtherPro
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetAllActive(_))
         .WillOnce(Return(std::vector<Project>{success_project, failed_project}));
@@ -1854,7 +1869,7 @@ TEST(ProjectRuntimeManagerSuite, EditPatternInfoStoppedCustomTcpPersistsAndWithd
     const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id)));
@@ -1893,7 +1908,7 @@ TEST(ProjectRuntimeManagerSuite, EditPatternInfoRejectsRunningProject)
     const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id, ProjectRuntimeState::kRunning)));
@@ -1926,7 +1941,7 @@ TEST(ProjectRuntimeManagerSuite, EditPatternInfoRejectsNonCustomTcpProject)
     const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeHttpProjectForStatus(project_id)));
@@ -1958,7 +1973,7 @@ TEST(ProjectRuntimeManagerSuite, EditPatternInfoRejectsInvalidPatternInfo)
     const nlohmann::json invalid_pattern_info = nlohmann::json::object();
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id)));
@@ -1994,7 +2009,7 @@ TEST(ProjectRuntimeManagerSuite, EditPatternInfoReturnsPersistFailedWhenServiceU
     const nlohmann::json pattern_info = MinimalCustomTcpPatternInfo();
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
-    auto runtime_manager = std::make_shared<ProjectRuntimeManager>(mocksvc, mock_protocol_svc, 2);
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
 
     EXPECT_CALL(*mocksvc, GetById(_, project_id))
         .WillOnce(Return(MakeCustomTcpProjectForPattern(project_id)));

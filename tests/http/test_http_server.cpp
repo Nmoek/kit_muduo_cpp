@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <arpa/inet.h>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cstring>
@@ -243,7 +244,7 @@ private:
 };
 
 
-void testHttpCb(TcpConnectionPtr conn, HttpContextPtr ctx)
+HttpDispatchResult testHttpCb(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
     auto resp = ctx->response();
@@ -256,6 +257,7 @@ void testHttpCb(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->appendBodyData("\n");
     conn->send(resp->toBytes());
 
+    return HttpDispatchResult::kClose;
 }
 
 
@@ -310,7 +312,9 @@ TEST(TestHttpServer, pipelined_requests_are_dispatched_separately)
             if(resp->connectionClosed())
             {
                 conn->shutdown();
+                return HttpDispatchResult::kClose;
             }
+            return HttpDispatchResult::kContinueHttp;
         });
         server->start();
         started.set_value();
@@ -422,6 +426,96 @@ TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
 
 /*
 测试思路：
+1. 启动启用 business thread pool 的 HttpServer，并注册一个 WebSocket upgrade 路由。
+2. 配置 auth callback 模拟未登录 Cookie，返回 401。
+3. 发送标准 WebSocket upgrade 请求时，应先在 HttpServer::handleRequest 的 work_func 中被鉴权拦截，
+   不进入 WebSocket prepare，不返回 101。
+
+示例：
+  GET /ws/auth-check + Upgrade: websocket + 未登录
+        |
+        v
+  HTTP/1.1 401 Unauthorized，且 Ws prepare 未被调用
+*/
+TEST(TestHttpServer, WebSocketUpgradeAuthFailureReturns401BeforePrepare)
+{
+    auto port_result = PickUnusedLoopbackPort();
+    if(!port_result.ok)
+    {
+        GTEST_SKIP() << "loopback TCP socket unavailable: " << port_result.error;
+    }
+    const uint16_t port = port_result.port;
+
+    EventLoopThread loop_thread(nullptr, "http_ws_auth_test");
+    EventLoop *loop = loop_thread.startLoop();
+    ASSERT_NE(loop, nullptr);
+
+    std::shared_ptr<HttpServer> server;
+    HttpServerTestGuard guard(loop, &server);
+    std::promise<void> started;
+    auto started_future = started.get_future();
+    std::atomic_bool auth_called{false};
+    std::atomic_bool prepare_called{false};
+
+    loop->runInLoop([&](){
+        InetAddress addr(port, "127.0.0.1");
+        server = std::make_shared<HttpServer>(loop, addr, "http-ws-auth-test", true, TcpServer::KReusePort);
+        server->setThreadNum(0);
+        server->setBusinessThreadPoolConfig(HttpServer::BusinessThreadPoolConfig{
+            1,
+            8,
+            2,
+            1000
+        });
+        server->setAuthCallback([&auth_called](HttpContextPtr) {
+            auth_called.store(true, std::memory_order_release);
+            return HttpServer::AuthCheckResult{
+                .ok = false,
+                .http_status = StateCode::k401Unauthorized,
+                .message = R"({"code":401,"message":"unauthorized"})",
+                .redirect_to_login = false,
+            };
+        });
+        server->Ws("/ws/auth-check", [&prepare_called](auto, auto) {
+            prepare_called.store(true, std::memory_order_release);
+            return true;
+        });
+        server->start();
+        started.set_value();
+    });
+
+    ASSERT_EQ(started_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    FdGuard client_fd(ConnectLoopback(port));
+    ASSERT_GE(client_fd.fd, 0);
+
+    const std::string request =
+        "GET /ws/auth-check HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade, close\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n";
+    ASSERT_TRUE(SendAll(client_fd.fd, request));
+
+    const std::string response = ReadAll(client_fd.fd);
+    ASSERT_NE(response.find("HTTP/1.1 401 Unauthorized\r\n"), std::string::npos)
+        << response;
+    EXPECT_NE(response.find(R"({"code":401,"message":"unauthorized"})"), std::string::npos)
+        << response;
+    EXPECT_EQ(response.find("HTTP/1.1 101 Switching Protocols\r\n"), std::string::npos)
+        << response;
+    EXPECT_EQ(response.find("Sec-WebSocket-Accept:"), std::string::npos)
+        << response;
+    EXPECT_TRUE(auth_called.load(std::memory_order_acquire));
+    EXPECT_FALSE(prepare_called.load(std::memory_order_acquire));
+
+    guard.cleanup();
+}
+
+/*
+测试思路：
 1. 手动启动固定地址上的 HTTP server，便于人工联调监听行为。
 2. 该用例会长期进入 loop.loop()，默认禁用。
 3. 需要人工运行时再去掉 DISABLED_ 前缀。
@@ -499,7 +593,9 @@ TEST(TestHttpServer, DISABLED_servlet)
         if(resp->connectionClosed())
         {
             conn->shutdown();
+            return HttpDispatchResult::kClose;
         }
+        return HttpDispatchResult::kContinueHttp;
         ////////////这部分可以异步//////////////
     });
 

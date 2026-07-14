@@ -29,7 +29,7 @@ constexpr unsigned char kCarriageReturn = '\r';
 
 inline bool IsBodyTypeValid(ProtocolBodyType body_type)
 {
-    return body_type > ProtocolBodyType::kUnknown && body_type < ProtocolBodyType::kMax;
+    return body_type > ProtocolBodyType::kNone && body_type < ProtocolBodyType::kMax;
 }
 
 ProtocolBodyCheckResult CheckTextAsciiControl(const std::vector<char> &data)

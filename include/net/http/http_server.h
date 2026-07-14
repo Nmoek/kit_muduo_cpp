@@ -36,7 +36,7 @@ enum class HttpDispatchResult
 class HttpServer: Noncopyable
 {
 public:
-    using HttpCallBack = std::function<HttpDispatchResult(TcpConnectionPtr, HttpContextPtr)>;
+    using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
     using StopCallBack = TcpServer::StopCb;
 
     struct AuthCheckResult
@@ -100,7 +100,7 @@ public:
     bool Delete(const std::string &url, HttpServlet::Ptr svl);
     bool Delete(const std::string &url, const FunctionServlet::CallBack &cb);
 
-    bool Ws(const std::string &url, WsOnCb cb);
+    bool Ws(const std::string &url, WsPrepareCb cb);
 
     // ---- 删 ----
     bool removeRoute(uint64_t route_id);
@@ -118,7 +118,9 @@ private:
     void onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receiveTime);
 
     // http服务器默认处理函数
-    HttpDispatchResult handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx);
+    void handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx);
+
+    void sendResponse(TcpConnectionPtr conn, HttpContextPtr ctx, bool close_after_send);
 
 private:
     TcpServer _server;

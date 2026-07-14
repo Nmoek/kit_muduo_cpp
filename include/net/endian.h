@@ -59,7 +59,7 @@ T SwapEndian(T& value)
 template<class T>
 T SwapToBigEndian(T& value)
 {
-    throw std::invalid_argument("swap type invalid");
+    throw std::invalid_argument("SwapToBigEndian type invalid");
 }
 
 template<>
@@ -137,7 +137,7 @@ T SwapToBigEndian(T& value)
 template<class T>
 T SwapToLittleEndian(T& value)
 {
-    throw std::invalid_argument("swap type invalid");
+    throw std::invalid_argument("SwapToLittleEndian type invalid");
 }
 
 

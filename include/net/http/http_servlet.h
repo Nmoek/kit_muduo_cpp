@@ -13,6 +13,7 @@
 #include "net/http/http_request.h"
 #include "net/http/http_router.h"
 
+#include <optional>
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -69,9 +70,9 @@ struct RouteInfo {
 };
 
 enum class MatchStatus {
-    Found,
-    PathFoundMethodNotAllowed,
-    NotFound,
+    kFound,
+    kPathFoundMethodNotAllowed,
+    kNotFound,
 };
 
 
@@ -213,6 +214,17 @@ public:
 };
 
 
+struct HttpDispatchOutcome
+{
+    MatchStatus status{MatchStatus::kNotFound};
+    uint64_t route_id{0};
+    std::string route_pattern;
+    MethodMask allowed_methods{ExpectHttpMethods::None};
+    HttpServlet::Ptr servlet;
+    std::string servlet_name;
+};
+
+
 /**
  * @brief 服务分发类
  */
@@ -221,6 +233,8 @@ class HttpServletDispatch
 public:
     HttpServletDispatch();
     ~HttpServletDispatch() = default;
+
+    HttpDispatchOutcome handleWithOutcome(TcpConnectionPtr conn, HttpContextPtr ctx, bool is_auto = true);
 
     void handle(TcpConnectionPtr conn, HttpContextPtr ctx);
 
@@ -264,7 +278,8 @@ private:
     };
 
     struct MatchResult {
-        MatchStatus status{MatchStatus::NotFound};
+        uint64_t id{0};
+        MatchStatus status{MatchStatus::kNotFound};
         HttpServlet::Ptr servlet;
         MethodMask allowed_methods{ExpectHttpMethods::None};
     };

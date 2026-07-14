@@ -85,8 +85,9 @@ public:
     void setText(const std::string& text);
     void setOctetStream(std::vector<uint8_t> data);
 
-    std::vector<uint8_t> toBytes();
-    std::string toString();
+    std::string toHeaderString() const;
+    std::vector<uint8_t> toBytes() const;
+    std::string toString() const;
 
 protected:
     /// @brief 状态码

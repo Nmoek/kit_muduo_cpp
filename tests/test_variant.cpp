@@ -226,8 +226,8 @@ TEST(TestVariant, test)
     test_set_val((int64_t)100);
     // TEST_DEBUG() << "第一种参数访问： " << v.get<0>() << ", " << test_get_val<int32_t>() << ", 类型:" << typeid(v.get<0>()).name() << std::endl;
 
-    int32_t val = test_get_val<int32_t>();
-    TEST_DEBUG() << "第四种种参数访问： " << val << "," << v.get<3>() << ", " << test_get_val<int64_t>() << ", 类型:" << typeid(v.get<3>()).name() << std::endl;
+    auto val = test_get_val<int64_t>();
+    TEST_DEBUG() << "第四种参数访问： " << val << "," << v.get<3>() << ", " << test_get_val<int64_t>() << ", 类型:" << typeid(v.get<3>()).name() << std::endl;
     
     // TEST_DEBUG() << "第三种类参数访问： " << v.get<2>() << ", " << v.get<std::string>() << ", 类型:" << typeid(v.get<2>()).name() << std::endl;
     // v = 11;

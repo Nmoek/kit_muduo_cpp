@@ -26,9 +26,11 @@ public:
     void removeSession(uint64_t session_id);
 
 
-    void handleUpgrade(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx, WsOnCb on_cb);
+    void handleUpgrade(TcpConnectionPtr conn, HttpContextPtr ctx, WsPrepareCb preprae_cb);
 
     void drainRemainingWebSocketBytes(TcpConnectionPtr &conn, Buffer *buf, TimeStamp receive_time);
+
+    void onOpen(TcpConnectionPtr conn);
 
 private:
     void onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive_time);

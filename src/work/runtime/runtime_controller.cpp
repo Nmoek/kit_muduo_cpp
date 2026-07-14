@@ -21,6 +21,7 @@
 #include "domain/protocol_item.h"
 #include "domain/protocol.h"
 #include "domain/custom_tcp_pattern_spec.h"
+#include "domain/protocol_interaction_publisher.h"
 
 #include <functional>
 #include <memory>
@@ -65,10 +66,12 @@ inline ProtocolRuntimeResult CheckProtocolRuntimeCondition(const ProtocolAccessI
 
 ProjectRuntimeManager::ProjectRuntimeManager(std::shared_ptr<ProjectSvcInterface> project_svc,
     std::shared_ptr<ProtocolSvcInterface> protocol_svc,
+    std::shared_ptr<ProtocolInteractionPublisher> publisher,
     size_t runtime_loop_capacity)
     :project_svc_(std::move(project_svc))
     ,protocol_svc_(std::move(protocol_svc))
     ,loop_pool_(runtime_loop_capacity)
+    ,publisher_(publisher)
 {
 
 
@@ -241,8 +244,7 @@ void ProjectRuntimeManager::removeServer(int64_t project_id)
     {
         return;
     }
-    assert(runtime_projects_.erase(project_id) == 1);
-
+    runtime_projects_.erase(project_id);
 }
 
 std::shared_ptr<std::mutex> ProjectRuntimeManager::lockForProject(int64_t project_id)
@@ -314,6 +316,9 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
         RUNPJMA_F_ERROR("UpdateRuntimeState error! pjId[%ld]\n", project_id);
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
     }
+
+    // 清理协议交互详情数据
+    // project_server->clearProjectInteraction(project_id);
 
     return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
     ProjectRuntimeSnapshot{
@@ -486,6 +491,19 @@ ProjectRuntimeResult ProjectRuntimeManager::createAndStartProjectServerImpl(kit_
     }
 
     uint16_t cur_listen_port = project_server->getBindAddr().toPort();
+
+    std::weak_ptr<ProtocolInteractionPublisher> weak_publisher(publisher_);
+    // 协议交互详情发布器器 挂载
+    project_server->setObserveCallback([weak_publisher](const ProtocolInteractionObservation &obs){
+        auto publisher = weak_publisher.lock()
+        ;
+        if(!publisher)
+        {
+            RUNPJMA_F_INFO("protocol interaction publisher null\n");
+            return;
+        }
+        publisher->publish(std::move(obs));
+    });
 
     // 协议项全部挂载成功后 开启监听
     project_server->start();
@@ -698,11 +716,18 @@ ProtocolRuntimeResult ProjectRuntimeManager::addProtocolImpl(kit_muduo::HttpCont
         });
         if(!runtime_result.ok())
         {
-            RUNTIME_F_ERROR("protocol_item runtime add error! pjId[%ld], pcId[%ld], type[%d]: %s\n", p.m_projectId, static_cast<int32_t>(p.m_type), runtime_result.error.toMsg().c_str());
+            RUNTIME_F_ERROR("protocol_item runtime add error! pjId[%ld], pcId[%ld], type[%d]: %s\n",
+                p.m_projectId,
+                protocol_id,
+                static_cast<int32_t>(p.m_type),
+                runtime_result.error.toMsg().c_str());
 
             if(!protocol_svc_->Del(ctx, protocol_id))
             {
-                RUNTIME_F_ERROR("protocol_item  del-rollback  error! pjId[%ld], pcId[%ld], type[%d]\n", p.m_projectId, static_cast<int32_t>(p.m_type));
+                RUNTIME_F_ERROR("protocol_item  del-rollback  error! pjId[%ld], pcId[%ld], type[%d]\n",
+                    p.m_projectId,
+                    protocol_id,
+                    static_cast<int32_t>(p.m_type));
                 // 回滚失败
                 return ProtocolRuntimeResult::Failed(RuntimeControlCode::kRuntimeRollbackFailed, 
                     runtime_result.error,
@@ -800,6 +825,8 @@ ProtocolRuntimeResult ProjectRuntimeManager::delProtocolImpl(kit_muduo::HttpCont
         receipt.runtime_applied = 1;
     }
 
+    // 清理协议项交互详情
+    // pj_server->clearProtocolInteraction(project_id, protocol_id);
 
     return ProtocolRuntimeResult::Success(receipt, ProtocolRuntimeSnapshot{
         .project_id = project_id,
@@ -1164,7 +1191,7 @@ ProtocolRuntimeResult ProjectRuntimeManager::updateProtocolBodyImpl(kit_muduo::H
 
     if(access_info.project_id != project_id
         || (ProtocolSide::kRequest != side && ProtocolSide::kResponse != side)
-        || (body_type <= ProtocolBodyType::kUnknown || body_type >= ProtocolBodyType::kMax))
+        || (body_type <= ProtocolBodyType::kNone || body_type >= ProtocolBodyType::kMax))
     {
         return ProtocolRuntimeResult::Failed(RuntimeControlCode::kInvalidArgument, RuntimeError(RuntimeError::kInternalError),
         "protocol project mismatch");

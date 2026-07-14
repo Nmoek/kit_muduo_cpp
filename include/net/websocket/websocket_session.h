@@ -42,12 +42,15 @@ public:
 
     const InetAddress& peerAddr() const;
 
+    kit_muduo::EventLoop *getLoop() const;
+
     bool isOpen() const { return state_ == WebSocketSessionState::kOpen; }
     bool open() { return transition(WebSocketSessionState::kOpening, WebSocketSessionState::kOpen); }
     bool isClosing() const { return state_ == WebSocketSessionState::kClosing; }
 
     WebSocketSessionState state() const { return state_; }
 
+    void onOpen();
 
     void onMessage(WebSocketContextPtr context, Buffer *buf, TimeStamp receive_time);
 
@@ -68,12 +71,16 @@ public:
     void close(CloseCode close_code, const std::string &reason = "");
     void fail(CloseCode close_code, const std::string &reason);
 
+    void setWSOnOpenCb(WsOnOpenCb cb) { on_open_cb_ = std::move(cb); }
     void setWSTextMessageCb(WSTextMessageCb cb) { text_cb_ = std::move(cb); }
     void setCloseCb(WSClosedCb cb) { close_cb_ = std::move(cb); }
     void setWSErrorCb(WSErrorCb cb) { error_cb_ = std::move(cb); }
     void setWSWriteCompleteCb(WSWriteCompleteCb cb){ write_complete_cb_ = std::move(cb); }
 
     void setWSClearCb(WSClearCb cb) { clear_cb_ = std::move(cb); }
+
+    void setOther(std::shared_ptr<void> other) { other_ = std::move(other); }
+    std::shared_ptr<void> other() const { return other_; }
 
 public:
     /// @brief 默认单帧最大负载10M
@@ -115,11 +122,13 @@ private:
     /// @brief 关闭握手定时器 默认3s
     TimerPtr close_timer_;
 
+    WsOnOpenCb on_open_cb_;
     WSTextMessageCb text_cb_;
     WSClosedCb close_cb_;
     WSErrorCb error_cb_;
     WSWriteCompleteCb write_complete_cb_;
     WSClearCb clear_cb_; // 注意:只有这个是内部回调
+    std::shared_ptr<void> other_;
 };
 
 

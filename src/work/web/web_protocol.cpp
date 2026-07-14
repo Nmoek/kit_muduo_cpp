@@ -49,8 +49,8 @@ struct AddProtocolReqHeader {
     std::string name;                          // 测试协议名称
     ProtocolType type{ProtocolType::kUnknown};                           // 测试协议类型 HTTP/TCP
     int64_t project_id{-1};                        // 所属测试服务Id
-    ProtocolBodyType req_body_type{ProtocolBodyType::kUnknown};                 // 请求协议体类型 json/xml/plain
-    ProtocolBodyType resp_body_type{ProtocolBodyType::kUnknown};                 // 响应协议体类型 json/xml/plain
+    ProtocolBodyType req_body_type{ProtocolBodyType::kNone};                 // 请求协议体类型 json/xml/plain
+    ProtocolBodyType resp_body_type{ProtocolBodyType::kNone};                 // 响应协议体类型 json/xml/plain
     ProtocolConfigState config_state{ProtocolConfigState::kOff};         // 协议项是否同步上线
     
     // TCP特有
@@ -1085,7 +1085,7 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     {
 
         body_type =  svc_->GetBodyTypeById(ctx, protocol_id, side);
-        if(body_type <= ProtocolBodyType::kUnknown || body_type > ProtocolBodyType::kBinary)
+        if(body_type <= ProtocolBodyType::kNone || body_type > ProtocolBodyType::kBinary)
         {
             throw std::logic_error("GetBodyTypeById failed");
         }

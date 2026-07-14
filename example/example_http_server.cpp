@@ -46,6 +46,10 @@ std::shared_ptr<HttpServer> HttpServerExample(kit_muduo::EventLoop *loop)
 
     server->Ws("/ws/test", [](WebSocketSessionPtr session, HttpContextPtr ctx) -> bool {
 
+        session->setWSOnOpenCb([](WebSocketSessionPtr session){
+            session->sendText("hello im websocket!");
+        });
+
         session->setWSTextMessageCb([](WebSocketSessionPtr session,const std::string& text){
             NET_F_INFO("example", "websocket session recv[%s]===> \n%s\n", session->peerAddr().toIpPort().c_str(), text.c_str());
 
