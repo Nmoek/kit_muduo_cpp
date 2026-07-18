@@ -214,7 +214,7 @@ protected:
         mock_ = std::make_shared<testing::NiceMock<MockProtocolSvc>>();
         project_mock_ = std::make_shared<testing::NiceMock<MockProjectSvc>>();
         publisher_ = std::make_shared<ProtocolInteractionPublisher>(
-            std::vector<std::shared_ptr<ProtocolInteractionSink>>{});
+            std::vector<std::shared_ptr<InteractionSink>>{});
         runtime_manager_ = std::make_shared<ProjectRuntimeManager>(project_mock_, mock_, publisher_, 1);
         handler_ = std::make_unique<ProtocolHandler>(mock_, project_mock_, runtime_manager_);
     }

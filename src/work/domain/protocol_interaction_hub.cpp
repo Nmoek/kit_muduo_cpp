@@ -8,73 +8,27 @@
  */
 #include "domain/domain_log.h"
 #include "domain/protocol_interaction.h"
-#include <atomic>
-#include <mutex>
+#include "domain/protocol_interaction_observation.h"
 #include "domain/protocol_interaction_hub.h"
+
+#include <exception>
+#include <mutex>
 
 namespace kit_domain {
 
 
 
-ProtocolInteractionHub::ProtocolInteractionHub(size_t max_records_num)
-    :max_records_num_(max_records_num)
-    ,cur_record_seq_(0)
-    ,next_subscriber_id_(1)
+ProtocolInteractionHub::ProtocolInteractionHub()
+    :next_subscriber_id_(1)
 {
 
 }
 
-void ProtocolInteractionHub::publish(ProtocolInteractionRecord record)
+void ProtocolInteractionHub::publish(InteractionRecord record)
 {
     CallBackVec cbs;
 
     std::unique_lock<std::mutex> lock(mtx_);
-
-    if(max_records_num_ <= 0)
-    {
-        INTERAC_F_ERROR("max records <=0\n");
-        return;
-    }
-
-    // 更新当前已经看到的序列号seq
-    cur_record_seq_ .store(
-        std::max(record.seq, cur_record_seq_.load(std::memory_order_relaxed)), 
-        std::memory_order_relaxed
-    );
-
-    // TODO 这里的缓存完全没用上
-#if 0
-    if(InteractionScope::kProtocol == record.scope)
-    {
-        RecordKey key{
-            .project_id = record.project_id,
-            .protocol_id = record.protocol_id,
-        };
-        auto it = protocol_records_.find(key);
-        if(it == protocol_records_.end())
-        {
-            INTERAC_F_INFO("interaction protocol record not found: pjId[%ld], pcId[%ld]\n",key.project_id, key.protocol_id);
-        }
-        pushWithLimit(protocol_records_[key], record);
-
-    }
-    else if(InteractionScope::kProject == record.scope)
-    {
-        record.protocol_id = 0;
-        auto it = project_notices_.find(record.project_id);
-        if(it == project_notices_.end())
-        {
-            INTERAC_F_INFO("interaction project notice not found: pjId[%ld]\n",record.project_id);
-        }
-        pushWithLimit(project_notices_[record.project_id], record);
-        
-    }
-    else 
-    {
-        INTERAC_F_ERROR("interaction record scope invalid: %d\n", static_cast<int32_t>(record.scope));
-        return;
-    }
-#endif
 
     // 找出和消息匹配的订阅者进行广播发布
     cbs.reserve(subscribers_.size());
@@ -91,67 +45,144 @@ void ProtocolInteractionHub::publish(ProtocolInteractionRecord record)
     // 注意 解锁后进行回调处理
     for(auto &cb : cbs)
     {
-        cb(record);
+        try {
+            cb(record);
+        } catch(const std::exception &e) {
+            INTERAC_F_ERROR("interaction callback exception: %s \n", e.what());
+        }catch(...) {
+            INTERAC_F_ERROR("interaction callback unknown exception\n");
+        }
+
     }
 
 }
 
-void ProtocolInteractionHub::clearProtocol(int64_t project_id, int64_t protocol_id)
+SubscribeWithCatchUpResult ProtocolInteractionHub::subscribeWithCatchUp(
+    InteractionSubscribeFilter filter,
+    InteractionRecordCacheContainer container,
+    InteractionCallback cb)
 {
-    std::unique_lock<std::mutex> lock(mtx_);
-    protocol_records_.erase(RecordKey{
-        .project_id = project_id,
-        .protocol_id = protocol_id,
-    });
-}
-void ProtocolInteractionHub::clearProject(int64_t project_id)
-{
-    std::unique_lock<std::mutex> lock(mtx_);
+    SubscribeWithCatchUpResult result;
 
-    project_notices_.erase(project_id);
-
-    for(auto it = protocol_records_.begin(); it != protocol_records_.end();)
+    if(!IsValidInteractionCursorPair(
+            container.after_protocol_cache_instance_id,
+            container.after_protocol_seq))
     {
-        if(it->first.project_id == project_id)
-        {
-            it = protocol_records_.erase(it);
-        }
-        else 
-        {
-            ++it;
-        }
+        INTERAC_F_ERROR(
+            "protocol cursor cache_instance_id and seq must be supplied as a valid pair\n");
+        result.result = false;
+        return result;
     }
 
-}
+    if(!IsValidInteractionCursorPair(
+            container.after_project_cache_instance_id,
+            container.after_project_seq))
+    {
+        INTERAC_F_ERROR(
+            "project cursor cache_instance_id and seq must be supplied as a valid pair\n");
+        result.result = false;
+        return result;
+    }
 
-ProtocolInteractionSubscription ProtocolInteractionHub::subscribe(ProtocolInteractionSubscribeFilter filter, CallBack cb)
-{
     if(!cb)
     {
         INTERAC_F_ERROR("subscriber callback function null!\n");
-        return {};
+        result.result = false;
+        return result;
     }
 
+    if(!container.protocol_cache)
+    {
+        INTERAC_F_ERROR("protocol cache null\n");
+        result.result = false;
+        return result;
+    }
 
-    std::unique_lock<std::mutex> lock(mtx_);
+    const auto& protocol_locked = container.protocol_cache->lockAndCollect(container.after_protocol_cache_instance_id, container.after_protocol_seq);
+    if (!protocol_locked.isActive())
+    {
+        INTERAC_F_INFO("protocol interaction cache closed! pjId[%ld], pcId[%ld]\n", filter.project_id, filter.protocol_id);
+        result.result = false;
 
-    uint64_t cur_seq = cur_record_seq_.load(std::memory_order_relaxed) + 1;
-
-    ProtocolInteractionSubscription subscription{
-        .subscriber_id = next_subscriber_id_++,
-        .start_record_seq = cur_seq,
-    };
+        return result;
+    }
+    if (!protocol_locked.isValid())
+    {
+        INTERAC_F_ERROR("protocol interaction cursor invalid\n");
+        result.result = false;
+        return result;
+    }
     
+    // 如果需要观测notice
+    std::optional<InteractionRecordCache::LockedSnapshot> project_locked;
+    if(filter.include_project_notice)
+    {
+        if(!container.project_cache)
+        {
+            INTERAC_F_ERROR("project cache null\n");
+            result.result = false;
+            return result;
+        }
+        if (container.project_cache.get() == container.protocol_cache.get())
+        {
+            INTERAC_F_ERROR("protocol cache and project cache must be different\n");
+            result.result = false;
 
+            return result;
+        }
+
+        project_locked.emplace(
+            container.project_cache->lockAndCollect(
+                container.after_project_cache_instance_id,
+                container.after_project_seq));
+        if (!project_locked->isActive())
+        {
+            INTERAC_F_INFO("project interaction cache closed\n");
+            result.result = false;
+            return result;
+        }
+        if (!project_locked->isValid())
+        {
+            INTERAC_F_ERROR("project interaction cursor invalid\n");
+            result.result = false;
+            return result;
+        }
+    }
+
+    const InteractionCacheSnapshot& protocol_snapshot = protocol_locked.snapshot();
     SubscriberEntry entry{
         .filter = std::move(filter),
-        .start_record_seq = cur_seq,
+        .protocol_cache_instance_id = protocol_snapshot.cache_instance_id,
+        .project_cache_instance_id = 0,
+        .protocol_start_seq = protocol_snapshot.last_seq + 1,
+        .project_start_seq = 0,
         .out_cb = std::move(cb),
     };
+    result.protocol_cache_snapshot = std::move(protocol_snapshot);
 
-    subscribers_.emplace(subscription.subscriber_id, std::move(entry));
-    
-    return subscription;
+    if (project_locked.has_value())
+    {
+        const InteractionCacheSnapshot& project_snapshot = project_locked->snapshot();
+
+        entry.project_cache_instance_id = project_snapshot.cache_instance_id;
+        entry.project_start_seq = project_snapshot.last_seq + 1;
+        result.project_cache_snapshot = std::move(project_snapshot);
+    }
+
+    auto &subscription = result.subscription;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+
+        subscription.subscriber_id = next_subscriber_id_++;
+        subscription.protocol_cache_instance_id = entry.protocol_cache_instance_id;
+        subscription.project_cache_instance_id = entry.project_cache_instance_id;
+        subscription.protocol_start_seq = entry.protocol_start_seq;
+        subscription.project_start_seq = entry.project_start_seq;
+
+        subscribers_.emplace(subscription.subscriber_id, std::move(entry));
+    }
+    result.result = true;
+    return result;
 }
 
 void ProtocolInteractionHub::unsubcribe(uint64_t subscriber_id)
@@ -160,51 +191,57 @@ void ProtocolInteractionHub::unsubcribe(uint64_t subscriber_id)
     subscribers_.erase(subscriber_id);
 }
 
-uint64_t ProtocolInteractionHub::currentSeq() const
+
+bool ProtocolInteractionHub::matchSubscriber(const SubscriberEntry &entry, const InteractionRecord &record) const
 {
-    return cur_record_seq_;
-}
-
-
-
-void ProtocolInteractionHub::pushWithLimit(std::deque<ProtocolInteractionRecord> &bucket, ProtocolInteractionRecord record)
-{
-    while(bucket.size() >= max_records_num_)
-    {
-        bucket.pop_front();
-    }
-
-    bucket.push_back(std::move(record));
-}
-
-bool ProtocolInteractionHub::matchSubscriber(const SubscriberEntry &entry, const ProtocolInteractionRecord &record) const
-{
-    const ProtocolInteractionSubscribeFilter &filter = entry.filter;
-
-    if(record.seq < entry.start_record_seq)
-    {
-        INTERAC_F_DEBUG("interaction req invalid: %lu --> %lu\n", record.seq, entry.start_record_seq);
-        return false;
-    }
+    const InteractionSubscribeFilter &filter = entry.filter;
 
     if(filter.project_id != record.project_id)
     {
-        INTERAC_F_DEBUG("project not match!\n");
+        INTERAC_F_DEBUG("project not match! %ld --> %ld\n", filter.project_id, record.project_id);
         return false;
     }
 
-
     if(InteractionScope::kProtocol == record.scope)
     {
-        return filter.protocol_id == record.protocol_id;
-    }
+        INTERAC_F_DEBUG("subscriber protocol match info:\n entry[%ld][%ld][%d] [%ld][%ld]\n record[%ld][%ld][%lu][%lu][%ld]\n", 
+            filter.project_id,
+            filter.protocol_id,
+            static_cast<int>(filter.include_project_notice),
+            entry.protocol_cache_instance_id,
+            entry.protocol_start_seq,
+            record.project_id,
+            record.protocol_id,
+            record.cache_instance_id,
+            record.seq,
+            record.time_ms
+        );
 
-    if(InteractionScope::kProject == record.scope)
+        return record.cache_instance_id == entry.protocol_cache_instance_id
+            && record.protocol_id == filter.protocol_id
+            && record.seq >= entry.protocol_start_seq;
+    }
+    else if(InteractionScope::kProject == record.scope && filter.include_project_notice)
     {
-        return filter.include_project_notice;
+        INTERAC_F_DEBUG("subscriber project match info:\n entry[%ld][%ld][%d] [%ld][%ld]\n record[%ld][%ld][%lu][%lu][%ld]\n", 
+            filter.project_id,
+            filter.protocol_id,
+            static_cast<int>(filter.include_project_notice),
+            entry.project_cache_instance_id,
+            entry.project_start_seq,
+            record.project_id,
+            record.protocol_id,
+            record.cache_instance_id,
+            record.seq,
+            record.time_ms
+        );
+        return record.cache_instance_id == entry.project_cache_instance_id
+            && filter.include_project_notice
+            && record.protocol_id == 0
+            && record.seq >= entry.project_start_seq;
     }
 
-    INTERAC_F_ERROR("all condition missmatch\n");
+    INTERAC_F_DEBUG("!!!!!!all condition missmatch!!!!!\n");
     return false;
 }
 

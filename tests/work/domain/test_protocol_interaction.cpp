@@ -56,13 +56,13 @@ InteractionCaptureOptions Options(size_t max_text_bytes = 64 * 1024,
     };
 }
 
-ProtocolInteractionRecord MakeRecord(uint64_t seq,
+InteractionRecord MakeRecord(uint64_t seq,
                                      InteractionScope scope,
                                      int64_t project_id,
                                      int64_t protocol_id,
                                      InteractionResult result = InteractionResult::kMatched)
 {
-    ProtocolInteractionRecord record;
+    InteractionRecord record;
     record.seq = seq;
     record.scope = scope;
     record.project_id = project_id;
@@ -74,10 +74,10 @@ ProtocolInteractionRecord MakeRecord(uint64_t seq,
     return record;
 }
 
-class CollectingInteractionSink : public ProtocolInteractionSink
+class CollectingInteractionSink : public InteractionSink
 {
 public:
-    void publish(ProtocolInteractionRecord record) override
+    void publish(InteractionRecord record) override
     {
         {
             std::lock_guard<std::mutex> lock(mtx_);
@@ -107,7 +107,7 @@ public:
         });
     }
 
-    std::vector<ProtocolInteractionRecord> Records() const
+    std::vector<InteractionRecord> Records() const
     {
         std::lock_guard<std::mutex> lock(mtx_);
         return records_;
@@ -116,15 +116,15 @@ public:
 private:
     mutable std::mutex mtx_;
     std::condition_variable cv_;
-    std::vector<ProtocolInteractionRecord> records_;
+    std::vector<InteractionRecord> records_;
     std::vector<std::pair<int64_t, int64_t>> cleared_protocols_;
     std::vector<int64_t> cleared_projects_;
 };
 
-class BlockingInteractionSink : public ProtocolInteractionSink
+class BlockingInteractionSink : public InteractionSink
 {
 public:
-    void publish(ProtocolInteractionRecord record) override
+    void publish(InteractionRecord record) override
     {
         std::unique_lock<std::mutex> lock(mtx_);
         records_.push_back(std::move(record));
@@ -160,7 +160,7 @@ public:
         cv_.notify_all();
     }
 
-    std::vector<ProtocolInteractionRecord> Records() const
+    std::vector<InteractionRecord> Records() const
     {
         std::lock_guard<std::mutex> lock(mtx_);
         return records_;
@@ -169,14 +169,14 @@ public:
 private:
     mutable std::mutex mtx_;
     std::condition_variable cv_;
-    std::vector<ProtocolInteractionRecord> records_;
+    std::vector<InteractionRecord> records_;
     bool unblocked_{false};
 };
 
-class ThrowingInteractionSink : public ProtocolInteractionSink
+class ThrowingInteractionSink : public InteractionSink
 {
 public:
-    void publish(ProtocolInteractionRecord) override
+    void publish(InteractionRecord) override
     {
         ++publish_count_;
         throw std::runtime_error("sink publish failed");
@@ -248,7 +248,7 @@ ProtocolInteractionObservation MakeHttpObservation(
  */
 TEST(TestProtocolInteraction, ProtocolRecordJsonContainsContractFieldsAndOmitsPrivateData)
 {
-    ProtocolInteractionRecord record;
+    InteractionRecord record;
     record.seq = 101;
     record.scope = InteractionScope::kProtocol;
     record.project_id = 1;
@@ -330,7 +330,7 @@ TEST(TestProtocolInteraction, ProtocolRecordJsonContainsContractFieldsAndOmitsPr
  */
 TEST(TestProtocolInteraction, ProjectNoticeJsonUsesProjectScopeAndProtocolIdZero)
 {
-    ProtocolInteractionRecord notice;
+    InteractionRecord notice;
     notice.seq = 102;
     notice.scope = InteractionScope::kProject;
     notice.project_id = 1;
@@ -697,14 +697,14 @@ TEST(TestProtocolInteraction, HubOnlyPushesMatchingProtocolRecordsAfterSubscribe
     hub.publish(MakeRecord(10, InteractionScope::kProtocol, 1, 12));
     ASSERT_EQ(hub.currentSeq(), 10U);
 
-    std::vector<ProtocolInteractionRecord> received;
+    std::vector<InteractionRecord> received;
     auto subscription = hub.subscribe(
-        ProtocolInteractionSubscribeFilter{
+        InteractionSubscribeFilter{
             .project_id = 1,
             .protocol_id = 12,
             .include_project_notice = false,
         },
-        [&received](const ProtocolInteractionRecord &record) {
+        [&received](const InteractionRecord &record) {
             received.push_back(record);
         });
 
@@ -739,26 +739,26 @@ TEST(TestProtocolInteraction, HubOnlyPushesMatchingProtocolRecordsAfterSubscribe
 TEST(TestProtocolInteraction, HubProjectNoticeRequiresOptInAndUnsubscribeStopsDelivery)
 {
     ProtocolInteractionHub hub;
-    std::vector<ProtocolInteractionRecord> protocol_only_records;
-    std::vector<ProtocolInteractionRecord> with_notice_records;
+    std::vector<InteractionRecord> protocol_only_records;
+    std::vector<InteractionRecord> with_notice_records;
 
     auto protocol_only = hub.subscribe(
-        ProtocolInteractionSubscribeFilter{
+        InteractionSubscribeFilter{
             .project_id = 1,
             .protocol_id = 12,
             .include_project_notice = false,
         },
-        [&protocol_only_records](const ProtocolInteractionRecord &record) {
+        [&protocol_only_records](const InteractionRecord &record) {
             protocol_only_records.push_back(record);
         });
 
     auto with_notice = hub.subscribe(
-        ProtocolInteractionSubscribeFilter{
+        InteractionSubscribeFilter{
             .project_id = 1,
             .protocol_id = 12,
             .include_project_notice = true,
         },
-        [&with_notice_records](const ProtocolInteractionRecord &record) {
+        [&with_notice_records](const InteractionRecord &record) {
             with_notice_records.push_back(record);
         });
 

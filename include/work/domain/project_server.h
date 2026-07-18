@@ -16,6 +16,7 @@
 #include "nlohmann/json.hpp"
 #include "protocol_interaction.h"
 #include "protocol_interaction_observation.h"
+#include "net/tcp_server.h"
 
 #include <memory>
 #include <vector>
@@ -35,13 +36,14 @@ struct HttpItemReqHeaderCfg;
 class CustomTcpMessage;
 struct CustomTcpItemCfg;
 class RuntimeLease;
+class InteractionRecordCache;
 
 class ProjectServer: public std::enable_shared_from_this<ProjectServer>
 {
 public:
     using ObserveCallback = std::function<void(ProtocolInteractionObservation)>;
 
-    ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop);
+    ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const std::string &name = "");
 
     virtual ~ProjectServer() = default;
 
@@ -54,10 +56,10 @@ public:
 
     void setObserveCallback(ObserveCallback cb) { observe_cb_ = std::move(cb); }
 
+    std::shared_ptr<InteractionRecordCache> cache() const { return notice_cache_; }
 
-    virtual void start() = 0;
-    virtual bool stop() = 0;
-
+    virtual void start();
+    virtual bool stop();
 
     virtual const kit_muduo::InetAddress& getBindAddr() const = 0;
 
@@ -80,17 +82,24 @@ public:
     virtual std::shared_ptr<CustomTcpPattern> GetPatternInfo() = 0;
 
 protected:
+    virtual void closeAllProtocolInteractionCaches() = 0;
+
+protected:
 
     void emitObserve(ProtocolInteractionObservation obs);
 
 protected:
+    kit_muduo::TcpServer tcp_server_;
     /// @brief 测试服务id
     int64_t project_id_;
     /// @brief 租赁Loop
     std::shared_ptr<RuntimeLease> lease_loop_;
+    /// @brief 当前运行态
     std::atomic_bool stopped_{false};
+    /// @brief 观测回调
     ObserveCallback observe_cb_;
-
+    /// @brief 协议项交互实时流缓存
+    std::shared_ptr<InteractionRecordCache> notice_cache_;
 };
 
 bool WaitRuntimeStopDone(const char *name,

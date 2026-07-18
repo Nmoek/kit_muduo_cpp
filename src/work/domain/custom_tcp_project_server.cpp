@@ -9,7 +9,6 @@
 #include "domain/custom_tcp_project_server.h"
 #include "domain/protocol_interaction.h"
 #include "domain/protocol_item.h"
-#include "domain/protocol.h"
 #include "domain/runtime_result.h"
 #include "domain/type.h"
 #include "net/call_backs.h"
@@ -17,7 +16,6 @@
 #include "domain/domain_log.h"
 #include "domain/custom_tcp_context.h"
 #include "domain/custom_tcp_message.h"
-#include "net/http/http_util.h"
 #include "domain/custom_tcp_protocol_item.h"
 #include "domain/custom_tcp_pattern.h"
 #include "domain/runtime_loop_pool.h"
@@ -36,13 +34,6 @@ using namespace kit_domain;
 
 
 namespace {
-
-inline static EventLoop* CheckLoop(EventLoop *loop)
-{
-    assert(loop);
-    return loop;
-}
-
 
 void AttachTcpRequestCaptureFromContext(
     ProtocolInteractionObservation &obs,
@@ -89,13 +80,10 @@ namespace kit_domain {
 CustomTcpProjectServer::CustomTcpProjectServer(
     int64_t project_id, 
     const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop)
-    :ProjectServer(project_id, lease_loop)
-    ,tcp_server_(std::make_shared<TcpServer>(
-        CheckLoop(lease_loop->loop()), 
-        InetAddress(0, "0.0.0.0"), 
-        "pj" + std::to_string(project_id_) + "tcp", 
-        kit_muduo::TcpServer::KReusePort
-    ))
+    :ProjectServer(
+        project_id, 
+        lease_loop,
+        "pj" + std::to_string(project_id) + "tcp")
 {
     try
     {
@@ -108,10 +96,9 @@ CustomTcpProjectServer::CustomTcpProjectServer(
 
     assert(pattern_info_);
 
-    assert(tcp_server_);
-    tcp_server_->setConnectionCallback(std::bind(&CustomTcpProjectServer::onConnect, this, std::placeholders::_1));
+    tcp_server_.setConnectionCallback(std::bind(&CustomTcpProjectServer::onConnect, this, std::placeholders::_1));
 
-    tcp_server_->setMessageCallback(std::bind(&CustomTcpProjectServer::onMessage, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+    tcp_server_.setMessageCallback(std::bind(&CustomTcpProjectServer::onMessage, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
 
 }
@@ -121,43 +108,10 @@ CustomTcpProjectServer::~CustomTcpProjectServer()
     stop();
 }
 
-void CustomTcpProjectServer::start() 
-{
-    tcp_server_->setThreadNum(0); // 使用单线程模式
-    tcp_server_->start();
-}
-
-bool CustomTcpProjectServer::stop()
-{
-    bool expected = false;
-    if(!stopped_.compare_exchange_strong(expected, true))
-    {
-        return true;
-    }
-
-    if(!tcp_server_)
-    {
-        lease_loop_->release();
-        return true;
-    }
-
-    bool ok = WaitRuntimeStopDone("CustomTcpProjectServer", project_id_, [this](std::function<void()> done){
-        tcp_server_->stopAsync(std::move(done));
-    });
-
-    if(!ok)
-    {
-        return false;
-    }
-
-    lease_loop_->release();
-    return true;
-}
-
 
 const kit_muduo::InetAddress& CustomTcpProjectServer::getBindAddr() const
 {
-    return tcp_server_->getBindAddr();
+    return tcp_server_.getBindAddr();
 }
 
 
@@ -240,6 +194,8 @@ RuntimeResult<void> CustomTcpProjectServer::DelProtocolItem(int64_t protocol_id)
 
     CUSTOM_F_DEBUG("CustomTcpProjectServer: Deleted protocol item, pjId[%d], pcId[%d] \n",  project_id_, protocol_id);
 
+    // 缓存删除
+    it->second.item->cache()->close();
     tcp_items_.erase(it);
 
     return result;
@@ -498,17 +454,19 @@ ProtocolInteractionObservation CustomTcpProjectServer::buildCustomTcpObservation
 {
     auto req = ctx->request();
     auto resp = ctx->response();
+    auto cache = tcp_item ? tcp_item->cache() : notice_cache_;
 
     ProtocolInteractionObservation obs;
     obs.project_id = project_id_;
     obs.protocol_id = tcp_item ? tcp_item->getId() : 0;
+    obs.cache_instance_id = cache->cacheInstanceId();
     obs.scope = tcp_item ? InteractionScope::kProtocol : InteractionScope::kProject;
     obs.protocol_type = ProtocolType::kCustomTcp;
     obs.time_ms = req->recordTime().millSeconds();
     obs.peer_addr = std::move(peer_addr);
     obs.result = result;
     obs.error_message = std::move(message);
-
+    obs.weak_record_cache = cache;
 
     if(InteractionScope::kProtocol == obs.scope)
     {
@@ -717,6 +675,16 @@ void CustomTcpProjectServer::CustomTcpProcess(std::shared_ptr<CustomTcpProtocolI
     return;
 }
 
-
+void CustomTcpProjectServer::closeAllProtocolInteractionCaches()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& [protocol_id, runtime_item] : tcp_items_)
+    {
+        if (runtime_item.item)
+        {
+            runtime_item.item->cache()->close();
+        }
+    }
+}
 
 } // namespace kit_domain

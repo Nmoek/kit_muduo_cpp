@@ -46,6 +46,12 @@ void ProtocolItem::initBase(const Protocol& p)
 
     req_body_view_.setBody(p.m_reqBodyType, p.m_reqBodyData);
     resp_body_view_.setBody(p.m_respBodyType, p.m_respBodyData);
+
+    record_cache_ =std::make_shared<InteractionRecordCache>(InteractionRecordCacheKey{
+        .scope = InteractionScope::kProtocol,
+        .project_id = project_id_,
+        .protocol_id = id_,
+    });
 }
 
 

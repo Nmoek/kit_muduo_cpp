@@ -311,14 +311,19 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kRuntimeApplyFailed);
     }
 
+    // 交互实时数据清理
+    if(inter_cleanup_cb_)
+    {
+        // protocol为空代表全部清理
+        inter_cleanup_cb_(project_id, std::nullopt);
+    }
+
     if(!project_svc_->UpdateRuntimeState(ctx, project_id, ProjectRuntimeState::kStopped, 0))
     {
         RUNPJMA_F_ERROR("UpdateRuntimeState error! pjId[%ld]\n", project_id);
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
     }
 
-    // 清理协议交互详情数据
-    // project_server->clearProjectInteraction(project_id);
 
     return ProjectRuntimeResult::Success(RuntimeMutationReceipt::AllOk(),
     ProjectRuntimeSnapshot{
@@ -824,9 +829,13 @@ ProtocolRuntimeResult ProjectRuntimeManager::delProtocolImpl(kit_muduo::HttpCont
         }
         receipt.runtime_applied = 1;
     }
-
-    // 清理协议项交互详情
-    // pj_server->clearProtocolInteraction(project_id, protocol_id);
+    
+    // 交互实时数据清理
+    if(inter_cleanup_cb_)
+    {
+        // protocol为空代表全部清理
+        inter_cleanup_cb_(project_id, protocol_id);
+    }
 
     return ProtocolRuntimeResult::Success(receipt, ProtocolRuntimeSnapshot{
         .project_id = project_id,
@@ -987,6 +996,13 @@ ProtocolRuntimeResult ProjectRuntimeManager::disableProtocolImpl(kit_muduo::Http
         return ProtocolRuntimeResult::Failed(RuntimeControlCode::kRuntimeApplyFailed, 
             runtime_result.error, 
             "protocol runtime apply failed");
+    }
+
+    // 交互实时数据清理
+    if(inter_cleanup_cb_)
+    {
+        // protocol为空代表全部清理
+        inter_cleanup_cb_(project_id, protocol_id);
     }
 
     return ProtocolRuntimeResult::Success(RuntimeMutationReceipt::AllOk(), ProtocolRuntimeSnapshot{

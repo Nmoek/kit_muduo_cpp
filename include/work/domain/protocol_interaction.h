@@ -133,7 +133,7 @@ struct InteractionPayloadHint
 struct InteractionCaptureOptions
 {
     static constexpr size_t kDefaultMaxTextBytes = 64*1024;//64K
-    static constexpr size_t kDefaultMaxAttachmentBytes = 10*1024*1024;//10M
+    static constexpr size_t kDefaultMaxAttachmentBytes = 5*1024*1024;//5M
 
     size_t max_text_bytes{kDefaultMaxTextBytes};
     size_t max_hex_bytes{kDefaultMaxTextBytes};
@@ -254,12 +254,13 @@ struct InteractionSide
 };
 
 
-struct ProtocolInteractionRecord
+struct InteractionRecord
 {
     uint64_t seq{0};
     InteractionScope scope{InteractionScope::kUnknown};
     int64_t project_id{0};
     int64_t protocol_id{0};
+    uint64_t cache_instance_id{0};
     ProtocolType protocol_type{ProtocolType::kUnknown};
     int64_t time_ms{0};
     std::string peer_addr;
@@ -270,7 +271,7 @@ struct ProtocolInteractionRecord
     /// @brief 注意: 不放入json序列化 仅作为逻辑结构托管
     std::vector<BinarySidecar> binary_sidecars;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProtocolInteractionRecord, seq, scope, project_id, protocol_id, protocol_type, time_ms, peer_addr, result, error_message, request, response)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(InteractionRecord, seq, scope, project_id, protocol_id, cache_instance_id, protocol_type, time_ms, peer_addr, result, error_message, request, response)
 
     static InteractionResult ToInteractionResult(HttpObserveResult obs_result);
 };

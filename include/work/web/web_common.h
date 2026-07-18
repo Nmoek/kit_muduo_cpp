@@ -77,10 +77,6 @@ bool ParsePositiveArithmetic(const std::string& value, T& out)
             parsed = std::stold(value);
         }
 
-        if(parsed <= 0)
-        {
-            return false;
-        }
         out = parsed;
         return true;
     }

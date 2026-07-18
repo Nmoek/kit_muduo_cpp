@@ -282,6 +282,7 @@ set(WORK_DOMAIN_SRC
     src/work/domain/protocol_interaction.cpp
     src/work/domain/protocol_interaction_hub.cpp
     src/work/domain/protocol_interaction_publisher.cpp
+    src/work/domain/protocol_interaction_observation.cpp
 )
 
 set(WORK_RUNTIME_SRC

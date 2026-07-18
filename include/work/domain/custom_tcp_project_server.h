@@ -39,10 +39,6 @@ public:
 
     ~CustomTcpProjectServer() override;
 
-    void start() override;
-
-    bool stop() override;
-
     const kit_muduo::InetAddress& getBindAddr() const override;
 
     RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem> ori_protocol) override;
@@ -95,8 +91,10 @@ private:
         const std::string &message);
 
 private:
-    /// @brief 实际运行TCP服务器
-    kit_muduo::TcpServerPtr tcp_server_;
+    void closeAllProtocolInteractionCaches() override;
+
+
+private:
     /// @brief 格式信息
     std::shared_ptr<CustomTcpPattern> pattern_info_;
     /// @brief 格式信息锁

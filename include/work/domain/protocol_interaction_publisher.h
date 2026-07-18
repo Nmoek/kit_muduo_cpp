@@ -33,7 +33,7 @@ struct ProtocolInteractionPublisherConfig
 class ProtocolInteractionPublisher : kit_muduo::Noncopyable
 {
 public:
-    explicit ProtocolInteractionPublisher(std::vector<std::shared_ptr<ProtocolInteractionSink>> sinks, ProtocolInteractionPublisherConfig config = {});
+    explicit ProtocolInteractionPublisher(std::vector<std::shared_ptr<InteractionSink>> sinks, ProtocolInteractionPublisherConfig config = {});
 
     ~ProtocolInteractionPublisher();
 
@@ -44,7 +44,6 @@ public:
     const ProtocolInteractionPublisherConfig& config() const { return config_; }
 
     void publish(ProtocolInteractionObservation obs);
-    uint64_t CurrentSeq() const;
 
     // void addSink(std::shared_ptr<ProtocolInteractionSink> sink);
 
@@ -63,22 +62,23 @@ private:
 
     void drainQueueTimeOut(int64_t will_timeout);
 
-    ProtocolInteractionRecord buildRecord(QueueObservation queue_obs);
+    void queueObsHandle(std::shared_ptr<QueueObservation>& queue_obs);
 
-    void publishRecord(ProtocolInteractionRecord record);
+    InteractionRecord buildRecord(const QueueObservation &queue_obs);
 
-    void fillInteractionSide(ProtocolInteractionRecord &record,
+    void publishRecord(InteractionRecord record);
+
+    void fillInteractionSide(InteractionRecord &record,
         InteractionSide& dst,
         const InteractionSideCapture &src,
         ProtocolSide side);
 
+
 private:
     /// @brief 发布渠道列表
-    std::vector<std::shared_ptr<ProtocolInteractionSink>> sinks_;
+    std::vector<std::shared_ptr<InteractionSink>> sinks_;
     /// @brief 发布器配置
     ProtocolInteractionPublisherConfig config_{};
-    /// @brief 交互记录编号
-    std::atomic_uint64_t next_seq_{1};
 
     /// @brief 待发布数据无锁队列 MPSC
     kit_muduo::BoundedLockFreeQueue<std::shared_ptr<QueueObservation>> queue_;

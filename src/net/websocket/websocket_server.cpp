@@ -225,6 +225,8 @@ void WebSocketServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp re
         return;
     }
 
+    // TODO 当前不存在分片重组情况 WebSocketContext 
+
     auto session = context->lockSession();
     if(!session)
     {

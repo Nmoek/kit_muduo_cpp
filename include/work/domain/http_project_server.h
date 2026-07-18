@@ -37,9 +37,6 @@ public:
 
     ~HttpProjectServer() override;
 
-    void start() override;
-
-    bool stop() override;
 
     const kit_muduo::InetAddress& getBindAddr() const override;
 
@@ -89,7 +86,9 @@ private:
     void HttpProjectProcess(std::shared_ptr<HttpProtocolItem> http_item, kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx);
 
 private:
-    kit_muduo::TcpServer tcp_server_;
+    void closeAllProtocolInteractionCaches() override;
+
+private:
     std::shared_ptr<kit_muduo::http::HttpServletDispatch> dispatch_;
 
     /// @brief 测试服务上依附的配置好的测试项

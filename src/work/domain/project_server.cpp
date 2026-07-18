@@ -7,26 +7,50 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "domain/project_server.h"
-#include "base/time_stamp.h"
-#include "base/util.h"
 #include "domain/protocol_interaction.h"
+#include "domain/protocol_interaction_observation.h"
 #include "domain/runtime_loop_pool.h"
 #include "domain/domain_log.h"
 #include "domain/protocol_interaction_hub.h"
-#include "domain/type.h"
-#include "web/web_common.h"
+#include "net/tcp_server.h"
+#include "net/tcp_server.h"
 
 #include <chrono>
 #include <future>
+#include <memory>
 
 
 using namespace kit_muduo;
 
 namespace kit_domain {
 
-ProjectServer::ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop)
-    :project_id_(project_id)
+namespace {
+
+inline static EventLoop* CheckLoop(EventLoop *loop)
+{
+    if(!loop)
+    {
+        throw std::invalid_argument("loop* is null");
+    }
+    return loop;
+}
+
+}
+
+ProjectServer::ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const std::string &name)
+    :tcp_server_(
+        CheckLoop(lease_loop->loop()), 
+        InetAddress(0, "0.0.0.0"), 
+        name, 
+        kit_muduo::TcpServer::KReusePort
+    )
+    ,project_id_(project_id)
     ,lease_loop_(lease_loop)
+    ,notice_cache_(std::make_shared<InteractionRecordCache>(InteractionRecordCacheKey{
+        .scope = InteractionScope::kProject,
+        .project_id = project_id,
+        .protocol_id = 0, //注意 这里必须为0
+    }))
 { 
 
 }
@@ -39,6 +63,40 @@ bool ProjectServer::isActive() const
 kit_muduo::EventLoop *ProjectServer::getLoop() 
 { 
     return lease_loop_->loop();
+}
+
+
+void ProjectServer::start() 
+{
+    tcp_server_.setThreadNum(0); // 使用单线程模式
+    tcp_server_.start();
+}
+
+bool ProjectServer::stop()
+{
+    bool expected = false;
+    if(!stopped_.compare_exchange_strong(expected, true))
+    {
+        return true;
+    }
+
+    bool ok = WaitRuntimeStopDone("CustomTcpProjectServer", project_id_, [this](std::function<void()> done){
+        tcp_server_.stopAsync(std::move(done));
+    });
+
+    if(!ok)
+    {
+        stopped_ = false;
+        return false;
+    }
+    if(notice_cache_)
+    {
+        notice_cache_->close();
+    }
+    closeAllProtocolInteractionCaches();
+
+    lease_loop_->release();
+    return true;
 }
 
 bool WaitRuntimeStopDone(const char *name,
@@ -67,7 +125,6 @@ bool WaitRuntimeStopDone(const char *name,
 
 void ProjectServer::emitObserve(ProtocolInteractionObservation obs)
 {
-
     try {
 
         if(observe_cb_)

@@ -13,13 +13,17 @@
 #include "domain/protocol_interaction_hub.h"
 #include "net/call_backs.h"
 #include "nlohmann/json.hpp"
+#include "net/event_loop.h"
 
 #include <cstdint>
 #include <atomic>
 
-namespace kit_muduo::ws{
+namespace kit_muduo {
+
+namespace ws{
 class WebSocketServer;
 
+}
 }
 
 namespace kit_domain {
@@ -28,16 +32,108 @@ class ProjectSvcInterface;
 class ProtocolSvcInterface;
 class RuntimeControllerInterface;
 
-
-enum class LivePushState
+/**
+ * @brief Upgrade升级时请求Body携带初始化信息
+ */
+struct UpgradeInitReq
 {
-    kInit = 0,
+    int64_t protocol_id{0};
+    std::optional<uint64_t> after_protocol_cache_instance_id{std::nullopt};
+    std::optional<uint64_t> after_protocol_seq{std::nullopt};
+    bool include_project_notice{true};
+    std::optional<uint64_t> after_project_cache_instance_id{std::nullopt};
+    std::optional<uint64_t> after_project_seq{std::nullopt};
+};
+
+
+enum class InteractionLiveState
+{
+    kInit = 1,
+    kCatchingUp,
     kActive,
     kPaused,
     kClosed,
 };
+NLOHMANN_JSON_SERIALIZE_ENUM(InteractionLiveState,{
+    {static_cast<InteractionLiveState>(0),  "unknown"},
+    {InteractionLiveState::kInit,           "init"},
+    {InteractionLiveState::kCatchingUp,     "catching_up"},
+    {InteractionLiveState::kActive,         "active"},
+    {InteractionLiveState::kPaused,         "paused"},
+    {InteractionLiveState::kClosed,         "closed"}
+})
 
-struct LiveConnectionInfo
+enum class InteractionLiveCommand
+{
+    // open/close 特别注意隐含在websocket的open/close之中
+    kUnknown,
+    kPause,
+    kResume,
+    kQueryState,
+};
+NLOHMANN_JSON_SERIALIZE_ENUM(InteractionLiveCommand,{
+    {InteractionLiveCommand::kUnknown,        "unknown"},
+    {InteractionLiveCommand::kPause,          "pause"},
+    {InteractionLiveCommand::kResume,         "resume"},
+    {InteractionLiveCommand::kQueryState,     "query_state"}
+})
+
+struct InteractionLiveCursor
+{
+    std::optional<uint64_t> cache_instance_id{std::nullopt};
+    uint64_t seq{0};
+
+    bool hasCursor() const
+    {
+        return cache_instance_id.has_value();
+    }
+
+    std::optional<uint64_t> afterSeq() const
+    {
+        return cache_instance_id.has_value() ? std::optional<uint64_t>{seq} : std::nullopt;
+    }
+
+    friend void from_json(const nlohmann::json &j, InteractionLiveCursor &cursor)
+    {
+        auto it = j.find("cache_instance_id");
+        if(it != j.end())
+        {
+            cursor.cache_instance_id = it.value().get<uint64_t>();
+        }
+
+        j.at("seq").get_to<uint64_t>(cursor.seq);
+    }
+    friend void to_json(nlohmann::json &j, const InteractionLiveCursor &cursor)
+    {
+        if(cursor.cache_instance_id.has_value())
+        {
+            j["cache_instance_id"] = cursor.cache_instance_id.value();
+        }
+
+        j["seq"] = cursor.seq;
+    }
+};
+
+struct LiveDetachResult
+{
+    uint64_t subscriber_id{0};
+    uint64_t generation{0};
+};
+
+
+struct InteractionLiveContextSnapshot
+{
+    InteractionLiveState state{InteractionLiveState::kInit};
+    uint64_t subscriber_id{0};
+    uint64_t generation{0};
+    InteractionLiveCursor protocol_cursor;
+    InteractionLiveCursor project_cursor;
+    uint64_t accepted_msg_seq{0};
+    uint64_t send_msg_seq{0};
+};
+
+
+struct InteractionLiveContext
 {
     /// @brief session Id
     uint64_t session_id{0};
@@ -45,34 +141,87 @@ struct LiveConnectionInfo
     int64_t project_id{0};
     /// @brief 观测协议Id
     int64_t protocol_id{0};
-    /// @brief 订阅Id
+    /// @brief upgrade链路初始化数据
+    UpgradeInitReq init_req;
+
+    // WebSocketSession 所属 IO loop。live 状态只允许在该 loop 上读写。
+    kit_muduo::EventLoop* owner_loop{nullptr};
+
+    /// @brief 订阅Id 0表示没有有效订阅
     uint64_t subscriber_id{0};
+    /// @brief 订阅生命周期版本。open/resume/pause/close 这类会改变订阅有效性的动作都要推进
+    uint64_t generation{0};
+    /// @brief protocol发送游标
+    InteractionLiveCursor protocol_cursor;
+    /// @brief project发送游标
+    InteractionLiveCursor project_cursor;
     /// @brief 业务实时通信状态
-    std::atomic<LivePushState> push_state{LivePushState::kClosed};
+    std::atomic<InteractionLiveState> state{InteractionLiveState::kInit};
     /// @brief 主动发送的消息序列号
-    std::atomic_uint64_t send_msg_seq_{0};
+    std::atomic_uint64_t send_msg_seq{0};
     /// @brief 被动收到的消息序列号
-    std::atomic_uint64_t accepted_msg_seq_{0};
+    std::atomic_uint64_t accepted_msg_seq{0};
+
+    bool isInOwnerLoop() const { return owner_loop && owner_loop->isInLoopThread(); }
+
+    /**
+     * @brief 业务命令执行时检查状态
+     * @param command 
+     * @return true 
+     * @return false 
+     */
+    bool checkState(InteractionLiveCommand command);
+
+    /**
+     * @brief 状态转移处理
+     * @param next_state 
+     */
+    void setState(InteractionLiveState next_state);
+
+
+    /**
+     * @brief 标定实时推送后的游标
+     * @param live 
+     * @param record 
+     */
+    void markLiveCursor(const InteractionRecord& record);
+
+    /**
+     * @brief 标记CatchUp后的游标
+     * @param live 
+     * @param scope 
+     * @param snapshot 
+     */
+    void markLiveCatchUpCursor(InteractionScope scope,
+        const InteractionCacheSnapshot& snapshot);
 };
-using LiveConnectionInfoPtr = std::shared_ptr<LiveConnectionInfo>;
+using InteractionLiveContextPtr = std::shared_ptr<InteractionLiveContext>;
 
 
-struct LiveClientMsg
+struct LiveCommandMsg
 {
-    std::string type;
+    std::string type; // 目前固定为"command"
+    InteractionLiveCommand command;
     uint64_t session_id;
     uint64_t client_seq;
     uint64_t timestamp; // 单位 ms
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(LiveClientMsg, type, session_id, client_seq, timestamp)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(LiveCommandMsg, type, command, session_id, client_seq, timestamp)
 };
 
-struct LiveServerMsg
+struct LiveCommandAckMsg
 {
     std::string type;
-    std::string state;
-    uint64_t accepted_seq;
+    InteractionLiveCommand command;
+    bool ok{true};
+    std::string error_message;
+    InteractionLiveState state;
+    uint64_t client_seq{0};
+    uint64_t accepted_seq{0};
+    InteractionLiveCursor protocol_cursor;
+    InteractionLiveCursor project_cursor;
     uint64_t timestamp; // 单位 ms
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(LiveServerMsg, type, state, accepted_seq, timestamp)
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(LiveCommandAckMsg, type, command, ok, error_message, state, client_seq, accepted_seq, protocol_cursor, project_cursor, timestamp)
 };
 
 class ProtocolInteractionHandler
@@ -85,10 +234,6 @@ public:
 
     void RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> server);
 
-    void sendInteraction(kit_muduo::WebSocketSessionPtr session, ProtocolInteractionRecord record);
-    void sendAckMsg(kit_muduo::WebSocketSessionPtr session, const LiveConnectionInfo& info);
-
-private:
     /**
      * @brief websocket session建立前业务准备
      * @param session 
@@ -97,22 +242,63 @@ private:
      * @return false 
      */
     bool onPrepare(kit_muduo::WebSocketSessionPtr session, kit_muduo::HttpContextPtr ctx) noexcept;
-    void onSubscribe(kit_muduo::WebSocketSessionPtr session, ProtocolInteractionRecord record);
+    void onHubLiveArrive(std::weak_ptr<kit_muduo::ws::WebSocketSession> weak_session, std::weak_ptr<InteractionLiveContext> weak_live, uint64_t generation,  InteractionRecord record) noexcept;
     /*******WebSocket 回调处理****/
-    void onOpen(kit_muduo::WebSocketSessionPtr session);
+    void onOpen(kit_muduo::WebSocketSessionPtr session) noexcept;
     void onText(kit_muduo::WebSocketSessionPtr session, const std::string &payload) noexcept;
     void onClose(kit_muduo::WebSocketSessionPtr session) noexcept;
     void onError(kit_muduo::WebSocketSessionPtr session, kit_muduo::ws::CloseCode code, const std::string &reason) noexcept;
     /*******WebSocket 回调处理****/
 
-    bool parseClientControlMessage(LiveConnectionInfo & info, const std::string &payload, LiveClientMsg &msg);
+    void sendLiveReady(
+        kit_muduo::WebSocketSessionPtr session,
+        InteractionLiveContextPtr live,
+        const SubscribeWithCatchUpResult& capture_result,
+        const std::string& trigger);
 
-    void sendBusinessError(kit_muduo::WebSocketSessionPtr session, const std::string &bs_code, const std::string &message);
-    void sendControlSeqError(kit_muduo::WebSocketSessionPtr session, const std::string &bs_code, const std::string &message, const LiveConnectionInfo &info);
+    void sendInteraction(
+        kit_muduo::WebSocketSessionPtr session,
+        InteractionLiveContextPtr live,
+        const InteractionRecord& record,
+        const std::string& delivery);
+
+    void sendCommandAckMsg(
+        kit_muduo::WebSocketSessionPtr session, 
+        const InteractionLiveContextPtr& live,
+        const LiveCommandMsg &req,
+        bool ok,
+        const std::string &error_message = "");
+    
+    void cleanupLive(int64_t project_id, std::optional<int64_t> protocol_id);
+
+private:
+
+    void onOpenInLoop(kit_muduo::WebSocketSessionPtr session, InteractionLiveContextPtr live);
+    void onHubLiveArriveInLoop(kit_muduo::WebSocketSessionPtr session, InteractionLiveContextPtr live, uint64_t generation,  InteractionRecord record);
+    void onClientCommandInLoop(kit_muduo::WebSocketSessionPtr session, InteractionLiveContextPtr live, LiveCommandMsg msg);
+    void onCloseInLoop(InteractionLiveContextPtr live);
+
+    bool catchUpHelperInLoop(kit_muduo::WebSocketSessionPtr session, InteractionLiveContextPtr live, const std::string& trigger, std::string &error_reason);
+
+    void onResumeInLoop(const kit_muduo::WebSocketSessionPtr& session, const InteractionLiveContextPtr& live, const LiveCommandMsg& msg);
+
+    bool parseLiveCommandMsg(InteractionLiveContext & info, const std::string &payload, LiveCommandMsg &msg);
+
+    void sendBusinessError(kit_muduo::WebSocketSessionPtr session, const std::string &bs_code);
+
+
+    bool addLiveContext(uint64_t session_id, InteractionLiveContextPtr live);
+    InteractionLiveContextPtr findLiveContext(uint64_t session_id);
+    InteractionLiveContextPtr removeLiveContext(uint64_t session_id);
+
 private:
     std::shared_ptr<ProtocolSvcInterface> pc_svc_;
     std::shared_ptr<RuntimeControllerInterface> runtime_controller_;
     std::shared_ptr<ProtocolInteractionHub> hub_;
+
+    std::mutex mtx_;
+    using WsSssionId = uint64_t;
+    std::unordered_map<WsSssionId, InteractionLiveContextPtr> live_contexts_;
 };
 
 

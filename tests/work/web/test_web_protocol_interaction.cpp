@@ -389,13 +389,13 @@ ProtocolAccessInfo MakeAccessInfo(int64_t project_id, int64_t protocol_id)
     };
 }
 
-ProtocolInteractionRecord MakeRecord(uint64_t seq,
+InteractionRecord MakeRecord(uint64_t seq,
                                      InteractionScope scope,
                                      int64_t project_id,
                                      int64_t protocol_id,
                                      InteractionResult result = InteractionResult::kMatched)
 {
-    ProtocolInteractionRecord record;
+    InteractionRecord record;
     record.seq = seq;
     record.scope = scope;
     record.project_id = project_id;
@@ -466,7 +466,7 @@ struct InteractionWsFixture
         RunInLoopSync(loop, []() {});
     }
 
-    void Publish(ProtocolInteractionRecord record)
+    void Publish(InteractionRecord record)
     {
         hub->publish(std::move(record));
         WaitForLoop();

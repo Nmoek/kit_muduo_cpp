@@ -30,6 +30,7 @@
 #include "domain/type.h"
 #include "domain/runtime_loop_pool.h"
 #include "domain/protocol_interaction.h"
+#include "domain/protocol_interaction_hub.h"
 
 #include <cstdint>
 #include <functional>
@@ -47,15 +48,6 @@ using nljson = nlohmann::json;
 namespace kit_domain {
 
 namespace {
-
-inline static EventLoop* CheckLoop(EventLoop *loop)
-{
-    if(!loop)
-    {
-        throw std::invalid_argument("loop* is null");
-    }
-    return loop;
-}
 
 ContentMeta ExpectedHttpContentMeta(kit_domain::ProtocolBodyType body_type)
 {
@@ -114,13 +106,10 @@ void AttachHttpResponseCaptureFromContext(
 
 
 HttpProjectServer::HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop)
-    :ProjectServer(project_id, lease_loop)
-    ,tcp_server_(
-        CheckLoop(lease_loop->loop()), 
-        InetAddress(0, "0.0.0.0"), 
-        "pj" + std::to_string(project_id_) + "http", 
-        kit_muduo::TcpServer::KReusePort
-    )
+    :ProjectServer(
+        project_id,
+        lease_loop,
+        "pj" + std::to_string(project_id) + "http")
     ,dispatch_(std::make_shared<HttpServletDispatch>())
 {
     tcp_server_.setConnectionCallback(std::bind(&HttpProjectServer::onConnect, this, std::placeholders::_1));
@@ -132,34 +121,6 @@ HttpProjectServer::~HttpProjectServer()
 {
     stop();
 }
-
-void HttpProjectServer::start()
-{
-    tcp_server_.setThreadNum(0); // 使用单线程模式
-    tcp_server_.start();
-}
-
-bool HttpProjectServer::stop()
-{
-    bool expected = false;
-    if(!stopped_.compare_exchange_strong(expected, true))
-    {
-        return true;
-    }
-
-    bool ok = WaitRuntimeStopDone("HttpProjectServer", project_id_, [this](std::function<void()> done){
-        tcp_server_.stopAsync(std::move(done));
-    });
-
-    if(!ok)
-    {
-        return false;
-    }
-
-    lease_loop_->release();
-    return true;
-}
-
 
 const kit_muduo::InetAddress& HttpProjectServer::getBindAddr() const 
 {
@@ -253,6 +214,7 @@ RuntimeResult<void> HttpProjectServer::DelProtocolItem(int64_t protocol_id)
     }
 
     // 2. 删缓存
+    it->second.item->cache()->close();
     http_items_.erase(it);
 
     return result;
@@ -662,16 +624,19 @@ ProtocolInteractionObservation HttpProjectServer::buildHttpObservation(HttpConte
 {
     auto req = ctx->request();
     auto resp = ctx->response();
+    auto cache = http_item ? http_item->cache() : notice_cache_;;
 
     ProtocolInteractionObservation obs;
     obs.project_id = project_id_;
     obs.protocol_id = http_item ? http_item->getId() : 0;
+    obs.cache_instance_id = cache->cacheInstanceId();
     obs.scope = http_item ? InteractionScope::kProtocol : InteractionScope::kProject;
     obs.protocol_type = ProtocolType::kHttp;
     obs.time_ms = req->receiveTime().millSeconds();
     obs.peer_addr = std::move(peer_addr);
     obs.result = result;
     obs.error_message = std::move(message);
+    obs.weak_record_cache = cache;
 
     if(InteractionScope::kProtocol == obs.scope)
     {
@@ -958,6 +923,18 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
         "service handle ok", 
         resp->connectionClosed());
     return;
+}
+
+void HttpProjectServer::closeAllProtocolInteractionCaches()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    for (auto& [protocol_id, runtime_item] : http_items_)
+    {
+        if (runtime_item.item)
+        {
+            runtime_item.item->cache()->close();
+        }
+    }
 }
 
 }

@@ -89,6 +89,11 @@ public:
         return it ==  query_params_.end() ? "" : it->second;
     } 
 
+    bool hasQureyParam(const std::string &key) const
+    {
+        return query_params_.find(key) != query_params_.end();
+    }
+
     void addQureyParam(const std::string &key, const std::string &val) { query_params_[key] = val; }
 
     std::string getRouteParam(const std::string &key) const

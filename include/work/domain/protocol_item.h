@@ -64,6 +64,8 @@ public:
 
     bool isEndian() const;
 
+    std::shared_ptr<InteractionRecordCache> cache() const { return record_cache_; }
+
 protected:
     void initBase(const Protocol& p);
 
@@ -78,8 +80,10 @@ protected:
     ProtocolItemBodyView req_body_view_;
     /// @brief 响应Body快照
     ProtocolItemBodyView resp_body_view_;
+    /// @brief 协议项交互实时流缓存
+    std::shared_ptr<InteractionRecordCache> record_cache_;
 
-    /// @brief 校验过程  粗略校验？ 精细校验?
+    /// @brief TODO 校验过程  粗略校验？ 精细校验?
 };
 
 

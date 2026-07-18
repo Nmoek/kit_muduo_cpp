@@ -42,6 +42,7 @@
 #include "dao/init.h"
 #include "ioc/web.h"
 
+#include <functional>
 #include <memory>
 #include <vector>
 #include <signal.h>
@@ -113,13 +114,12 @@ static std::shared_ptr<Application> InitApp()
 
     // 全局协议交互详情发布器
     auto publisher = std::make_shared<ProtocolInteractionPublisher>(
-        std::vector<std::shared_ptr<ProtocolInteractionSink>>{hub}
+        std::vector<std::shared_ptr<InteractionSink>>{hub}
     );
     publisher->start();
     
     // 全局运行态管理器
     std::shared_ptr<RuntimeControllerInterface> runtime_controller = std::make_shared<ProjectRuntimeManager>(projSvc, protocSvc, publisher);
-
     
 
     // 需要将app句柄放到Handler中
@@ -134,6 +134,9 @@ static std::shared_ptr<Application> InitApp()
     authHdl = std::make_shared<AuthHandler>(authSvc);
     userHdl = std::make_shared<UserHandler>(userSvc);
     interHdl = std::make_shared<ProtocolInteractionHandler>(protocSvc, runtime_controller, hub);
+
+    //需要给运行态增加live清理回调
+    runtime_controller->setInteractionCleanUpCallBack(std::bind(&ProtocolInteractionHandler::cleanupLive, interHdl, std::placeholders::_1, std::placeholders::_2));
 
     auto server = InitWebServer(&loop, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), interHdl.get());
 

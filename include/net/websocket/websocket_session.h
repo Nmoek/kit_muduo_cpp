@@ -79,9 +79,6 @@ public:
 
     void setWSClearCb(WSClearCb cb) { clear_cb_ = std::move(cb); }
 
-    void setOther(std::shared_ptr<void> other) { other_ = std::move(other); }
-    std::shared_ptr<void> other() const { return other_; }
-
 public:
     /// @brief 默认单帧最大负载10M
     static constexpr size_t kDefaultMaxFrameBytes = 10 * 1024 * 1024;
@@ -128,7 +125,6 @@ private:
     WSErrorCb error_cb_;
     WSWriteCompleteCb write_complete_cb_;
     WSClearCb clear_cb_; // 注意:只有这个是内部回调
-    std::shared_ptr<void> other_;
 };
 
 

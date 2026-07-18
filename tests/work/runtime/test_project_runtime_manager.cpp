@@ -377,7 +377,7 @@ static std::shared_ptr<ProjectRuntimeManager> MakeRuntimeManagerForTest(
         size_t runtime_loop_capacity = 2)
 {
     auto publisher = std::make_shared<ProtocolInteractionPublisher>(
-        std::vector<std::shared_ptr<ProtocolInteractionSink>>{});
+        std::vector<std::shared_ptr<InteractionSink>>{});
     return std::make_shared<ProjectRuntimeManager>(
         std::move(project_svc),
         std::move(protocol_svc),

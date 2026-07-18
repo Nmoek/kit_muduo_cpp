@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -248,6 +249,8 @@ struct RuntimeOperationOptions
 class RuntimeControllerInterface
 {
 public:
+    using InteractionCleanUpCallBack = std::function<void(int64_t project_id, std::optional<int64_t> protocol_id)>;
+
     virtual ~RuntimeControllerInterface() = default;
 
     virtual void shutdown() = 0;
@@ -272,7 +275,11 @@ public:
     virtual std::shared_ptr<ProjectServer> findServer(int64_t project_id) = 0;
     virtual void addServer(int64_t project_id, std::shared_ptr<ProjectServer> server) = 0;
     virtual void removeServer(int64_t project_id) = 0;
+    void setInteractionCleanUpCallBack(InteractionCleanUpCallBack cb) { inter_cleanup_cb_ = std::move(cb); }
 
+protected:
+    /// @brief 交互数据实时live清理回调
+    InteractionCleanUpCallBack inter_cleanup_cb_;
 };
 
 

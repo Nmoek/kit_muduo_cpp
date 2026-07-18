@@ -329,10 +329,10 @@ void WebSocketSession::handleFrame(const WebSocketFrame &frame)
 
 void WebSocketSession::fireCloseOnce()
 {
-    std::call_once(close_once_, [sesion = shared_from_this()](){
-        if(sesion->close_cb_)
+    std::call_once(close_once_, [session = shared_from_this()](){
+        if(session->close_cb_)
         {
-            sesion->close_cb_(sesion);
+            session->close_cb_(session);
         }
     });
 }
@@ -340,10 +340,10 @@ void WebSocketSession::fireCloseOnce()
 
 void WebSocketSession::clearOnce()
 {
-    std::call_once(clear_once_, [sesion = shared_from_this()](){
-        if(sesion->clear_cb_)
+    std::call_once(clear_once_, [session = shared_from_this()](){
+        if(session->clear_cb_)
         {
-            sesion->clear_cb_(sesion->session_id_);
+            session->clear_cb_(session->session_id_);
         }
     });
 }

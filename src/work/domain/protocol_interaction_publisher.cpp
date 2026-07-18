@@ -21,10 +21,9 @@ using namespace kit_muduo;
 namespace kit_domain {
 
 
-ProtocolInteractionPublisher::ProtocolInteractionPublisher(std::vector<std::shared_ptr<ProtocolInteractionSink>> sinks, ProtocolInteractionPublisherConfig config)
+ProtocolInteractionPublisher::ProtocolInteractionPublisher(std::vector<std::shared_ptr<InteractionSink>> sinks, ProtocolInteractionPublisherConfig config)
     :sinks_(std::move(sinks))
     ,config_(std::move(config))
-    ,next_seq_(1)
     ,queue_(config_.queue_capacity)
     ,worker_thread_(nullptr)
     ,is_stopping_(false)
@@ -92,14 +91,9 @@ void ProtocolInteractionPublisher::publish(ProtocolInteractionObservation obs)
     worker_cond_.notify_one();
 }
 
-uint64_t ProtocolInteractionPublisher::CurrentSeq() const
-{
-    return next_seq_.load(std::memory_order_relaxed) - 1;
-}
 
 
-
-void ProtocolInteractionPublisher::fillInteractionSide(ProtocolInteractionRecord &record,
+void ProtocolInteractionPublisher::fillInteractionSide(InteractionRecord &record,
     InteractionSide& dst,
     const InteractionSideCapture &src,
     ProtocolSide side)
@@ -137,25 +131,7 @@ void ProtocolInteractionPublisher::workLoop()
         std::shared_ptr<QueueObservation> queue_obs = nullptr;
         while(queue_.tryPop(queue_obs))
         {
-            if(!queue_obs)
-            {
-                PUBLISHER_F_WARN("interaction queue pop result null\n");
-                break;
-            }
-
-            try {
-
-                auto record = buildRecord(*queue_obs);
-                publishRecord(std::move(record));
-                processed_count_.fetch_add(1, std::memory_order_relaxed);
-
-            } catch(const std::exception &e) {
-                failed_count_.fetch_add(1, std::memory_order_relaxed);
-                PUBLISHER_F_ERROR("interaction publish failed: %s\n", e.what());
-            } catch(...) {
-                failed_count_.fetch_add(1, std::memory_order_relaxed);
-                PUBLISHER_F_ERROR("interaction publish unknown exception\n");
-            }
+            queueObsHandle(queue_obs);
         }
 
         std::unique_lock<std::mutex> lock(worker_mtx_);
@@ -181,25 +157,7 @@ void ProtocolInteractionPublisher::drainQueueTimeOut(int64_t will_timeout)
                 PUBLISHER_F_DEBUG("interaction queue drain timeout!\n");
                 return;
             }
-            if(!queue_obs)
-            {
-                PUBLISHER_F_WARN("interaction queue empty\n");
-                break;
-            }
-
-            try {
-
-                auto record = buildRecord(*queue_obs);
-                publishRecord(std::move(record));
-                processed_count_.fetch_add(1, std::memory_order_relaxed);
-
-            } catch(const std::exception &e) {
-                failed_count_.fetch_add(1, std::memory_order_relaxed);
-                PUBLISHER_F_ERROR("interaction publish failed: %s\n", e.what());
-            } catch(...) {
-                failed_count_.fetch_add(1, std::memory_order_relaxed);
-                PUBLISHER_F_ERROR("interaction publish unknown exception\n");
-            }
+            queueObsHandle(queue_obs);
         }
     }
 
@@ -210,16 +168,29 @@ void ProtocolInteractionPublisher::drainQueueTimeOut(int64_t will_timeout)
 }
 
 
-ProtocolInteractionRecord ProtocolInteractionPublisher::buildRecord(QueueObservation queue_obs)
+InteractionRecord ProtocolInteractionPublisher::buildRecord(const QueueObservation &queue_obs)
 {
     ProtocolInteractionObservation obs = std::move(queue_obs.obs);
 
-    ProtocolInteractionRecord record;
-    // TODO 每个订阅者维护自己的seq
-    record.seq = next_seq_.fetch_add(1, std::memory_order_relaxed); // 注意要使用 Publisher生成的sequence
+    if (obs.scope != InteractionScope::kProtocol
+        && obs.scope != InteractionScope::kProject)
+    {
+        throw std::invalid_argument("unknown interaction scope");
+    }
+    if (obs.project_id <= 0)
+    {
+        throw std::invalid_argument("invalid interaction project_id");
+    }
+    if (obs.scope == InteractionScope::kProtocol && obs.protocol_id <= 0)
+    {
+        throw std::invalid_argument("invalid protocol interaction protocol_id");
+    }
+
+    InteractionRecord record;
     record.scope = obs.scope;
     record.project_id = obs.project_id;
     record.protocol_id = (InteractionScope::kProject == record.scope ? 0 : obs.protocol_id);
+    record.cache_instance_id = obs.cache_instance_id;
     record.protocol_type = obs.protocol_type;
     record.time_ms = obs.time_ms > 0 ? obs.time_ms : TimeStamp::NowMs();
     record.peer_addr = std::move(obs.peer_addr);
@@ -233,7 +204,7 @@ ProtocolInteractionRecord ProtocolInteractionPublisher::buildRecord(QueueObserva
 }
 
 
-void ProtocolInteractionPublisher::publishRecord(ProtocolInteractionRecord record)
+void ProtocolInteractionPublisher::publishRecord(InteractionRecord record)
 {
     if(sinks_.empty())
     {
@@ -258,15 +229,44 @@ void ProtocolInteractionPublisher::publishRecord(ProtocolInteractionRecord recor
     }
 }
 
+void ProtocolInteractionPublisher::queueObsHandle(std::shared_ptr<QueueObservation>& queue_obs)
+{
+    if(!queue_obs)
+    {
+        PUBLISHER_F_WARN("interaction queue data null\n");
+        return;
+    }
+    try {
 
+        auto cache = queue_obs->obs.weak_record_cache.lock();
+        if(!cache || !cache->isActive())
+        {
+            PUBLISHER_F_INFO("interaction cache not active\n");
+            return;
+        }
 
+        // record构造
+        auto record = buildRecord(*queue_obs);
 
+        // record缓存
+        if(!cache->tryAppend(record))
+        {
+            return;
+        }
+        
+        // record推送
+        publishRecord(std::move(record));
 
+        processed_count_.fetch_add(1, std::memory_order_relaxed);
 
-
-
-
-
+    } catch(const std::exception &e) {
+        failed_count_.fetch_add(1, std::memory_order_relaxed);
+        PUBLISHER_F_ERROR("interaction publish failed: %s\n", e.what());
+    } catch(...) {
+        failed_count_.fetch_add(1, std::memory_order_relaxed);
+        PUBLISHER_F_ERROR("interaction publish unknown exception\n");
+    }
+}
 
 
 }
