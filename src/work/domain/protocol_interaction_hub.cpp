@@ -43,6 +43,7 @@ void ProtocolInteractionHub::publish(InteractionRecord record)
     lock.unlock();
 
     // 注意 解锁后进行回调处理
+    // 这里有问题 实时发布不应该再worker线程处理 应该再各自的IO线程处理
     for(auto &cb : cbs)
     {
         try {

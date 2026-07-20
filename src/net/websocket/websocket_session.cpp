@@ -16,6 +16,7 @@
 #include "net/event_loop.h"
 
 #include <atomic>
+#include <limits>
 #include <mutex>
 #include <vector>
 
@@ -36,6 +37,26 @@ inline bool ChechkControlFrame(WebSocketOpcode opcode)
     return WebSocketOpcode::kClose == opcode
         || WebSocketOpcode::kPing == opcode
         || WebSocketOpcode::kPong == opcode;
+}
+
+bool AddFrameReserveBytes(size_t payload_bytes, size_t& reserve_bytes)
+{
+    constexpr size_t kHeaderLen = WebSocketSession::kMaxFrameHeaderBytes;
+
+    if(payload_bytes > std::numeric_limits<size_t>::max() - kHeaderLen)
+    {
+        return false;
+    }
+
+    const size_t frame_bytes = payload_bytes + kHeaderLen;
+    if(frame_bytes > std::numeric_limits<size_t>::max() - reserve_bytes)
+    {
+        return false;
+    }
+
+    reserve_bytes += frame_bytes;
+    return true;
+
 }
 
 }
@@ -120,38 +141,72 @@ void WebSocketSession::sendBinary(const std::vector<uint8_t> &payload)
     sendDataFrame(WebSocketOpcode::kBinary, payload);
 }
 
+
+bool 
+ WebSocketSession::sendMessageGroups(const MessageGroups &groups)
+{
+    if(!isOpen() || groups.empty())
+    {
+        return false;
+    }
+
+    size_t reserve_bytes = 0;
+
+    // 计算总容量大小
+    for(const auto& group : groups)
+    {
+        if(!AddFrameReserveBytes(group.text_payload.size(), reserve_bytes))
+        {
+            WS_F_ERROR("websocket message groups size overflow\n");
+            return false;
+        }
+
+        for(const auto &binary : group.binary_payloads)
+        {
+            if(!binary)
+            {
+                WS_F_ERROR("binary frame data is null\n");
+                return false;
+            }
+
+            if(!AddFrameReserveBytes(binary->size(), reserve_bytes))
+            {
+                WS_F_ERROR("websocket binary group size overflow\n");
+                return false;
+            }
+
+        }
+    }
+
+    WS_F_DEBUG("websocket send message groups size: %lu\n", reserve_bytes);
+
+
+    std::vector<uint8_t> data;
+    data.reserve(reserve_bytes);
+
+    for(const auto &g : groups)
+    {
+        AppendWebSocketFrameBytes(data, WebSocketOpcode::kText, std::vector<uint8_t>(g.text_payload.begin(), g.text_payload.end()));
+
+        for(const auto &b : g.binary_payloads)
+        {
+            AppendWebSocketFrameBytes(data, WebSocketOpcode::kBinary, *b);
+        }
+    }
+
+    conn_->send(data);
+    return true;
+}
+
 void WebSocketSession::sendMessageGroup(const std::string &json_msg, const BinaryGroup& binary_frames)
 {
-    if(!isOpen())
-    {
-        WS_F_ERROR("webscoket session disconnected\n");
-        return;
-    }
-    size_t reserve_bytes = json_msg.size() + kMaxFrameHeaderBytes;
-    for(const auto &frame : binary_frames)
-    {
-        if(frame)
-        {
-            reserve_bytes += frame->size() + kMaxFrameHeaderBytes;
-        }
-        else
-        {
-            WS_F_ERROR("binray frame data is null!\n");
-            return;
-        }
-    }
+    MessageGroups groups(1, MessageGroup{
+        .text_payload = json_msg,
+        .binary_payloads = binary_frames,
+        .wire_bytes = 0,
+    });
 
-    std::vector<uint8_t> out;
-    out.reserve(reserve_bytes);
-
-    AppendWebSocketFrameBytes(out, WebSocketOpcode::kText, std::vector<uint8_t>(json_msg.begin(), json_msg.end()));
-
-    for(const auto &frame : binary_frames)
-    {
-        AppendWebSocketFrameBytes(out, WebSocketOpcode::kBinary, *frame);
-    }
-
-    conn_->send(out);
+    (void)sendMessageGroups(groups);
 }
 
 void WebSocketSession::close(CloseCode close_code, const std::string &reason)

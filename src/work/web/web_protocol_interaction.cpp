@@ -8,6 +8,7 @@
  */
 #include "base/time_stamp.h"
 #include "cppcodec/base64_rfc4648.hpp"
+#include "domain/protocol_interaction_observation.h"
 #include "net/event_loop.h"
 #include "domain/protocol_interaction.h"
 #include "domain/protocol_interaction_hub.h"
@@ -38,6 +39,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <system_error>
 #include <type_traits>
@@ -48,6 +50,7 @@ using namespace kit_muduo::http;
 using namespace kit_muduo::ws;
 
 namespace kit_domain {
+
 
 namespace {
 #define WEBSOCKET_CB1(NAME) ([this](auto && arg1){\
@@ -233,6 +236,178 @@ bool ParseQueryUpgradeInitData(const HttpRequestPtr req, UpgradeInitReq &out)
     return true;
 }
 
+bool AddWireBytes(
+    size_t payload_bytes,
+    size_t& wire_bytes) noexcept
+{
+    //wire_bytes 使用每个 frame 最大 14 bytes header 做保守估算。实际 header 可能更小，但 batch 预算只能按上边界算
+    constexpr size_t kHeaderLen = WebSocketSession::kMaxFrameHeaderBytes;
+
+    if(payload_bytes > std::numeric_limits<size_t>::max() - kHeaderLen)
+    {
+        PCINTERAC_F_FATAL("payload bytes overflow max!\n");
+        return false;
+    }
+
+    const size_t frame_bytes = payload_bytes + kHeaderLen;
+    if(frame_bytes > std::numeric_limits<size_t>::max() - wire_bytes)
+    {
+        PCINTERAC_F_FATAL("frame bytes overflow max!\n");
+        return false;
+    }
+
+    wire_bytes += frame_bytes;
+    return true;
+}
+
+struct CatchUpCursorInput
+{
+    std::optional<uint64_t> protocol_cache_instance_id;
+    std::optional<uint64_t> protocol_seq;
+    std::optional<uint64_t> project_cache_instance_id;
+    std::optional<uint64_t> project_seq;
+};
+
+/**
+ * @brief 游标种类选择辅助函数
+ * @param live 
+ * @param trigger 
+ * @return CatchUpCursorInput 
+ */
+CatchUpCursorInput ResolveCatchUpCursor(
+    const InteractionLiveContext& live,
+    CatchUpTrigger trigger)
+{
+    if(trigger == CatchUpTrigger::kOpen)
+    {
+        return CatchUpCursorInput{
+            .protocol_cache_instance_id = live.init_req.after_protocol_cache_instance_id,
+            .protocol_seq = live.init_req.after_protocol_seq,
+            .project_cache_instance_id = live.init_req.after_project_cache_instance_id,
+            .project_seq = live.init_req.after_project_seq,
+        };
+    }
+
+    return CatchUpCursorInput{
+        .protocol_cache_instance_id = live.protocol_cursor.cache_instance_id,
+        .protocol_seq = live.protocol_cursor.afterSeq(),
+        .project_cache_instance_id = live.project_cursor.cache_instance_id,
+        .project_seq = live.project_cursor.afterSeq(),
+    };
+}
+
+struct NextCatchUpRecord
+{
+    const InteractionRecord* record{nullptr};
+    CatchUpRecordSource source{CatchUpRecordSource::kProtocolSnapshot};
+};
+
+/**
+ * @brief 挑选snapshot数据下一条record
+ * @param state 
+ * @return NextCatchUpRecord 
+ */
+NextCatchUpRecord PeekNextSnapshotRecord(
+    const CatchUpDeliveryState& state)
+{
+    if(state.protocol_index < state.protocol_cache_snapshot.incr_records.size())
+    {
+        return NextCatchUpRecord{
+            .record = &state.protocol_cache_snapshot.incr_records[state.protocol_index],
+            .source = CatchUpRecordSource::kProtocolSnapshot,
+        };
+    }
+
+    if(state.project_cache_snapshot.has_value()
+        && state.project_index < state.project_cache_snapshot->incr_records.size())
+    {
+        return NextCatchUpRecord{
+            .record = &state.project_cache_snapshot->incr_records[state.project_index],
+            .source = CatchUpRecordSource::kProjectSnapshot,
+        };
+    }
+
+    return {};
+}
+
+void UpdateSnapshotIndex(CatchUpDeliveryState& state, CatchUpRecordSource source)
+{
+    if(source == CatchUpRecordSource::kProtocolSnapshot)
+    {
+        ++state.protocol_index;
+    }
+    else if(source == CatchUpRecordSource::kProjectSnapshot)
+    {
+        ++state.project_index;
+    }
+}
+
+/**
+ * @brief batch批数据加入判断规则
+ * @param batch_bytes 
+ * @param next_group_bytes 
+ * @param max_batch_bytes 
+ * @param batch_empty 
+ * @return true 
+ * @return false 
+ */
+bool CanAppendToBatch(size_t batch_bytes,
+    size_t next_group_bytes,
+    size_t max_batch_bytes,
+    bool batch_empty) noexcept
+{
+    if(batch_empty)
+    {
+        // 单条 record 可以超过软上限，否则永远无法前进。
+        return true;
+    }
+
+    if(batch_bytes > max_batch_bytes)
+    {
+        return false;
+    }
+
+    return next_group_bytes <= max_batch_bytes - batch_bytes;
+}
+
+} // namespace
+
+
+PendingLiveRecord::PendingLiveRecord(InteractionRecord record)
+    :record_(std::move(record))
+    ,reserved_sidecar_bytes_(0)
+    ,release_callback_(nullptr)
+    ,reservation_active_(false)
+{
+
+}
+
+
+PendingLiveRecord::PendingLiveRecord(
+    InteractionRecord record,
+    size_t reserved_sidecar_bytes,
+    std::function<void()> release_callback)
+    :record_(std::move(record))
+    ,reserved_sidecar_bytes_(reserved_sidecar_bytes)
+    ,release_callback_(std::move(release_callback))
+{
+
+}
+
+PendingLiveRecord::~PendingLiveRecord() noexcept
+{
+    if(!reservation_active_ || !release_callback_)
+    {
+        return;
+    }
+
+    try {
+        release_callback_();
+    } catch(const std::exception& e) {
+        PCINTERAC_F_ERROR("release pending reservation exception: %s\n", e.what());
+    } catch(...) {
+        PCINTERAC_F_ERROR("release pending reservation unknown exception\n");
+    }
 }
 
 bool InteractionLiveContext::checkState(InteractionLiveCommand command)
@@ -351,10 +526,12 @@ void InteractionLiveContext::markLiveCatchUpCursor(InteractionScope scope, const
 
 ProtocolInteractionHandler::ProtocolInteractionHandler(std::shared_ptr<ProtocolSvcInterface> svc, 
     std::shared_ptr<RuntimeControllerInterface> runtime_controller, 
-    std::shared_ptr<ProtocolInteractionHub> hub)
+    std::shared_ptr<ProtocolInteractionHub> hub,
+    InteractionLiveConfig live_config)
     :pc_svc_(std::move(svc))
     ,runtime_controller_(runtime_controller)
     ,hub_(hub)
+    ,live_config_(std::move(live_config))
 {
 
 }
@@ -396,6 +573,7 @@ bool ProtocolInteractionHandler::onPrepare(kit_muduo::WebSocketSessionPtr sessio
     live->state = InteractionLiveState::kInit;
     live->init_req = std::move(init_req);
     live->owner_loop = session->getLoop();
+    live->weak_session = session;
 
     if(!addLiveContext(live->session_id, live))
     {
@@ -416,30 +594,39 @@ bool ProtocolInteractionHandler::onPrepare(kit_muduo::WebSocketSessionPtr sessio
     return true;
 }
 
-void ProtocolInteractionHandler::onHubLiveArrive(std::weak_ptr<kit_muduo::ws::WebSocketSession> weak_session, std::weak_ptr<InteractionLiveContext> weak_live, uint64_t generation,  InteractionRecord record) noexcept
+void ProtocolInteractionHandler::onHubLiveArrive(std::weak_ptr<kit_muduo::ws::WebSocketSession> weak_session, std::weak_ptr<InteractionLiveContext> weak_live, uint64_t generation, InteractionRecord record)
 {
-    auto session = weak_session.lock();
     auto live = weak_live.lock();
-    if(!session || !live)
+    if(!live || !live->owner_loop)
     {
-        PCINTERAC_F_INFO("interaction not active\n");
+        PCINTERAC_F_ERROR("interaction not active\n");
+        return;
+    }
+    PendingLiveRecordPtr pending_record = nullptr;
+
+    const auto state = live->state.load(std::memory_order_relaxed);
+
+    if(InteractionLiveState::kCatchingUp == state)
+    {
+        pending_record = tryReserveCatchUpPending(live, generation, std::move(record));
+        if(!pending_record)
+        {
+            return;
+        }
+    }
+    else if(InteractionLiveState::kActive == state)
+    {
+        pending_record = std::make_shared<PendingLiveRecord>(std::move(record));
+    }
+    else 
+    {
         return;
     }
 
+    // catch-up 记录已经在进入 EventLoop pending 前预占；active 链路尚未接入该上限。
 
-    // 特别注意: 这里相当于一直循环入队 直到恢复kActive
-    if(InteractionLiveState::kCatchingUp == live->state.load(std::memory_order_relaxed))
-    {
-        PCINTERAC_F_DEBUG("interaction live record queue... seq[%lu] pjId[%ld], pcId[%lu], time_ms[%ld]\n", record.seq, record.project_id, record.protocol_id, record.time_ms);
-
-        live->owner_loop->queueInLoop([this, weak_session, weak_live, generation, mv_record = std::move(record)](){
-            onHubLiveArrive(weak_session, weak_live, generation, std::move(mv_record));
-        });
-        return;
-    }
-
-    // 真正执行点
-    live->owner_loop->runInLoop([this, weak_session, weak_live, generation, mv_record = std::move(record)](){
+    // 这里必须排队 消除live数据跑到catchup数据前的强一致要求
+    live->owner_loop->queueInLoop([this, weak_session, weak_live, generation, pending_record = std::move(pending_record)]() mutable {
         auto session = weak_session.lock();
         auto live = weak_live.lock();
         if(!session || !live)
@@ -447,7 +634,18 @@ void ProtocolInteractionHandler::onHubLiveArrive(std::weak_ptr<kit_muduo::ws::We
             return;
         }
 
-        onHubLiveArriveInLoop(session, live, generation, std::move(mv_record));
+        try {
+            onHubLiveArriveInLoop(session, live, generation, std::move(pending_record));
+        } catch(const std::exception &e) {
+            PCINTERAC_F_ERROR("onHubLiveArriveInLoop exception: %s \n", e.what());
+
+            abortInLoop(session, live, generation, e.what());
+        } catch(...) {
+            PCINTERAC_F_ERROR("onHubLiveArriveInLoop unknown exception \n");
+            abortInLoop(session, live, generation, "unknown exception");
+        }
+        
+
     });
 
     
@@ -475,7 +673,17 @@ void ProtocolInteractionHandler::onOpen(kit_muduo::WebSocketSessionPtr session) 
         {
             return;
         }
-        onOpenInLoop(session, live);
+        try {
+            onOpenInLoop(session, live);
+        } catch(const std::exception &e) {
+            PCINTERAC_F_ERROR("onOpenInLoop exception: %s \n", e.what());
+
+            abortInLoop(session, live, live->generation, e.what());
+        } catch(...) {
+            PCINTERAC_F_ERROR("onOpenInLoop unknown exception \n");
+
+            abortInLoop(session, live, live->generation, "unknown exception");
+        }        
     });
     
 }
@@ -513,7 +721,17 @@ void ProtocolInteractionHandler::onText(kit_muduo::WebSocketSessionPtr session, 
         {
             return;
         }
-        onClientCommandInLoop(session, live, std::move(mv_msg));
+        try {
+            onClientCommandInLoop(session, live, std::move(mv_msg));
+        } catch(const std::exception &e) {
+            PCINTERAC_F_ERROR("onClientCommandInLoop exception: %s \n", e.what());
+
+            abortInLoop(session, live, live->generation, e.what());
+        } catch(...) {
+            PCINTERAC_F_ERROR("onClientCommandInLoop unknown exception \n");
+
+            abortInLoop(session, live, live->generation, " unknown exception");
+        }
     });
 
 
@@ -555,7 +773,7 @@ void ProtocolInteractionHandler::sendLiveReady(
     kit_muduo::WebSocketSessionPtr session,
     InteractionLiveContextPtr live,
     const SubscribeWithCatchUpResult& capture_result,
-    const std::string& trigger)
+    CatchUpTrigger trigger)
 {
     if(!session || !live)
     {
@@ -568,7 +786,7 @@ void ProtocolInteractionHandler::sendLiveReady(
     // 告诉客户端业务连接已经建立
     nlohmann::json root;
     root["type"] = "live_ready";
-    root["trigger"] = trigger;
+    root["trigger"] = trigger == CatchUpTrigger::kOpen ? "open" : "resume";
     root["project_id"] = live->project_id;
     root["protocol_id"] = live->protocol_id;
     root["session_id"] = session->sessionId();
@@ -597,7 +815,7 @@ void ProtocolInteractionHandler::sendLiveReady(
     session->sendText(root.dump());
 }
 
-void ProtocolInteractionHandler::sendInteraction(
+bool ProtocolInteractionHandler::sendInteraction(
     kit_muduo::WebSocketSessionPtr session,
     InteractionLiveContextPtr live,
     const InteractionRecord& record,
@@ -605,35 +823,17 @@ void ProtocolInteractionHandler::sendInteraction(
 {
     if(!session || !live)
     {
-        return;
+        return false;
     }
 
-    nlohmann::json root;
-    root["type"] = "interaction";
-    root["delivery"] = delivery;
-    root["record"] = record;
-
-    WebSocketSession::BinaryGroup group;
-    for(const auto &bs : record.binary_sidecars)
+    const auto& group = buildInteractionMessageGroup(record, delivery);
+    if(!group.has_value())
     {
-        if(bs.bytes && !bs.bytes->empty())
-        {
-            auto binary_msg_bytes = BuildAttachmentBinaryMessage(record, bs);
-            if(binary_msg_bytes)
-            {
-                group.push_back(binary_msg_bytes);
-            }
-            else 
-            {
-                PCINTERAC_F_WARN("build attachment binary message null: seq[%lu], pjId[%ld], pcId[%ld], peer[%s]\n", record.seq,
-                    record.project_id,
-                    record.protocol_id,
-                    record.peer_addr.c_str());
-            }
-
-        }
+        PCINTERAC_F_ERROR("buildInteractionMessageGroup error!\n");
+        return false;
     }
-    session->sendMessageGroup(root.dump(), group);
+
+    return session->sendMessageGroups({std::move(group.value())});
 }
 
 void ProtocolInteractionHandler::sendCommandAckMsg(
@@ -667,48 +867,54 @@ void ProtocolInteractionHandler::sendCommandAckMsg(
 
 void ProtocolInteractionHandler::cleanupLive(int64_t project_id, std::optional<int64_t> protocol_id)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::vector<InteractionLiveContextPtr> removed;
 
-    // 精准到protocol删除
-    if(protocol_id.has_value())
     {
-        for(auto &it : live_contexts_)
+        std::lock_guard<std::mutex> lock(mtx_);
+
+        for(auto it = live_contexts_.begin();
+            it != live_contexts_.end();)
         {
-            if(it.second && protocol_id.value() == it.second->protocol_id && project_id == it.second->project_id)
+            const auto& live = it->second;
+            const bool project_match =
+                live && live->project_id == project_id;
+            const bool protocol_match =
+                !protocol_id.has_value()
+                || (live
+                    && live->protocol_id
+                        == protocol_id.value());
+
+            if(project_match && protocol_match)
             {
-                PCINTERAC_F_DEBUG("interaction live cleanup success! pjId[%ld], pcId[%ld]\n", project_id, protocol_id.value());
+                PCINTERAC_F_DEBUG("interaction live cleanup success! pjId[%ld], pcId[%ld]\n", project_id, protocol_id.has_value() ? protocol_id.value() : 0);
 
-                InteractionLiveContextPtr live = it.second;
-                it.second.reset();
-                live->owner_loop->queueInLoop([this, live](){
-                    onCloseInLoop(live);
-                });
-
-                live_contexts_.erase(it.first);
-                break;
+                removed.push_back(std::move(it->second));
+                it = live_contexts_.erase(it);
+            }
+            else
+            {
+                ++it;
             }
         }
-
-        return;
     }
-    // project下全部删除
-    for(auto it = live_contexts_.begin();it != live_contexts_.end();)
+    // 锁外处理
+    for(auto& live : removed)
     {
-        if(it->second && it->second->project_id == project_id)
+        if(!live || !live->owner_loop)
         {
-            PCINTERAC_F_DEBUG("interaction live cleanup all project success! pjId[%ld]\n", project_id);
-            InteractionLiveContextPtr live = it->second;
-            it->second.reset();
-            live->owner_loop->queueInLoop([this, live](){
-                onCloseInLoop(live);
-            });
+            continue;
+        }
 
-            it = live_contexts_.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
+        live->owner_loop->queueInLoop([this, live]() {
+            auto session = live->weak_session.lock();
+            
+            onCloseInLoop(live);
+
+            if(session && session->isOpen())
+            {
+                session->close(CloseCode::kNormalShutdown,"shutdown");
+            }
+        });
     }
 }
 
@@ -718,50 +924,74 @@ void ProtocolInteractionHandler::onOpenInLoop(kit_muduo::WebSocketSessionPtr ses
 {
     assert(live && live->isInOwnerLoop());
 
-    if (live->state != InteractionLiveState::kInit)
-    {
-        live->setState(InteractionLiveState::kClosed);
-        session->close(CloseCode::kServerError, "interaction live state invalid");
-        return;
-    }
-
-    // kInit --> kCatchingUp
-    live->setState(InteractionLiveState::kCatchingUp);
-
     std::string error_reason;
-    if(!catchUpHelperInLoop(session, live, "open", error_reason))
+    if(!beginCatchUpInLoop(session,
+        live,
+        CatchUpTrigger::kOpen,
+        std::nullopt,
+        error_reason))
     {
-        PCINTERAC_F_ERROR("interaction catch up error: %s\n", error_reason.c_str());
-        // kCatchingUp --> kClosed
-        live->setState(InteractionLiveState::kClosed);
-        session->close(CloseCode::kServerError, error_reason);
-        return;
+        abortInLoop(session, live, live->generation, error_reason);
     }
-
-    // kCatchingUp --> kActive
-    live->setState(InteractionLiveState::kActive);
-
 }
 
 
-void ProtocolInteractionHandler::onHubLiveArriveInLoop(kit_muduo::WebSocketSessionPtr session , InteractionLiveContextPtr live, uint64_t generation,  InteractionRecord record)
+void ProtocolInteractionHandler::onHubLiveArriveInLoop(
+    kit_muduo::WebSocketSessionPtr session,
+    InteractionLiveContextPtr live,
+    uint64_t generation,
+    PendingLiveRecordPtr pending_record)
 {
     assert(live && live->isInOwnerLoop());
+
 
     if(live->generation != generation)
     {
         PCINTERAC_F_INFO("interaction record expired! %lu --> %lu\n", live->generation, generation);
         return;
     }
-    const auto state = live->state.load(std::memory_order_relaxed);
-    if(InteractionLiveState::kActive != state)
+
+    if(!pending_record)
     {
-        PCINTERAC_F_ERROR("interaction live not active!\n");
+        PCINTERAC_F_INFO("interaction record null!\n");
         return;
     }
 
-    sendInteraction(session, live, std::move(record), "live");
-    live->markLiveCursor(record);
+    const auto state = live->state.load(std::memory_order_relaxed);
+
+    if(InteractionLiveState::kCatchingUp == state)
+    {
+        if(!live->catchup_state || live->catchup_state->generation != generation)
+        {
+            PCINTERAC_F_INFO("interaction catchup expired!\n");
+            abortInLoop(session, live, generation, "catch-up state missing");
+            return;
+        }
+        // catching-up 记录必须在 Hub 线程完成过预占。
+        if(!pending_record->reservationActive())
+        {
+            PCINTERAC_F_ERROR("interaction catchup record dont pending reservation\n");
+            return;
+        }
+
+        live->pending_live_records.push_back(std::move(pending_record));
+
+        return;
+    }
+
+    if(InteractionLiveState::kActive == state)
+    {
+        InteractionRecord& live_record =  pending_record->record();
+        if(sendInteraction(session, live, live_record, "live"))
+        {
+            live->markLiveCursor(live_record);
+        }
+        return;
+    }
+
+    PCINTERAC_F_ERROR("interaction live not active!\n");
+
+    return;
 }
 
 
@@ -774,7 +1004,7 @@ void ProtocolInteractionHandler::onClientCommandInLoop(kit_muduo::WebSocketSessi
     // 重复 、过期消息
     if(msg.client_seq <= accepted_msg_seq)
     {
-        sendCommandAckMsg(session, live, msg, false, "seq duplicate  or expired");
+        sendCommandAckMsg(session, live, msg, false, "seq duplicate or expired");
         return;
     }
 
@@ -816,8 +1046,15 @@ void ProtocolInteractionHandler::onClientCommandInLoop(kit_muduo::WebSocketSessi
     }
     else if (InteractionLiveCommand::kResume == msg.command)
     {
-        // 复用catchup 流程
-        onResumeInLoop(session, live, msg);
+        try {
+                // 复用catchup 流程
+            onResumeInLoop(session, live, msg);
+
+        } catch(const std::exception &e) {
+
+            throw std::runtime_error(std::string("onResumeInLoop exception: ") + e.what());
+        }
+
         return;
     }
 
@@ -830,132 +1067,18 @@ void ProtocolInteractionHandler::onCloseInLoop(InteractionLiveContextPtr live)
 {
     assert(live && live->isInOwnerLoop());
 
+    stopCatchUpPendingAdmission(live, live->generation);
+    cleanupCatchUpPending(live, live->generation);
     live->setState(InteractionLiveState::kClosed);
-    if (live->subscriber_id != 0)
+    live->catchup_state.reset();
+
+    if(live->subscriber_id != 0)
     {
         hub_->unsubcribe(live->subscriber_id);
     }
     live->subscriber_id = 0;
 }
 
-
-bool ProtocolInteractionHandler::catchUpHelperInLoop(kit_muduo::WebSocketSessionPtr session, InteractionLiveContextPtr live, const std::string& trigger, std::string &error_reason)
-{
-    const auto &init_req = live->init_req;
-    std::optional<uint64_t> after_protocol_cache_instance_id{std::nullopt};
-    std::optional<uint64_t> after_protocol_seq{std::nullopt};
-    std::optional<uint64_t> after_project_cache_instance_id{std::nullopt};
-    std::optional<uint64_t> after_project_seq{std::nullopt};
-
-    auto pj_server = runtime_controller_->findServer(live->project_id);
-    if(!pj_server)
-    {
-        PCINTERAC_F_ERROR("runtime not find project server! \n");
-        error_reason = "runtime error";
-        return false;
-    }
-
-    auto runtime_result = pj_server->GetProtocolItem(live->protocol_id);
-    if(!runtime_result.ok() || !runtime_result.val)
-    {
-        PCINTERAC_F_ERROR("runtime get protocol item error! %d:%s\n", runtime_result.error.toInt(), runtime_result.error.toMsg().c_str());
-
-        error_reason = runtime_result.error.toMsg();
-        return false;
-    }
-    const auto& pc_item = runtime_result.val;
-
-    if("open" == trigger)
-    {
-        after_protocol_cache_instance_id = init_req.after_protocol_cache_instance_id;
-        after_protocol_seq = init_req.after_protocol_seq;
-        after_project_cache_instance_id = init_req.after_project_cache_instance_id;
-        after_project_seq = init_req.after_project_seq;
-    }
-    else if("resume" == trigger)
-    {
-        after_protocol_cache_instance_id = live->protocol_cursor.cache_instance_id;
-        after_protocol_seq = live->protocol_cursor.afterSeq();
-        after_project_cache_instance_id = live->project_cursor.cache_instance_id;
-        after_project_seq = live->project_cursor.afterSeq();
-    }
-    else
-    {
-        PCINTERAC_F_ERROR("interaction trigger invalid: %s\n", trigger.c_str());
-        error_reason = "trigger invalid";
-        return false;
-    }
-
-    InteractionSubscribeFilter filter{
-        .project_id = live->project_id,
-        .protocol_id = live->protocol_id,
-        .include_project_notice = init_req.include_project_notice,
-    };
-
-    InteractionRecordCacheContainer container{
-        .protocol_cache = pc_item->cache(),
-        .project_cache = pj_server->cache(),
-        .after_protocol_cache_instance_id = after_protocol_cache_instance_id,
-        .after_protocol_seq = after_protocol_seq,
-        .after_project_cache_instance_id = after_project_cache_instance_id,
-        .after_project_seq = after_project_seq,
-    };
-
-    std::weak_ptr<WebSocketSession> weak_session{session};
-    std::weak_ptr<InteractionLiveContext> weak_live{live};
-
-    auto capture_result = hub_->subscribeWithCatchUp(filter, std::move(container), 
-        [this, weak_session, weak_live, generation = live->generation](InteractionRecord record){
-
-            PCINTERAC_F_DEBUG("new hub live data arrive ==> seq[%lu], pjId[%ld], pcId[%ld], cacheId[%lu], time_ms[%ld]\n", record.seq, record.project_id, record.protocol_id, record.cache_instance_id, record.time_ms);
-
-            /**  订阅回调分两种情况:
-                1. 已订阅但还处于catchup阶段 需要将当前的实时数据排队
-                2. 已订阅 已经active阶段 直接发送
-            */
-            onHubLiveArrive(weak_session, weak_live, generation, std::move(record));
-
-        }
-    );
-    // 订阅失败 websession层 直接关闭
-    if(!capture_result.ok() || capture_result.subscription.subscriber_id <= 0)
-    {
-        error_reason = "interaction subscribe error";
-        return false;
-    }
-    live->subscriber_id = capture_result.subscription.subscriber_id;
-
-    const auto& protocol_cache_snapshot = capture_result.protocol_cache_snapshot;
-    const auto& project_cache_snapshot_opt = capture_result.project_cache_snapshot;
-
-
-    // 发送 live_ready消息
-    sendLiveReady(session, live, capture_result, trigger);
-
-    // 补发增量数据 catch_up
-    for(const InteractionRecord& record : protocol_cache_snapshot.incr_records)
-    {
-        sendInteraction(session, live, record, "catch_up");
-    }
-    if(project_cache_snapshot_opt.has_value())
-    {
-        for (const InteractionRecord& record : project_cache_snapshot_opt->incr_records)
-        {
-            sendInteraction(session, live, record, "catch_up");
-        }
-    }
-
-    // protocol 游标更新
-    live->markLiveCatchUpCursor(InteractionScope::kProtocol, protocol_cache_snapshot);
-
-    // project 游标更新
-    if(project_cache_snapshot_opt.has_value())
-    {
-        live->markLiveCatchUpCursor(InteractionScope::kProject, project_cache_snapshot_opt.value());
-    }
-
-    return true;
-}
 
 void ProtocolInteractionHandler::onResumeInLoop(
     const kit_muduo::WebSocketSessionPtr& session,
@@ -964,23 +1087,23 @@ void ProtocolInteractionHandler::onResumeInLoop(
 {
     assert(live && live->isInOwnerLoop());
 
-    // kInit --> kCatchingUp
-    live->setState(InteractionLiveState::kCatchingUp);
+    try {
+        std::string error_reason;
+        if(!beginCatchUpInLoop(session,
+            live,
+            CatchUpTrigger::kResume,
+            msg,
+            error_reason))
+        {
+            abortInLoop(session, live, live->generation, error_reason);
+        }
 
-    std::string error_reason;
-    if(!catchUpHelperInLoop(session, live, "resume", error_reason))
-    {
-        PCINTERAC_F_ERROR("interaction catch up error: %s\n", error_reason.c_str());
-        // kCatchingUp --> kClosed
-        live->setState(InteractionLiveState::kClosed);
-        session->close(CloseCode::kServerError, error_reason);
-        return;
+    } catch(const std::exception &e) {
+        PCINTERAC_F_ERROR("onResumeInLoop exception: %s \n", e.what());
+
+        abortInLoop(session, live, live->generation, e.what());
     }
 
-    // kCatchingUp --> kActive
-    live->setState(InteractionLiveState::kActive);
-    live->accepted_msg_seq.store(msg.client_seq, std::memory_order_relaxed);
-    sendCommandAckMsg(session, live, msg, true);
 }
 
 bool ProtocolInteractionHandler::parseLiveCommandMsg(InteractionLiveContext & live, const std::string &payload, LiveCommandMsg &out)
@@ -1031,6 +1154,151 @@ void ProtocolInteractionHandler::sendBusinessError(kit_muduo::WebSocketSessionPt
     session->sendText(root.dump());
 }
 
+
+std::optional<kit_muduo::ws::WebSocketSession::MessageGroup> ProtocolInteractionHandler::buildInteractionMessageGroup(const InteractionRecord& record, const std::string& delivery)
+{
+    nlohmann::json root;
+    root["type"] = "interaction";
+    root["delivery"] = delivery;
+    root["record"] = record;
+
+    WebSocketSession::MessageGroup group;
+    group.text_payload = root.dump();
+
+    if(!AddWireBytes(group.text_payload.size(),  group.wire_bytes))
+    {
+        PCINTERAC_F_ERROR("interaction text payload size overflow: seq[%lu]\n", record.seq);
+        return std::nullopt;
+    }
+
+    for(const auto &bs : record.binary_sidecars)
+    {
+        if(!bs.bytes || bs.bytes->empty())
+        {
+            PCINTERAC_F_WARN(
+                "interaction sidecar unavailable: seq[%lu], attachment[%s]\n",
+                record.seq,
+                bs.attachment_ref.attachment_id.c_str());
+            continue;
+        }
+    
+        auto binary_payload  = BuildAttachmentBinaryMessage(record, bs);
+        if(!binary_payload)
+        {
+            PCINTERAC_F_ERROR("build attachment binary message null: seq[%lu], pjId[%ld], pcId[%ld], peer[%s]\n", record.seq,
+                record.project_id,
+                record.protocol_id,
+                record.peer_addr.c_str());
+            return std::nullopt;
+        }
+
+        if(!AddWireBytes(binary_payload->size(),  group.wire_bytes))
+        {
+            PCINTERAC_F_ERROR("interaction binary payload size overflow: seq[%lu]\n", record.seq);
+            return std::nullopt;
+        }
+
+        group.binary_payloads.push_back(std::move(binary_payload));
+        
+    }
+
+    return group;
+}
+
+PendingLiveRecordPtr
+ProtocolInteractionHandler::tryReserveCatchUpPending(const InteractionLiveContextPtr& live,
+    uint64_t generation,
+    InteractionRecord record)
+{
+    const size_t record_bytes = CalculateInteractionSidecarBytes(record);
+
+    std::weak_ptr<InteractionLiveContext> weak_live{live};
+
+    auto pending_record = std::make_shared<PendingLiveRecord>(std::move(record), record_bytes,
+        [weak_live, record_bytes]() {
+            auto live = weak_live.lock();
+            if(!live)
+            {
+                return;
+            }
+
+            std::lock_guard<std::mutex> lock(live->pending_limit_mtx);
+            if(live->pending_live_count == 0
+                || live->pending_live_bytes < record_bytes)
+            {
+                PCINTERAC_F_ERROR(
+                    "interaction pending accounting underflow: "
+                    "current[%lu][%lu], release[1][%lu]\n",
+                    live->pending_live_count,
+                    live->pending_live_bytes,
+                    record_bytes);
+                return;
+            }
+
+            --live->pending_live_count;
+            live->pending_live_bytes -= record_bytes;
+        });
+
+    std::lock_guard<std::mutex> lock(live->pending_limit_mtx);
+
+    if(live->pending_accepting_generation != generation)
+    {
+        return nullptr;
+    }
+
+
+    const bool count_limit_reached = live->pending_live_count >= live_config_.pending_live_max_records;
+
+    const bool byte_limit_reached = record_bytes > live_config_.pending_live_max_bytes || live->pending_live_bytes > live_config_.pending_live_max_bytes - record_bytes;
+
+    // 超过数量 或 大小bytes限制
+    if(count_limit_reached || byte_limit_reached)
+    {
+        // TODO 热路径打印要去除 改为定时统计/定量统计
+        PCINTERAC_F_ERROR("interaction catchup pending live limit overflow! count[%lu], size[]%lu]\n", live->pending_live_count, live->pending_live_bytes);
+
+        return nullptr;
+    }
+
+    ++live->pending_live_count;
+    live->pending_live_bytes += record_bytes;
+    pending_record->setReservationActiveTrue();
+
+    return pending_record;
+}
+
+void ProtocolInteractionHandler::startCatchUpPendingAdmission(const InteractionLiveContextPtr& live, uint64_t generation)
+{
+    std::lock_guard<std::mutex> lock(live->pending_limit_mtx);
+    live->pending_accepting_generation = generation;
+}
+
+void ProtocolInteractionHandler::stopCatchUpPendingAdmission(const InteractionLiveContextPtr& live, uint64_t generation)
+{
+    std::lock_guard<std::mutex> lock(live->pending_limit_mtx);
+
+    if(live->pending_accepting_generation == generation)
+    {
+        live->pending_accepting_generation = 0;
+    }
+}
+
+void ProtocolInteractionHandler::cleanupCatchUpPending(const InteractionLiveContextPtr& live, uint64_t generation)
+{
+    assert(live && live->isInOwnerLoop());
+
+    if(live->generation != generation)
+    {
+        return;
+    }
+    live->pending_live_records.clear();
+
+    if(live->catchup_state && live->catchup_state->deferred_group.has_value() && CatchUpRecordSource::kPendingLive ==  live->catchup_state->deferred_group->source)
+    {
+        live->catchup_state->deferred_group.reset();
+    }
+}
+
 bool ProtocolInteractionHandler::addLiveContext(uint64_t session_id, InteractionLiveContextPtr live)
 {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -1056,5 +1324,433 @@ InteractionLiveContextPtr ProtocolInteractionHandler::removeLiveContext(uint64_t
     live_contexts_.erase(it);
     return live;
 }
+
+bool ProtocolInteractionHandler::beginCatchUpInLoop(
+    const kit_muduo::WebSocketSessionPtr& session,
+    const InteractionLiveContextPtr& live,
+    CatchUpTrigger trigger,
+    std::optional<LiveCommandMsg> resume_msg,
+    std::string& error_reason)
+{
+    assert(live && live->isInOwnerLoop());
+
+    const InteractionLiveState expectd = 
+        trigger == CatchUpTrigger::kOpen ? InteractionLiveState::kInit : InteractionLiveState::kPaused;
+
+    if(live->state.load(std::memory_order_relaxed) != expectd)
+    {
+        error_reason = "interaction live state invalid";
+        return false;
+    }
+
+    live->setState(InteractionLiveState::kCatchingUp);
+    const uint64_t generation = live->generation;
+    startCatchUpPendingAdmission(live, generation);
+
+    auto project_server =
+        runtime_controller_->findServer(live->project_id);
+    if(!project_server)
+    {
+        error_reason = "runtime project server not found";
+        return false;
+    }
+
+    auto protocol_result =
+        project_server->GetProtocolItem(live->protocol_id);
+    if(!protocol_result.ok() || !protocol_result.val)
+    {
+        error_reason = protocol_result.error.toMsg();
+        return false;
+    }
+
+    const CatchUpCursorInput& cursor = ResolveCatchUpCursor(*live, trigger);
+
+    InteractionSubscribeFilter filter{
+        .project_id = live->project_id,
+        .protocol_id = live->protocol_id,
+        .include_project_notice =
+            live->init_req.include_project_notice,
+    };
+
+    InteractionRecordCacheContainer container{
+        .protocol_cache = protocol_result.val->cache(),
+        .project_cache = project_server->cache(),
+        .after_protocol_cache_instance_id =
+            cursor.protocol_cache_instance_id,
+        .after_protocol_seq = cursor.protocol_seq,
+        .after_project_cache_instance_id =
+            cursor.project_cache_instance_id,
+        .after_project_seq = cursor.project_seq,
+    };
+
+    std::weak_ptr<WebSocketSession> weak_session{session};
+    std::weak_ptr<InteractionLiveContext> weak_live{live};
+
+    SubscribeWithCatchUpResult capture_result = hub_->subscribeWithCatchUp(filter, std::move(container), 
+    [this, weak_session, weak_live, generation](const InteractionRecord& record) {
+        onHubLiveArrive(weak_session, weak_live, generation, record);
+    });
+
+    if(!capture_result.ok()
+        || capture_result.subscription.subscriber_id == 0)
+    {
+        error_reason = "interaction subscribe error";
+        return false;
+    }
+    const uint64_t subscriber_id = capture_result.subscription.subscriber_id;
+    live->subscriber_id = subscriber_id;
+
+
+    sendLiveReady(session, live, capture_result, trigger);
+
+    auto catchup_state = std::make_unique<CatchUpDeliveryState>();
+    catchup_state->generation = generation;
+    catchup_state->trigger = trigger;
+    catchup_state->protocol_cache_snapshot =
+        std::move(capture_result.protocol_cache_snapshot);
+    catchup_state->project_cache_snapshot =
+        std::move(capture_result.project_cache_snapshot);
+    catchup_state->resume_msg =
+        std::move(resume_msg);
+
+    live->catchup_state = std::move(catchup_state);
+
+    scheduleNextCatchUpBatchInLoop(session, live, generation);
+
+    return true;
+}
+
+void ProtocolInteractionHandler::scheduleNextCatchUpBatchInLoop(const kit_muduo::WebSocketSessionPtr& session,
+    const InteractionLiveContextPtr& live,
+    uint64_t generation)
+{
+    assert(live && live->isInOwnerLoop());
+
+    std::weak_ptr<WebSocketSession> weak_session{session};
+    std::weak_ptr<InteractionLiveContext> weak_live{live};
+
+    live->owner_loop->queueInLoop([this, weak_session, weak_live, generation]() {
+        auto session = weak_session.lock();
+        auto live = weak_live.lock();
+        if(!session || !live)
+        {
+            return;
+        }
+
+        try {
+            drainCatchUpBatchInLoop(session, live, generation);
+        } catch(const std::exception &e) {
+            PCINTERAC_F_ERROR("interaction drain catchup exception: %s \n", e.what());
+
+            abortInLoop(session , live, generation, e.what());
+
+        } catch(...) {
+            PCINTERAC_F_ERROR("interaction drain catchup unknown exception\n");
+
+            abortInLoop(session , live, generation, "drain catchup exception");
+        }
+
+    });
+
+}
+
+void ProtocolInteractionHandler::drainCatchUpBatchInLoop(const kit_muduo::WebSocketSessionPtr& session,
+    const InteractionLiveContextPtr& live,
+    uint64_t generation)
+{
+    assert(live && live->isInOwnerLoop());
+
+    if(live->generation != generation)
+    {
+        PCINTERAC_F_ERROR("interaction live generation invalid: %lu --> %lu\n", live->generation, generation);
+        return;
+    }
+
+    if(live->state.load(std::memory_order_relaxed) != InteractionLiveState::kCatchingUp)
+    {
+        PCINTERAC_F_ERROR("interaction live state invalid\n");
+        return;
+    }
+
+    if(!live->catchup_state || live->catchup_state->generation != generation)
+    {
+        PCINTERAC_F_ERROR("interaction catchup invalid\n");
+        return;
+    }
+
+    CatchUpDeliveryState& catchup_state = *live->catchup_state;
+
+    // snapshot 边界已提交后，这一 tick 只处理一个 pending batch。
+    if(catchup_state.snapshot_cursor_committed)
+    {
+        drainPendingLiveBatchInLoop(session, live, generation);
+        return;
+    }
+
+    WebSocketSession::MessageGroups batch;
+    size_t batch_bytes = 0;
+
+    for(;;)
+    {
+        PreparedInteractionGroup prepared;
+
+        if(catchup_state.deferred_group.has_value())
+        {
+            prepared = std::move(catchup_state.deferred_group.value());
+            catchup_state.deferred_group.reset();
+        }
+        else
+        {
+            const NextCatchUpRecord next = PeekNextSnapshotRecord(catchup_state);
+            if(!next.record)
+            {
+                PCINTERAC_F_DEBUG("interaction catchup handle finish\n");
+                break;
+            }
+            PCINTERAC_F_DEBUG("interaction catchup handle: seq[%lu], pjId[%ld], pcId[%ld]\n", next.record->seq, next.record->project_id, next.record->protocol_id);
+
+            const auto &group = buildInteractionMessageGroup(*next.record, "catch_up");
+            if(!group.has_value())
+            {
+                abortInLoop(session, live, generation, "build catch-up message failed");
+                return;
+            }
+
+            prepared.source = next.source;
+            prepared.group = std::move(group.value());
+        }
+
+        if(!CanAppendToBatch(batch_bytes, prepared.group.wire_bytes, live_config_.catch_up_batch_bytes, batch.empty()))
+        {
+            catchup_state.deferred_group = std::move(prepared);
+            break;
+        }
+
+        const size_t prepared_bytes = prepared.group.wire_bytes;
+        const CatchUpRecordSource source = prepared.source;
+
+        batch.push_back(std::move(prepared.group));
+        batch_bytes += prepared_bytes;
+        UpdateSnapshotIndex(catchup_state, source);
+
+        // 当前批次大小超限
+        if(batch_bytes >= live_config_.catch_up_batch_bytes)
+        {
+            PCINTERAC_F_WARN("interaction catchup batch oversize: %lu\n", batch_bytes);
+            break;
+        }
+    }
+
+    if(!batch.empty() && !session->sendMessageGroups(batch))
+    {
+        abortInLoop(session, live, generation, "send catch-up batch failed");
+        return;
+    }
+
+    const bool protocol_done = catchup_state.protocol_index >= catchup_state.protocol_cache_snapshot.incr_records.size();
+
+    const bool project_done = !catchup_state.project_cache_snapshot.has_value() || catchup_state.project_index >= catchup_state.project_cache_snapshot->incr_records.size();
+
+    // 如果存在数据未发完
+    if(!protocol_done || !project_done || catchup_state.deferred_group.has_value())
+    {
+        scheduleNextCatchUpBatchInLoop(session, live, generation);
+        return;
+    }
+
+    // 游标未更新
+    if(!catchup_state.snapshot_cursor_committed)
+    {
+        live->markLiveCatchUpCursor(InteractionScope::kProtocol, catchup_state.protocol_cache_snapshot);
+
+        if(catchup_state.project_cache_snapshot.has_value())
+        {
+            live->markLiveCatchUpCursor(InteractionScope::kProject, catchup_state.project_cache_snapshot.value());
+        }
+
+        catchup_state.snapshot_cursor_committed = true;
+    }
+
+    // 不在同一 tick 内继续发送 pending batch，
+    // 否则 snapshot 最后一批 + pending 第一批可能合计超过 5 MiB。
+    if(!live->pending_live_records.empty()
+        || (catchup_state.deferred_group.has_value() && catchup_state.deferred_group->source == CatchUpRecordSource::kPendingLive))
+    {
+        scheduleNextCatchUpBatchInLoop(session, live, generation);
+        return;
+    }
+
+    finishCatchUpInLoop(session, live, generation);
+}
+
+
+void ProtocolInteractionHandler::drainPendingLiveBatchInLoop(const kit_muduo::WebSocketSessionPtr& session,
+    const InteractionLiveContextPtr& live,
+    uint64_t generation)
+{
+    assert(live && live->isInOwnerLoop());
+
+    if(!session || live->generation != generation || !live->catchup_state)
+    {
+        return;
+    }
+
+    CatchUpDeliveryState& catchup_state = *live->catchup_state;
+    WebSocketSession::MessageGroups batch;
+    std::vector<PreparedInteractionGroup> delivered;
+    size_t batch_bytes = 0;
+
+    while(catchup_state.deferred_group.has_value()
+        || !live->pending_live_records.empty())
+    {
+        PreparedInteractionGroup prepared;
+        
+        if(catchup_state.deferred_group.has_value())
+        {
+            if(catchup_state.deferred_group->source != CatchUpRecordSource::kPendingLive)
+            {
+                abortInLoop(session, live, generation, "invalid deferred group source");
+                return;
+            }
+            prepared = std::move(catchup_state.deferred_group.value());
+            catchup_state.deferred_group.reset();
+        }
+        else
+        {
+            PendingLiveRecordPtr pending_record =
+                live->pending_live_records.front();
+            const auto& record = pending_record->record();
+
+            const auto &group = buildInteractionMessageGroup(record, "live");
+            if(!group.has_value())
+            {
+                abortInLoop(session, live, generation, "build pending queue live message failed");
+                return;
+            }
+
+            prepared.source = CatchUpRecordSource::kPendingLive;
+            prepared.group = std::move(group.value());
+            prepared.scope = record.scope;
+            prepared.cache_instance_id = record.cache_instance_id;
+            prepared.seq = record.seq;
+            prepared.pending_live_record = std::move(pending_record);
+
+            live->pending_live_records.pop_front();
+        }
+        
+        if(!CanAppendToBatch(batch_bytes, prepared.group.wire_bytes, live_config_.catch_up_batch_bytes, batch.empty()))
+        {
+            catchup_state.deferred_group = std::move(prepared);
+            break;
+        }
+
+        batch_bytes += prepared.group.wire_bytes;
+        batch.push_back(std::move(prepared.group));
+        delivered.push_back(std::move(prepared));
+
+        // 这一批数据已经超过 批次bytes大小上限
+        if(batch_bytes >= live_config_.catch_up_batch_bytes)
+        {
+            PCINTERAC_F_WARN("interaction pending batch oversize: %lu\n", batch_bytes);
+            break;
+        }
+    }
+
+    if(!batch.empty() && !session->sendMessageGroups(batch))
+    {
+        PCINTERAC_F_ERROR("interaction send pending live batch failed \n");
+        abortInLoop(session, live, generation, "send pending live batch failed");
+        return;
+    }
+    
+    InteractionRecord cursor_record{};
+    for(const auto& item : delivered)
+    {
+        cursor_record.scope = item.scope;
+        cursor_record.cache_instance_id = item.cache_instance_id;
+        cursor_record.seq = item.seq;
+        live->markLiveCursor(cursor_record);
+    }
+
+    // pending 队列还有数据未处理完则开启下一轮循环
+    if(catchup_state.deferred_group.has_value()
+        || !live->pending_live_records.empty())
+    {
+        scheduleNextCatchUpBatchInLoop(session, live, generation);
+        return;
+    }
+
+    finishCatchUpInLoop(session, live, generation);
+}
+
+void ProtocolInteractionHandler::finishCatchUpInLoop(const kit_muduo::WebSocketSessionPtr& session,
+    const InteractionLiveContextPtr& live,
+    uint64_t generation)
+{
+    assert(live && live->isInOwnerLoop());
+    if(!session || live->generation != generation || !live->catchup_state)
+    {
+        return;
+    }
+    if(InteractionLiveState::kCatchingUp != live->state.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+
+    CatchUpDeliveryState& completed = *live->catchup_state;
+
+    stopCatchUpPendingAdmission(live, generation);
+    live->setState(InteractionLiveState::kActive);
+
+    // 如果是resume操作必须返回ack消息
+    if(completed.trigger == CatchUpTrigger::kResume)
+    {
+        // 必须有resume消息
+        assert(completed.resume_msg.has_value());
+
+        const LiveCommandMsg& msg = completed.resume_msg.value();
+
+        live->accepted_msg_seq.store( msg.client_seq, std::memory_order_relaxed);
+
+        sendCommandAckMsg(session, live, msg, true);
+    }
+    live->catchup_state.reset();
+}
+
+void ProtocolInteractionHandler::abortInLoop(
+    const kit_muduo::WebSocketSessionPtr& session,
+    const InteractionLiveContextPtr& live,
+    uint64_t generation,
+    const std::string& reason)
+{
+    assert(live && live->isInOwnerLoop());
+
+    if(live->generation != generation)
+    {
+        PCINTERAC_F_ERROR("interaction live maybe expired: %lu --> %lu\n", live->generation, generation);
+        return;
+    }
+
+    const uint64_t old_subscriber_id = live->subscriber_id;
+    live->subscriber_id = 0;
+
+    stopCatchUpPendingAdmission(live, generation);
+    cleanupCatchUpPending(live, generation);
+
+    // kCatchingUp -> kClosed 推进 generation，使旧 continuation 失效。
+    live->setState(InteractionLiveState::kClosed);
+    live->catchup_state.reset();
+
+    if(old_subscriber_id != 0)
+    {
+        hub_->unsubcribe(old_subscriber_id);
+    }
+
+    if(session && session->isOpen())
+    {
+        session->close( CloseCode::kServerError, reason);
+    }
+}
+
 
 }

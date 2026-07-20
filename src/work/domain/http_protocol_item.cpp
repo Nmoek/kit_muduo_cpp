@@ -176,11 +176,7 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
         PCITEM_F_ERROR("ori protocol data is null\n");
         return false;
     }
-    // 基本信息赋值
-    id_ = ori_protocol->m_id;
-    name_ = ori_protocol->m_name;
-    project_id_ = ori_protocol->m_projectId;
-    is_endian_ = ori_protocol->m_isEndian;
+    initBase(*ori_protocol);
 
     const nljson& req_cfg_root = ori_protocol->m_reqCfg;
     const nljson& resp_cfg_root = ori_protocol->m_respCfg;
@@ -192,16 +188,12 @@ bool HttpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
         return false;
     }
 
-    req_body_view_.setBody(ori_protocol->m_reqBodyType, ori_protocol->m_reqBodyData);
-
     /*****响应****/
     if(!resp_cfg_.fromJson(resp_cfg_root))
     {
         PCITEM_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_root.dump().c_str());
         return false;
     }
-
-    resp_body_view_.setBody(ori_protocol->m_respBodyType, ori_protocol->m_respBodyData);
 
     return true;
 }

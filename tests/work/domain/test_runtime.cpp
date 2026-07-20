@@ -148,7 +148,7 @@ static std::vector<char> Chars(const std::string &text)
 class RuntimeInteractionCollector
 {
 public:
-    void OnRecord(const ProtocolInteractionRecord &record)
+    void OnRecord(const InteractionRecord &record)
     {
         {
             std::lock_guard<std::mutex> lock(mtx_);
@@ -166,7 +166,7 @@ public:
         });
     }
 
-    std::vector<ProtocolInteractionRecord> Records() const
+    std::vector<InteractionRecord> Records() const
     {
         std::lock_guard<std::mutex> lock(mtx_);
         return records_;
@@ -175,7 +175,7 @@ public:
 private:
     mutable std::mutex mtx_;
     std::condition_variable cv_;
-    std::vector<ProtocolInteractionRecord> records_;
+    std::vector<InteractionRecord> records_;
 };
 
 struct RuntimeInteractionPipeline
@@ -186,8 +186,8 @@ struct RuntimeInteractionPipeline
         : hub(std::make_shared<ProtocolInteractionHub>())
         , collector(std::make_shared<RuntimeInteractionCollector>())
         , publisher(
-            std::vector<std::shared_ptr<ProtocolInteractionSink>>{
-                std::static_pointer_cast<ProtocolInteractionSink>(hub),
+            std::vector<std::shared_ptr<InteractionSink>>{
+                std::static_pointer_cast<InteractionSink>(hub),
             },
             ProtocolInteractionPublisherConfig{
                 .queue_capacity = 16,
@@ -195,24 +195,44 @@ struct RuntimeInteractionPipeline
                 .capture_options = InteractionCaptureOptions{},
             })
     {
-        subscription = hub->subscribe(
-            ProtocolInteractionSubscribeFilter{
+        (void)project_id;
+        (void)protocol_id;
+        (void)include_project_notice;
+        publisher.start();
+    }
+
+    void Subscribe(
+        int64_t project_id,
+        int64_t protocol_id,
+        std::shared_ptr<InteractionRecordCache> protocol_cache,
+        std::shared_ptr<InteractionRecordCache> project_cache,
+        bool include_project_notice)
+    {
+        protocol_cache_ = std::move(protocol_cache);
+        project_cache_ = std::move(project_cache);
+        ASSERT_NE(protocol_cache_, nullptr);
+        ASSERT_NE(project_cache_, nullptr);
+        subscription = hub->subscribeWithCatchUp(
+            InteractionSubscribeFilter{
                 .project_id = project_id,
                 .protocol_id = protocol_id,
                 .include_project_notice = include_project_notice,
             },
-            [collector = collector](const ProtocolInteractionRecord &record) {
+            InteractionRecordCacheContainer{
+                protocol_cache_, project_cache_, std::nullopt, std::nullopt,
+                std::nullopt, std::nullopt},
+            [collector = collector](const InteractionRecord &record) {
                 collector->OnRecord(record);
             });
-        publisher.start();
+        ASSERT_TRUE(subscription.ok());
     }
 
     ~RuntimeInteractionPipeline()
     {
         publisher.stop();
-        if(subscription.subscriber_id > 0)
+        if(subscription.subscription.subscriber_id > 0)
         {
-            hub->unsubcribe(subscription.subscriber_id);
+            hub->unsubcribe(subscription.subscription.subscriber_id);
         }
     }
 
@@ -226,7 +246,9 @@ struct RuntimeInteractionPipeline
     std::shared_ptr<ProtocolInteractionHub> hub;
     std::shared_ptr<RuntimeInteractionCollector> collector;
     ProtocolInteractionPublisher publisher;
-    ProtocolInteractionSubscription subscription;
+    SubscribeWithCatchUpResult subscription;
+    std::shared_ptr<InteractionRecordCache> protocol_cache_;
+    std::shared_ptr<InteractionRecordCache> project_cache_;
 };
 
 static nljson HttpReqCfg(const std::string &method,
@@ -786,7 +808,6 @@ TEST(HttpProjectRuntimeSuite, UpdateReqSameRouteWithRepeatedSlashDoesNotConflict
 
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
     ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
-
     auto update_result = server->UpdateReqCfgProtocolItem(
         151,
         HttpReqCfg("GET", "//d9//http/slash", nljson{{"X-New", "slash"}}));
@@ -1024,6 +1045,9 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesMatchedObservationThroughPublisher
         Chars(configured_resp_body));
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
     ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+    auto matched_item = GetHttpRuntimeItem(server, 701);
+    ASSERT_NE(matched_item, nullptr);
+    pipeline.Subscribe(9101, 701, matched_item->cache(), server->cache(), true);
 
     server->start();
 
@@ -1094,6 +1118,9 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesRouteNotFoundProjectNotice)
     auto server = std::make_shared<HttpProjectServer>(9102, result.val);
     RuntimeInteractionPipeline pipeline(9102, 702, true);
     server->setObserveCallback(pipeline.Callback());
+    auto protocol_cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 9102, 702});
+    pipeline.Subscribe(9102, 702, protocol_cache, server->cache(), true);
     server->start();
 
     RuntimeTestFdGuard client_fd(ConnectLoopback(server->getBindAddr().toPort()));
@@ -1150,6 +1177,9 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesMethodNotAllowedProjectNotice)
     auto protocol = MakeHttpProtocol(703, 9103, "/d9/http/method-only", {}, Chars(R"({"ok":true})"));
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
     ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+    auto method_item = GetHttpRuntimeItem(server, 703);
+    ASSERT_NE(method_item, nullptr);
+    pipeline.Subscribe(9103, 703, method_item->cache(), server->cache(), true);
     server->start();
 
     RuntimeTestFdGuard client_fd(ConnectLoopback(server->getBindAddr().toPort()));
@@ -1202,6 +1232,9 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesParseErrorRawPacketAndKeeps400Resp
     auto server = std::make_shared<HttpProjectServer>(9104, result.val);
     RuntimeInteractionPipeline pipeline(9104, 704, true);
     server->setObserveCallback(pipeline.Callback());
+    auto protocol_cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 9104, 704});
+    pipeline.Subscribe(9104, 704, protocol_cache, server->cache(), true);
     server->start();
 
     RuntimeTestFdGuard client_fd(ConnectLoopback(server->getBindAddr().toPort()));

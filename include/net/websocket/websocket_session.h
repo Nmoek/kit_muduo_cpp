@@ -35,6 +35,16 @@ public:
         std::shared_ptr<std::vector<uint8_t>>
     >;
 
+    struct MessageGroup
+    {
+        std::string text_payload;
+        BinaryGroup binary_payloads;
+
+        // 使用最大 frame header 做保守计费，用于 batch 切分。
+        size_t wire_bytes{0};
+    };
+    using MessageGroups = std::vector<MessageGroup>;
+
     WebSocketSession(uint64_t seesion_id, TcpConnectionPtr conn);
     ~WebSocketSession() = default;
 
@@ -67,6 +77,7 @@ public:
     void sendBinary(const std::vector<uint8_t> &payload);
 
     void sendMessageGroup(const std::string &json_msg, const BinaryGroup& binary_frames);
+    bool sendMessageGroups(const MessageGroups &groups);
 
     void close(CloseCode close_code, const std::string &reason = "");
     void fail(CloseCode close_code, const std::string &reason);

@@ -86,18 +86,6 @@ public:
         cv_.notify_all();
     }
 
-    void clearProtocol(int64_t project_id, int64_t protocol_id) override
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        cleared_protocols_.push_back({project_id, protocol_id});
-    }
-
-    void clearProject(int64_t project_id) override
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        cleared_projects_.push_back(project_id);
-    }
-
     bool WaitForRecordCount(size_t expected_count,
                             std::chrono::milliseconds timeout = std::chrono::milliseconds(3000))
     {
@@ -117,8 +105,6 @@ private:
     mutable std::mutex mtx_;
     std::condition_variable cv_;
     std::vector<InteractionRecord> records_;
-    std::vector<std::pair<int64_t, int64_t>> cleared_protocols_;
-    std::vector<int64_t> cleared_projects_;
 };
 
 class BlockingInteractionSink : public InteractionSink
@@ -137,10 +123,6 @@ public:
             });
         }
     }
-
-    void clearProtocol(int64_t, int64_t) override {}
-
-    void clearProject(int64_t) override {}
 
     bool WaitForRecordCount(size_t expected_count,
                             std::chrono::milliseconds timeout = std::chrono::milliseconds(1000))
@@ -181,10 +163,6 @@ public:
         ++publish_count_;
         throw std::runtime_error("sink publish failed");
     }
-
-    void clearProtocol(int64_t, int64_t) override {}
-
-    void clearProject(int64_t) override {}
 
     int publishCount() const
     {
@@ -228,6 +206,26 @@ ProtocolInteractionObservation MakeHttpObservation(
     obs.response.expect_body_type = ProtocolBodyType::kJson;
     obs.response.media_type = "application/json";
     return obs;
+}
+
+std::shared_ptr<InteractionRecordCache> MakeProtocolCache()
+{
+    return std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12});
+}
+
+std::shared_ptr<InteractionRecordCache> MakeProjectCache()
+{
+    return std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProject, 1, 0});
+}
+
+void BindObservationToCache(
+    ProtocolInteractionObservation &observation,
+    const std::shared_ptr<InteractionRecordCache> &cache)
+{
+    observation.cache_instance_id = cache->cacheInstanceId();
+    observation.weak_record_cache = cache;
 }
 
 } // namespace
@@ -677,112 +675,365 @@ TEST(TestProtocolInteraction, RawPacketCapturesHexPrefixAndSerializesWhenPresent
     EXPECT_EQ(json["raw_packet"]["truncated"], true);
 }
 
+namespace {
+
+InteractionRecord MakeCachedRecord(
+    const std::shared_ptr<InteractionRecordCache> &cache,
+    size_t sidecar_bytes = 0)
+{
+    InteractionRecord record = MakeRecord(
+        0, InteractionScope::kProtocol, 1, 12);
+    record.cache_instance_id = cache->cacheInstanceId();
+
+    if(sidecar_bytes > 0)
+    {
+        InteractionAttachmentRef ref;
+        ref.attachment_id = "response.body:cache-test";
+        ref.side = "response";
+        ref.flag = "response.body";
+        ref.kind = InteractionPayloadKind::kImage;
+        ref.size = sidecar_bytes;
+        ref.captured_size = sidecar_bytes;
+        ref.binary_available = true;
+        ref.sha1 = "cache-test-sha1";
+        record.response.body.attachments.push_back(ref);
+        record.binary_sidecars.push_back(BinarySidecar{
+            .attachment_ref = ref,
+            .bytes = std::make_shared<const std::vector<uint8_t>>(
+                sidecar_bytes, 0xAB),
+        });
+    }
+
+    return record;
+}
+
+} // namespace
+
 /**
  * 测试思路：
- * 1. 先发布一条历史记录，让 Hub 的 currentSeq 前进到 10。
- * 2. 订阅 project=1/protocol=12 后，只应该收到订阅之后且协议项匹配的记录。
- * 3. 同项目但其他协议项、其他项目、订阅前序号的记录都不能推给该订阅者。
+ *   验证 recent cache 的 metadata 条数窗口是硬上限，而不是只记录统计值。
  *
- * 示例：
+ * 输入示例：
+ *   max_records=20，连续追加 21 条无 sidecar record。
  *
- *   publish(seq=10, pc=12) -> subscribe(start=11)
- *        |
- *        +-- publish(seq=10, pc=12)  不推送
- *        +-- publish(seq=11, pc=13)  不推送
- *        +-- publish(seq=12, pc=12)  推送
+ * 事件或线程时序：
+ *   tryAppend(seq=1..21) -> lockAndCollect(cache_id, after_seq=0)。
+ *
+ * 预期结果：
+ *   只保留最新 20 条，即 seq=2..21；序号继续连续分配。
+ *
+ * 关键断言：
+ *   recordCount、snapshot 内容和 last_seq 均准确，且发生窗口淘汰后仍能
+ *   通过 catch_up_gap 表达旧游标已经落后。
  */
-TEST(TestProtocolInteraction, HubOnlyPushesMatchingProtocolRecordsAfterSubscribe)
+TEST(TestProtocolInteraction, InteractionCacheKeepsTwentyNewestMetadataRecords)
 {
-    ProtocolInteractionHub hub;
-    hub.publish(MakeRecord(10, InteractionScope::kProtocol, 1, 12));
-    ASSERT_EQ(hub.currentSeq(), 10U);
+    auto cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12});
 
-    std::vector<InteractionRecord> received;
-    auto subscription = hub.subscribe(
-        InteractionSubscribeFilter{
-            .project_id = 1,
-            .protocol_id = 12,
-            .include_project_notice = false,
-        },
-        [&received](const InteractionRecord &record) {
-            received.push_back(record);
-        });
+    for(size_t i = 0; i < InteractionRecordCacheConfig::kDefaultMaxRecord + 1; ++i)
+    {
+        auto record = MakeCachedRecord(cache);
+        ASSERT_TRUE(cache->tryAppend(record));
+        EXPECT_EQ(record.seq, i + 1);
+    }
 
-    ASSERT_NE(subscription.subscriber_id, 0U);
-    EXPECT_EQ(subscription.start_record_seq, 11U);
-
-    hub.publish(MakeRecord(10, InteractionScope::kProtocol, 1, 12));
-    hub.publish(MakeRecord(11, InteractionScope::kProtocol, 1, 13));
-    hub.publish(MakeRecord(12, InteractionScope::kProtocol, 2, 12));
-    hub.publish(MakeRecord(13, InteractionScope::kProtocol, 1, 12));
-
-    ASSERT_EQ(received.size(), 1U);
-    EXPECT_EQ(received.front().seq, 13U);
-    EXPECT_EQ(received.front().project_id, 1);
-    EXPECT_EQ(received.front().protocol_id, 12);
+    EXPECT_EQ(cache->recordCount(), InteractionRecordCacheConfig::kDefaultMaxRecord);
+    auto locked = cache->lockAndCollect(cache->cacheInstanceId(), 0);
+    ASSERT_TRUE(locked.isActive());
+    ASSERT_TRUE(locked.isValid());
+    EXPECT_EQ(locked.snapshot().last_seq,
+        InteractionRecordCacheConfig::kDefaultMaxRecord + 1);
+    EXPECT_TRUE(locked.snapshot().catch_up_gap);
+    ASSERT_EQ(locked.snapshot().incr_records.size(),
+        InteractionRecordCacheConfig::kDefaultMaxRecord);
+    EXPECT_EQ(locked.snapshot().incr_records.front().seq, 2U);
+    EXPECT_EQ(locked.snapshot().incr_records.back().seq, 21U);
 }
 
 /**
  * 测试思路：
- * 1. 建立两个订阅者：一个只看协议项记录，一个同时包含项目级 notice。
- * 2. 发布同项目 route_not_found 这类项目级记录时，只有 include_project_notice=true 的订阅者收到。
- * 3. 取消订阅后，再发布匹配协议项记录，被取消订阅者不应继续收到。
+ *   用较小的自定义预算等价验证 64 MiB 精确边界，避免测试本身分配无谓的
+ *   大块内存；核心风险是边界判断把“刚好等于上限”误当成超限。
  *
- * 示例：
+ * 输入示例：
+ *   max_sidecar_bytes=8，追加两个 4-byte sidecar record。
  *
- *   protocol-only subscriber     + project-notice subscriber
- *        |                                  |
- *   publish(scope=project)             只第二个收到
- *   unsubscribe(second)
- *   publish(scope=protocol)            只有第一个收到
+ * 事件或线程时序：
+ *   append(4) -> append(4) -> 读取 retainedSidecarBytes。
+ *
+ * 预期结果：
+ *   总 sidecar 正好达到上限时不发生字节淘汰，两个 record 都保留。
+ *
+ * 关键断言：
+ *   retainedSidecarBytes==8、recordCount==2、byteEvictionCount==0。
+ */
+TEST(TestProtocolInteraction, InteractionCacheAcceptsExactSidecarByteLimit)
+{
+    auto cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12},
+        InteractionRecordCacheConfig{.max_records = 20, .max_sidecar_bytes = 8});
+
+    auto first = MakeCachedRecord(cache, 4);
+    auto second = MakeCachedRecord(cache, 4);
+    ASSERT_TRUE(cache->tryAppend(first));
+    ASSERT_TRUE(cache->tryAppend(second));
+
+    EXPECT_EQ(cache->retainedSidecarBytes(), 8U);
+    EXPECT_EQ(cache->recordCount(), 2U);
+    EXPECT_EQ(cache->byteEvictionCount(), 0U);
+}
+
+/**
+ * 测试思路：
+ *   验证新 record 使 sidecar 总量超过预算时，cache 按最旧 record 顺序淘汰，
+ *   而不是拒绝新 record 或突破字节上限。
+ *
+ * 输入示例：
+ *   max_sidecar_bytes=8，依次追加 4-byte、4-byte、1-byte sidecar。
+ *
+ * 事件或线程时序：
+ *   [seq1=4, seq2=4] -> append(seq3=1) -> evict seq1。
+ *
+ * 预期结果：
+ *   cache 保留 seq2、seq3，总 sidecar 为 5 bytes。
+ *
+ * 关键断言：
+ *   byteEvictionCount==1、retainedSidecarBytes==5、快照首尾序号为 2/3。
+ */
+TEST(TestProtocolInteraction, InteractionCacheEvictsOldestRecordWhenByteBudgetIsExceeded)
+{
+    auto cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12},
+        InteractionRecordCacheConfig{.max_records = 20, .max_sidecar_bytes = 8});
+
+    auto first = MakeCachedRecord(cache, 4);
+    auto second = MakeCachedRecord(cache, 4);
+    auto third = MakeCachedRecord(cache, 1);
+    ASSERT_TRUE(cache->tryAppend(first));
+    ASSERT_TRUE(cache->tryAppend(second));
+    ASSERT_TRUE(cache->tryAppend(third));
+
+    EXPECT_EQ(cache->retainedSidecarBytes(), 5U);
+    EXPECT_EQ(cache->recordCount(), 2U);
+    EXPECT_EQ(cache->byteEvictionCount(), 1U);
+
+    auto locked = cache->lockAndCollect(cache->cacheInstanceId(), 0);
+    ASSERT_EQ(locked.snapshot().incr_records.size(), 2U);
+    EXPECT_EQ(locked.snapshot().incr_records[0].seq, 2U);
+    EXPECT_EQ(locked.snapshot().incr_records[1].seq, 3U);
+}
+
+/**
+ * 测试思路：
+ *   单条 sidecar 大于 cache 预算时，cache 必须降级为 metadata-only；但原始
+ *   record 仍要保留完整 sidecar，供当前 Publisher live 分发使用。
+ *
+ * 输入示例：
+ *   max_sidecar_bytes=4，单条 record 携带 5-byte attachment。
+ *
+ * 事件或线程时序：
+ *   tryAppend(original) -> cache snapshot。
+ *
+ * 预期结果：
+ *   原始 record 的 sidecar 和 binary_available 不变；cache 副本释放 sidecar，
+ *   但保留 attachment 元数据并将 binary_available 置 false。
+ *
+ * 关键断言：
+ *   retainedSidecarBytes==0、metadataOnlyCount==1、seq 仍为 1、cache 副本无
+ *   binary_sidecars 且附件元数据仍存在。
+ */
+TEST(TestProtocolInteraction, InteractionCacheDowngradesOversizedRecordToMetadataOnly)
+{
+    auto cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12},
+        InteractionRecordCacheConfig{.max_records = 20, .max_sidecar_bytes = 4});
+    auto original = MakeCachedRecord(cache, 5);
+    ASSERT_TRUE(cache->tryAppend(original));
+
+    ASSERT_EQ(original.seq, 1U);
+    ASSERT_EQ(original.binary_sidecars.size(), 1U);
+    ASSERT_TRUE(original.response.body.attachments.front().binary_available);
+    EXPECT_EQ(cache->retainedSidecarBytes(), 0U);
+    EXPECT_EQ(cache->metadataOnlyCount(), 1U);
+
+    auto locked = cache->lockAndCollect(cache->cacheInstanceId(), 0);
+    ASSERT_EQ(locked.snapshot().incr_records.size(), 1U);
+    const auto &cached = locked.snapshot().incr_records.front();
+    EXPECT_TRUE(cached.binary_sidecars.empty());
+    ASSERT_EQ(cached.response.body.attachments.size(), 1U);
+    EXPECT_FALSE(cached.response.body.attachments.front().binary_available);
+    EXPECT_EQ(cached.response.body.attachments.front().attachment_id,
+        original.response.body.attachments.front().attachment_id);
+}
+
+/**
+ * 测试思路：
+ *   close 是 cache 生命周期终点，必须释放窗口和 sidecar 预算，并拒绝后续
+ *   append，避免运行态销毁后 Publisher 继续向旧 cache 写入。
+ *
+ * 输入示例：
+ *   追加一条带 sidecar 的 record 后调用 close，再尝试追加第二条。
+ *
+ * 事件或线程时序：
+ *   append -> close -> tryAppend。
+ *
+ * 预期结果：
+ *   close 后 cache inactive、recordCount 和 retained bytes 都归零，后续 append
+ *   返回 false。
+ *
+ * 关键断言：
+ *   isActive、recordCount、retainedSidecarBytes 和 tryAppend 返回值。
+ */
+TEST(TestProtocolInteraction, InteractionCacheCloseReleasesRecordsAndRejectsAppend)
+{
+    auto cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12},
+        InteractionRecordCacheConfig{.max_records = 20, .max_sidecar_bytes = 8});
+    auto first = MakeCachedRecord(cache, 4);
+    ASSERT_TRUE(cache->tryAppend(first));
+    ASSERT_EQ(cache->recordCount(), 1U);
+    ASSERT_EQ(cache->retainedSidecarBytes(), 4U);
+
+    cache->close();
+
+    EXPECT_FALSE(cache->isActive());
+    EXPECT_EQ(cache->recordCount(), 0U);
+    EXPECT_EQ(cache->retainedSidecarBytes(), 0U);
+    auto second = MakeCachedRecord(cache, 1);
+    EXPECT_FALSE(cache->tryAppend(second));
+}
+
+/**
+ * 测试思路：
+ *   先把历史 record 写入独立 protocol cache，再建立 Hub 订阅；订阅成功后
+ *   只允许同 project、同 protocol、同 cache instance 且 seq 在起始边界之后
+ *   的 record 进入回调。
+ *
+ * 输入示例：
+ *   历史 seq=1，订阅快照之后再追加 seq=2；另造其它协议项和其它项目记录。
+ *
+ * 事件或线程时序：
+ *   cache.tryAppend(history) -> subscribeWithCatchUp(no cursor)
+ *   -> cache.tryAppend(new) -> hub.publish(new)。
+ *
+ * 预期结果：
+ *   首次订阅不回放历史，只收到同 cache 的新 protocol record。
+ *
+ * 关键断言：
+ *   protocol_start_seq == history.seq + 1，回调数量为 1，且 project/protocol
+ *   过滤和 cache_instance_id 过滤均生效。
+ */
+TEST(TestProtocolInteraction, HubOnlyPushesMatchingProtocolRecordsAfterSubscribe)
+{
+    ProtocolInteractionHub hub;
+    auto protocol_cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12});
+    auto project_cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProject, 1, 0});
+
+    InteractionRecord history = MakeRecord(0, InteractionScope::kProtocol, 1, 12);
+    history.cache_instance_id = protocol_cache->cacheInstanceId();
+    ASSERT_TRUE(protocol_cache->tryAppend(history));
+
+    std::vector<InteractionRecord> received;
+    auto subscription = hub.subscribeWithCatchUp(
+        InteractionSubscribeFilter{1, 12, false},
+        InteractionRecordCacheContainer{protocol_cache, project_cache,
+            std::nullopt, std::nullopt, std::nullopt, std::nullopt},
+        [&received](const InteractionRecord &record) {
+            received.push_back(record);
+        });
+
+    ASSERT_TRUE(subscription.ok());
+    ASSERT_NE(subscription.subscription.subscriber_id, 0U);
+    EXPECT_EQ(subscription.subscription.protocol_start_seq, history.seq + 1);
+    EXPECT_TRUE(subscription.protocol_cache_snapshot.incr_records.empty());
+
+    InteractionRecord next = MakeRecord(0, InteractionScope::kProtocol, 1, 12);
+    next.cache_instance_id = protocol_cache->cacheInstanceId();
+    ASSERT_TRUE(protocol_cache->tryAppend(next));
+    hub.publish(next);
+
+    InteractionRecord other_protocol = MakeRecord(0, InteractionScope::kProtocol, 1, 13);
+    other_protocol.cache_instance_id = protocol_cache->cacheInstanceId();
+    EXPECT_FALSE(protocol_cache->tryAppend(other_protocol));
+    hub.publish(other_protocol);
+    hub.publish(MakeRecord(999, InteractionScope::kProtocol, 2, 12));
+
+    ASSERT_EQ(received.size(), 1U);
+    EXPECT_EQ(received.front().seq, next.seq);
+    EXPECT_EQ(received.front().cache_instance_id, protocol_cache->cacheInstanceId());
+    hub.unsubcribe(subscription.subscription.subscriber_id);
+}
+
+/**
+ * 测试思路：
+ *   用两个独立 cache 建立“只看 protocol”和“看 protocol + project notice”的
+ *   订阅，验证项目 notice 的显式开关以及退订后的停止分发语义。
+ *
+ * 输入示例：
+ *   project cache 追加 route_not_found notice；protocol cache 追加 matched record。
+ *
+ * 事件或线程时序：
+ *   subscribe(two filters) -> project notice -> unsubscribe(second)
+ *   -> protocol record。
+ *
+ * 预期结果：
+ *   只有 opt-in 订阅收到 notice；退订后不再收到后续 record。
+ *
+ * 关键断言：
+ *   project notice 的 protocol_id 为 0，protocol-only 订阅为空，退订订阅的
+ *   回调数量不再增长。
  */
 TEST(TestProtocolInteraction, HubProjectNoticeRequiresOptInAndUnsubscribeStopsDelivery)
 {
     ProtocolInteractionHub hub;
+    auto protocol_cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProtocol, 1, 12});
+    auto project_cache = std::make_shared<InteractionRecordCache>(
+        InteractionRecordCacheKey{InteractionScope::kProject, 1, 0});
+
     std::vector<InteractionRecord> protocol_only_records;
     std::vector<InteractionRecord> with_notice_records;
+    const InteractionRecordCacheContainer empty_cursor{
+        protocol_cache, project_cache, std::nullopt, std::nullopt,
+        std::nullopt, std::nullopt};
 
-    auto protocol_only = hub.subscribe(
-        InteractionSubscribeFilter{
-            .project_id = 1,
-            .protocol_id = 12,
-            .include_project_notice = false,
-        },
+    auto protocol_only = hub.subscribeWithCatchUp(
+        InteractionSubscribeFilter{1, 12, false}, empty_cursor,
         [&protocol_only_records](const InteractionRecord &record) {
             protocol_only_records.push_back(record);
         });
-
-    auto with_notice = hub.subscribe(
-        InteractionSubscribeFilter{
-            .project_id = 1,
-            .protocol_id = 12,
-            .include_project_notice = true,
-        },
+    auto with_notice = hub.subscribeWithCatchUp(
+        InteractionSubscribeFilter{1, 12, true}, empty_cursor,
         [&with_notice_records](const InteractionRecord &record) {
             with_notice_records.push_back(record);
         });
+    ASSERT_TRUE(protocol_only.ok());
+    ASSERT_TRUE(with_notice.ok());
 
-    hub.publish(MakeRecord(
-        1,
-        InteractionScope::kProject,
-        1,
-        0,
-        InteractionResult::kRouteNotFound));
+    InteractionRecord notice = MakeRecord(0, InteractionScope::kProject, 1, 0,
+        InteractionResult::kRouteNotFound);
+    notice.cache_instance_id = project_cache->cacheInstanceId();
+    ASSERT_TRUE(project_cache->tryAppend(notice));
+    hub.publish(notice);
 
     EXPECT_TRUE(protocol_only_records.empty());
     ASSERT_EQ(with_notice_records.size(), 1U);
     EXPECT_EQ(with_notice_records.front().scope, InteractionScope::kProject);
     EXPECT_EQ(with_notice_records.front().protocol_id, 0);
-    EXPECT_EQ(with_notice_records.front().result, InteractionResult::kRouteNotFound);
 
-    hub.unsubcribe(with_notice.subscriber_id);
-    hub.publish(MakeRecord(2, InteractionScope::kProtocol, 1, 12));
+    hub.unsubcribe(with_notice.subscription.subscriber_id);
+    InteractionRecord protocol = MakeRecord(0, InteractionScope::kProtocol, 1, 12);
+    protocol.cache_instance_id = protocol_cache->cacheInstanceId();
+    ASSERT_TRUE(protocol_cache->tryAppend(protocol));
+    hub.publish(protocol);
 
     ASSERT_EQ(protocol_only_records.size(), 1U);
-    EXPECT_EQ(protocol_only_records.front().seq, 2U);
+    EXPECT_EQ(protocol_only_records.front().seq, protocol.seq);
     EXPECT_EQ(with_notice_records.size(), 1U);
-
-    hub.unsubcribe(protocol_only.subscriber_id);
+    hub.unsubcribe(protocol_only.subscription.subscriber_id);
 }
 
 /**
@@ -801,6 +1052,7 @@ TEST(TestProtocolInteraction, HubProjectNoticeRequiresOptInAndUnsubscribeStopsDe
 TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
 {
     auto sink = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
@@ -834,6 +1086,7 @@ TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
     obs.response.body_bytes = Bytes("ok");
     obs.response.expect_body_type = ProtocolBodyType::kText;
     obs.response.media_type = "text/plain";
+    BindObservationToCache(obs, cache);
 
     publisher.publish(std::move(obs));
 
@@ -845,7 +1098,6 @@ TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
     const auto &record = records.front();
 
     EXPECT_EQ(record.seq, 1U);
-    EXPECT_EQ(publisher.CurrentSeq(), 1U);
     EXPECT_EQ(record.scope, InteractionScope::kProtocol);
     EXPECT_EQ(record.project_id, 1);
     EXPECT_EQ(record.protocol_id, 12);
@@ -882,6 +1134,7 @@ TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
 TEST(TestProtocolInteraction, PublisherNormalizesProjectNoticeProtocolIdAndRawPacket)
 {
     auto sink = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProjectCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
@@ -906,6 +1159,7 @@ TEST(TestProtocolInteraction, PublisherNormalizesProjectNoticeProtocolIdAndRawPa
         {"path", "/missing"},
     };
     obs.request.raw_bytes = std::vector<uint8_t>{'B', 'A', 'D', 0x01};
+    BindObservationToCache(obs, cache);
 
     publisher.publish(std::move(obs));
 
@@ -949,6 +1203,7 @@ TEST(TestProtocolInteraction, PublisherNormalizesProjectNoticeProtocolIdAndRawPa
 TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvancingSeq)
 {
     auto sink = std::make_shared<BlockingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
@@ -969,6 +1224,7 @@ TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvan
     first.request.body_bytes = Bytes("first");
     first.request.expect_body_type = ProtocolBodyType::kText;
     first.request.media_type = "text/plain";
+    BindObservationToCache(first, cache);
 
     ProtocolInteractionObservation second = first;
     second.time_ms = 1780000000400;
@@ -1008,7 +1264,6 @@ TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvan
     EXPECT_EQ(records[2].seq, 3U);
     EXPECT_EQ(records[2].request.meta["path"], "/third");
     EXPECT_EQ(records[2].request.body.text, "third");
-    EXPECT_EQ(publisher.CurrentSeq(), 3U);
 }
 
 /**
@@ -1027,18 +1282,25 @@ TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvan
 TEST(TestProtocolInteraction, PublisherAssignsMonotonicSeqForContinuousObservations)
 {
     auto sink = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 8,
             .stop_drain_timeout = 1000,
             .capture_options = Options(),
-        });
+    });
 
     publisher.start();
-    publisher.publish(MakeHttpObservation(1, 12, "/one"));
-    publisher.publish(MakeHttpObservation(1, 12, "/two"));
-    publisher.publish(MakeHttpObservation(1, 12, "/three"));
+    auto first = MakeHttpObservation(1, 12, "/one");
+    BindObservationToCache(first, cache);
+    publisher.publish(std::move(first));
+    auto second = MakeHttpObservation(1, 12, "/two");
+    auto third = MakeHttpObservation(1, 12, "/three");
+    BindObservationToCache(second, cache);
+    BindObservationToCache(third, cache);
+    publisher.publish(std::move(second));
+    publisher.publish(std::move(third));
 
     ASSERT_TRUE(sink->WaitForRecordCount(3));
     publisher.stop();
@@ -1051,7 +1313,6 @@ TEST(TestProtocolInteraction, PublisherAssignsMonotonicSeqForContinuousObservati
     EXPECT_EQ(records[1].request.meta["path"], "/two");
     EXPECT_EQ(records[2].seq, 3U);
     EXPECT_EQ(records[2].request.meta["path"], "/three");
-    EXPECT_EQ(publisher.CurrentSeq(), 3U);
 }
 
 /**
@@ -1071,6 +1332,7 @@ TEST(TestProtocolInteraction, PublisherAssignsMonotonicSeqForContinuousObservati
 TEST(TestProtocolInteraction, PublisherCurrentSeqDoesNotAdvanceBeforeQueuedObservationIsBuilt)
 {
     auto sink = std::make_shared<BlockingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
@@ -1080,11 +1342,14 @@ TEST(TestProtocolInteraction, PublisherCurrentSeqDoesNotAdvanceBeforeQueuedObser
         });
 
     publisher.start();
-    publisher.publish(MakeHttpObservation(1, 12, "/blocked-first"));
+    auto first = MakeHttpObservation(1, 12, "/blocked-first");
+    BindObservationToCache(first, cache);
+    publisher.publish(std::move(first));
     ASSERT_TRUE(sink->WaitForRecordCount(1));
 
-    publisher.publish(MakeHttpObservation(1, 12, "/queued-second"));
-    EXPECT_EQ(publisher.CurrentSeq(), 1U);
+    auto second = MakeHttpObservation(1, 12, "/queued-second");
+    BindObservationToCache(second, cache);
+    publisher.publish(std::move(second));
 
     sink->Unblock();
     ASSERT_TRUE(sink->WaitForRecordCount(2));
@@ -1096,7 +1361,6 @@ TEST(TestProtocolInteraction, PublisherCurrentSeqDoesNotAdvanceBeforeQueuedObser
     EXPECT_EQ(records[0].request.meta["path"], "/blocked-first");
     EXPECT_EQ(records[1].seq, 2U);
     EXPECT_EQ(records[1].request.meta["path"], "/queued-second");
-    EXPECT_EQ(publisher.CurrentSeq(), 2U);
 }
 
 /**
@@ -1117,6 +1381,7 @@ TEST(TestProtocolInteraction, PublisherDeliversSameSeqToMultipleSinks)
 {
     auto sink_a = std::make_shared<CollectingInteractionSink>();
     auto sink_b = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink_a, sink_b},
         ProtocolInteractionPublisherConfig{
@@ -1126,7 +1391,9 @@ TEST(TestProtocolInteraction, PublisherDeliversSameSeqToMultipleSinks)
         });
 
     publisher.start();
-    publisher.publish(MakeHttpObservation(1, 12, "/multi-sink"));
+    auto observation = MakeHttpObservation(1, 12, "/multi-sink");
+    BindObservationToCache(observation, cache);
+    publisher.publish(std::move(observation));
 
     ASSERT_TRUE(sink_a->WaitForRecordCount(1));
     ASSERT_TRUE(sink_b->WaitForRecordCount(1));
@@ -1159,6 +1426,7 @@ TEST(TestProtocolInteraction, PublisherCatchesSinkExceptionAndContinues)
 {
     auto throwing_sink = std::make_shared<ThrowingInteractionSink>();
     auto collecting_sink = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {throwing_sink, collecting_sink},
         ProtocolInteractionPublisherConfig{
@@ -1168,8 +1436,12 @@ TEST(TestProtocolInteraction, PublisherCatchesSinkExceptionAndContinues)
         });
 
     publisher.start();
-    publisher.publish(MakeHttpObservation(1, 12, "/throw-on-first"));
-    publisher.publish(MakeHttpObservation(1, 12, "/still-works"));
+    auto first = MakeHttpObservation(1, 12, "/throw-on-first");
+    auto second = MakeHttpObservation(1, 12, "/still-works");
+    BindObservationToCache(first, cache);
+    BindObservationToCache(second, cache);
+    publisher.publish(std::move(first));
+    publisher.publish(std::move(second));
 
     ASSERT_TRUE(collecting_sink->WaitForRecordCount(2));
     publisher.stop();
@@ -1199,6 +1471,7 @@ TEST(TestProtocolInteraction, PublisherCatchesSinkExceptionAndContinues)
  */
 TEST(TestProtocolInteraction, PublisherWithEmptySinksStillProcessesLaterObservations)
 {
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {},
         ProtocolInteractionPublisherConfig{
@@ -1208,17 +1481,13 @@ TEST(TestProtocolInteraction, PublisherWithEmptySinksStillProcessesLaterObservat
         });
 
     publisher.start();
-    publisher.publish(MakeHttpObservation(1, 12, "/empty-a"));
-    publisher.publish(MakeHttpObservation(1, 12, "/empty-b"));
-
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-    while(publisher.CurrentSeq() < 2U && std::chrono::steady_clock::now() < deadline)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-    }
+    auto first = MakeHttpObservation(1, 12, "/empty-a");
+    auto second = MakeHttpObservation(1, 12, "/empty-b");
+    BindObservationToCache(first, cache);
+    BindObservationToCache(second, cache);
+    publisher.publish(std::move(first));
+    publisher.publish(std::move(second));
     publisher.stop();
-
-    EXPECT_EQ(publisher.CurrentSeq(), 2U);
 }
 
 /**
@@ -1238,6 +1507,7 @@ TEST(TestProtocolInteraction, PublisherWithEmptySinksStillProcessesLaterObservat
 TEST(TestProtocolInteraction, PublisherStopDrainsQueuedObservationBestEffort)
 {
     auto sink = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
@@ -1247,7 +1517,9 @@ TEST(TestProtocolInteraction, PublisherStopDrainsQueuedObservationBestEffort)
         });
 
     publisher.start();
-    publisher.publish(MakeHttpObservation(1, 12, "/drain-on-stop"));
+    auto observation = MakeHttpObservation(1, 12, "/drain-on-stop");
+    BindObservationToCache(observation, cache);
+    publisher.publish(std::move(observation));
     publisher.stop();
 
     const auto records = sink->Records();
@@ -1435,6 +1707,7 @@ TEST(TestProtocolInteraction, RawPacketAttachmentsStayEmptyAndDoNotCreateSidecar
 TEST(TestProtocolInteraction, PublisherBuildsHttpBinaryBodySidecarsFromObservation)
 {
     auto sink = std::make_shared<CollectingInteractionSink>();
+    auto cache = MakeProtocolCache();
     ProtocolInteractionPublisher publisher(
         {sink},
         ProtocolInteractionPublisherConfig{
@@ -1461,6 +1734,7 @@ TEST(TestProtocolInteraction, PublisherBuildsHttpBinaryBodySidecarsFromObservati
     obs.response.body_bytes = std::vector<uint8_t>{'P', 'K', 0x03, 0x04};
     obs.response.expect_body_type = ProtocolBodyType::kBinary;
     obs.response.media_type = "application/zip";
+    BindObservationToCache(obs, cache);
 
     publisher.start();
     publisher.publish(std::move(obs));

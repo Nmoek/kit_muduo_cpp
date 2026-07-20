@@ -528,6 +528,7 @@ add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_INTERACTION test_protocol_interaction
     tests/work/domain/test_protocol_interaction.cpp
     src/work/domain/type.cpp
     src/work/domain/protocol_interaction.cpp
+    src/work/domain/protocol_interaction_observation.cpp
     src/work/domain/protocol_interaction_hub.cpp
     src/work/domain/protocol_interaction_publisher.cpp)
 

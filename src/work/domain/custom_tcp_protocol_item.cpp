@@ -169,11 +169,7 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
     }
     const auto& spec = tcp_pattern->spec();
 
-    // 基本信息赋值
-    id_ = ori_protocol->m_id;
-    name_ = ori_protocol->m_name;
-    project_id_ = ori_protocol->m_projectId;
-    is_endian_ = ori_protocol->m_isEndian;
+    initBase(*ori_protocol);
 
     const nljson &req_cfg_json = ori_protocol->m_reqCfg;
 
@@ -190,15 +186,11 @@ bool CustomTcpProtocolItem::init(std::shared_ptr<Protocol> ori_protocol)
         return false;
     }
 
-    req_body_view_.setBody(ori_protocol->m_reqBodyType, ori_protocol->m_reqBodyData);
-
     if(!resp_cfg_.fromJson(resp_cfg_json, spec))
     {
         PCITEM_F_ERROR("resp cfg json parse error! %s\n", resp_cfg_json.dump().c_str());
         return false;
     }
-
-    resp_body_view_.setBody(ori_protocol->m_respBodyType, ori_protocol->m_respBodyData);
 
     return true;
 }

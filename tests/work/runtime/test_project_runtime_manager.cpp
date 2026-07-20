@@ -323,6 +323,18 @@ public:
         return nullptr;
     }
 
+    void closeAllProtocolInteractionCaches() override
+    {
+        for(const auto& [protocol_id, item] : items_)
+        {
+            (void)protocol_id;
+            if(item && item->cache())
+            {
+                item->cache()->close();
+            }
+        }
+    }
+
     void failNextAdd()
     {
         fail_next_add_ = true;

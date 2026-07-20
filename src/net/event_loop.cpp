@@ -15,6 +15,7 @@
 #include "net/timer.h"
 #include "net/sample_timer_queue.h"
 
+#include <exception>
 #include <sys/eventfd.h>
 #include <assert.h>
 #include <functional>
@@ -139,9 +140,17 @@ void EventLoop::runInLoop(Func cb)
 
 void EventLoop::queueInLoop(Func cb)
 {
+    size_t pending_len = 0;
     std::unique_lock<std::mutex> lock(_mutex);
     _pendingFuncs.emplace_back(cb);
+    pending_len = _pendingFuncs.size();
     lock.unlock();
+
+    // TODO 系统性能观测点
+    if(pending_len >= 1024)
+    {
+        LOOP_F_WARN("IO thread pending queue too long!!! %lu\n", pending_len);
+    }
 
     // 难点：为什么要判断_callingPendingFunc
     // 答：poller会阻塞，触发一次唤醒事件，在下一轮的doPendingFuncs才能够被唤醒继续执行，否则将永远阻塞
@@ -209,7 +218,16 @@ void EventLoop::doPendingFuncs()
 
 
     for(auto &f : tmp_func)
-        if(f) f();
+    {
+        if(f) 
+        {
+            try {
+                f();
+            } catch(const std::exception &e) {
+                LOOP_F_ERROR("do pending callback function exception: %s \n", e.what());
+            }
+        }
+    }
 
     _callingPendingFunc = false;
 }

@@ -12,6 +12,11 @@
 #include "domain/protocol_interaction.h"
 #include "domain/protocol_interaction_hub.h"
 #include "domain/type.h"
+#include "domain/project_server.h"
+#include "domain/protocol_item.h"
+#include "domain/runtime_loop_pool.h"
+#include "domain/user.h"
+#include "dao/session.h"
 #include "net/buffer.h"
 #include "net/event_loop.h"
 #include "net/http/http_context.h"
@@ -26,6 +31,9 @@
 #include "net/websocket/websocket_util.h"
 #include "runtime/mock/runtime_controller_mock.h"
 #include "service/mock/svc_protocol_mock.h"
+#include "repository/mock/repo_session_mock.h"
+#include "repository/mock/repo_user_mock.h"
+#include "service/svc_auth.h"
 #define private public
 #include "web/web_protocol_interaction.h"
 #undef private
@@ -311,6 +319,16 @@ std::vector<std::string> DecodeServerTextFrames(const std::vector<uint8_t> &byte
     return out;
 }
 
+std::vector<nlohmann::json> ReadJsonTextFrames(int32_t fd)
+{
+    std::vector<nlohmann::json> out;
+    for(const auto &text : DecodeServerTextFrames(ReadAvailable(fd)))
+    {
+        out.push_back(nlohmann::json::parse(text));
+    }
+    return out;
+}
+
 uint32_t ReadUint32BE(const std::vector<uint8_t> &bytes, size_t offset)
 {
     return (static_cast<uint32_t>(bytes[offset]) << 24)
@@ -407,6 +425,192 @@ InteractionRecord MakeRecord(uint64_t seq,
     return record;
 }
 
+InteractionRecord MakeTextRecord(uint64_t seq,
+                                 InteractionScope scope,
+                                 int64_t project_id,
+                                 int64_t protocol_id,
+                                 size_t text_bytes)
+{
+    auto record = MakeRecord(seq, scope, project_id, protocol_id);
+    record.response.body.kind = InteractionPayloadKind::kText;
+    record.response.body.expect_kind = InteractionPayloadKind::kText;
+    record.response.body.size = text_bytes;
+    record.response.body.captured_size = text_bytes;
+    record.response.body.text.assign(text_bytes, 'x');
+    return record;
+}
+
+InteractionRecord MakeAttachmentRecord(uint64_t seq,
+                                        size_t attachment_bytes)
+{
+    auto record = MakeRecord(seq, InteractionScope::kProtocol, 1, 12);
+    InteractionAttachmentRef ref;
+    ref.attachment_id = "response.body:catch-up-" + std::to_string(seq);
+    ref.side = "response";
+    ref.flag = "response.body";
+    ref.kind = InteractionPayloadKind::kImage;
+    ref.size = attachment_bytes;
+    ref.captured_size = attachment_bytes;
+    ref.binary_available = true;
+    ref.sha1 = "catch-up-sha1";
+    record.response.body.kind = InteractionPayloadKind::kImage;
+    record.response.body.expect_kind = InteractionPayloadKind::kBinary;
+    record.response.body.size = attachment_bytes;
+    record.response.body.captured_size = attachment_bytes;
+    record.response.body.attachments.push_back(ref);
+    record.binary_sidecars.push_back(BinarySidecar{
+        .attachment_ref = ref,
+        .bytes = std::make_shared<const std::vector<uint8_t>>(
+            attachment_bytes, 0xAB),
+    });
+    return record;
+}
+
+size_t InteractionWireBytes(const InteractionRecord &record,
+                            const std::string &delivery)
+{
+    const nlohmann::json root = {
+        {"type", "interaction"},
+        {"delivery", delivery},
+        {"record", record},
+    };
+    size_t wire_bytes = root.dump().size();
+    for(const auto &sidecar : record.binary_sidecars)
+    {
+        if(sidecar.bytes)
+        {
+            wire_bytes += sidecar.bytes->size();
+        }
+    }
+    return wire_bytes + (record.binary_sidecars.size() + 1)
+        * WebSocketSession::kMaxFrameHeaderBytes;
+}
+
+class CatchUpProtocolItem : public ProtocolItem
+{
+public:
+    CatchUpProtocolItem(int64_t project_id, int64_t protocol_id)
+    {
+        Protocol protocol;
+        protocol.m_id = protocol_id;
+        protocol.m_name = "catch-up-test";
+        protocol.m_type = ProtocolType::kHttp;
+        protocol.m_projectId = project_id;
+        protocol.m_status = ProtocolStatus::kValid;
+        protocol.m_configState = ProtocolConfigState::kOn;
+        protocol.m_reqBodyType = ProtocolBodyType::kNone;
+        protocol.m_respBodyType = ProtocolBodyType::kNone;
+        protocol.m_isEndian = false;
+        initBase(protocol);
+    }
+
+    bool init(std::shared_ptr<Protocol> protocol) override
+    {
+        if(!protocol)
+        {
+            return false;
+        }
+        initBase(*protocol);
+        return true;
+    }
+
+    bool setReqCfg(const nlohmann::json&) override { return true; }
+    bool setRespCfg(const nlohmann::json&) override { return true; }
+};
+
+class CatchUpProjectServer : public ProjectServer
+{
+public:
+    CatchUpProjectServer(int64_t project_id,
+                         std::shared_ptr<RuntimeLease> lease,
+                         std::shared_ptr<ProtocolItem> protocol_item)
+        : ProjectServer(project_id, std::move(lease), "catch-up-test-server")
+        , protocol_item_(std::move(protocol_item))
+    {
+    }
+
+    std::shared_ptr<ProtocolItem> protocolItem() const
+    {
+        return protocol_item_;
+    }
+
+    const InetAddress& getBindAddr() const override
+    {
+        return bind_addr_;
+    }
+
+    RuntimeResult<void> AddProtocolItem(std::shared_ptr<ProtocolItem>) override
+    {
+        return {};
+    }
+
+    RuntimeResult<void> DelProtocolItem(int64_t) override
+    {
+        return {};
+    }
+
+    RuntimeResult<std::shared_ptr<ProtocolItem>> GetProtocolItem(int64_t protocol_id) override
+    {
+        RuntimeResult<std::shared_ptr<ProtocolItem>> result;
+        if(protocol_item_ && protocol_item_->getId() == protocol_id)
+        {
+            result.val = protocol_item_;
+            return result;
+        }
+        result.error.set(RuntimeError::kProtocolItemNotFound);
+        return result;
+    }
+
+    RuntimeResult<void> UpdateReqCfgProtocolItem(int64_t, const nljson&) override
+    {
+        return {};
+    }
+
+    RuntimeResult<void> UpdateRespCfgProtocolItem(int64_t, const nljson&) override
+    {
+        return {};
+    }
+
+    RuntimeResult<void> UpdateBodyProtocolItem(int64_t, ProtocolSide,
+                                                const ProtocolBodyType,
+                                                const std::vector<char>&) override
+    {
+        return {};
+    }
+
+    RuntimeResult<void> UpdateReqBodyProtocolItem(int64_t,
+                                                   const ProtocolBodyType,
+                                                   const std::vector<char>&) override
+    {
+        return {};
+    }
+
+    RuntimeResult<void> UpdateRespBodyProtocolItem(int64_t,
+                                                    const ProtocolBodyType,
+                                                    const std::vector<char>&) override
+    {
+        return {};
+    }
+
+    std::shared_ptr<CustomTcpPattern> GetPatternInfo() override
+    {
+        return nullptr;
+    }
+
+protected:
+    void closeAllProtocolInteractionCaches() override
+    {
+        if(protocol_item_ && protocol_item_->cache())
+        {
+            protocol_item_->cache()->close();
+        }
+    }
+
+private:
+    std::shared_ptr<ProtocolItem> protocol_item_;
+    InetAddress bind_addr_{0, "127.0.0.1"};
+};
+
 struct InteractionWsFixture
 {
     EventLoopThread loop_thread;
@@ -415,23 +619,94 @@ struct InteractionWsFixture
     TcpConnectionPtr conn;
     WebSocketServer server;
     std::shared_ptr<NiceMock<MockProtocolSvc>> protocol_svc;
-    std::shared_ptr<NiceMock<MockRuntimeController>> runtime;
+    std::shared_ptr<NiceMock<MockUserRepo>> user_repo;
+    std::shared_ptr<NiceMock<MockSessionRepo>> session_repo;
+    std::unique_ptr<AuthService> auth_service;
+    kit_dao::UserSession auth_session;
+    std::string session_cookie;
     std::shared_ptr<ProtocolInteractionHub> hub;
+    std::unique_ptr<RuntimeLoopPool> runtime_pool;
+    std::shared_ptr<RuntimeLease> runtime_lease;
+    std::shared_ptr<CatchUpProtocolItem> protocol_item;
+    std::shared_ptr<CatchUpProjectServer> project_server;
+    std::shared_ptr<NiceMock<MockRuntimeController>> runtime;
     ProtocolInteractionHandler handler;
     WebSocketSessionPtr session;
 
-    explicit InteractionWsFixture(std::shared_ptr<ProtocolInteractionHub> shared_hub = nullptr)
+    explicit InteractionWsFixture(
+        std::shared_ptr<ProtocolInteractionHub> shared_hub = nullptr,
+        std::shared_ptr<CatchUpProjectServer> shared_server = nullptr,
+        InteractionLiveConfig live_config = {})
         : loop_thread(nullptr, "interaction-ws-test-loop")
         , protocol_svc(std::make_shared<NiceMock<MockProtocolSvc>>())
-        , runtime(std::make_shared<NiceMock<MockRuntimeController>>())
+        , user_repo(std::make_shared<NiceMock<MockUserRepo>>())
+        , session_repo(std::make_shared<NiceMock<MockSessionRepo>>())
         , hub(shared_hub ? std::move(shared_hub) : std::make_shared<ProtocolInteractionHub>())
-        , handler(protocol_svc, runtime, hub)
+        , runtime_pool(nullptr)
+        , runtime_lease(nullptr)
+        , protocol_item(nullptr)
+        , project_server(nullptr)
+        , runtime(std::make_shared<NiceMock<MockRuntimeController>>())
+        , handler(protocol_svc, runtime, hub, std::move(live_config))
     {
         loop = loop_thread.startLoop();
         if(loop == nullptr)
         {
             throw std::runtime_error("start interaction websocket event loop failed");
         }
+
+        const User auth_user{
+            .id = 1,
+            .note_name = "interactiontest",
+            .role = UserRole::kNormal,
+            .status = UserStatus::kActive,
+        };
+        ON_CALL(*user_repo, GetByNoteName(_, "interactiontest"))
+            .WillByDefault(Return(auth_user));
+        ON_CALL(*user_repo, GetById(_, 1))
+            .WillByDefault(Return(auth_user));
+        ON_CALL(*session_repo, Create(_, _))
+            .WillByDefault(Invoke([this](HttpContextPtr,
+                                          const kit_dao::UserSession &session) {
+                auth_session = session;
+                auth_session.m_id = 1;
+                return int64_t{1};
+            }));
+        ON_CALL(*session_repo, GetById(_, 1))
+            .WillByDefault(Invoke([this](HttpContextPtr, int64_t) {
+                return auth_session;
+            }));
+        ON_CALL(*session_repo, DeleteExpired(_, _)).WillByDefault(Return(0));
+
+        auth_service = std::make_unique<AuthService>(user_repo, session_repo);
+        const LoginResult login = auth_service->Login(
+            nullptr, LoginRequest{"interactiontest", "normal", ""});
+        if(!login.ok || login.cookie_value.empty())
+        {
+            throw std::runtime_error("create interaction test session failed");
+        }
+        session_cookie = login.cookie_value;
+
+        if(shared_server)
+        {
+            project_server = std::move(shared_server);
+            protocol_item = std::dynamic_pointer_cast<CatchUpProtocolItem>(
+                project_server->protocolItem());
+        }
+        else
+        {
+            runtime_pool = std::make_unique<RuntimeLoopPool>(1, "interaction-runtime-test");
+            auto lease_result = runtime_pool->acquire(1);
+            if(!lease_result.ok() || !lease_result.val)
+            {
+                throw std::runtime_error("acquire interaction runtime loop failed");
+            }
+            runtime_lease = lease_result.val;
+            protocol_item = std::make_shared<CatchUpProtocolItem>(1, 12);
+            project_server = std::make_shared<CatchUpProjectServer>(
+                1, runtime_lease, protocol_item);
+        }
+        ON_CALL(*runtime, findServer(_)).WillByDefault(Return(project_server));
 
         FdGuard server_fd;
         InetAddress server_peer_addr;
@@ -466,18 +741,121 @@ struct InteractionWsFixture
         RunInLoopSync(loop, []() {});
     }
 
+    void WaitForLoopTicks(size_t count)
+    {
+        for(size_t i = 0; i < count; ++i)
+        {
+            WaitForLoop();
+        }
+    }
+
+    void PublishNoWait(InteractionRecord record)
+    {
+        std::shared_ptr<InteractionRecordCache> cache;
+        if(record.scope == InteractionScope::kProtocol
+            && record.project_id == project_server->getProjectId()
+            && record.protocol_id == protocol_item->getId())
+        {
+            cache = protocol_item->cache();
+        }
+        else if(record.scope == InteractionScope::kProject
+            && record.project_id == project_server->getProjectId()
+            && record.protocol_id == 0)
+        {
+            cache = project_server->cache();
+        }
+
+        if(cache)
+        {
+            record.cache_instance_id = cache->cacheInstanceId();
+            ASSERT_TRUE(cache->tryAppend(record));
+        }
+        hub->publish(std::move(record));
+    }
+
     void Publish(InteractionRecord record)
     {
-        hub->publish(std::move(record));
+        PublishNoWait(std::move(record));
         WaitForLoop();
+    }
+
+    void QueuePublishAfterOpenStarts(InteractionRecord record)
+    {
+        loop->queueInLoop([this, record = std::move(record)]() mutable {
+            PublishNoWait(std::move(record));
+        });
+    }
+
+    void QueuePublishBatchAfterOpenStarts(
+        std::vector<InteractionRecord> records)
+    {
+        loop->queueInLoop([this, records = std::move(records)]() mutable {
+            for(auto &record : records)
+            {
+                PublishNoWait(std::move(record));
+            }
+        });
     }
 
     void Upgrade(int64_t project_id, int64_t protocol_id)
     {
+        UpgradeWithCursors(project_id, protocol_id,
+            std::nullopt, std::nullopt, std::nullopt, std::nullopt, true);
+    }
+
+    void UpgradeWithoutWaiting(
+        int64_t project_id,
+        int64_t protocol_id,
+        std::optional<uint64_t> after_protocol_cache_instance_id,
+        std::optional<uint64_t> after_protocol_seq,
+        std::optional<uint64_t> after_project_cache_instance_id = std::nullopt,
+        std::optional<uint64_t> after_project_seq = std::nullopt)
+    {
+        UpgradeWithCursors(project_id, protocol_id,
+            after_protocol_cache_instance_id,
+            after_protocol_seq,
+            after_project_cache_instance_id,
+            after_project_seq,
+            false);
+    }
+
+    void UpgradeWithCursors(
+        int64_t project_id,
+        int64_t protocol_id,
+        std::optional<uint64_t> after_protocol_cache_instance_id,
+        std::optional<uint64_t> after_protocol_seq,
+        std::optional<uint64_t> after_project_cache_instance_id,
+        std::optional<uint64_t> after_project_seq,
+        bool wait_for_loop)
+    {
         EXPECT_CALL(*protocol_svc, GetAccessInfo(_, protocol_id, _))
             .WillOnce(DoAll(SetArgReferee<2>(MakeAccessInfo(project_id, protocol_id)), Return(true)));
 
-        auto ctx = MakeUpgradeContext(protocol_id);
+        auto ctx = MakeAuthenticatedUpgradeContext(protocol_id);
+        if(after_protocol_cache_instance_id.has_value())
+        {
+            ctx->request()->addQureyParam(
+                "after_protocol_cache_instance_id",
+                std::to_string(after_protocol_cache_instance_id.value()));
+        }
+        if(after_protocol_seq.has_value())
+        {
+            ctx->request()->addQureyParam(
+                "after_protocol_seq",
+                std::to_string(after_protocol_seq.value()));
+        }
+        if(after_project_cache_instance_id.has_value())
+        {
+            ctx->request()->addQureyParam(
+                "after_project_cache_instance_id",
+                std::to_string(after_project_cache_instance_id.value()));
+        }
+        if(after_project_seq.has_value())
+        {
+            ctx->request()->addQureyParam(
+                "after_project_seq",
+                std::to_string(after_project_seq.value()));
+        }
         server.handleUpgrade(conn, ctx, [this](WebSocketSessionPtr session, HttpContextPtr prepare_ctx) {
             this->session = session;
             return handler.onPrepare(std::move(session), std::move(prepare_ctx));
@@ -486,7 +864,22 @@ struct InteractionWsFixture
         ASSERT_NE(session, nullptr);
         ASSERT_TRUE(session->isOpen());
         server.onOpen(conn);
-        WaitForLoop();
+        if(wait_for_loop)
+        {
+            WaitForLoop();
+        }
+    }
+
+    HttpContextPtr MakeAuthenticatedUpgradeContext(int64_t protocol_id)
+    {
+        auto ctx = MakeUpgradeContext(protocol_id);
+        ctx->request()->addHeader("Cookie", "kit_session=" + session_cookie);
+        const auto current_user = auth_service->Authenticate(ctx, session_cookie);
+        if(!current_user.has_value())
+        {
+            throw std::runtime_error("authenticate interaction test session failed");
+        }
+        return ctx;
     }
 
     void SendClientJson(const nlohmann::json &msg)
@@ -511,7 +904,7 @@ struct InteractionWsFixture
         EXPECT_CALL(*protocol_svc, GetAccessInfo(_, protocol_id, _))
             .WillOnce(Return(false));
 
-        auto ctx = MakeUpgradeContext(protocol_id);
+        auto ctx = MakeAuthenticatedUpgradeContext(protocol_id);
         server.handleUpgrade(conn, ctx, [this](WebSocketSessionPtr session, HttpContextPtr prepare_ctx) {
             this->session = session;
             return handler.onPrepare(std::move(session), std::move(prepare_ctx));
@@ -550,7 +943,9 @@ TEST(TestWebProtocolInteraction, UpgradeSendsLiveReadyFromCurrentHubSeq)
     EXPECT_EQ(ready["type"], "live_ready");
     EXPECT_EQ(ready["project_id"], 1);
     EXPECT_EQ(ready["protocol_id"], 12);
-    EXPECT_EQ(ready["start_record_seq"], 11);
+    EXPECT_EQ(ready["protocol_cache_info"]["last_seq"], 1);
+    EXPECT_EQ(ready["protocol_cache_info"]["live_start_seq"], 2);
+    EXPECT_EQ(ready["protocol_cache_info"]["catch_up_count"], 0);
     EXPECT_GT(ready["session_id"].get<uint64_t>(), 0U);
 }
 
@@ -563,9 +958,9 @@ TEST(TestWebProtocolInteraction, UpgradeSendsLiveReadyFromCurrentHubSeq)
  * 示例：
  *
  *   publish(seq=1) -> interaction
- *   pause #1       -> state(paused)
+ *   command/pause #1 -> state(paused)
  *   publish(seq=2) -> no frame
- *   resume #2      -> state(resumed)
+ *   command/resume #2 -> catch-up interaction, then state(resumed)
  *   publish(seq=3) -> interaction
  */
 TEST(TestWebProtocolInteraction, PauseAndResumeGateHubInteractionDelivery)
@@ -581,7 +976,8 @@ TEST(TestWebProtocolInteraction, PauseAndResumeGateHubInteractionDelivery)
     EXPECT_EQ(first["record"]["seq"], 1);
 
     f.SendClientJson({
-        {"type", "pause"},
+        {"type", "command"},
+        {"command", "pause"},
         {"session_id", session_id},
         {"client_seq", 1},
         {"timestamp", 1780000000100},
@@ -595,15 +991,23 @@ TEST(TestWebProtocolInteraction, PauseAndResumeGateHubInteractionDelivery)
     EXPECT_TRUE(ReadAvailable(f.peer.fd).empty());
 
     f.SendClientJson({
-        {"type", "resume"},
+        {"type", "command"},
+        {"command", "resume"},
         {"session_id", session_id},
         {"client_seq", 2},
         {"timestamp", 1780000000200},
     });
-    auto resumed = SingleJsonTextFrame(f.peer.fd);
-    EXPECT_EQ(resumed["type"], "state");
-    EXPECT_EQ(resumed["state"], "resumed");
-    EXPECT_EQ(resumed["accepted_seq"], 2);
+    const auto resumed_frames = ReadJsonTextFrames(f.peer.fd);
+    ASSERT_EQ(resumed_frames.size(), 3U);
+    EXPECT_EQ(resumed_frames[0]["type"], "live_ready");
+    EXPECT_EQ(resumed_frames[1]["type"], "interaction");
+    EXPECT_EQ(resumed_frames[1]["delivery"], "catch_up");
+    EXPECT_EQ(resumed_frames[1]["record"]["seq"], 2);
+    EXPECT_EQ(resumed_frames[2]["type"], "state");
+    EXPECT_EQ(resumed_frames[2]["command"], "resume");
+    EXPECT_TRUE(resumed_frames[2]["ok"]);
+    EXPECT_EQ(resumed_frames[2]["state"], "active");
+    EXPECT_EQ(resumed_frames[2]["accepted_seq"], 2);
 
     f.Publish(MakeRecord(3, InteractionScope::kProtocol, 1, 12));
     auto third = SingleJsonTextFrame(f.peer.fd);
@@ -706,7 +1110,7 @@ TEST(TestWebProtocolInteraction, InteractionAttachmentSendsJsonThenBinaryFrame)
     const auto interaction = nlohmann::json::parse(
         std::string(frames[0].payload.begin(), frames[0].payload.end()));
     EXPECT_EQ(interaction["type"], "interaction");
-    EXPECT_EQ(interaction["record"]["seq"], 21);
+    EXPECT_EQ(interaction["record"]["seq"], 1);
     EXPECT_EQ(interaction["record"]["request"]["body"]["attachments"][0]["attachment_id"],
         ref.attachment_id);
     EXPECT_FALSE(interaction["record"].contains("binary_sidecars"));
@@ -720,7 +1124,7 @@ TEST(TestWebProtocolInteraction, InteractionAttachmentSendsJsonThenBinaryFrame)
         binary_payload.begin() + 4 + header_len);
     const auto header = nlohmann::json::parse(header_text);
     EXPECT_EQ(header["type"], "attachment");
-    EXPECT_EQ(header["record_seq"], 21);
+    EXPECT_EQ(header["record_seq"], 1);
     EXPECT_EQ(header["attachment_id"], ref.attachment_id);
     EXPECT_EQ(header["captured_size"], attachment_bytes.size());
     EXPECT_EQ(header["sha1"], ref.sha1);
@@ -780,7 +1184,7 @@ TEST(TestWebProtocolInteraction, UpgradeIgnoresClientProjectIdAndUsesAccessInfoP
     EXPECT_CALL(*f.protocol_svc, GetAccessInfo(_, 12, _))
         .WillOnce(DoAll(SetArgReferee<2>(MakeAccessInfo(1, 12)), Return(true)));
 
-    auto ctx = MakeUpgradeContext(12);
+    auto ctx = f.MakeAuthenticatedUpgradeContext(12);
     ctx->request()->addQureyParam("project_id", "999");
     f.server.handleUpgrade(f.conn, ctx, [&f](WebSocketSessionPtr session, HttpContextPtr prepare_ctx) {
         f.session = session;
@@ -816,8 +1220,10 @@ TEST(TestWebProtocolInteraction, UpgradeIgnoresClientProjectIdAndUsesAccessInfoP
  *
  *   "{bad json"                         -> error bad_message
  *   {"type":"stop", ...}                -> error bad_message
- *   {"type":"pause", session_id=bad}    -> error bad_message
- *   {"type":"pause", client_seq=2}      -> error seq_gap accepted_seq=0
+ *   {"type":"command", "command":"pause", session_id=bad}
+ *                                      -> error bad_message
+ *   {"type":"command", "command":"pause", client_seq=2}
+ *                                      -> error seq_gap accepted_seq=0
  */
 TEST(TestWebProtocolInteraction, InvalidClientControlMessagesReturnBusinessErrors)
 {
@@ -842,7 +1248,8 @@ TEST(TestWebProtocolInteraction, InvalidClientControlMessagesReturnBusinessError
     EXPECT_EQ(unknown_type["code"], "bad_message");
 
     f.SendClientFrame(WebSocketOpcode::kText, ToBytes(nlohmann::json({
-        {"type", "pause"},
+        {"type", "command"},
+        {"command", "pause"},
         {"session_id", session_id},
         {"timestamp", 1780000000400},
     }).dump()));
@@ -851,7 +1258,8 @@ TEST(TestWebProtocolInteraction, InvalidClientControlMessagesReturnBusinessError
     EXPECT_EQ(missing_seq["code"], "bad_message");
 
     f.SendClientJson({
-        {"type", "pause"},
+        {"type", "command"},
+        {"command", "pause"},
         {"session_id", session_id + 1},
         {"client_seq", 1},
         {"timestamp", 1780000000500},
@@ -861,16 +1269,19 @@ TEST(TestWebProtocolInteraction, InvalidClientControlMessagesReturnBusinessError
     EXPECT_EQ(bad_session["code"], "bad_message");
 
     f.SendClientJson({
-        {"type", "pause"},
+        {"type", "command"},
+        {"command", "pause"},
         {"session_id", session_id},
         {"client_seq", 2},
         {"timestamp", 1780000000600},
     });
     auto seq_gap = SingleJsonTextFrame(f.peer.fd);
-    EXPECT_EQ(seq_gap["type"], "error");
-    EXPECT_EQ(seq_gap["code"], "seq_gap");
+    EXPECT_EQ(seq_gap["type"], "state");
+    EXPECT_EQ(seq_gap["command"], "pause");
+    EXPECT_FALSE(seq_gap["ok"]);
+    EXPECT_EQ(seq_gap["error_message"], "seq gap");
     EXPECT_EQ(seq_gap["accepted_seq"], 0);
-    EXPECT_EQ(seq_gap["state"], "resumed");
+    EXPECT_EQ(seq_gap["state"], "active");
 }
 
 /**
@@ -983,7 +1394,7 @@ TEST(TestWebProtocolInteraction, MultipleConnectionsKeepPauseAndCloseIsolated)
 {
     auto shared_hub = std::make_shared<ProtocolInteractionHub>();
     InteractionWsFixture a(shared_hub);
-    InteractionWsFixture b(shared_hub);
+    InteractionWsFixture b(shared_hub, a.project_server);
 
     a.Upgrade(1, 12);
     auto ready_a = SingleJsonTextFrame(a.peer.fd);
@@ -993,7 +1404,8 @@ TEST(TestWebProtocolInteraction, MultipleConnectionsKeepPauseAndCloseIsolated)
     (void)SingleJsonTextFrame(b.peer.fd);
 
     a.SendClientJson({
-        {"type", "pause"},
+        {"type", "command"},
+        {"command", "pause"},
         {"session_id", session_a},
         {"client_seq", 1},
         {"timestamp", 1780000000700},
@@ -1001,7 +1413,7 @@ TEST(TestWebProtocolInteraction, MultipleConnectionsKeepPauseAndCloseIsolated)
     auto paused = SingleJsonTextFrame(a.peer.fd);
     EXPECT_EQ(paused["state"], "paused");
 
-    shared_hub->publish(MakeRecord(1, InteractionScope::kProtocol, 1, 12));
+    a.Publish(MakeRecord(1, InteractionScope::kProtocol, 1, 12));
     a.WaitForLoop();
     b.WaitForLoop();
 
@@ -1012,7 +1424,7 @@ TEST(TestWebProtocolInteraction, MultipleConnectionsKeepPauseAndCloseIsolated)
 
     a.SendClientFrame(WebSocketOpcode::kClose, {});
     (void)ReadAvailable(a.peer.fd);
-    shared_hub->publish(MakeRecord(2, InteractionScope::kProtocol, 1, 12));
+    a.Publish(MakeRecord(2, InteractionScope::kProtocol, 1, 12));
     a.WaitForLoop();
     b.WaitForLoop();
 
@@ -1020,4 +1432,240 @@ TEST(TestWebProtocolInteraction, MultipleConnectionsKeepPauseAndCloseIsolated)
     auto b_second = SingleJsonTextFrame(b.peer.fd);
     EXPECT_EQ(b_second["type"], "interaction");
     EXPECT_EQ(b_second["record"]["seq"], 2);
+}
+
+/**
+ * 测试思路：
+ * 1. protocol 与 project 使用各自独立的 cache identity/seq，客户端同时带上
+ *    两个 scope 的 after cursor。
+ * 2. protocol snapshot 必须先于 project snapshot，且只发送 cursor 之后的记录。
+ * 3. live_ready 的两个 cache info 应报告当前右边界，catch-up interaction 的
+ *    record 顺序应保持 protocol -> project。
+ *
+ * 输入示例：
+ *   protocol seq=1,2，project seq=1,2；after protocol=1、after project=1。
+ *
+ * 事件或线程时序：
+ *   预写四条历史记录 -> 带双 scope cursor upgrade -> live_ready -> 两条 catch-up。
+ *
+ * 关键断言：
+ *   只收到 protocol seq=2 和 project seq=2，且 protocol 在 project 之前。
+ */
+TEST(TestWebProtocolInteraction, CatchUpUsesIndependentProtocolAndProjectCursors)
+{
+    InteractionWsFixture f;
+    f.Publish(MakeRecord(1, InteractionScope::kProtocol, 1, 12));
+    f.Publish(MakeRecord(2, InteractionScope::kProtocol, 1, 12));
+    f.Publish(MakeRecord(1, InteractionScope::kProject, 1, 0,
+        InteractionResult::kRouteNotFound));
+    f.Publish(MakeRecord(2, InteractionScope::kProject, 1, 0,
+        InteractionResult::kRouteNotFound));
+
+    const uint64_t protocol_cache_id = f.protocol_item->cache()->cacheInstanceId();
+    const uint64_t project_cache_id = f.project_server->cache()->cacheInstanceId();
+    f.UpgradeWithCursors(1, 12, protocol_cache_id, 1, project_cache_id, 1,
+        true);
+
+    const auto frames = ReadJsonTextFrames(f.peer.fd);
+    ASSERT_EQ(frames.size(), 3U);
+    EXPECT_EQ(frames[0]["type"], "live_ready");
+    EXPECT_EQ(frames[0]["protocol_cache_info"]["last_seq"], 2);
+    EXPECT_EQ(frames[0]["project_cache_info"]["last_seq"], 2);
+    ASSERT_EQ(frames[1]["type"], "interaction");
+    EXPECT_EQ(frames[1]["delivery"], "catch_up");
+    EXPECT_EQ(frames[1]["record"]["scope"], "protocol");
+    EXPECT_EQ(frames[1]["record"]["seq"], 2);
+    ASSERT_EQ(frames[2]["type"], "interaction");
+    EXPECT_EQ(frames[2]["delivery"], "catch_up");
+    EXPECT_EQ(frames[2]["record"]["scope"], "project");
+    EXPECT_EQ(frames[2]["record"]["seq"], 2);
+}
+
+/**
+ * 测试思路：
+ *   用很小的等价 batch 预算让三条 snapshot record 必须跨多个 owner-loop
+ *   continuation；同时验证单条 wire bytes 超过预算时仍能独占一个 batch，
+ *   不会永久停在 deferred_group。
+ *
+ * 输入示例：
+ *   batch_limit=512，三条文本 record 各自大于 512 bytes。
+ *
+ * 事件或线程时序：
+ *   写入三条历史 -> 小 batch upgrade -> 多轮 drain -> 逐条收到 catch-up。
+ *
+ * 关键断言：
+ *   三条记录各出现一次且按 seq=1,2,3，连接最终完成 catch-up 并进入 active。
+ */
+TEST(TestWebProtocolInteraction, CatchUpSplitsByWireBudgetAndAllowsOversizedSingleGroup)
+{
+    InteractionLiveConfig config;
+    config.catch_up_batch_bytes = 512;
+    InteractionWsFixture f(nullptr, nullptr, config);
+    const auto first = MakeTextRecord(1, InteractionScope::kProtocol, 1, 12, 700);
+    const auto second = MakeTextRecord(2, InteractionScope::kProtocol, 1, 12, 700);
+    const auto third = MakeTextRecord(3, InteractionScope::kProtocol, 1, 12, 700);
+    ASSERT_GT(InteractionWireBytes(first, "catch_up"), config.catch_up_batch_bytes);
+    f.Publish(first);
+    f.Publish(second);
+    f.Publish(third);
+
+    const uint64_t protocol_cache_id = f.protocol_item->cache()->cacheInstanceId();
+    f.UpgradeWithCursors(1, 12, protocol_cache_id, 0,
+        std::nullopt, std::nullopt, true);
+    const auto frames = ReadJsonTextFrames(f.peer.fd);
+    ASSERT_EQ(frames.size(), 4U);
+    EXPECT_EQ(frames[0]["type"], "live_ready");
+    for(size_t i = 1; i < frames.size(); ++i)
+    {
+        EXPECT_EQ(frames[i]["type"], "interaction");
+        EXPECT_EQ(frames[i]["delivery"], "catch_up");
+        EXPECT_EQ(frames[i]["record"]["seq"], i);
+    }
+
+    f.Publish(MakeRecord(4, InteractionScope::kProtocol, 1, 12));
+    const auto active = SingleJsonTextFrame(f.peer.fd);
+    EXPECT_EQ(active["type"], "interaction");
+    EXPECT_EQ(active["delivery"], "live");
+    EXPECT_EQ(active["record"]["seq"], 4);
+}
+
+/**
+ * 测试思路：
+ *   在 snapshot 尚未发送完时连续发布 live record，验证每条记录只进入
+ *   pending 一次，并按 catch-up snapshot -> pending live -> active live 顺序输出。
+ *
+ * 输入示例：
+ *   snapshot seq=1..3；catch-up 期间注入 seq=4；最后再发布 seq=5。
+ *
+ * 事件或线程时序：
+ *   UpgradeWithoutWaiting -> publish live seq=4 -> owner loop 完成 snapshot 和
+ *   pending drain -> publish seq=5。
+ *
+ * 关键断言：
+ *   seq=4 恰好一条且 delivery=live，seq=5 在 active 后仍能正常发送。
+ */
+TEST(TestWebProtocolInteraction, CatchUpQueuesLiveRecordOnceBeforeActiveDelivery)
+{
+    InteractionLiveConfig config;
+    config.catch_up_batch_bytes = 512;
+    InteractionWsFixture f(nullptr, nullptr, config);
+    f.Publish(MakeTextRecord(1, InteractionScope::kProtocol, 1, 12, 700));
+    f.Publish(MakeTextRecord(2, InteractionScope::kProtocol, 1, 12, 700));
+    f.Publish(MakeTextRecord(3, InteractionScope::kProtocol, 1, 12, 700));
+
+    const uint64_t protocol_cache_id = f.protocol_item->cache()->cacheInstanceId();
+    f.UpgradeWithoutWaiting(1, 12, protocol_cache_id, 0);
+    f.WaitForLoop();
+    f.QueuePublishAfterOpenStarts(MakeRecord(4, InteractionScope::kProtocol, 1, 12));
+    f.WaitForLoopTicks(8);
+
+    const auto frames = ReadJsonTextFrames(f.peer.fd);
+    size_t seq4_count = 0;
+    for(const auto &frame : frames)
+    {
+        if(frame.value("type", "") == "interaction"
+            && frame.value("record", nlohmann::json::object()).value("seq", 0U) == 4U)
+        {
+            ++seq4_count;
+            EXPECT_EQ(frame["delivery"], "live");
+        }
+    }
+    EXPECT_EQ(seq4_count, 1U);
+
+    f.Publish(MakeRecord(5, InteractionScope::kProtocol, 1, 12));
+    const auto active = SingleJsonTextFrame(f.peer.fd);
+    EXPECT_EQ(active["record"]["seq"], 5);
+    EXPECT_EQ(active["delivery"], "live");
+}
+
+/**
+ * 测试思路：
+ *   把 pending count/bytes 上限缩小为可观测的小值，验证预占发生在 Hub
+ *   callback 入队前，超限记录被丢弃；catch-up 完成后 reservation 恰好释放。
+ *
+ * 输入示例：
+ *   max_records=2、max_bytes=4；先注入两条 metadata，再注入第三条和一条
+ *   5-byte sidecar record。
+ *
+ * 事件或线程时序：
+ *   UpgradeWithoutWaiting -> 两次 PublishNoWait -> 超限 PublishNoWait -> drain。
+ *
+ * 关键断言：
+ *   第三条不产生 interaction，连接仍能完成 catch-up；随后正常 active live。
+ */
+TEST(TestWebProtocolInteraction, CatchUpPendingAdmissionHonorsCountAndByteLimits)
+{
+    InteractionLiveConfig config;
+    config.catch_up_batch_bytes = 512;
+    config.pending_live_max_records = 2;
+    config.pending_live_max_bytes = 4;
+    InteractionWsFixture f(nullptr, nullptr, config);
+    f.Publish(MakeTextRecord(1, InteractionScope::kProtocol, 1, 12, 700));
+    f.Publish(MakeTextRecord(2, InteractionScope::kProtocol, 1, 12, 700));
+
+    const uint64_t protocol_cache_id = f.protocol_item->cache()->cacheInstanceId();
+    f.UpgradeWithoutWaiting(1, 12, protocol_cache_id, 0);
+    f.WaitForLoop();
+    f.QueuePublishBatchAfterOpenStarts({
+        MakeRecord(3, InteractionScope::kProtocol, 1, 12),
+        MakeRecord(4, InteractionScope::kProtocol, 1, 12),
+        MakeAttachmentRecord(5, 5),
+    });
+    f.WaitForLoopTicks(8);
+
+    const auto frames = ReadJsonTextFrames(f.peer.fd);
+    size_t pending_seq3_count = 0;
+    size_t pending_seq4_count = 0;
+    size_t rejected_seq5_count = 0;
+    for(const auto &frame : frames)
+    {
+        const uint64_t seq = frame.value("record", nlohmann::json::object())
+            .value("seq", 0U);
+        if(seq == 3U) ++pending_seq3_count;
+        if(seq == 4U) ++pending_seq4_count;
+        if(seq == 5U) ++rejected_seq5_count;
+    }
+    EXPECT_EQ(pending_seq3_count, 1U);
+    EXPECT_EQ(pending_seq4_count, 1U);
+    EXPECT_EQ(rejected_seq5_count, 0U);
+
+    f.Publish(MakeRecord(6, InteractionScope::kProtocol, 1, 12));
+    const auto active = SingleJsonTextFrame(f.peer.fd);
+    EXPECT_EQ(active["record"]["seq"], 6);
+}
+
+/**
+ * 测试思路：
+ *   runtime cleanup 以 owner-loop cleanup task 为线性化点。cleanup 之后，旧
+ *   continuation 即使仍在队列中执行，也必须因 generation/state 失效而不发送。
+ *
+ * 输入示例：
+ *   catch-up 尚未结束时调用 cleanupLive(project=1, protocol=12)。
+ *
+ * 事件或线程时序：
+ *   open -> queue continuation -> cleanupLive -> owner loop drain。
+ *
+ * 关键断言：
+ *   连接关闭、没有 catch-up interaction 泄漏，后续 publish 也不会发送。
+ */
+TEST(TestWebProtocolInteraction, RuntimeCleanupInvalidatesQueuedCatchUpContinuation)
+{
+    InteractionLiveConfig config;
+    config.catch_up_batch_bytes = 512;
+    InteractionWsFixture f(nullptr, nullptr, config);
+    f.Publish(MakeTextRecord(1, InteractionScope::kProtocol, 1, 12, 700));
+    f.Publish(MakeTextRecord(2, InteractionScope::kProtocol, 1, 12, 700));
+
+    f.UpgradeWithoutWaiting(1, 12, std::nullopt, std::nullopt);
+    f.handler.cleanupLive(1, 12);
+    f.WaitForLoopTicks(8);
+
+    EXPECT_FALSE(f.session->isOpen());
+    const auto cleanup_frames = ReadJsonTextFrames(f.peer.fd);
+    for(const auto &frame : cleanup_frames)
+    {
+        EXPECT_NE(frame.value("type", ""), "interaction");
+    }
+    f.Publish(MakeRecord(3, InteractionScope::kProtocol, 1, 12));
+    EXPECT_TRUE(ReadAvailable(f.peer.fd).empty());
 }

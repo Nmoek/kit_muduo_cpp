@@ -96,7 +96,7 @@ static std::string BodyString(const CustomTcpMessagePtr &message)
 class CustomTcpInteractionCollector
 {
 public:
-    void OnRecord(const ProtocolInteractionRecord &record)
+    void OnRecord(const InteractionRecord &record)
     {
         {
             std::lock_guard<std::mutex> lock(mtx_);
@@ -114,7 +114,7 @@ public:
         });
     }
 
-    std::vector<ProtocolInteractionRecord> Records() const
+    std::vector<InteractionRecord> Records() const
     {
         std::lock_guard<std::mutex> lock(mtx_);
         return records_;
@@ -123,7 +123,7 @@ public:
 private:
     mutable std::mutex mtx_;
     std::condition_variable cv_;
-    std::vector<ProtocolInteractionRecord> records_;
+    std::vector<InteractionRecord> records_;
 };
 
 struct CustomTcpInteractionPipeline
@@ -134,8 +134,8 @@ struct CustomTcpInteractionPipeline
         : hub(std::make_shared<ProtocolInteractionHub>())
         , collector(std::make_shared<CustomTcpInteractionCollector>())
         , publisher(
-            std::vector<std::shared_ptr<ProtocolInteractionSink>>{
-                std::static_pointer_cast<ProtocolInteractionSink>(hub),
+            std::vector<std::shared_ptr<InteractionSink>>{
+                std::static_pointer_cast<InteractionSink>(hub),
             },
             ProtocolInteractionPublisherConfig{
                 .queue_capacity = 16,
@@ -143,24 +143,55 @@ struct CustomTcpInteractionPipeline
                 .capture_options = InteractionCaptureOptions{},
             })
     {
-        subscription = hub->subscribe(
-            ProtocolInteractionSubscribeFilter{
+        (void)project_id;
+        (void)protocol_id;
+        (void)include_project_notice;
+        publisher.start();
+    }
+
+    void Subscribe(
+        int64_t project_id,
+        int64_t protocol_id,
+        std::shared_ptr<InteractionRecordCache> protocol_cache,
+        std::shared_ptr<InteractionRecordCache> project_cache,
+        bool include_project_notice)
+    {
+        if(!protocol_cache)
+        {
+            protocol_cache = std::make_shared<InteractionRecordCache>(
+                InteractionRecordCacheKey{
+                    InteractionScope::kProtocol, project_id, protocol_id});
+        }
+        if(!project_cache)
+        {
+            project_cache = std::make_shared<InteractionRecordCache>(
+                InteractionRecordCacheKey{
+                    InteractionScope::kProject, project_id, 0});
+        }
+        protocol_cache_ = std::move(protocol_cache);
+        project_cache_ = std::move(project_cache);
+
+        subscription = hub->subscribeWithCatchUp(
+            InteractionSubscribeFilter{
                 .project_id = project_id,
                 .protocol_id = protocol_id,
                 .include_project_notice = include_project_notice,
             },
-            [collector = collector](const ProtocolInteractionRecord &record) {
+            InteractionRecordCacheContainer{
+                protocol_cache_, project_cache_, std::nullopt, std::nullopt,
+                std::nullopt, std::nullopt},
+            [collector = collector](const InteractionRecord &record) {
                 collector->OnRecord(record);
             });
-        publisher.start();
+        ASSERT_TRUE(subscription.ok());
     }
 
     ~CustomTcpInteractionPipeline()
     {
         publisher.stop();
-        if(subscription.subscriber_id > 0)
+        if(subscription.subscription.subscriber_id > 0)
         {
-            hub->unsubcribe(subscription.subscriber_id);
+            hub->unsubcribe(subscription.subscription.subscriber_id);
         }
     }
 
@@ -174,7 +205,9 @@ struct CustomTcpInteractionPipeline
     std::shared_ptr<ProtocolInteractionHub> hub;
     std::shared_ptr<CustomTcpInteractionCollector> collector;
     ProtocolInteractionPublisher publisher;
-    ProtocolInteractionSubscription subscription;
+    SubscribeWithCatchUpResult subscription;
+    std::shared_ptr<InteractionRecordCache> protocol_cache_;
+    std::shared_ptr<InteractionRecordCache> project_cache_;
 };
 
 
@@ -1280,6 +1313,7 @@ TEST_F(CustomTcpServerSuite, RuntimePublishesMatchedObservationThroughPublisherH
         server,
         MakeBodyLengthProtocol(4001, 9401, "H0100", {}, std::vector<char>(resp_body1.begin(), resp_body1.end())));
     ASSERT_NE(item, nullptr);
+    pipeline.Subscribe(9401, 4001, item->cache(), server->cache(), true);
 
     server->start();
     const InetAddress &server_addr = server->getBindAddr();
@@ -1345,6 +1379,7 @@ TEST_F(CustomTcpServerSuite, RuntimePublishesFunctionCodeNotFoundProjectNotice)
 
     auto item = AddTcpRuntimeProtocol(server, MakeBodyLengthProtocol(4002, 9402, "H0100"));
     ASSERT_NE(item, nullptr);
+    pipeline.Subscribe(9402, 4002, item->cache(), server->cache(), true);
 
     server->start();
     const InetAddress &server_addr = server->getBindAddr();
@@ -1392,6 +1427,7 @@ TEST_F(CustomTcpServerSuite, RuntimePublishesParseErrorRawPacket)
     auto server = server_start(project);
     CustomTcpInteractionPipeline pipeline(9403, 4003, true);
     server->setObserveCallback(pipeline.Callback());
+    pipeline.Subscribe(9403, 4003, nullptr, server->cache(), true);
     server->start();
     const InetAddress &server_addr = server->getBindAddr();
 
@@ -1445,6 +1481,7 @@ TEST_F(CustomTcpServerSuite, RuntimePublishesSerializeErrorForBadResponseConfig)
 
     auto item = AddTcpRuntimeProtocol(server, MakeBodyLengthProtocol(4004, 9404, "H0100"));
     ASSERT_NE(item, nullptr);
+    pipeline.Subscribe(9404, 4004, item->cache(), server->cache(), true);
 
     auto broken_resp_cfg = item->getRespCfg();
     broken_resp_cfg.field_values_by_byte_pos[4] = std::vector<uint8_t>{0x00};

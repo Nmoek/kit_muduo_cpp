@@ -19,26 +19,6 @@
 
 namespace kit_domain {
 
-struct InteractionRecordCacheKey
-{
-    InteractionScope scope{InteractionScope::kUnknown};
-    int64_t project_id{0};
-    int64_t protocol_id{0};
-};
-
-struct InteractionCacheSnapshot
-{
-    /// @brief 缓存Id 用于区分同一 project_id/protocol_id 下的不同运行态 cache，
-    uint64_t cache_instance_id{0};
-    /// @brief 快照存储后的新的右边界
-    uint64_t last_seq{0};
-    /// @brief 是否发生快照断层
-    bool catch_up_gap{false};
-    /// @brief 游标是否重置
-    bool cursor_reset{false};
-    /// @brief 增量快照数据
-    std::vector<InteractionRecord> incr_records;
-};
 
 /**
  * @brief 校验交互缓存游标是否成对且可用。
@@ -60,6 +40,57 @@ inline bool IsValidInteractionCursorPair(
         && cache_instance_id.value() != 0
         && seq.has_value();
 }
+
+struct InteractionRecordCacheKey
+{
+    InteractionScope scope{InteractionScope::kUnknown};
+    int64_t project_id{0};
+    int64_t protocol_id{0};
+};
+
+struct InteractionCacheSnapshot
+{
+    /// @brief 缓存Id 用于区分同一 project_id/protocol_id 下的不同运行态 cache，
+    uint64_t cache_instance_id{0};
+    /// @brief 快照存储后的新的右边界
+    uint64_t last_seq{0};
+    /// @brief 是否发生快照断层
+    bool catch_up_gap{false};
+    /// @brief 游标是否重置
+    bool cursor_reset{false};
+    /// @brief 增量快照数据
+    std::vector<InteractionRecord> incr_records;
+};
+
+struct InteractionRecordCacheConfig
+{
+    static constexpr size_t kDefaultMaxRecord = 20;
+    static constexpr size_t kDefaultMaxSidecarBytes = 64*1024*1024; // 64M
+
+    size_t max_records{kDefaultMaxRecord};
+    size_t max_sidecar_bytes{kDefaultMaxSidecarBytes};
+
+};
+
+struct CachedInteractionRecord
+{
+    InteractionRecord record;
+    size_t sidecar_bytes{};
+};
+
+/**
+ * @brief 计算record中body+rawbytes 总大小
+ * @param record 
+ * @return size_t 
+ */
+size_t CalculateInteractionSidecarBytes(const InteractionRecord& record) noexcept;
+
+/**
+ * @brief record附件超限进行降级处理
+ * @param record 
+ */
+void MarkCachedAttachmentsUnavailable(InteractionRecord& record) noexcept;
+
 
 class InteractionRecordCache
 {
@@ -92,7 +123,7 @@ public:
     };
 
 public:
-    explicit InteractionRecordCache(InteractionRecordCacheKey key, size_t capacity = kDefaultCacheCapacity);
+    explicit InteractionRecordCache(InteractionRecordCacheKey key, InteractionRecordCacheConfig config = {});
 
     ~InteractionRecordCache() = default;
 
@@ -116,29 +147,35 @@ public:
 
     void close();
 
-    uint64_t cacheInstanceId() const { return cache_instance_id_; }
+    uint64_t cacheInstanceId() const noexcept { return cache_instance_id_; }
+
+    size_t retainedSidecarBytes() const;
+    size_t recordCount() const;
+    uint64_t byteEvictionCount() const;
+    uint64_t metadataOnlyCount() const;
 
 private:
     bool chechkCacheKey(const InteractionRecord &record);
+    void evictOldestRecordUnLocked(bool caused_by_bytes);
 
 public:
-    constexpr static size_t kDefaultCacheCapacity = 20;
-    constexpr static size_t kDefaultReplyLimit = 20;
-
     inline static std::atomic_uint64_t s_next_cache_instance_id_{1};
 
 private:
     mutable std::mutex mtx_;
     /// @brief 缓存索引
     InteractionRecordCacheKey key_;
+    InteractionRecordCacheConfig config_;
     bool is_active_{true};
-    size_t capacity_{kDefaultCacheCapacity};
     /// @brief 缓存唯一标识Id
     uint64_t cache_instance_id_{0};
 
     uint64_t next_seq_{1};
     uint64_t last_seq_{0};
-    std::deque<InteractionRecord> records_;
+    std::deque<CachedInteractionRecord> records_;
+    size_t retained_sidecar_bytes_{0};
+    uint64_t byte_eviction_count_{0};
+    uint64_t metadata_only_count_{0};
 
 };
 
