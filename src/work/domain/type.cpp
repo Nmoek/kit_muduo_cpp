@@ -34,18 +34,26 @@ std::string ProtocolTypeToString(ProtocolType type)
 
 ProtocolBodyType ProtocolBodyTypeFromString(const std::string &type)
 {
-    if("json" == type) return ProtocolBodyType::kJson;
+    if("none" == type) return ProtocolBodyType::kNone;
+    else if("empty" == type) return ProtocolBodyType::kEmpty;
+    else if("json" == type) return ProtocolBodyType::kJson;
     else if("xml" == type) return ProtocolBodyType::kXml;
     else if("text" == type) return ProtocolBodyType::kText;
+    else if("multiform" == type) return ProtocolBodyType::kMultiForm;
+    else if("image" == type) return ProtocolBodyType::kImage;
     else if("binary" == type) return ProtocolBodyType::kBinary;
     return ProtocolBodyType::kNone;
 }
 
 std::string ProtocolBodyTypeToString(ProtocolBodyType type)
 {
-    if(ProtocolBodyType::kJson == type) return "json";
+    if(ProtocolBodyType::kNone == type) return "none";
+    else if(ProtocolBodyType::kEmpty == type) return "empty";
+    else if(ProtocolBodyType::kJson == type) return "json";
     else if(ProtocolBodyType::kXml == type) return "xml";
     else if(ProtocolBodyType::kText == type) return "text";
+    else if(ProtocolBodyType::kMultiForm == type) return "multiform";
+    else if(ProtocolBodyType::kImage == type) return "image";
     else if(ProtocolBodyType::kBinary == type) return "binary";
 
     return "";
@@ -86,6 +94,8 @@ kit_muduo::http::ContentCodecFormat ProtocolBodyTypeToContentCodecFormat(Protoco
             return ContentCodecFormat::kXml;
         case ProtocolBodyType::kText:
             return ContentCodecFormat::kText;
+        case ProtocolBodyType::kMultiForm:
+            return ContentCodecFormat::kMultipartFormData;
         case ProtocolBodyType::kBinary:
             return ContentCodecFormat::kBinary;
         default:
@@ -106,6 +116,8 @@ kit_muduo::http::ContentMeta ProtocolBodyTypeToHttpContentMeta(ProtocolBodyType 
             return MakeContentMeta(KnownMediaType::kApplicationXml);
         case ProtocolBodyType::kText:
             return MakeContentMeta(KnownMediaType::kTextPlain);
+        case ProtocolBodyType::kMultiForm:
+            return MakeContentMeta(KnownMediaType::kMultipartFormData);
         case ProtocolBodyType::kBinary:
             return MakeContentMeta(KnownMediaType::kApplicationOctetStream);
         default:

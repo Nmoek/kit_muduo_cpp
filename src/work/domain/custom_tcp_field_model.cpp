@@ -130,7 +130,7 @@ bool FieldSpec::validate() const
         CUSTOM_F_ERROR("field 'byte_order' value invalid: %d \n", static_cast<int>(byte_order));
         return false;
     }
-    if(FieldType::kString == type && 0 == byte_len)
+    if(FieldType::kString == type && (byte_len <= 0 || byte_len > 32))
     {
         CUSTOM_F_ERROR("field 'byte_len' value invalid for string: %lu \n", byte_len);
         return false;

@@ -43,7 +43,7 @@ class ProjectServer: public std::enable_shared_from_this<ProjectServer>
 public:
     using ObserveCallback = std::function<void(ProtocolInteractionObservation)>;
 
-    ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const std::string &name = "");
+    ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const kit_muduo::InetAddress &addr, const std::string &name = "");
 
     virtual ~ProjectServer() = default;
 

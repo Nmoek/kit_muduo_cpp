@@ -86,6 +86,14 @@ protected:
     virtual ProtocolBodyCheckResult checkNonEmptyBody(const ProtocolBodySpec &spec) const = 0;
 };
 
+class EmptyBodyPolicy final: public ProtocolBodyPolicy
+{
+public:
+    ~EmptyBodyPolicy() override = default;
+protected:
+    ProtocolBodyCheckResult checkNonEmptyBody(const ProtocolBodySpec &spec) const override;
+};
+
 class JsonBodyPolicy final: public ProtocolBodyPolicy
 {
 public:
@@ -117,7 +125,22 @@ public:
 protected:
     ProtocolBodyCheckResult checkNonEmptyBody(const ProtocolBodySpec &spec) const override;
 };
+class MultiFormBodyPolicy final: public ProtocolBodyPolicy
+{
+public:
+    ~MultiFormBodyPolicy() override = default;
+protected:
+    ProtocolBodyCheckResult checkNonEmptyBody(const ProtocolBodySpec &spec) const override;
+};
 
+
+class ImageBodyPolicy final: public ProtocolBodyPolicy
+{
+public:
+    ~ImageBodyPolicy() override = default;
+protected:
+    ProtocolBodyCheckResult checkNonEmptyBody(const ProtocolBodySpec &spec) const override;
+};
 
 }
 #endif // __KIT_POTOCOL_BODY_PIPIELINE_H__

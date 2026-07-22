@@ -35,7 +35,7 @@ public:
      * @param project_id 项目ID
      * @param tcp_server TCP服务器指针
      */
-    CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop);
+    CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop, const kit_muduo::InetAddress &addr);
 
     ~CustomTcpProjectServer() override;
 

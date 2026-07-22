@@ -677,7 +677,7 @@ ProtocolBodyType GuessProtocolBodyTypeFromContentMeta(const ContentMeta& meta)
     switch (codec_type) 
     {
         case ContentCodecFormat::kNone:
-            return ProtocolBodyType::kEmpty;
+            return ProtocolBodyType::kNone;
         case ContentCodecFormat::kJson:
             return ProtocolBodyType::kJson;
         case ContentCodecFormat::kXml:
@@ -685,6 +685,8 @@ ProtocolBodyType GuessProtocolBodyTypeFromContentMeta(const ContentMeta& meta)
         case ContentCodecFormat::kText:
         case ContentCodecFormat::kFormUrlEncoded:
             return ProtocolBodyType::kText;
+        case ContentCodecFormat::kMultipartFormData:
+            return ProtocolBodyType::kMultiForm;
         default:
             return ProtocolBodyType::kBinary;
     }

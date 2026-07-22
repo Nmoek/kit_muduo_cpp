@@ -10,6 +10,7 @@
 #define __HTTP_PROJECT_SERVER_H__
 
 
+#include "net/inet_address.h"
 #include "net/tcp_server.h"
 #include "domain/project_server.h"
 #include "net/call_backs.h"
@@ -33,7 +34,7 @@ public:
         uint64_t route_id;
     };
 
-    HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop);
+    HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const kit_muduo::InetAddress &addr);
 
     ~HttpProjectServer() override;
 

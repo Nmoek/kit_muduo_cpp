@@ -301,6 +301,8 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
     auto project_server = it->second.server;
     lock.unlock();
 
+    uint16_t cur_listen_port = project_server->getBindAddr().toPort();
+
     // 实际停止runtime
     if(project_server->stop())
     {
@@ -318,7 +320,7 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
         inter_cleanup_cb_(project_id, std::nullopt);
     }
 
-    if(!project_svc_->UpdateRuntimeState(ctx, project_id, ProjectRuntimeState::kStopped, 0))
+    if(!project_svc_->UpdateRuntimeState(ctx, project_id, ProjectRuntimeState::kStopped, cur_listen_port))
     {
         RUNPJMA_F_ERROR("UpdateRuntimeState error! pjId[%ld]\n", project_id);
         return ProjectRuntimeResult::Failed(RuntimeControlCode::kPersistFailed);
@@ -329,7 +331,7 @@ ProjectRuntimeResult ProjectRuntimeManager::stopProjectImpl(kit_muduo::HttpConte
     ProjectRuntimeSnapshot{
         .project_id = project_id,
         .runtime_state = ProjectRuntimeState::kStopped,
-        .listen_port = 0
+        .listen_port = cur_listen_port
     });
 }
 
@@ -1207,12 +1209,13 @@ ProtocolRuntimeResult ProjectRuntimeManager::updateProtocolBodyImpl(kit_muduo::H
 
     if(access_info.project_id != project_id
         || (ProtocolSide::kRequest != side && ProtocolSide::kResponse != side)
-        || (body_type <= ProtocolBodyType::kNone || body_type >= ProtocolBodyType::kMax))
+        || (body_type < ProtocolBodyType::kNone || body_type >= ProtocolBodyType::kMax))
     {
         return ProtocolRuntimeResult::Failed(RuntimeControlCode::kInvalidArgument, RuntimeError(RuntimeError::kInternalError),
         "protocol project mismatch");
     }
 
+    // DEBUG 当前请求侧不做检测
     // body格式检查
     auto body_check = ProtocolBodyPipeline::CheckBody({
         .body_type = body_type,

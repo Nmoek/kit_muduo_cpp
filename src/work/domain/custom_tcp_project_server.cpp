@@ -77,12 +77,11 @@ void AttachTcpResponseCaptureFromContext(
 namespace kit_domain {
 
 
-CustomTcpProjectServer::CustomTcpProjectServer(
-    int64_t project_id, 
-    const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop)
+CustomTcpProjectServer::CustomTcpProjectServer(int64_t project_id, const std::vector<char> &info, std::shared_ptr<RuntimeLease> lease_loop, const kit_muduo::InetAddress &addr)
     :ProjectServer(
         project_id, 
         lease_loop,
+        addr,
         "pj" + std::to_string(project_id) + "tcp")
 {
     try

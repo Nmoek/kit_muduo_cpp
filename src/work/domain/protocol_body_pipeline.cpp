@@ -29,7 +29,7 @@ constexpr unsigned char kCarriageReturn = '\r';
 
 inline bool IsBodyTypeValid(ProtocolBodyType body_type)
 {
-    return body_type > ProtocolBodyType::kNone && body_type < ProtocolBodyType::kMax;
+    return body_type >= ProtocolBodyType::kNone && body_type < ProtocolBodyType::kMax;
 }
 
 ProtocolBodyCheckResult CheckTextAsciiControl(const std::vector<char> &data)
@@ -67,6 +67,12 @@ ProtocolBodyCheckResult ProtocolBodyPipeline::CheckBody(const ProtocolBodySpec &
     {
         RUNTIME_F_ERROR("protocol body type invalid! %d\n", static_cast<int32_t>(spec.body_type));
         return ProtocolBodyCheckResult::Failed("protocol body type invalid");
+    }
+
+    // 不关心 直接返回成功
+    if(ProtocolBodyType::kNone == spec.body_type)
+    {
+        return ProtocolBodyCheckResult::Success();
     }
 
     const auto policy = getPolicy(spec.body_type);
@@ -110,6 +116,11 @@ ProtocolBodyCheckResult ProtocolBodyPipeline::CheckFullProtocol(const Protocol &
 
 const ProtocolBodyPolicy* ProtocolBodyPipeline::getPolicy(ProtocolBodyType body_type)
 {
+    if(ProtocolBodyType::kEmpty == body_type)
+    {
+        static EmptyBodyPolicy p;
+        return &p;
+    }
     if(ProtocolBodyType::kJson == body_type)
     {
         static JsonBodyPolicy p;
@@ -125,6 +136,19 @@ const ProtocolBodyPolicy* ProtocolBodyPipeline::getPolicy(ProtocolBodyType body_
         static TextBodyPolicy p;
         return &p;
     }
+    // TODO 暂时默认成功
+    if(ProtocolBodyType::kMultiForm == body_type)
+    {
+        static MultiFormBodyPolicy p;
+        return &p;
+    }
+    // TODO 暂时默认成功
+    if(ProtocolBodyType::kImage == body_type)
+    {
+        static ImageBodyPolicy p;
+        return &p;
+    }
+    // TODO 暂时默认成功
     if(ProtocolBodyType::kBinary == body_type)
     {
         static BinaryBodyPolicy p;
@@ -137,11 +161,21 @@ const ProtocolBodyPolicy* ProtocolBodyPipeline::getPolicy(ProtocolBodyType body_
 ProtocolBodyCheckResult ProtocolBodyPolicy::check(const ProtocolBodySpec &spec) const
 {
     // 注意: 当前策略协议项可以配置空的Body
-    if(spec.body_data.empty())
+    if(ProtocolBodyType::kEmpty != spec.body_type && spec.body_data.empty())
     {
         return ProtocolBodyCheckResult::Success("body allow empty");
     }
     return checkNonEmptyBody(spec);
+}
+
+ProtocolBodyCheckResult EmptyBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
+{
+    // 注意 配了空body 但不空会报错
+    if(!spec.body_data.empty())
+    {
+        return ProtocolBodyCheckResult::Failed("body not empty");
+    }
+    return ProtocolBodyCheckResult::Success();
 }
 
 ProtocolBodyCheckResult JsonBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
@@ -207,6 +241,18 @@ ProtocolBodyCheckResult TextBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec
         return ProtocolBodyCheckResult::Failed("text body must be valid utf-8 text: " + utf8_error);
     }
 
+    return ProtocolBodyCheckResult::Success();
+}
+
+ProtocolBodyCheckResult MultiFormBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
+{
+    (void)spec;
+    return ProtocolBodyCheckResult::Success();
+}
+
+ProtocolBodyCheckResult ImageBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
+{
+    (void)spec;
     return ProtocolBodyCheckResult::Success();
 }
 

@@ -11,6 +11,8 @@
 #include "domain/domain_log.h"
 #include "domain/type.h"
 #include "net/http/http_content.h"
+#include "net/http/http_content_codec.h"
+#include "net/http/multiform.h"
 #include "net/net_data_converter.h"
 #include "domain/protocol_interaction.h"
 #include "domain/http_project_server.h"
@@ -42,19 +44,21 @@ void AssignHexPrefix(InteractionBody &body, const std::vector<uint8_t> &data, si
     body.text = BytesToHexString(prefix);
 }
 
-/**
- * @brief 通过Http的`Content-Type`推导更具体的Body数据类型(Http、类Http协议可用)
- * @param media_type 
- * @return InteractionPayloadKind 
- */
-InteractionPayloadKind GuessBinaryKindFromHttpContentType(const std::string &media_type)
-{
-    const auto meta = kit_muduo::http::ParseHttpContentType(media_type);
-    if(meta.media_type.empty())
-    {
-        return InteractionPayloadKind::kBinary;
-    }
 
+inline InteractionPayloadKind ContentMetaToBinaryKind(const ContentMeta& meta)
+{
+    if(IsJsonLikeContent(meta))
+    {
+        return InteractionPayloadKind::kJson;
+    }
+    if(IsXmlLikeContent(meta))
+    {
+        return InteractionPayloadKind::kXml;
+    }
+    if(IsTextLikeContent(meta))
+    {
+        return InteractionPayloadKind::kText;
+    }
     if(meta.parsed_media_type.type == "image")
     {
         return InteractionPayloadKind::kImage;
@@ -85,7 +89,34 @@ InteractionPayloadKind GuessBinaryKindFromHttpContentType(const std::string &med
     {
         return InteractionPayloadKind::kArchive;
     }
-    return InteractionPayloadKind::kBinary;
+    return InteractionPayloadKind::kUnknown;
+}
+
+/**
+ * @brief 通过Http的`Content-Type`推导更具体的Body数据类型(Http、类Http协议可用)
+ * @param media_type 
+ * @return InteractionPayloadKind 
+ */
+InteractionPayloadKind GuessBinaryKindFromContentType(const std::string &media_type, bool is_multiform = false)
+{
+    ContentMeta meta;
+    if(!is_multiform)
+    {
+        meta = kit_muduo::http::ParseHttpContentType(media_type);
+        if(meta.media_type.empty())
+        {
+            return InteractionPayloadKind::kBinary;
+        }
+    }
+    else
+    {
+        meta = kit_muduo::http::ParseMultiformPartContentType(media_type);
+        if(meta.media_type.empty())
+        {
+            return InteractionPayloadKind::kText;
+        }
+    }
+    return ContentMetaToBinaryKind(meta);
 }
 
 }
@@ -175,14 +206,129 @@ InteractionBody& InteractionBody::fillTextBdoy(const std::vector<uint8_t> &data,
     return *this;
 }
 
-InteractionBody& InteractionBody::fillBinaryBdoy(const std::vector<uint8_t> &data, const InteractionPayloadHint &hint, const ProtocolSide &side, bool is_utf8_safe, const std::string &utf8_error, const std::string &flag, const InteractionCaptureOptions & options, std::vector<BinarySidecar> &sidecars)
+InteractionBody& InteractionBody::fillMultiFormBdoy(const std::vector<uint8_t> &data, 
+    const InteractionPayloadHint &hint,
+    const ProtocolSide &side,
+    const std::string &flag, 
+    const InteractionCaptureOptions & options,
+    std::vector<BinarySidecar> &sidecars)
+{
+    this->kind = InteractionPayloadKind::kMultiForm;
+    this->size = data.size();
+    this->sha1 = Sha1BytesBase64Helper(data);
+    this->captured_size =  std::min(data.size(), options.max_binary_attachment_bytes);
+    this->truncated = this->captured_size < data.size();
+
+    // 被截断无法解析
+    if(this->truncated)
+    {
+        INTERAC_F_INFO("body multiform truncated! size[%lu], captured_size[%s]\n", this->size, this->captured_size);
+
+        // 直接当二进制解析
+        return fillBinaryBdoy(data, hint, side, flag, options, sidecars);
+    }
+
+    MultiForm form;
+    auto result = ContentDecoder<MultiForm, ContentCodecFormat::kMultipartFormData>::Decode(ContentView{
+        .data = data.data(),
+        .size = data.size(),
+        .meta = hint.content_meta,
+    }, form);
+    if(!result.ok)
+    {
+        INTERAC_F_ERROR("body parse to multi-form-data error! field[%s]:%s\n", result.field.c_str(), result.message.c_str());
+
+        AssignHexPrefix(*this, data, options.max_hex_bytes);
+        this->error_message = "body parse to multi-form-data error!";
+        return *this;
+    }
+
+
+    int32_t idx = 1;
+    for(auto &field : form.fields())
+    {
+        const FormPart& part = field.second.front();
+
+        INTERAC_F_DEBUG("body multiform field info: name[%s], filename[%s], media_type[%s], size[%lu]\n", part.name.c_str(), part.filename.c_str(), part.meta.media_type.c_str(), part.data.size());
+        
+        const auto part_kind = ContentMetaToBinaryKind(part.meta);
+        
+
+        std::string part_text;
+
+        uint64_t part_captured_size =  std::min(part.data.size(), options.max_binary_attachment_bytes);
+        const bool part_truncated = part_captured_size < part.data.size();
+        bool part_binary_available = !part_truncated && part_captured_size == part.data.size();
+
+        switch (part_kind)
+        {
+            case InteractionPayloadKind::kEmpty:
+            case InteractionPayloadKind::kJson:
+            case InteractionPayloadKind::kXml:
+            case InteractionPayloadKind::kText:
+            {
+                part_text.assign(part.data.begin(), part.data.begin() + part_captured_size);
+                part_binary_available = false; // 不追加到二进制帧中
+                break;
+            }
+            case InteractionPayloadKind::kImage:
+            case InteractionPayloadKind::kBinary:
+            {
+                // donothing
+                break;
+            }
+            default:
+            {
+                AssignHexPrefix(*this, data, options.max_hex_bytes);
+                this->error_message = "body multi-form-data part kind invalid!";
+                return *this;
+            }
+        }
+        std::string part_flag = flag + "." + "multiform" + "." + std::to_string(idx++);
+
+        const std::string& part_sha1 = Sha1BytesBase64Helper(part.data);
+
+        InteractionAttachmentRef ref{
+            .attachment_id = part_flag + ":" + part_sha1.substr(0, 16),
+            .side = ProtocolSideToString(side),
+            .flag = part_flag,
+            .kind = part_kind, 
+            .text = std::move(part_text),
+            .size = part.data.size(),
+            .captured_size = part_captured_size,
+            .truncated = part_truncated,
+            .binary_available = part_binary_available,
+            .sha1 = part_sha1,
+        };
+
+        attachments.push_back(ref);
+
+        // 二进制数据完整未截断 追加到二进制帧缓存
+        if(ref.binary_available)
+        {
+            sidecars.push_back(BinarySidecar{
+                .attachment_ref = ref,
+                .bytes = std::make_shared<const std::vector<uint8_t>>(part.data),
+            });
+        }
+    }
+
+    return *this;
+}
+
+InteractionBody& InteractionBody::fillBinaryBdoy(const std::vector<uint8_t> &data, 
+    const InteractionPayloadHint &hint, 
+    const ProtocolSide &side, 
+    const std::string &flag, 
+    const InteractionCaptureOptions & options, 
+    std::vector<BinarySidecar> &sidecars)
 {
     // 默认按二进制处理
     this->kind = InteractionPayloadKind::kBinary;
     if(ProtocolType::kHttp == hint.protocol_type
         || ProtocolType::kHttps == hint.protocol_type)
     {
-        this->kind = GuessBinaryKindFromHttpContentType(hint.media_type);
+        this->kind = GuessBinaryKindFromContentType(hint.content_meta.media_type);
     }
 
     this->size = data.size();
@@ -234,7 +380,8 @@ InteractionBody InteractionBody::BuildFromBytes(const std::vector<uint8_t> &data
 {
     InteractionBody body;
     body.size = data.size();
-    body.expect_kind = ProtocolBodyTypeToInterKind(hint.expect_body_type);
+    ProtocolBodyType expect_body_type = hint.expect_body_type;
+    body.expect_kind = ProtocolBodyTypeToInterKind(expect_body_type);
     body.sha1 = Sha1BytesBase64Helper(data);
 
     if(data.empty())
@@ -249,13 +396,23 @@ InteractionBody InteractionBody::BuildFromBytes(const std::vector<uint8_t> &data
     std::string utf8_error;
     bool is_utf8_safe = IsUtf8Safe(data.data(), data.size(), utf8_error);
     
-    switch (hint.expect_body_type) 
+    // 这里需要思考, 应该按配置格式解析还是按实际格式解析
+    // 这里比较复杂了： 请求侧和响应侧不一样，http和tcp又不一样
+    if(ProtocolBodyType::kNone == hint.expect_body_type
+        && (ProtocolType::kHttp == hint.protocol_type || ProtocolType::kHttps == hint.protocol_type))
+    {
+        // HTTP类协议可以兜底MIME类型
+        expect_body_type = GuessProtocolBodyTypeFromContentMeta(hint.content_meta);
+    }
+
+    switch (expect_body_type)
     {
         case ProtocolBodyType::kJson: return body.fillJsonBdoy(data, is_utf8_safe, utf8_error, options);
         case ProtocolBodyType::kXml: return body.fillXmlBdoy(data, is_utf8_safe, utf8_error, options);
         case ProtocolBodyType::kText: return body.fillTextBdoy(data, is_utf8_safe, utf8_error, options);
+        case ProtocolBodyType::kMultiForm: return body.fillMultiFormBdoy(data, hint, side, flag, options, sidecars);
         default:
-            return body.fillBinaryBdoy(data, hint, side, is_utf8_safe, utf8_error, flag, options, sidecars);
+            return body.fillBinaryBdoy(data, hint, side, flag, options, sidecars);
     }
 }
 

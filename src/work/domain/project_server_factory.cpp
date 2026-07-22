@@ -28,12 +28,15 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
 
     // 注意： 端口后续都不进行指定 服务器自己绑定空闲端口
-    // const InetAddress& address = InetAddress(p.m_listenPort);
+    // 同一个服务器尽可能复用之前绑过的port
+    InetAddress address{p.m_listenPort};
     
     try {
-        auto pj_server = std::make_shared<HttpProjectServer>(p.m_id, lease_loop);
+        auto pj_server = std::make_shared<HttpProjectServer>(p.m_id, lease_loop, address);
 
-        PJSERVER_F_INFO("Creating HttpProjectServer, project_id[%d] address[%s]\n", p.m_id, pj_server->getBindAddr().toIpPort().c_str());
+        PJSERVER_F_INFO("Creating HttpProjectServer, project_id[%d],old address[%s] --> new address[%s]\n", p.m_id, 
+            address.toIpPort().c_str(),
+            pj_server->getBindAddr().toIpPort().c_str());
 
         return pj_server;
     } catch (const std::exception& e) {
@@ -59,6 +62,7 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
     // 本地模式下 需要单开线程开启一个新server
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
 
+    InetAddress address{p.m_listenPort};
     try {
         // 创建自定义TCP服务器必须带解析格式，否则无法解析。
         std::string tmp;
@@ -76,9 +80,12 @@ std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain:
             pattern_info.assign(tmp.begin(), tmp.end());
         }
 
-        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, pattern_info, lease_loop);
+        auto pj_server = std::make_shared<CustomTcpProjectServer>(p.m_id, pattern_info, lease_loop, address);
 
-        PJSERVER_F_INFO("Creating TcpProjectServer, project_id[%d] address[%s], patternInfo[%s] \n", p.m_id, pj_server->getBindAddr().toIpPort().c_str(), tmp.c_str());
+        PJSERVER_F_INFO("Creating TcpProjectServer, project_id[%d], old address[%s] --> new address[%s], patternInfo[%s] \n", p.m_id, 
+            address.toIpPort().c_str(),
+            pj_server->getBindAddr().toIpPort().c_str(), 
+            tmp.c_str());
 
         return pj_server;
         

@@ -11,6 +11,8 @@
 
 
 #include "domain/type.h"
+#include "net/http/http_content.h"
+#include "net/http/multiform.h"
 #include "nlohmann/json.hpp"
 
 #include <optional>
@@ -97,13 +99,16 @@ struct InteractionAttachmentRef
     std::string side;
     std::string flag;  // request.body / response.body / request.raw_packet
     InteractionPayloadKind kind{InteractionPayloadKind::kBinary};
+    std::string text; // 特别注意，附件里的可显示文本属于mulitform特化
     uint64_t size{0};
     uint64_t captured_size{0};
     bool truncated{false};
     bool binary_available{false};
+
+    kit_muduo::http::MultiForm::FieldMap map;
     std::string sha1;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(InteractionAttachmentRef, attachment_id, side, flag, kind, size, captured_size, truncated, binary_available, sha1)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(InteractionAttachmentRef, attachment_id, side, flag, kind, text, size, captured_size, truncated, binary_available, sha1)
 };
 
 struct BinarySidecar
@@ -123,7 +128,7 @@ struct InteractionPayloadHint
 
     // HTTP Content-Type 去掉参数后的 media type。
     // 仅用于分类，不在 InteractionBody 里重复输出；原始 header 仍只在 head_text 中展示。
-    std::string media_type;
+    kit_muduo::http::ContentMeta content_meta;
 
     // true 时，binary body 优先生成 body.text 十六进制前缀。
     // CustomTcp request/response 传 true；HTTP 图片、PDF、zip 等一般传 false。
@@ -172,18 +177,17 @@ struct InteractionBody
         const std::string &utf8_error,
         const InteractionCaptureOptions & options);
 
-    // TODO 处理multipart-form-data
     InteractionBody& fillMultiFormBdoy(const std::vector<uint8_t> &data, 
-        bool is_utf8_safe, 
-        const std::string &utf8_error, 
-        const InteractionCaptureOptions & options);
+        const InteractionPayloadHint &hint,
+        const ProtocolSide &side,
+        const std::string &flag, 
+        const InteractionCaptureOptions & options,
+        std::vector<BinarySidecar> &sidecars);
 
 
     InteractionBody& fillBinaryBdoy(const std::vector<uint8_t> &data, 
         const InteractionPayloadHint &hint, 
         const ProtocolSide &side, 
-        bool is_utf8_safe, 
-        const std::string &utf8_error, 
         const std::string &flag, 
         const InteractionCaptureOptions & options, 
         std::vector<BinarySidecar> &sidecars);

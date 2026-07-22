@@ -190,7 +190,7 @@ struct InteractionSideCapture
 
     /// @brief TODO 注意这个字段的实际作用：告诉前段当前收到的请求Body应该怎么解析的问题 展示的
     ProtocolBodyType expect_body_type{ProtocolBodyType::kNone};
-    std::string media_type;
+    kit_muduo::http::ContentMeta content_meta;
     bool prefer_hex_text_for_binary{false};
 
     bool hasBody() const { return !body_bytes.empty(); }

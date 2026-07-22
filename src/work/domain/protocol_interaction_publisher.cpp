@@ -104,7 +104,7 @@ void ProtocolInteractionPublisher::fillInteractionSide(InteractionRecord &record
     InteractionPayloadHint hint;
     hint.protocol_type = record.protocol_type;
     hint.expect_body_type = src.expect_body_type;
-    hint.media_type = std::move(src.media_type);
+    hint.content_meta = std::move(src.content_meta);
     hint.prefer_hex_text_for_binary = src.prefer_hex_text_for_binary;
 
     dst.body = InteractionBody::BuildFromBytes(src.body_bytes, 

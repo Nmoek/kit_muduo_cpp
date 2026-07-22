@@ -37,10 +37,10 @@ inline static EventLoop* CheckLoop(EventLoop *loop)
 
 }
 
-ProjectServer::ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const std::string &name)
+ProjectServer::ProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const kit_muduo::InetAddress &addr, const std::string &name)
     :tcp_server_(
         CheckLoop(lease_loop->loop()), 
-        InetAddress(0, "0.0.0.0"), 
+        addr, 
         name, 
         kit_muduo::TcpServer::KReusePort
     )

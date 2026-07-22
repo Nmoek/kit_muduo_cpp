@@ -28,10 +28,14 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     _acceptSocket.setReusePort(reuseport);
     _acceptSocket.setTcpNoDelay(true);
 
+    // 先绑定指定的端口 后自由绑定 都失败抛出异常
     if(!_acceptSocket.bindAddress(addr))
     {
         CHANNEL_F_WARN("acceptor bind address failed! %s \n", addr.toIpPort().c_str());
-        throw std::runtime_error("bind address failed");
+        if(!_acceptSocket.bindAddress(InetAddress(0, "0.0.0.0")))
+        {
+            throw std::runtime_error("bind address failed");
+        }
     }
   
     _bind_addr = InetAddress::GetLocalAddr(_acceptSocket.fd());

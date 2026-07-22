@@ -1085,7 +1085,7 @@ void ProtocolHandler::GetProtocolBodyType(kit_muduo::TcpConnectionPtr conn, kit_
     {
 
         body_type =  svc_->GetBodyTypeById(ctx, protocol_id, side);
-        if(body_type <= ProtocolBodyType::kNone || body_type > ProtocolBodyType::kBinary)
+        if(body_type < ProtocolBodyType::kNone || body_type >= ProtocolBodyType::kMax)
         {
             throw std::logic_error("GetBodyTypeById failed");
         }
