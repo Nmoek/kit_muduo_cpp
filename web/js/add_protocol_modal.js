@@ -71,6 +71,7 @@ function getAddModalBodyTypeOptions(projectProtocolType, side) {
  */
 function renderAddModalBodyTypeOptions(projectProtocolType, side) {
     return getAddModalBodyTypeOptions(projectProtocolType, side)
+        .filter(option => String(option && option.value || '').toLowerCase() !== 'multiform')
         .map(option => {
             const label = option.reserved ? `${option.label}（预留）` : option.label;
             return `<option value="${escapeBodyOptionHTML(option.value)}" ${option.enabled === false ? 'disabled' : ''}>${escapeBodyOptionHTML(label)}</option>`;

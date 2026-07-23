@@ -91,7 +91,7 @@ describe('V1.3 service filters and body editor', () => {
     });
 
     /**
-     * 测试思路：请求侧和响应侧 Body 类型保持一致，避免响应侧缺少 None/Empty/Image/Binary。
+     * 测试思路：请求侧和响应侧 Body 类型保持一致，Multiform 暂不作为可编辑入口暴露。
      * 示例：两侧都包含 None/Empty/JSON/XML/Text/Image/Binary，Binary 可选。
      */
     it('请求侧和响应侧 Body 类型选项保持一致', () => {
@@ -118,6 +118,30 @@ describe('V1.3 service filters and body editor', () => {
         expect(responseOptions.map(option => option.value)).toEqual(requestOptions.map(option => option.value));
         expect(responseOptions.find(option => option.value === 'binary').enabled).toBe(true);
         expect(responseOptions.find(option => option.value === 'none').enabled).toBe(true);
+    });
+
+    /**
+     * 测试思路：Multiform 编辑入口隐藏后，已有 Multiform 数据仍需以只读方式保留，不能被 fallback 改写。
+     * 示例：编辑器收到旧 Multiform 类型和值时不显示字段表格，getType/getValue 仍返回原始数据。
+     */
+    it('隐藏 Multiform Body 编辑入口并保留已有数据', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        const host = context.document.createElement('div');
+        context.document.body.appendChild(host);
+        const editor = context.KitProxy.bodyEditor.create(host, {
+            bodyType: 'multiform',
+            value: 'legacy multiform body',
+            allowedTypes: ['text', 'multiform'],
+        });
+
+        expect(Array.from(host.querySelector('.body-editor-type').options).map(option => option.value)).toEqual(['text']);
+        expect(host.querySelector('.body-editor-type').disabled).toBe(true);
+        expect(host.querySelector('.body-editor-multiform-wrap').classList.contains('is-collapsed')).toBe(true);
+        expect(host.querySelector('.body-editor-unsupported-note').hidden).toBe(false);
+        expect(host.querySelector('.body-editor-textarea').readOnly).toBe(true);
+        expect(editor.getType()).toBe('multiform');
+        expect(editor.getValue()).toBe('legacy multiform body');
     });
 
     /**

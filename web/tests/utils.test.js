@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createBrowserContext, flushPromises, loadCoreScripts } from './helpers/browser_context.js';
+import {
+    createBrowserContext,
+    flushPromises,
+    loadCoreScripts,
+    readFormDataValueAsText,
+} from './helpers/browser_context.js';
 
 describe('V1 utils', () => {
     /**
@@ -84,7 +89,7 @@ describe('V1 utils', () => {
      * 测试思路：新增协议项最终走 multipart FormData，工具函数要把配置和 Body 正确分栏。
      * 示例：cfg_header、req_cfg 转 JSON 字符串，request_body 原样写入 protocol_req_body。
      */
-    it('构造新增协议项 FormData payload', () => {
+    it('构造新增协议项 FormData payload', async () => {
         const formData = context.KitProxy.utils.createAddProtocolFormData({
             cfg_header: {
                 name: '接口1',
@@ -102,9 +107,12 @@ describe('V1 utils', () => {
             response_body: '',
         });
 
-        expect(JSON.parse(formData.get('protocol_cfg_header')).name).toBe('接口1');
-        expect(JSON.parse(formData.get('protocol_req_cfg')).path).toBe('/api/test');
-        expect(formData.get('protocol_req_body')).toBe('{"a":1}');
+        const cfgHeader = JSON.parse(await readFormDataValueAsText(context, formData.get('protocol_cfg_header')));
+        const reqCfg = JSON.parse(await readFormDataValueAsText(context, formData.get('protocol_req_cfg')));
+        const requestBody = await readFormDataValueAsText(context, formData.get('protocol_req_body'));
+        expect(cfgHeader.name).toBe('接口1');
+        expect(reqCfg.path).toBe('/api/test');
+        expect(requestBody).toBe('{"a":1}');
         expect(formData.has('protocol_resp_body')).toBe(true);
         expect(formData.get('protocol_resp_body')).toBe('');
     });
@@ -145,8 +153,8 @@ describe('V1 utils', () => {
      * 测试思路：新增协议的上线态由 cfg_header.config_state 传给后端，保存和保存并上线都要能序列化。
      * 示例：config_state=0 表示只保存，config_state=1 表示保存并上线，两个值都应进入 protocol_cfg_header。
      */
-    it('构造新增协议项 FormData 保留 config_state', () => {
-        [0, 1].forEach(configState => {
+    it('构造新增协议项 FormData 保留 config_state', async () => {
+        for (const configState of [0, 1]) {
             const formData = context.KitProxy.utils.createAddProtocolFormData({
                 cfg_header: {
                     name: '运行态协议',
@@ -162,8 +170,9 @@ describe('V1 utils', () => {
                 response_body: '',
             });
 
-            expect(JSON.parse(formData.get('protocol_cfg_header')).config_state).toBe(configState);
-        });
+            const cfgHeader = JSON.parse(await readFormDataValueAsText(context, formData.get('protocol_cfg_header')));
+            expect(cfgHeader.config_state).toBe(configState);
+        }
     });
 
     /**

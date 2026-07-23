@@ -28,8 +28,44 @@
         }
     }
 
-    function buildLoginUrl() {
-        return buildPageUrl('/html/login.html');
+    /**
+     * 只允许同源 /html 目录下的单层 HTML 页面作为登录后的返回地址。
+     * 这样可以保留协议项页的 projectId 和调试参数，同时拒绝开放重定向。
+     * @param {string} href
+     * @returns {string}
+     */
+    function normalizeReturnTo(href) {
+        const value = String(href || '').trim();
+        if (!value || value.startsWith('//') || value.startsWith('\\')
+            || /^[a-z][a-z\d+.-]*:/i.test(value)) return '';
+        try {
+            const url = new URL(value, global.location.href);
+            if (url.origin !== global.location.origin) return '';
+            if (!/^\/html\/[^/?#]+\.html$/i.test(url.pathname)) return '';
+            return url.pathname + url.search + url.hash;
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function currentReturnTo() {
+        if (!global.location) return '';
+        return normalizeReturnTo(global.location.pathname + global.location.search + global.location.hash);
+    }
+
+    /**
+     * @param {{includeReturnTo?: boolean, returnTo?: string}=} options
+     * @returns {string}
+     */
+    function buildLoginUrl(options = {}) {
+        const loginUrl = new URL(buildPageUrl('/html/login.html'), global.location.href);
+        if (options.includeReturnTo === false) return loginUrl.pathname + loginUrl.search + loginUrl.hash;
+
+        const returnTo = normalizeReturnTo(
+            options.returnTo !== undefined ? options.returnTo : currentReturnTo(),
+        );
+        if (returnTo) loginUrl.searchParams.set('returnTo', returnTo);
+        return loginUrl.pathname + (loginUrl.search ? `?${loginUrl.searchParams.toString()}` : '') + loginUrl.hash;
     }
 
     function buildMainUrl() {
@@ -60,9 +96,71 @@
         return String(user && (user.note || user.note_name) || '');
     }
 
-    function redirectToLogin() {
+    function getSafeReturnToFromLoginUrl() {
+        if (!global.location) return '';
+        const params = new URLSearchParams(global.location.search);
+        return normalizeReturnTo(params.get('returnTo'));
+    }
+
+    function buildPostLoginUrl() {
+        return getSafeReturnToFromLoginUrl() || buildMainUrl();
+    }
+
+    function currentUserId(user) {
+        const value = Number(user && (user.id != null ? user.id : user.user_id));
+        return Number.isInteger(value) && value > 0 ? value : 0;
+    }
+
+    function workspaceIdentityForUser(user) {
+        const persistence = KitProxy.protocolInteractionPersistence;
+        const backendIdentity = persistence && typeof persistence.normalizeBackendIdentity === 'function'
+            ? persistence.normalizeBackendIdentity(
+                KitProxy.config && KitProxy.config.apiBaseUrl,
+                global.location,
+            )
+            : '';
+        return {
+            backendIdentity,
+            userId: currentUserId(user),
+        };
+    }
+
+    async function clearUserWorkspace(identity) {
+        const persistence = KitProxy.protocolInteractionPersistence;
+        if (!persistence || typeof persistence.clearUserWorkspace !== 'function') return null;
+        return persistence.clearUserWorkspace(identity);
+    }
+
+    function clearRestoreMarker() {
+        const persistence = KitProxy.protocolInteractionPersistence;
+        if (persistence && typeof persistence.clearRestoreMarker === 'function') {
+            persistence.clearRestoreMarker(global.sessionStorage);
+        }
+    }
+
+    async function logout() {
+        // 必须在 logout API 前捕获身份，API 成功后用户对象可能已被后端语义清空。
+        const user = state.currentUser;
+        const workspaceIdentity = workspaceIdentityForUser(user);
+        try {
+            await KitProxy.api.logout();
+        } catch (error) {
+            console.warn('退出登录接口失败，继续清理本地工作区:', error);
+        } finally {
+            try {
+                await clearUserWorkspace(workspaceIdentity);
+            } catch (error) {
+                console.warn('清理本地实时工作区失败，继续跳转登录页:', error);
+            }
+            clearRestoreMarker();
+            state.currentUser = null;
+            redirectToLogin({ includeReturnTo: false });
+        }
+    }
+
+    function redirectToLogin(options = {}) {
         if (!global.location) return;
-        global.location.href = buildLoginUrl();
+        global.location.href = buildLoginUrl(options);
     }
 
     function redirectToMain() {
@@ -93,17 +191,6 @@
     }
 
     /**
-     * @param {HTMLLIElement} item
-     * @returns {boolean}
-     */
-    function isDashboardNavItem(item) {
-        if (!item) return false;
-        if (item.matches('[data-admin-dashboard-nav]')) return true;
-        const link = item.querySelector('a');
-        return Boolean(link && String(link.getAttribute('href') || '').includes('dashboard.html'));
-    }
-
-    /**
      * @param {HTMLElement} navList
      * @param {string} selector
      * @param {string} href
@@ -112,9 +199,6 @@
      */
     function ensureAdminNavItem(navList, selector, href, text) {
         let item = navList.querySelector(selector);
-        if (!item && selector === '[data-admin-dashboard-nav]') {
-            item = Array.from(navList.querySelectorAll('li')).find(isDashboardNavItem);
-        }
         const targetUrl = buildPageUrl(href);
 
         if (item) {
@@ -127,9 +211,6 @@
 
         if (selector === '[data-admin-users-nav]') {
             item.setAttribute('data-admin-users-nav', '1');
-        }
-        if (selector === '[data-admin-dashboard-nav]') {
-            item.setAttribute('data-admin-dashboard-nav', '1');
         }
         item.hidden = false;
         return item;
@@ -144,19 +225,12 @@
         if (!navList) return;
 
         if (!isAdmin(user)) {
-            navList.querySelectorAll('[data-admin-users-nav], [data-admin-dashboard-nav]').forEach(item => item.remove());
-            Array.from(navList.querySelectorAll('li')).filter(isDashboardNavItem).forEach(item => item.remove());
+            navList.querySelectorAll('[data-admin-users-nav]').forEach(item => item.remove());
             return;
         }
 
         const usersItem = ensureAdminNavItem(navList, '[data-admin-users-nav]', 'admin_users.html', '用户管理');
-        const dashboardItem = ensureAdminNavItem(navList, '[data-admin-dashboard-nav]', 'dashboard.html', '控制面板');
-
-        // 用户管理是管理员专属入口，固定排在“控制面板”上方，避免各页面静态导航顺序不一致。
-        if (!dashboardItem.parentNode) navList.appendChild(dashboardItem);
-        if (dashboardItem !== usersItem.nextElementSibling) {
-            navList.insertBefore(usersItem, dashboardItem);
-        }
+        if (!usersItem.parentNode) navList.appendChild(usersItem);
     }
 
     /**
@@ -183,16 +257,7 @@
             <button type="button" class="logout-btn">退出登录</button>
         `;
 
-        panel.querySelector('.logout-btn')?.addEventListener('click', async function() {
-            try {
-                await KitProxy.api.logout();
-            } catch (error) {
-                console.warn('退出登录接口失败，继续跳转登录页:', error);
-            } finally {
-                state.currentUser = null;
-                redirectToLogin();
-            }
-        });
+        panel.querySelector('.logout-btn')?.addEventListener('click', logout);
     }
 
     /**
@@ -279,12 +344,16 @@
         buildPageUrl,
         buildLoginUrl,
         buildMainUrl,
+        normalizeReturnTo,
+        getSafeReturnToFromLoginUrl,
+        buildPostLoginUrl,
         syncSidebarLinks,
         loadCurrentUser,
         requireCurrentUser,
         applyCurrentUser,
         redirectToLogin,
         redirectToMain,
+        logout,
         isAdmin,
         roleText,
         noteText,

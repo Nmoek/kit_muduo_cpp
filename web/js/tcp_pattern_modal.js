@@ -41,6 +41,8 @@
         UINT64: 8,
         DOUBLE: 8,
     });
+    const STRING_MAX_BYTES = 32;
+    const PATTERN_BYTE_LAYOUT_MAX_SPAN = 10;
     const FIELD_REORDER_ANIMATION_MS = 200;
     const FIELD_DELETE_HOLD_MS = 220;
     const FIELD_DELETE_ANIMATION_MS = 420;
@@ -121,6 +123,59 @@
         return Array.from(new TextEncoder().encode(String(text == null ? '' : text)));
     }
 
+    function isAsciiBytes(bytes) {
+        return Array.from(bytes || []).every(byte => Number(byte) >= 0 && Number(byte) <= 0x7f);
+    }
+
+    function assertAsciiString(text) {
+        const value = String(text == null ? '' : text);
+        if (!/^[\x00-\x7f]*$/.test(value)) {
+            throw new Error('STR字段值只能包含ASCII字符');
+        }
+        if (utf8Bytes(value).length > STRING_MAX_BYTES) {
+            throw new Error(`STR字段值长度不能超过${STRING_MAX_BYTES}字节`);
+        }
+        return value;
+    }
+
+    function sanitizeAsciiString(text) {
+        return String(text == null ? '' : text)
+            .replace(/[^\x00-\x7f]/g, '')
+            .slice(0, STRING_MAX_BYTES);
+    }
+
+    function asciiStringFromBytes(bytes) {
+        if (bytes.length > STRING_MAX_BYTES) {
+            throw new Error(`STR字段值长度不能超过${STRING_MAX_BYTES}字节`);
+        }
+        if (!isAsciiBytes(bytes)) {
+            throw new Error('STR字段值只能包含ASCII字符');
+        }
+        return String.fromCharCode(...bytes);
+    }
+
+    function validateStringWireValue(value, label, expectedByteLen = null) {
+        if (!value || (isWireHex(value) && wireHexByteLength(value) === 0)) {
+            return [`${label}：STR字段值不能为空`];
+        }
+        if (!isWireHex(value)) {
+            return [`${label}：字段值必须是 H 开头的十六进制字节串`];
+        }
+
+        const bytes = bytesFromWireHex(value);
+        if (bytes.length > STRING_MAX_BYTES) {
+            return [`${label}：STR字段值长度不能超过${STRING_MAX_BYTES}字节`];
+        }
+        if (!isAsciiBytes(bytes)) {
+            return [`${label}：STR字段值只能包含ASCII字符`];
+        }
+        if (Number.isInteger(Number(expectedByteLen))
+            && bytes.length !== Number(expectedByteLen)) {
+            return [`${label}：字段值字节数必须等于 ${expectedByteLen}`];
+        }
+        return [];
+    }
+
     function signedNumberFromBytes(bytes) {
         let value = 0n;
         bytes.forEach(byte => {
@@ -177,7 +232,7 @@
         const normalizedType = String(type || '').toUpperCase();
 
         if (normalizedType === 'STR') {
-            return new TextDecoder().decode(new Uint8Array(bytes));
+            return asciiStringFromBytes(bytes);
         }
         if (normalizedType === 'FLOAT' || normalizedType === 'DOUBLE') {
             const expectedLen = normalizedType === 'FLOAT' ? 4 : 8;
@@ -205,7 +260,7 @@
         const text = String(displayValue == null ? '' : displayValue);
 
         if (normalizedType === 'STR') {
-            return wireHexFromBytes(utf8Bytes(text));
+            return wireHexFromBytes(utf8Bytes(assertAsciiString(text)));
         }
         if (normalizedType === 'FLOAT' || normalizedType === 'DOUBLE') {
             const numberValue = Number(text);
@@ -226,8 +281,7 @@
             return FIXED_TYPE_LENGTHS[normalizedType];
         }
         if (normalizedType === 'STR') {
-            if (isWireHex(currentValue)) return wireHexByteLength(currentValue);
-            return utf8Bytes(currentValue || '').length || null;
+            return null;
         }
         return null;
     }
@@ -238,7 +292,7 @@
         return {
             name: node.querySelector('.pattern-field-name')?.value || '',
             byte_pos: toFiniteNumber(node.querySelector('.pattern-field-byte-pos')?.value, null),
-            byte_len: toFiniteNumber(node.querySelector('.pattern-field-byte-len')?.value, null),
+            byte_len: readFieldByteLenValue(node),
             type: node.querySelector('.pattern-field-type')?.value || '',
             role: node.querySelector('.pattern-field-role')?.value || 'common',
             match: node.querySelector('.pattern-field-value')?.value || '',
@@ -416,14 +470,21 @@
 
         normalized.fields.forEach((field, index) => {
             const label = field.name || `字段${index + 1}`;
+            const isStringField = String(field.type || '').toUpperCase() === 'STR';
             if (!String(field.name || '').trim()) errors.push(`${label}：字段名称不能为空`);
             if (!Number.isInteger(field.byte_pos) || field.byte_pos < 0) errors.push(`${label}：Byte 起始位置必须是非负整数`);
-            if (!Number.isInteger(field.byte_len) || field.byte_len <= 0) errors.push(`${label}：Byte 长度必须是大于 0 的整数`);
+            if (!Number.isInteger(field.byte_len) || field.byte_len <= 0) {
+                errors.push(isStringField
+                    ? `${label}：STR Byte 长度必须是 1~${STRING_MAX_BYTES} 的整数`
+                    : `${label}：Byte 长度必须是大于 0 的整数`);
+            } else if (isStringField && field.byte_len > STRING_MAX_BYTES) {
+                errors.push(`${label}：STR Byte 长度必须是 1~${STRING_MAX_BYTES} 的整数`);
+            }
             if (!String(field.type || '').trim()) errors.push(`${label}：类型不能为空`);
             if (!String(field.role || '').trim()) errors.push(`${label}：角色不能为空`);
 
             const expectedLen = getTypeByteLen(field.type, field.role === 'start_magic' ? field.match : field.value);
-            if (Number.isFinite(expectedLen) && Number(field.byte_len) !== Number(expectedLen)) {
+            if (!isStringField && Number.isFinite(expectedLen) && Number(field.byte_len) !== Number(expectedLen)) {
                 errors.push(`${label}：Byte 长度必须和字段类型 ${field.type} 匹配`);
             }
 
@@ -486,8 +547,15 @@
         }
 
         (Array.isArray(fields) ? fields : []).forEach(field => {
-            if (!field.value) return;
             const label = field.name || `byte_pos ${field.byte_pos}`;
+            const isStringField = String(field.type || '').toUpperCase() === 'STR';
+            if (isStringField) {
+                errors.push(...validateStringWireValue(field.value, label, field.byte_len));
+                return;
+            }
+            if (!field.value) {
+                return;
+            }
             if (!isWireHex(field.value)) {
                 errors.push(`${label}：字段值必须是 H 开头的十六进制字节串`);
             } else if (wireHexByteLength(field.value) !== Number(field.byte_len)) {
@@ -541,8 +609,42 @@
     }
 
     function fieldByteLen(fieldNode) {
-        const byteLen = Number(fieldNode.querySelector('.pattern-field-byte-len')?.value || 0);
+        const byteLen = readFieldByteLenValue(fieldNode);
         return Number.isInteger(byteLen) && byteLen > 0 ? byteLen : 0;
+    }
+
+    function readFieldByteLenValue(fieldNode) {
+        const input = fieldNode?.querySelector('.pattern-field-byte-len');
+        if (!input) return null;
+
+        const value = toFiniteNumber(input.value, null);
+        return Number.isFinite(value) ? value : null;
+    }
+
+    /**
+     * STR Byte 长度只保留数字，并把可显示值限制在 1~STRING_MAX_BYTES。
+     * @param {HTMLElement} fieldNode 字段行节点。
+     */
+    function sanitizeStringByteLenInput(fieldNode) {
+        const input = fieldNode?.querySelector('.pattern-field-byte-len');
+        const type = fieldNode?.querySelector('.pattern-field-type')?.value || '';
+        if (!input || String(type).toUpperCase() !== 'STR') return;
+
+        const digits = String(input.value || '').replace(/\D/g, '');
+        if (!digits) {
+            input.value = '';
+            return;
+        }
+
+        const parsed = Number.parseInt(digits, 10);
+        const clamped = Number.isFinite(parsed)
+            ? Math.min(Math.max(parsed, 1), STRING_MAX_BYTES)
+            : STRING_MAX_BYTES;
+        input.value = String(clamped);
+    }
+
+    function patternByteLayoutSpan(byteLen) {
+        return Math.min(PATTERN_BYTE_LAYOUT_MAX_SPAN, Math.max(1, Number(byteLen) || 1));
     }
 
     function hexDigitLimit(fieldNode) {
@@ -606,6 +708,7 @@
         if (!hiddenInput || !editor || !wireInput) return;
 
         wireInput.classList.toggle('is-display-value', mode !== 'H');
+        wireInput.classList.toggle('is-display-str', mode === 'S');
         if (mode === 'H') {
             const limit = hexDigitLimit(fieldNode);
             const digits = limitedHexDigits(hiddenInput.value, limit);
@@ -618,8 +721,13 @@
             editor.maxLength = String(groupedLimit);
         } else {
             editor.value = hiddenInput.value;
-            editor.placeholder = mode === 'S' ? '字符串真值' : (mode === 'F' ? '小数真值' : '十进制真值');
-            editor.removeAttribute('maxlength');
+            editor.placeholder = mode === 'S' ? 'ASCII字符串真值' : (mode === 'F' ? '小数真值' : '十进制真值');
+            if (mode === 'S') {
+                const byteLen = fieldByteLen(fieldNode);
+                editor.maxLength = String(byteLen > 0 ? Math.min(byteLen, STRING_MAX_BYTES) : STRING_MAX_BYTES);
+            } else {
+                editor.removeAttribute('maxlength');
+            }
         }
 
         updateValueDisplayButton(fieldNode);
@@ -634,6 +742,12 @@
             const digits = limitedHexDigits(editor.value, hexDigitLimit(fieldNode));
             editor.value = formatHexDigits(digits);
             hiddenInput.value = wireHexFromDigits(digits);
+        } else if ((hiddenInput.dataset.displayMode || 'H') === 'S') {
+            const byteLen = fieldByteLen(fieldNode);
+            const value = sanitizeAsciiString(editor.value)
+                .slice(0, byteLen > 0 ? Math.min(byteLen, STRING_MAX_BYTES) : STRING_MAX_BYTES);
+            editor.value = value;
+            hiddenInput.value = value;
         } else {
             hiddenInput.value = editor.value;
         }
@@ -645,15 +759,72 @@
         return field.value || '';
     }
 
-    function updateByteLenByType(fieldNode) {
+    function updateByteLenByType(fieldNode, options = {}) {
         const typeSelect = fieldNode.querySelector('.pattern-field-type');
         const valueInput = fieldNode.querySelector('.pattern-field-value');
         const byteLenInput = fieldNode.querySelector('.pattern-field-byte-len');
+        const isStringField = String(typeSelect?.value || '').toUpperCase() === 'STR';
+        if (isStringField) {
+            byteLenInput.min = '1';
+            byteLenInput.max = String(STRING_MAX_BYTES);
+            byteLenInput.placeholder = '1~32';
+            byteLenInput.setAttribute('inputmode', 'numeric');
+            byteLenInput.setAttribute('pattern', '[0-9]*');
+            return;
+        }
+
+        byteLenInput.min = '1';
+        byteLenInput.max = '65535';
+        byteLenInput.placeholder = '自动';
         const byteLen = getTypeByteLen(typeSelect.value, valueInput.value);
 
         if (Number.isFinite(byteLen)) {
             byteLenInput.value = String(byteLen);
         }
+    }
+
+    function syncByteLengthAvailability(fieldNode, isProjectMode) {
+        const byteLenInput = fieldNode.querySelector('.pattern-field-byte-len');
+        const type = fieldNode.querySelector('.pattern-field-type')?.value || '';
+        if (!byteLenInput) return;
+
+        const isStringField = String(type).toUpperCase() === 'STR';
+        const editable = Boolean(isProjectMode)
+            && fieldNode.dataset.structureEditable !== 'false'
+            && isStringField;
+        byteLenInput.readOnly = !editable;
+        byteLenInput.disabled = !editable;
+        byteLenInput.required = Boolean(isProjectMode && isStringField);
+        if (editable) {
+            sanitizeStringByteLenInput(fieldNode);
+        }
+    }
+
+    function initializeStringDisplayMode(fieldNode) {
+        const hiddenInput = fieldNode.querySelector('.pattern-field-value');
+        const type = fieldNode.querySelector('.pattern-field-type')?.value || '';
+        if (!hiddenInput || String(type).toUpperCase() !== 'STR') return;
+
+        const sourceValue = hiddenInput.dataset.displayMode !== 'H' && hiddenInput.dataset.wireValue
+            ? hiddenInput.dataset.wireValue
+            : hiddenInput.value.trim();
+        try {
+            if (!sourceValue) {
+                hiddenInput.value = '';
+            } else if (isWireHex(sourceValue)) {
+                hiddenInput.dataset.wireValue = sourceValue;
+                hiddenInput.value = displayFromWireHex(sourceValue, 'STR');
+            } else {
+                hiddenInput.value = assertAsciiString(sourceValue);
+                delete hiddenInput.dataset.wireValue;
+            }
+            hiddenInput.dataset.displayMode = 'S';
+        } catch (error) {
+            hiddenInput.dataset.displayMode = 'H';
+            hiddenInput.value = sourceValue;
+        }
+        updateByteLenByType(fieldNode);
+        syncValueEditorFromHidden(fieldNode);
     }
 
     function syncValueAvailability(fieldNode, isProjectMode) {
@@ -695,6 +866,11 @@
             if (fixedValueButton) fixedValueButton.hidden = true;
             if (roleCell) roleCell.classList.remove('has-fixed-value-control');
             if (label) label.textContent = '字段值';
+        }
+        if (valueEditor) {
+            valueEditor.required = !isProjectMode
+                && !valueEditor.disabled
+                && String(fieldNode.querySelector('.pattern-field-type')?.value || '').toUpperCase() === 'STR';
         }
         syncValueEditorFromHidden(fieldNode);
     }
@@ -959,7 +1135,7 @@
                 </div>
                 <div class="pattern-cell pattern-cell-byte-len">
                     <label>Byte长度</label>
-                    <input type="number" class="pattern-field-byte-len" value="${escapeHTML(field.byte_len ?? '')}" min="1" max="65535" placeholder="自动" readonly required>
+                    <input type="text" class="pattern-field-byte-len" value="${escapeHTML(field.byte_len ?? '')}" min="1" max="65535" inputmode="numeric" pattern="[0-9]*" placeholder="自动" readonly required>
                 </div>
                 <div class="pattern-cell pattern-cell-type">
                     <label>类型</label>
@@ -1024,7 +1200,7 @@
             : (field.value || '');
         fieldNode.querySelector('.pattern-field-value').dataset.displayMode = 'H';
         setFieldValueEditable(fieldNode, field.value_editable !== false);
-        updateByteLenByType(fieldNode);
+        updateByteLenByType(fieldNode, { isProjectMode: Boolean(isSpecial) });
         syncValueEditorFromHidden(fieldNode);
         return fieldNode;
     }
@@ -1152,7 +1328,7 @@
                 && String(field.type || '').trim();
             const roleClass = roleClassName(field.role);
             return `
-                <div class="pattern-byte-block ${roleClass} ${valid ? '' : 'is-error'}" data-role="${escapeHTML(field.role || 'common')}" style="--pattern-span:${Math.max(1, Number(field.byte_len) || 1)}">
+                <div class="pattern-byte-block ${roleClass} ${valid ? '' : 'is-error'}" data-role="${escapeHTML(field.role || 'common')}" style="--pattern-span:${patternByteLayoutSpan(field.byte_len)}">
                     <span class="pattern-byte-offset">offset ${escapeHTML(field.byte_pos ?? '?')}</span>
                     <strong>${escapeHTML(field.name || `字段${index + 1}`)}</strong>
                     <span>${escapeHTML(previewFieldValueText(field, isProjectMode))}</span>
@@ -1222,7 +1398,7 @@
                     input.dataset.wireValue = wireValue;
                     input.value = wireValue;
                 }
-                updateByteLenByType(fieldNode);
+                updateByteLenByType(fieldNode, { isProjectMode });
                 syncValueEditorFromHidden(fieldNode);
                 onRefresh();
             } catch (error) {
@@ -1308,7 +1484,7 @@
                 syncFixedValueInputFromEditor(popover, fixedByteLen);
                 hiddenInput.value = popover.querySelector('.pattern-fixed-value-input').value;
                 hiddenInput.dataset.displayMode = 'H';
-                updateByteLenByType(fieldNode);
+                updateByteLenByType(fieldNode, { isProjectMode });
                 syncValueEditorFromHidden(fieldNode);
                 syncValueAvailability(fieldNode, isProjectMode);
                 popover.remove();
@@ -1441,6 +1617,9 @@
         const valueAvailabilityProjectMode = options.valueAvailabilityProjectMode != null
             ? Boolean(options.valueAvailabilityProjectMode)
             : Boolean(isProjectMode);
+        const allowStringLengthEdit = options.allowStringLengthEdit != null
+            ? Boolean(options.allowStringLengthEdit)
+            : Boolean(isProjectMode);
         const onRefresh = typeof options.onRefresh === 'function'
             ? options.onRefresh
             : () => refreshPatternModal(modal, isProjectMode);
@@ -1454,6 +1633,14 @@
         syncValueAvailability(fieldNode, valueAvailabilityProjectMode);
         bindValueDisplayToggle(fieldNode, modal, isProjectMode, options);
         bindFixedValuePopover(fieldNode, patternList, modal, isProjectMode);
+
+        fieldNode.querySelector('.pattern-field-byte-len')?.addEventListener('beforeinput', function(event) {
+            const type = fieldNode.querySelector('.pattern-field-type')?.value || '';
+            if (String(type).toUpperCase() !== 'STR') return;
+            if (event.data && /\D/.test(event.data)) {
+                event.preventDefault();
+            }
+        });
 
         fieldNode.querySelector('.add-field-btn')?.addEventListener('click', function() {
             if (!canEditStructure) return;
@@ -1500,7 +1687,14 @@
         fieldNode.addEventListener('input', function(event) {
             if (event.target.classList.contains('pattern-value-editor-input')) {
                 syncHiddenValueFromEditor(fieldNode);
-                updateByteLenByType(fieldNode);
+                updateByteLenByType(fieldNode, { isProjectMode });
+                syncValueEditorFromHidden(fieldNode);
+                if (autoRecalculateBytePositions) {
+                    recalculatePatternFieldBytePositions(patternList);
+                }
+            }
+            if (event.target.classList.contains('pattern-field-byte-len') && allowStringLengthEdit) {
+                sanitizeStringByteLenInput(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
                 if (autoRecalculateBytePositions) {
                     recalculatePatternFieldBytePositions(patternList);
@@ -1516,7 +1710,19 @@
                     input.value = input.dataset.wireValue;
                 }
                 input.dataset.displayMode = 'H';
-                updateByteLenByType(fieldNode);
+                if (!isProjectMode && String(event.target.value || '').toUpperCase() === 'STR') {
+                    initializeStringDisplayMode(fieldNode);
+                }
+                updateByteLenByType(fieldNode, { isProjectMode });
+                syncByteLengthAvailability(fieldNode, allowStringLengthEdit);
+                syncValueAvailability(fieldNode, valueAvailabilityProjectMode);
+                syncValueEditorFromHidden(fieldNode);
+                if (autoRecalculateBytePositions) {
+                    recalculatePatternFieldBytePositions(patternList);
+                }
+            }
+            if (event.target.classList.contains('pattern-field-byte-len') && allowStringLengthEdit) {
+                sanitizeStringByteLenInput(fieldNode);
                 syncValueEditorFromHidden(fieldNode);
                 if (autoRecalculateBytePositions) {
                     recalculatePatternFieldBytePositions(patternList);
@@ -1534,14 +1740,13 @@
         const canEditValues = options.canEditValues !== false;
         const lockRole = options.lockRole === true;
         const shouldOverrideValueEditable = Object.prototype.hasOwnProperty.call(options, 'canEditValues');
+        const allowStringLengthEdit = options.allowStringLengthEdit != null
+            ? Boolean(options.allowStringLengthEdit)
+            : Boolean(isProjectMode);
 
         fieldNode.dataset.structureEditable = canEditStructure ? 'true' : 'false';
         fieldNode.querySelector('.pattern-field-byte-pos').readOnly = Boolean(options.autoRecalculateBytePositions !== false && canEditStructure);
-        const byteLenInput = fieldNode.querySelector('.pattern-field-byte-len');
-        if (byteLenInput) {
-            byteLenInput.readOnly = true;
-            byteLenInput.disabled = true;
-        }
+        syncByteLengthAvailability(fieldNode, allowStringLengthEdit);
 
         if (!canEditStructure) {
             setFieldMetadataReadonly(fieldNode, true);
@@ -1564,6 +1769,10 @@
         }
         if (shouldOverrideValueEditable) {
             setFieldValueEditable(fieldNode, canEditValues);
+        }
+
+        if (options.defaultStringDisplay) {
+            initializeStringDisplayMode(fieldNode);
         }
 
         bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode, options);
@@ -1660,7 +1869,7 @@
                     && Number.isFinite(field.byte_len)
                     && field.byte_len > 0
                     && String(field.type || '').trim();
-                const byteLen = Math.max(1, Number(field.byte_len) || 1);
+                const byteLen = patternByteLayoutSpan(field.byte_len);
                 const roleClass = roleClassName(field.role || 'common');
                 const offsetText = Number.isFinite(field.byte_pos) ? field.byte_pos : '?';
                 const name = field.name || `字段${index + 1}`;
@@ -1725,6 +1934,7 @@
                 role: fixedRole || undefined,
                 roleOptions,
                 valueAvailabilityProjectMode: isProjectMode,
+                allowStringLengthEdit: isProjectMode,
                 onRefresh: refresh,
                 onAddAfter: function(anchorNode) {
                     appendEditorField(createDefaultPatternFieldInfo(), anchorNode);
@@ -1900,7 +2110,9 @@
         normalized.fields.forEach(field => {
             const fieldNode = createPatternField('字段名称', '', field);
             updatePatternField(fieldNode, field, isProjectMode);
-            appendFieldNode(patternList, fieldNode, configModal, isProjectMode);
+            appendFieldNode(patternList, fieldNode, configModal, isProjectMode, null, {
+                defaultStringDisplay: !isProjectMode,
+            });
         });
         syncPatternListEmptyState(patternList, configModal, isProjectMode);
 
@@ -1911,7 +2123,9 @@
             const blankField = createBlankPatternFieldInfo();
             const fieldNode = createPatternField('字段名称', '', blankField);
             updatePatternField(fieldNode, blankField, isProjectMode);
-            appendFieldNode(patternList, fieldNode, configModal, isProjectMode);
+            appendFieldNode(patternList, fieldNode, configModal, isProjectMode, null, {
+                defaultStringDisplay: !isProjectMode,
+            });
             markPatternFieldChanged(fieldNode, 'added');
             return fieldNode;
         }
@@ -2091,9 +2305,22 @@
             errors.push('功能码不能为空');
         } else if (!isWireHex(normalizedCfg.function_code)) {
             errors.push('功能码必须是 H 开头的十六进制字节串');
+        } else if (String(functionField?.type || '').toUpperCase() === 'STR') {
+            errors.push(...validateStringWireValue(
+                normalizedCfg.function_code,
+                '功能码',
+                functionField?.byte_len,
+            ));
         } else if (functionField && wireHexByteLength(normalizedCfg.function_code) !== Number(functionField.byte_len)) {
             errors.push(`功能码字节数必须等于 ${functionField.byte_len}`);
         }
+
+        normalizedPattern.fields
+            .filter(field => field.role === 'common' && String(field.type || '').toUpperCase() === 'STR')
+            .forEach(field => {
+                const value = normalizedCfg.fields[String(field.byte_pos)] || '';
+                errors.push(...validateStringWireValue(value, field.name || field.byte_pos, field.byte_len));
+            });
 
         Object.keys(normalizedCfg.fields).forEach(bytePos => {
             const field = normalizedPattern.fields.find(item => String(item.byte_pos) === String(bytePos));
@@ -2102,7 +2329,9 @@
                 errors.push(`普通字段 ${bytePos} 不存在于项目 TCP 格式`);
                 return;
             }
-            if (!isWireHex(value)) {
+            if (String(field.type || '').toUpperCase() === 'STR') {
+                errors.push(...validateStringWireValue(value, field.name || bytePos, field.byte_len));
+            } else if (!isWireHex(value)) {
                 errors.push(`${field.name || bytePos}：字段值必须是 H 开头的十六进制字节串`);
             } else if (wireHexByteLength(value) !== Number(field.byte_len)) {
                 errors.push(`${field.name || bytePos}：字段值字节数必须等于 ${field.byte_len}`);

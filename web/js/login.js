@@ -104,7 +104,9 @@
                 if (KitProxy.auth && typeof KitProxy.auth.applyCurrentUser === 'function') {
                     KitProxy.auth.applyCurrentUser(user);
                 }
-                global.location.href = KitProxy.auth ? KitProxy.auth.buildPageUrl('main.html') : 'main.html';
+                global.location.href = KitProxy.auth && typeof KitProxy.auth.buildPostLoginUrl === 'function'
+                    ? KitProxy.auth.buildPostLoginUrl()
+                    : (KitProxy.auth ? KitProxy.auth.buildPageUrl('main.html') : 'main.html');
             } catch (error) {
                 showLoginError(errorElement, error && error.message ? error.message : '登录失败，请稍后重试');
             } finally {

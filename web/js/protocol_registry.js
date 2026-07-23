@@ -135,7 +135,9 @@
      * @returns {Array<{ value: string; label: string; enabled?: boolean; reserved?: boolean; }>}
      */
     function cloneBodyTypeOptions(options) {
-        return options.map(option => Object.assign({}, option));
+        return options
+            .filter(option => String(option && option.value || '').toLowerCase() !== 'multiform')
+            .map(option => Object.assign({}, option));
     }
 
     /**

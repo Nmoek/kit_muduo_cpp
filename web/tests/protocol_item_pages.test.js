@@ -3,6 +3,1376 @@ import { createBrowserContext, createProtocolItemFormContext, createProtocolItem
 
 describe('V1.5 protocol item form page and compact cards', () => {
     /**
+     * 测试思路：项目运行且协议项 config_state=1 时，实时详情入口应可用并打开右侧抽屉。
+     * 示例：project runtime_state=1、protocol config_state=1，按钮 disabled=false，点击后 dialog 可见。
+     */
+    it('协议项在线且项目运行时启用实时交互详情入口', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 10, name: '实时 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: { method: 'GET', path: '/health' }, resp_cfg: {},
+        });
+
+        const button = item.querySelector('.protocol-interaction-btn');
+        expect(button.disabled).toBe(false);
+        button.click();
+        expect(context.KitProxy.protocolInteractionDrawer.isOpen()).toBe(true);
+        expect(context.document.querySelector('.protocol-interaction-drawer').getAttribute('role')).toBe('dialog');
+        context.KitProxy.protocolInteractionDrawer.close();
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 10);
+    });
+
+    /**
+     * 测试思路：项目停止、协议待重配置和协议未上线都必须禁用入口，并给出对应原因。
+     * 示例：runtime=0 -> 请先启动测试服务；runtime=1/config_state=2 -> 协议项待重配置；config_state=0 -> 请先上线协议项。
+     */
+    it('项目或协议运行态不满足时禁用实时交互详情入口', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '0';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 11, name: '不可连接 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: { method: 'GET', path: '/health' }, resp_cfg: {},
+        });
+        const button = item.querySelector('.protocol-interaction-btn');
+        expect(button.disabled).toBe(true);
+        expect(button.title).toBe('请先启动测试服务');
+
+        root.dataset.runtimeState = '1';
+        item.dataset.projectRuntimeState = '1';
+        item.dataset.configState = '2';
+        context.refreshProtocolInteractionEntry(item);
+        expect(button.disabled).toBe(true);
+        expect(button.title).toBe('协议项待重配置');
+
+        item.dataset.configState = '0';
+        context.refreshProtocolInteractionEntry(item);
+        expect(button.disabled).toBe(true);
+        expect(button.title).toBe('请先上线协议项');
+
+        item.dataset.projectRuntimeState = '0';
+        item.dataset.status = 'inactive';
+        context.refreshProtocolInteractionEntry(item);
+        expect(button.disabled).toBe(true);
+        expect(button.title).toBe('协议项已删除');
+    });
+
+    /**
+     * 测试思路：抽屉显隐、全屏切换和连接控制是三种独立动作，打开不自动连接，收起/全屏不能调用 disconnect 或重建 client。
+     * 示例：点击入口后 connect 为 0，点击连接按钮后为 1，再点击全屏和关闭，disconnect 仍为 0。
+     */
+    it('抽屉收起和全屏切换不改变实时连接生命周期', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const connect = vi.fn();
+        const disconnect = vi.fn();
+        const fakeClient = {
+            on: vi.fn(() => () => {}),
+            connect,
+            disconnect,
+            destroy: vi.fn(),
+            pause: vi.fn(),
+            resume: vi.fn(),
+            getState: vi.fn(() => ({
+                connectionState: 'disconnected', desiredConnected: false, socket: null,
+                visibleRecords: [], pendingRecords: [], warnings: [], lastError: '', selectedRecordKey: null,
+            })),
+            getRecord: vi.fn(() => null),
+            selectRecord: vi.fn(),
+            getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 12, name: '生命周期 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: { method: 'GET', path: '/health' }, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        expect(connect).not.toHaveBeenCalled();
+        const drawer = context.document.querySelector('.protocol-interaction-drawer');
+        drawer.querySelector('[data-action="connect"]').click();
+        expect(connect).toHaveBeenCalledTimes(1);
+        drawer.querySelector('[data-action="fullscreen"]').click();
+        expect(drawer.classList.contains('is-fullscreen')).toBe(true);
+        drawer.querySelector('[data-action="close"]').click();
+        expect(disconnect).not.toHaveBeenCalled();
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 12);
+    });
+
+    /**
+     * 测试思路：后端 head_text、错误文本和 Raw/Hex 必须通过 textContent 输出，恶意字符串不能创建 HTML 节点。
+     * 示例：head_text='<img src=x onerror=1>'，Request Tab 中应只有文本，不应出现 img 元素。
+     */
+    it('抽屉详情安全渲染后端文本字段', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const record = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 13,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { head_text: '<img src=x onerror=1>', body: { kind: 'text', expect_kind: 'text', text: '<b>raw</b>', attachments: [] } },
+            response: { head_text: 'ok', body: { kind: 'empty', expect_kind: 'empty', text: '', attachments: [] } },
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}),
+            connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(),
+            destroy: vi.fn(),
+            getState: vi.fn(() => ({ connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '', visibleRecords: [record], pendingRecords: [], selectedRecordKey: record._key })),
+            getRecord: vi.fn(() => record), selectRecord: vi.fn(), getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 13, name: '安全渲染 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: { method: 'GET', path: '/health' }, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-tab="request"]').click();
+        expect(panel.querySelector('.interaction-record-detail').textContent).toContain('<img src=x onerror=1>');
+        expect(panel.querySelector('.interaction-record-detail img')).toBeNull();
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 13);
+    });
+
+    /**
+     * 测试思路：窄屏单栏流程由选中记录进入详情，并能通过返回按钮恢复列表。
+     * 示例：点击 protocol:1:1 后抽屉增加 is-mobile-detail，点击“返回列表”后移除该状态。
+     */
+    it('移动端列表和详情状态可往返切换', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const record = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 14,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: '/mobile' }, body: { attachments: [] } },
+            response: { body: { attachments: [] } },
+        };
+        const state = { connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '', visibleRecords: [record], pendingRecords: [], selectedRecordKey: null };
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(key => key === record._key ? record : null),
+            selectRecord: vi.fn(key => { state.selectedRecordKey = key; }), getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, { id: 14, name: '移动端 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1, req_cfg: {}, resp_cfg: {} });
+
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-record-key="protocol:1:1"]').click();
+        expect(panel.classList.contains('is-mobile-detail')).toBe(true);
+        panel.querySelector('[data-action="back-to-list"]').click();
+        expect(panel.classList.contains('is-mobile-detail')).toBe(false);
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 14);
+    });
+
+    /**
+     * 测试思路：已读状态必须独立于当前选中项，依次查看多条记录后，已查看记录都应保持已读。
+     * 示例：先点击 seq=1，再点击 seq=2；seq=1 和 seq=2 的“未读”徽标都消失，未点击的 seq=3 仍显示“未读”。
+     */
+    it('实时记录已读状态不会随当前选中项互斥切换', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const makeRecord = seq => ({
+            _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 18,
+            cache_instance_id: 1, seq, protocol_type: 'http', time_ms: seq,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'POST', path: '/api/upload' }, body: { kind: 'image', size: 1024, attachments: [] } },
+            response: { meta: { status_code: 200 }, body: { attachments: [] } },
+        });
+        const records = [makeRecord(1), makeRecord(2), makeRecord(3)];
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: records, pendingRecords: [], selectedRecordKey: null,
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(key => records.find(record => record._key === key) || null),
+            selectRecord: vi.fn(key => { state.selectedRecordKey = key; }), getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 18, name: '已读状态 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-record-key="protocol:1:1"]').click();
+        panel.querySelector('[data-action="back-to-list"]').click();
+        panel.querySelector('[data-record-key="protocol:1:2"]').click();
+
+        const first = panel.querySelector('[data-record-key="protocol:1:1"]');
+        const second = panel.querySelector('[data-record-key="protocol:1:2"]');
+        const third = panel.querySelector('[data-record-key="protocol:1:3"]');
+        expect(first.querySelector('[data-role="read-state"]')).toBeNull();
+        expect(second.querySelector('[data-role="read-state"]')).toBeNull();
+        expect(third.querySelector('[data-role="read-state"]')).toBeNull();
+        expect(first.classList.contains('is-unread')).toBe(false);
+        expect(second.classList.contains('is-unread')).toBe(false);
+        expect(third.classList.contains('is-unread')).toBe(true);
+        expect(second.classList.contains('is-selected')).toBe(true);
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 18);
+    });
+
+    /**
+     * 测试思路：未读状态使用 demo 的黄色事件卡片视觉，不额外渲染“未读”文字标签。
+     * 示例：CSS 中 .is-unread 包含浅黄色背景和左侧橙色强调线，记录 DOM 中不存在 read-state 节点。
+     */
+    it('未读记录保持黄色卡片且不显示未读标签', () => {
+        const css = readRepoFile('css/protocol_interaction_drawer.css');
+        const unreadRule = css.match(/\.interaction-record-item\.is-unread\s*\{([^}]*)\}/);
+        const selectedRule = css.match(/\.interaction-record-item\.is-selected,\s*\.interaction-record-item\.is-selected:hover\s*\{([^}]*)\}/);
+        expect(unreadRule).toBeTruthy();
+        expect(selectedRule).toBeTruthy();
+        expect(unreadRule[1]).toContain('background: #fff8e7');
+        expect(unreadRule[1]).toContain('inset 4px 0 0 var(--interaction-orange)');
+        expect(selectedRule[1]).toContain('background: #edf8f0');
+        expect(selectedRule[1]).toContain('inset 4px 0 0 var(--interaction-green)');
+        expect(readRepoFile('js/protocol_interaction_drawer.js')).not.toContain('data-role="read-state"');
+    });
+
+    /**
+     * 测试思路：实时/补发来源 badge 只对管理员渲染，普通用户的记录 DOM 不应包含这些控件。
+     * 示例：admin -> 同时看到“实时”和“补发”；normal -> 两个 data-role=delivery 节点都不存在。
+     */
+    it('实时和补发来源 badge 只对管理员可见', () => {
+        const createContext = role => {
+            const context = createBrowserContext('?apiMode=mock&projectId=1');
+            loadCoreScripts(context);
+            context.KitProxy.__disableAutoInitMain = true;
+            context.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(context);
+            context.KitProxy.auth.applyCurrentUser({ note: role, role });
+            const records = ['live', 'catch_up'].map((delivery, index) => ({
+                _key: `protocol:1:${index + 1}`, scope: 'protocol', project_id: 1, protocol_id: 19,
+                cache_instance_id: 1, seq: index + 1, protocol_type: 'http', time_ms: index + 1,
+                peer_addr: 'peer', result: 'matched', _delivery: delivery,
+                request: { meta: { method: 'GET', path: '/source' }, body: { attachments: [] } },
+                response: { meta: { status_code: 200 }, body: { attachments: [] } },
+            }));
+            const state = {
+                connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+                visibleRecords: records, pendingRecords: [], selectedRecordKey: null,
+            };
+            const fakeClient = {
+                on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+                getState: vi.fn(() => state), getRecord: vi.fn(key => records.find(record => record._key === key) || null),
+                selectRecord: vi.fn(), getAttachment: vi.fn(), clearRecords: vi.fn(),
+            };
+            context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+            const root = context.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            context.document.body.appendChild(root);
+            const item = context.addProtocolItem(root, {
+                id: 19, name: '来源权限 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+                req_cfg: {}, resp_cfg: {},
+            });
+            item.querySelector('.protocol-interaction-btn').click();
+            return { context, panel: context.document.querySelector('.protocol-interaction-drawer') };
+        };
+
+        const admin = createContext('admin');
+        expect(admin.panel.querySelectorAll('[data-role="delivery"]')).toHaveLength(2);
+        admin.context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 19);
+
+        const normal = createContext('normal');
+        expect(normal.panel.querySelectorAll('[data-role="delivery"]')).toHaveLength(0);
+        normal.context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 19);
+    });
+
+    /**
+     * 测试思路：Notice 原因应进入标题行，Notice badge 位于结果 badge 左侧；“协议项”与“项目 Notice”筛选都显示 seq，全部筛选隐藏 seq。
+     * 示例：Notice error_message=“项目级 Notice：没有协议项可以处理”时，标题只显示“没有协议项可以处理”。
+     */
+    it('Notice 标题、badge 顺序和筛选序号显示符合列表规则', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        context.KitProxy.auth.applyCurrentUser({ note: 'normal', role: 'normal' });
+        const protocol = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 20,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: '/ok' }, body: { attachments: [] } },
+            response: { meta: { status_code: 200 }, body: { attachments: [] } },
+        };
+        const notice = {
+            _key: 'project:2:2', scope: 'project', project_id: 1, protocol_id: 0,
+            cache_instance_id: 2, seq: 2, protocol_type: 'http', time_ms: 2,
+            peer_addr: 'peer', result: 'route_not_found', _delivery: 'live',
+            error_message: '项目级 Notice：没有协议项可以处理',
+            request: { meta: { method: 'GET', path: '/missing' }, body: { attachments: [] } },
+            response: { meta: { status_code: 404 }, body: { attachments: [] } },
+        };
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: [protocol, notice], pendingRecords: [], selectedRecordKey: null,
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(key => [protocol, notice].find(record => record._key === key) || null),
+            selectRecord: vi.fn(), getAttachment: vi.fn(), clearRecords: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 20, name: '筛选规则 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        const allNotice = panel.querySelector('[data-record-key="project:2:2"]');
+        expect(allNotice.querySelector('[data-role="title"]').textContent).toBe('没有协议项可以处理');
+        expect(allNotice.querySelector('[data-role="scope"]').parentElement.className).toContain('interaction-record-item-top');
+        const allTopRoles = Array.from(allNotice.querySelector('.interaction-record-item-top').children)
+            .map(child => child.dataset.role);
+        expect(allTopRoles).toEqual(['title', 'scope', 'result']);
+        expect(allNotice.querySelector('[data-role="seq"]').hidden).toBe(true);
+
+        panel.querySelector('[data-filter="protocol"]').click();
+        expect(panel.querySelector('[data-record-key="protocol:1:1"] [data-role="seq"]').hidden).toBe(false);
+        panel.querySelector('[data-filter="notice"]').click();
+        expect(panel.querySelector('[data-record-key="project:2:2"] [data-role="seq"]').hidden).toBe(false);
+        panel.querySelector('[data-filter="all"]').click();
+        expect(panel.querySelector('[data-record-key="protocol:1:1"] [data-role="seq"]').hidden).toBe(true);
+        expect(panel.querySelector('[data-filter="protocol"]').textContent).toBe('协议项');
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 20);
+    });
+
+    /**
+     * 测试思路：列表排序只根据 time_ms 改变浏览器显示顺序，清空只清理本地记录，不断开实时 client。
+     * 示例：默认正序显示 3、2、1，切换倒序后显示 1、2、3，点击清空后列表为空且 clearRecords 被调用。
+     */
+        it('实时记录支持按时间排序和一键清空本地列表', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const records = [3, 1, 2].map(seq => ({
+            _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 21,
+            cache_instance_id: 1, seq, protocol_type: 'http', time_ms: seq * 1000,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: `/${seq}` }, body: { attachments: [] } },
+            response: { meta: { status_code: 200 }, body: { attachments: [] } },
+        }));
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: records, pendingRecords: [], selectedRecordKey: null,
+        };
+        const clearRecords = vi.fn(() => {
+            state.visibleRecords = [];
+            state.pendingRecords = [];
+            state.selectedRecordKey = null;
+        });
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(), selectRecord: vi.fn(), getAttachment: vi.fn(), clearRecords,
+            setBufferLimits: vi.fn(),
+            setRecordOrder: vi.fn(),
+            updatePersistenceUiState: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 21, name: '排序 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        const keys = () => Array.from(panel.querySelectorAll('.interaction-record-item')).map(item => item.dataset.recordKey);
+        expect(keys()).toEqual(['protocol:1:3', 'protocol:1:2', 'protocol:1:1']);
+        expect(fakeClient.setBufferLimits).toHaveBeenCalledWith(
+            { maxVisibleRecords: 10, maxPendingRecords: 20 },
+            { reflowVisibleRecords: records },
+        );
+        expect(panel.querySelector('[data-action="toggle-sort"]').dataset.sortDirection).toBe('asc');
+        const descendingIcon = panel.querySelector('[data-action="toggle-sort"] svg').outerHTML;
+        panel.querySelector('[data-action="toggle-sort"]').click();
+        expect(keys()).toEqual(['protocol:1:1', 'protocol:1:2', 'protocol:1:3']);
+        expect(fakeClient.setRecordOrder).toHaveBeenCalledWith('asc');
+        expect(panel.querySelector('[data-action="toggle-sort"]').dataset.sortDirection).toBe('desc');
+        expect(panel.querySelector('[data-action="toggle-sort"] svg').outerHTML).not.toBe(descendingIcon);
+        panel.querySelector('[data-action="clear-records"]').click();
+        const confirmation = panel.querySelector('.interaction-clear-confirm');
+        expect(confirmation.hidden).toBe(false);
+        expect(clearRecords).not.toHaveBeenCalled();
+        confirmation.querySelector('[data-action="cancel-clear"]').click();
+        expect(confirmation.hidden).toBe(true);
+        panel.querySelector('[data-action="clear-records"]').click();
+        confirmation.querySelector('[data-action="confirm-clear"]').click();
+        expect(clearRecords).toHaveBeenCalledTimes(1);
+        expect(panel.querySelectorAll('.interaction-record-item')).toHaveLength(0);
+        expect(fakeClient.disconnect).not.toHaveBeenCalled();
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 21);
+    });
+
+    /**
+     * 测试思路：抽屉的筛选、详情 Tab、全屏、排序和已读动作都要通知快照层，关闭时 drawerOpen 必须为 false。
+     * 示例：依次点击 Notice/附件/全屏/记录，最后关闭，adapter 通知中能找到对应字段和最终 drawerOpen=false。
+     */
+    it('抽屉 UI 状态变化写入实时 workspace 快照', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const record = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 24,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1000,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: '/' }, body: { attachments: [] } },
+            response: { meta: { status_code: 200 }, body: { attachments: [] } },
+        };
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: [record], pendingRecords: [], selectedRecordKey: null,
+        };
+        const updatePersistenceUiState = vi.fn();
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(key => key === record._key ? record : null),
+            selectRecord: vi.fn(), getAttachment: vi.fn(), clearRecords: vi.fn(), setBufferLimits: vi.fn(),
+            setRecordOrder: vi.fn(), updatePersistenceUiState,
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 24, name: '快照 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-record-key="protocol:1:1"]').click();
+        panel.querySelector('[data-filter="notice"]').click();
+        panel.querySelector('[data-tab="attachments"]').click();
+        panel.querySelector('[data-action="fullscreen"]').click();
+        const latest = updatePersistenceUiState.mock.calls.at(-1);
+        expect(latest[0]).toMatchObject({
+            filter: 'notice', detailTab: 'attachments', fullscreen: true,
+            mobileDetail: true, drawerOpen: true, readRecordKeys: ['protocol:1:1'],
+        });
+        context.KitProxy.protocolInteractionDrawer.close();
+        const finalCall = updatePersistenceUiState.mock.calls.at(-1);
+        expect(finalCall[0].drawerOpen).toBe(false);
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 24);
+    });
+
+    /**
+     * 测试思路：普通模式列表固定为 10 个显示槽位，全屏固定为左列 10 条、右列 10 条，列表不得依赖滚动条展示。
+     * 示例：CSS 使用 repeat(10) 行、全屏 grid-auto-flow: column，并将 interaction-record-items 设置为 overflow:hidden。
+     */
+    it('列表固定一屏展示十条，全屏按列优先展示二十条', () => {
+        const css = readRepoFile('css/protocol_interaction_drawer.css');
+        expect(css).toContain('grid-template-rows: repeat(10, minmax(0, 1fr));');
+        expect(css).toContain('grid-auto-flow: row;');
+        expect(css).toContain('grid-auto-flow: column;');
+        expect(css).toContain('overflow: hidden;');
+        expect(css).toContain('grid-template-columns: 580px minmax(0, 1fr);');
+    });
+
+    /**
+     * 测试思路：实时层淘汰可见记录时，旧卡片淡出，新卡片在同一过渡窗口淡入；中速动画必须在下一次 1000ms 消费前释放。
+     * 示例：列表从 1、2 替换为 2、3，淘汰的 1 有 is-exiting，新记录 3 有 is-entering，690ms 后旧记录移除。
+     */
+    it('可见记录淘汰时显示淡出动画并在结束后移除', () => {
+        vi.useFakeTimers();
+        try {
+            const context = createBrowserContext('?apiMode=mock&projectId=1');
+            loadCoreScripts(context);
+            context.KitProxy.__disableAutoInitMain = true;
+            context.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(context);
+            const makeRecord = (seq, timeMs) => ({
+                _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 22,
+                cache_instance_id: 1, seq, protocol_type: 'http', time_ms: timeMs,
+                peer_addr: 'peer', result: 'matched', _delivery: 'live',
+                request: { meta: { method: 'GET', path: `/${seq}` }, body: { attachments: [] } },
+                response: { body: { attachments: [] } },
+            });
+            const first = makeRecord(1, 1);
+            const second = makeRecord(2, 2);
+            const third = makeRecord(3, 3);
+            const state = {
+                connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+                visibleRecords: [first, second], pendingRecords: [], selectedRecordKey: null,
+            };
+            const listeners = {};
+            const fakeClient = {
+                on: vi.fn((type, callback) => { listeners[type] = callback; return () => {}; }),
+                connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+                getState: vi.fn(() => state),
+                getRecord: vi.fn(key => state.visibleRecords.find(record => record._key === key) || null),
+                selectRecord: vi.fn(), getAttachment: vi.fn(),
+            };
+            context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+            const root = context.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            context.document.body.appendChild(root);
+            const item = context.addProtocolItem(root, {
+                id: 22, name: '淘汰动画 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+                req_cfg: {}, resp_cfg: {},
+            });
+            item.querySelector('.protocol-interaction-btn').click();
+            const panel = context.document.querySelector('.protocol-interaction-drawer');
+            expect(panel.querySelector('[data-record-key="protocol:1:1"]')).toBeTruthy();
+
+            state.visibleRecords = [second, third];
+            listeners.recordEvicted({ record: first, reason: 'visible_capacity' });
+            listeners.recordVisible({ record: third });
+            expect(panel.querySelector('[data-record-key="protocol:1:1"]').classList.contains('is-exiting')).toBe(true);
+            expect(panel.querySelector('[data-record-key="protocol:1:3"]').classList.contains('is-entering-front')).toBe(true);
+
+            expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('650ms');
+            vi.advanceTimersByTime(690);
+            expect(panel.querySelector('[data-record-key="protocol:1:1"]')).toBeNull();
+            context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 22);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
+     * 测试思路：列表未满时连续到达的事件不能因为 pending 数量变化而重建正在淡入的卡片。
+     * 示例：记录 2 开始淡入后记录 3 到达，记录 2 的 DOM 引用和动画 class 保持不变，不能闪烁重播。
+     */
+    it('连续新事件到达时稳定保持当前淡入动画', () => {
+        vi.useFakeTimers();
+        try {
+            const context = createBrowserContext('?apiMode=mock&projectId=1');
+            loadCoreScripts(context);
+            context.KitProxy.__disableAutoInitMain = true;
+            context.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(context);
+            const makeRecord = seq => ({
+                _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 23,
+                cache_instance_id: 1, seq, protocol_type: 'http', time_ms: seq,
+                peer_addr: 'peer', result: 'matched', _delivery: 'live',
+                request: { body: { attachments: [] } }, response: { body: { attachments: [] } },
+            });
+            const first = makeRecord(1);
+            const second = makeRecord(2);
+            const third = makeRecord(3);
+            const state = {
+                connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+                visibleRecords: [first], pendingRecords: [], selectedRecordKey: null,
+            };
+            const listeners = {};
+            const fakeClient = {
+                on: vi.fn((type, callback) => { listeners[type] = callback; return () => {}; }),
+                connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+                getState: vi.fn(() => state),
+                getRecord: vi.fn(key => state.visibleRecords.find(record => record._key === key) || null),
+                selectRecord: vi.fn(), getAttachment: vi.fn(),
+            };
+            context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+            const root = context.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            context.document.body.appendChild(root);
+            const item = context.addProtocolItem(root, {
+                id: 23, name: '连续淡入 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+                req_cfg: {}, resp_cfg: {},
+            });
+            item.querySelector('.protocol-interaction-btn').click();
+            const panel = context.document.querySelector('.protocol-interaction-drawer');
+
+            state.visibleRecords = [first, second];
+            listeners.recordVisible({ record: second });
+            const secondItem = panel.querySelector('[data-record-key="protocol:1:2"]');
+            expect(secondItem.classList.contains('is-entering-front')).toBe(true);
+
+            state.visibleRecords = [first, second, third];
+            listeners.recordVisible({ record: third });
+            expect(panel.querySelector('[data-record-key="protocol:1:2"]')).toBe(secondItem);
+            expect(secondItem.classList.contains('is-entering-front')).toBe(true);
+            const thirdItem = panel.querySelector('[data-record-key="protocol:1:3"]');
+            expect(thirdItem).toBeTruthy();
+            expect(thirdItem.classList.contains('is-entering-front')).toBe(false);
+
+            context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 23);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
+     * 测试思路：全屏切回非全屏时保留较旧的 10 条，最新的 10 条回到 pending 队首；切换完成后新到达记录不能覆盖保留列表。
+     * 示例：20 条可见记录切成 10 条时保留 seq=1..10，回退 seq=20..11，seq=21 在切换后仍存在于 pending。
+     */
+    it('全屏切回非全屏保留较旧记录并接纳切换期间新事件', () => {
+        vi.useFakeTimers();
+        try {
+            const live = createBrowserContext('?apiMode=mock&projectId=1');
+            loadCoreScripts(live);
+            live.KitProxy.__disableAutoInitMain = true;
+            live.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(live);
+            const records = Array.from({ length: 20 }, (_, index) => ({
+                _key: `protocol:1:${index + 1}`,
+                scope: 'protocol', project_id: 1, protocol_id: 26,
+                cache_instance_id: 1, seq: index + 1, protocol_type: 'http', time_ms: index + 1,
+                peer_addr: 'peer', result: 'matched', _delivery: 'live',
+                request: { body: { attachments: [] } }, response: { body: { attachments: [] } },
+            }));
+            const state = {
+                connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+                visibleRecords: records.slice(0, 10), pendingRecords: records.slice(10), selectedRecordKey: null,
+            };
+            const fakeClient = {
+                on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+                getState: vi.fn(() => state), getRecord: vi.fn(key => state.visibleRecords.find(record => record._key === key) || state.pendingRecords.find(record => record._key === key) || null),
+                selectRecord: vi.fn(), getAttachment: vi.fn(),
+                setBufferLimits: vi.fn((limits, placement = {}) => {
+                    const preserve = new Set(placement.preserveVisibleKeys || []);
+                    const all = state.visibleRecords.concat(state.pendingRecords);
+                    const preferred = preserve.size
+                        ? all.filter(record => preserve.has(record._key))
+                        : all.slice(0, limits.maxVisibleRecords);
+                    const visibleKeys = new Set(preferred.map(record => record._key));
+                    const remaining = all.filter(record => !visibleKeys.has(record._key));
+                    state.visibleRecords = preferred.slice(0, limits.maxVisibleRecords);
+                    state.pendingRecords = remaining.slice(0, limits.maxPendingRecords);
+                }),
+            };
+            live.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+            const root = live.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            live.document.body.appendChild(root);
+            const item = live.addProtocolItem(root, { id: 26, name: '全屏切换 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1, req_cfg: {}, resp_cfg: {} });
+            item.querySelector('.protocol-interaction-btn').click();
+            const panel = live.document.querySelector('.protocol-interaction-drawer');
+            panel.querySelector('[data-action="fullscreen"]').click();
+            panel.querySelector('[data-action="fullscreen"]').click();
+            expect(fakeClient.setBufferLimits).toHaveBeenLastCalledWith(
+                { maxVisibleRecords: 10, maxPendingRecords: 20 },
+                {
+                    reflowVisibleRecords: records,
+                },
+            );
+            expect(state.visibleRecords.map(record => record.seq)).toEqual(records.slice(0, 10).map(record => record.seq));
+            expect(state.pendingRecords.map(record => record.seq)).toEqual(records.slice(10).map(record => record.seq));
+
+            const newRecord = Object.assign({}, records[19], { _key: 'protocol:1:21', seq: 21, time_ms: 21 });
+            fakeClient.getState.mockReturnValueOnce(state);
+            state.pendingRecords.push(newRecord);
+            expect(state.pendingRecords.map(record => record.seq)).toContain(21);
+            expect(state.visibleRecords.map(record => record.seq)).not.toContain(21);
+            live.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 26);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
+     * 测试思路：使用真实 live client 走完打开、填充 12 条、全屏、切回非全屏的完整路径，逐条检查回放动画。
+     * 示例：切回后每 1000ms 只新增 1 条，10 条回放记录都带淡入 class，不再隔条直接跳入。
+     */
+    it('真实抽屉回退后按中速逐条从列表首项淡入', () => {
+        vi.useFakeTimers();
+        try {
+            const context = createBrowserContext('?apiMode=real&projectId=1');
+            loadCoreScripts(context);
+            context.KitProxy.__disableAutoInitMain = true;
+            context.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(context);
+            let client;
+            const originalCreateClient = context.KitProxy.protocolInteractionLive.createClient;
+            context.KitProxy.protocolInteractionLive.createClient = options => {
+                client = originalCreateClient(options);
+                return client;
+            };
+            const root = context.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            context.document.body.appendChild(root);
+            const item = context.addProtocolItem(root, {
+                id: 29, name: '真实回退 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+                req_cfg: {}, resp_cfg: {},
+            });
+            item.querySelector('.protocol-interaction-btn').click();
+            client.setBufferLimits({ maxVisibleRecords: 20, maxPendingRecords: 20 });
+
+            for (let seq = 1; seq <= 12; seq += 1) {
+                client.receiveText(JSON.stringify({
+                    type: 'interaction', delivery: 'live', record: {
+                        seq,
+                        scope: 'protocol',
+                        project_id: 1,
+                        protocol_id: 29,
+                        cache_instance_id: 7,
+                        protocol_type: 'http',
+                        time_ms: seq,
+                        peer_addr: '127.0.0.1:50000',
+                        result: 'matched',
+                        error_message: '',
+                        request: { meta: { method: 'GET', path: `/test/${seq}` }, body: { kind: 'text', size: 1, attachments: [] } },
+                        response: { meta: { status_code: 200 }, body: { kind: 'text', size: 1, text: 'ok', attachments: [] } },
+                    },
+                }));
+                vi.advanceTimersByTime(1000);
+            }
+            expect(client.getState().visibleRecords).toHaveLength(12);
+
+            const panel = context.document.querySelector('.protocol-interaction-drawer');
+            panel.querySelector('[data-action="fullscreen"]').click();
+            panel.querySelector('[data-action="fullscreen"]').click();
+            vi.advanceTimersByTime(0);
+            expect(client.getState().mergePaused).toBe(false);
+            expect(client.getState().pendingQueues.reflow).toHaveLength(10);
+            expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('650ms');
+
+            const consumed = [];
+            client.on('recordVisible', payload => consumed.push(payload.record.seq));
+            for (let index = 0; index < 10; index += 1) {
+                vi.advanceTimersByTime(999);
+                expect(consumed).toHaveLength(index);
+                expect(client.getState().pendingQueues.reflow).toHaveLength(10 - index);
+                vi.advanceTimersByTime(1);
+                expect(consumed).toHaveLength(index + 1);
+                expect(consumed[index]).toBe(index + 3);
+                expect(client.getState().pendingQueues.reflow).toHaveLength(9 - index);
+                const firstItem = panel.querySelector('.interaction-record-items .interaction-record-item');
+                expect(firstItem.dataset.recordKey).toBe(`protocol:7:${index + 3}`);
+                expect(firstItem.classList.contains('is-entering-front')).toBe(true);
+            }
+            context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 29);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
+     * 测试思路：消费速度切换必须同步更新卡片动画时长；若切换时上一条仍在过渡，应先结束旧过渡，再按新间隔消费。
+     * 示例：慢速 820ms 动画中切到快速时立即清理旧 class，600ms 后的下一条使用 380ms 动画。
+     */
+    it('三档消费速度同步调整回放动画时长', () => {
+        vi.useFakeTimers();
+        try {
+            const context = createBrowserContext('?apiMode=real&projectId=1');
+            loadCoreScripts(context);
+            context.KitProxy.__disableAutoInitMain = true;
+            context.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(context);
+            let client;
+            const originalCreateClient = context.KitProxy.protocolInteractionLive.createClient;
+            context.KitProxy.protocolInteractionLive.createClient = options => {
+                client = originalCreateClient(options);
+                return client;
+            };
+            const root = context.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            context.document.body.appendChild(root);
+            const item = context.addProtocolItem(root, {
+                id: 30, name: '动画速度 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+                req_cfg: {}, resp_cfg: {},
+            });
+            item.querySelector('.protocol-interaction-btn').click();
+            const panel = context.document.querySelector('.protocol-interaction-drawer');
+            const speedButton = speed => panel.querySelector(`[data-action="set-merge-speed"][data-speed="${speed}"]`);
+            const makeRecordMessage = seq => JSON.stringify({
+                type: 'interaction', delivery: 'live', record: {
+                    seq, scope: 'protocol', project_id: 1, protocol_id: 30,
+                    cache_instance_id: 7, protocol_type: 'http', time_ms: seq,
+                    peer_addr: '127.0.0.1:50000', result: 'matched', error_message: '',
+                    request: { body: { kind: 'empty', size: 0, attachments: [] } },
+                    response: { body: { kind: 'empty', size: 0, attachments: [] } },
+                },
+            });
+
+            expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('650ms');
+            speedButton('slow').click();
+            expect(client.getState().mergeIntervalMs).toBe(1500);
+            expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('820ms');
+            speedButton('medium').click();
+            expect(client.getState().mergeIntervalMs).toBe(1000);
+            expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('650ms');
+            speedButton('fast').click();
+            expect(client.getState().mergeIntervalMs).toBe(600);
+            expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('380ms');
+
+            speedButton('slow').click();
+            client.receiveText(makeRecordMessage(1));
+            vi.advanceTimersByTime(1500);
+            expect(panel.querySelector('[data-record-key="protocol:7:1"]').classList.contains('is-entering-front')).toBe(true);
+            speedButton('fast').click();
+            expect(panel.querySelector('[data-record-key="protocol:7:1"]').classList.contains('is-entering-front')).toBe(false);
+            client.receiveText(makeRecordMessage(2));
+            vi.advanceTimersByTime(599);
+            expect(client.getState().visibleRecords).toHaveLength(1);
+            vi.advanceTimersByTime(1);
+            expect(panel.querySelector('[data-record-key="protocol:7:2"]').classList.contains('is-entering-front')).toBe(true);
+            context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 30);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
+     * 测试思路：非全屏使用 10 条可见记录和固定 20 条待显示队列，全屏只增加可见容量到 20；
+     * 清空策略对协议项和 Notice 共用同一 client 配置。
+     * 示例：打开抽屉调用 setBufferLimits(10,20)，全屏后调用 setBufferLimits(20,20)，且列表容器进入双列状态。
+     */
+    it('全屏切换实时列表容量并进入双列布局', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: [], pendingRecords: [], selectedRecordKey: null,
+        };
+        const setBufferLimits = vi.fn();
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(), selectRecord: vi.fn(), getAttachment: vi.fn(),
+            setBufferLimits,
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 23, name: '容量 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        const items = panel.querySelector('.interaction-record-items');
+        expect(setBufferLimits).toHaveBeenLastCalledWith({ maxVisibleRecords: 10, maxPendingRecords: 20 });
+        panel.querySelector('[data-action="fullscreen"]').click();
+        expect(setBufferLimits).toHaveBeenLastCalledWith({ maxVisibleRecords: 20, maxPendingRecords: 20 });
+        expect(panel.classList.contains('is-fullscreen')).toBe(true);
+        expect(readRepoFile('css/protocol_interaction_drawer.css')).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');
+        expect(items.classList.contains('interaction-record-items')).toBe(true);
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 23);
+    });
+
+    /**
+     * 测试思路：新事件触发重绘时，只在重绘前焦点已经位于当前选中条目的情况下恢复焦点，不能把用户焦点强行移走。
+     * 示例：选中 seq=1 后焦点在 seq=1，新事件 seq=2 到达并重绘，document.activeElement 仍是 seq=1。
+     */
+    it('新事件到达时保持已选中记录焦点', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const makeRecord = seq => ({
+            _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 24,
+            cache_instance_id: 1, seq, protocol_type: 'http', time_ms: seq,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: `/${seq}` }, body: { attachments: [] } },
+            response: { body: { attachments: [] } },
+        });
+        const first = makeRecord(1);
+        const second = makeRecord(2);
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: [first], pendingRecords: [], selectedRecordKey: null,
+        };
+        const listeners = {};
+        const fakeClient = {
+            on: vi.fn((type, callback) => { listeners[type] = callback; return () => {}; }),
+            connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state),
+            getRecord: vi.fn(key => state.visibleRecords.find(record => record._key === key) || null),
+            selectRecord: vi.fn(key => { state.selectedRecordKey = key; }),
+            getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 24, name: '焦点保持 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-record-key="protocol:1:1"]').click();
+        const firstItem = panel.querySelector('[data-record-key="protocol:1:1"]');
+        firstItem.focus();
+        expect(context.document.activeElement.dataset.recordKey).toBe('protocol:1:1');
+        state.visibleRecords = [first, second];
+        listeners.recordsChanged({ reason: 'merge' });
+        expect(context.document.activeElement.dataset.recordKey).toBe('protocol:1:1');
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 24);
+    });
+
+    /**
+     * 测试思路：选中记录被淘汰后，抽屉必须清除选择和焦点，不能自动聚焦新到达的记录。
+     * 示例：选中 seq=1，淘汰 seq=1 并显示 seq=2/3，activeElement 不得变为 seq=2 或 seq=3。
+     */
+    it('选中记录淘汰后焦点自动失效且不转移', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const makeRecord = seq => ({
+            _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 28,
+            cache_instance_id: 1, seq, protocol_type: 'http', time_ms: seq,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: `/${seq}` }, body: { attachments: [] } },
+            response: { body: { attachments: [] } },
+        });
+        const first = makeRecord(1);
+        const second = makeRecord(2);
+        const third = makeRecord(3);
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: [first], pendingRecords: [], selectedRecordKey: null,
+        };
+        const listeners = {};
+        const fakeClient = {
+            on: vi.fn((type, callback) => { listeners[type] = callback; return () => {}; }),
+            connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state),
+            getRecord: vi.fn(key => state.visibleRecords.find(record => record._key === key) || null),
+            selectRecord: vi.fn(key => { state.selectedRecordKey = key; }),
+            getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 28, name: '选中淘汰 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1,
+            req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-record-key="protocol:1:1"]').click();
+        panel.querySelector('[data-record-key="protocol:1:1"]').focus();
+        expect(context.document.activeElement.dataset.recordKey).toBe('protocol:1:1');
+
+        state.visibleRecords = [second, third];
+        state.selectedRecordKey = null;
+        listeners.selectionChanged({ record: null, reason: 'selected_record_evicted' });
+        listeners.recordEvicted({ record: first, reason: 'visible_capacity' });
+        listeners.recordVisible({ record: third });
+
+        expect(panel.querySelector('.interaction-record-item.is-selected')).toBeNull();
+        expect(context.document.activeElement.dataset.recordKey).not.toBe('protocol:1:2');
+        expect(context.document.activeElement.dataset.recordKey).not.toBe('protocol:1:3');
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 28);
+    });
+
+    /**
+     * 测试思路：动画方向通过 CSS 关键帧表达，正序淡入必须从右向左，正序淘汰必须向右上淡出；倒序仍从下方淡入并向上淡出。
+     * 示例：正序 enter 使用 translateX(16px)->translateX(0)，exit 使用 translateX(12px) translateY(-10px)。
+     */
+    it('正序插入和淘汰动画使用新的横向方向', () => {
+        const css = readRepoFile('css/protocol_interaction_drawer.css');
+        expect(css).toContain('transform: translateX(16px);');
+        expect(css).toContain('transform: translateX(0);');
+        expect(css).toContain('transform: translateX(12px) translateY(-10px);');
+        expect(css).toContain('animation: interaction-record-exit var(--interaction-record-transition-duration) ease both;');
+    });
+
+    /**
+     * 测试思路：可用的媒体附件要按 kind 生成浏览器原生预览控件，不能全部降级为下载链接。
+     * 示例：audio/video 生成带 controls 的媒体元素，PDF 生成 iframe 预览和新窗口打开链接。
+     */
+    it('附件按音频视频和 PDF 类型提供原生预览', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const attachments = ['audio', 'video', 'pdf'].map(kind => ({ attachment_id: kind, kind, size: 3, captured_size: 3, binary_available: true }));
+        const record = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 15,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { body: { attachments } }, response: { body: { attachments: [] } },
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => ({ connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '', visibleRecords: [record], pendingRecords: [], selectedRecordKey: record._key })),
+            getRecord: vi.fn(() => record), selectRecord: vi.fn(),
+            getAttachment: vi.fn((currentRecord, ref) => ({ objectUrl: `blob:${ref.kind}` })),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, { id: 15, name: '媒体 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1, req_cfg: {}, resp_cfg: {} });
+
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        panel.querySelector('[data-tab="attachments"]').click();
+        expect(panel.querySelector('audio[controls]')).toBeTruthy();
+        expect(panel.querySelector('video[controls]')).toBeTruthy();
+        expect(panel.querySelector('iframe[src="blob:pdf"]')).toBeTruthy();
+        expect(panel.querySelector('a[target="_blank"][rel="noopener"]')).toBeTruthy();
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 15);
+    });
+
+    /**
+     * 测试思路：请求 Body 的实际类型和期望类型都为 image 时，概览与 Request Tab 共用可放大图片预览，保存动作由旁侧下载图标按钮触发，附件 Tab 只保留其他附件。
+     * 示例：点击图片打开遮罩预览，点击下载按钮使用 download 属性保存；request-image 不出现在附件页，response-image 仍保留。
+     */
+    it('匹配的请求图片在概览和 Request 预览且不重复出现在附件页', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const requestImage = {
+            attachment_id: 'request-image', kind: 'image', size: 8, captured_size: 8, binary_available: true,
+        };
+        const responseImage = { attachment_id: 'response-image', kind: 'image', size: 9, captured_size: 9, binary_available: true };
+        const record = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 25,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { head_text: 'POST /upload', body: { kind: 'image', expect_kind: 'image', attachments: [requestImage] } },
+            response: { head_text: 'HTTP/1.1 200', body: { kind: 'image', expect_kind: 'image', attachments: [responseImage] } },
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => ({ connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '', visibleRecords: [record], pendingRecords: [], selectedRecordKey: record._key })),
+            getRecord: vi.fn(() => record), selectRecord: vi.fn(),
+            getAttachment: vi.fn((currentRecord, ref) => ({
+                objectUrl: `blob:${ref.attachment_id}`,
+                bytes: ref.attachment_id === 'request-image'
+                    ? new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+                    : new Uint8Array([1, 2, 3]),
+            })),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, { id: 25, name: '请求图片 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1, req_cfg: {}, resp_cfg: {} });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+
+        expect(panel.querySelector('.summary-panel')).toBeTruthy();
+        expect(panel.querySelector('.detail-grid')).toBeTruthy();
+        const previewButton = panel.querySelector('[data-action="preview-image"]');
+        const downloadButton = panel.querySelector('[data-action="download-image"]');
+        expect(previewButton).toBeTruthy();
+        expect(previewButton.querySelector('img[src="blob:request-image"]')).toBeTruthy();
+        expect(downloadButton.querySelector('svg')).toBeTruthy();
+        expect(downloadButton.closest('.interaction-code-heading')).toBeTruthy();
+        previewButton.click();
+        expect(panel.ownerDocument.querySelector('.interaction-image-preview[hidden]')).toBeNull();
+        expect(panel.ownerDocument.querySelector('.interaction-image-preview-image[src="blob:request-image"]')).toBeTruthy();
+        panel.ownerDocument.querySelector('[data-action="close-image-preview"]').click();
+        expect(panel.ownerDocument.querySelector('.interaction-image-preview[hidden]')).toBeTruthy();
+
+        panel.querySelector('[data-tab="request"]').click();
+        expect(panel.querySelector('[data-action="preview-image"] img[src="blob:request-image"]')).toBeTruthy();
+        expect(panel.querySelector('[data-action="download-image"] svg')).toBeTruthy();
+
+        panel.querySelector('[data-tab="attachments"]').click();
+        expect(panel.querySelector('[data-role="attachment-title"]')).toBeNull();
+        expect(panel.textContent).not.toContain('request-image');
+        expect(panel.textContent).toContain('response-image');
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 25);
+    });
+
+    /**
+     * 测试思路：Multiform Body 的文本 part 直接读取 ref.text，二进制 part 通过完整 attachment_id 取 payload。
+     * 示例：同一个请求包含一个文本字段和一个文件字段，概览、Request、附件三个视图都要分别展示。
+     */
+    it('实时抽屉按 Multiform part 展示文本和二进制附件', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+
+        const textRef = {
+            attachment_id: 'request.body.multiform.1:textpart',
+            side: 'request', flag: 'request.body.multiform.1', kind: 'text', text: 'token=abc',
+            size: 9, captured_size: 9, binary_available: false, truncated: false, sha1: 'text-sha1',
+        };
+        const binaryRef = {
+            attachment_id: 'request.body.multiform.2:binarypart',
+            side: 'request', flag: 'request.body.multiform.2', kind: 'binary', text: '',
+            size: 4, captured_size: 4, binary_available: true, truncated: false, sha1: 'binary-sha1',
+        };
+        const record = {
+            _key: 'protocol:1:1', scope: 'protocol', project_id: 1, protocol_id: 27,
+            cache_instance_id: 1, seq: 1, protocol_type: 'http', time_ms: 1,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: {
+                head_text: 'POST /upload',
+                body: {
+                    kind: 'multiform', expect_kind: 'unknown', size: 13, captured_size: 13,
+                    text: '', attachments: [textRef, binaryRef],
+                },
+            },
+            response: { body: { kind: 'text', expect_kind: 'text', text: 'ok', attachments: [] } },
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}), connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => ({
+                connectionState: 'active', desiredConnected: false, socket: null, warnings: [], lastError: '',
+                visibleRecords: [record], pendingRecords: [], selectedRecordKey: record._key,
+            })),
+            getRecord: vi.fn(() => record), selectRecord: vi.fn(),
+            getAttachment: vi.fn((currentRecord, ref) => ref.attachment_id === binaryRef.attachment_id
+                ? { objectUrl: 'blob:multiform-binary', bytes: new Uint8Array([1, 2, 3, 4]) }
+                : null),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const writeText = vi.fn(() => Promise.resolve());
+        Object.defineProperty(context.navigator, 'clipboard', {
+            configurable: true,
+            value: { writeText },
+        });
+
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, {
+            id: 27, name: 'Multiform HTTP', project_id: 1, type: 'HTTP',
+            config_state: 1, status: 1, req_cfg: {}, resp_cfg: {},
+        });
+        item.querySelector('.protocol-interaction-btn').click();
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+
+        expect(panel.querySelectorAll('.interaction-multiform-part')).toHaveLength(2);
+        expect(panel.querySelector('[data-attachment-id="request.body.multiform.1:textpart"]')).toBeTruthy();
+        expect(panel.textContent).toContain('token=abc');
+        const copyButton = panel.querySelector('[data-action="copy-code"][data-copy-text="token=abc"]');
+        expect(copyButton).toBeTruthy();
+        copyButton.click();
+        await flushPromises(2);
+        expect(writeText).toHaveBeenCalledWith('token=abc');
+        expect(panel.ownerDocument.querySelector('.interaction-copy-toast').textContent).toBe('复制成功');
+        expect(panel.ownerDocument.querySelector('.interaction-copy-toast').hidden).toBe(false);
+        expect(panel.querySelector('[data-attachment-id="request.body.multiform.2:binarypart"] a[download="request.body.multiform.2:binarypart"]')).toBeTruthy();
+
+        const firstPart = panel.querySelector('[data-role="multiform-part"]');
+        const firstToggle = firstPart.querySelector('[data-action="toggle-multiform-part"]');
+        expect(firstToggle.getAttribute('aria-expanded')).toBe('true');
+        firstToggle.click();
+        expect(firstPart.classList.contains('is-collapsed')).toBe(true);
+        expect(firstToggle.getAttribute('aria-expanded')).toBe('false');
+        firstToggle.click();
+        expect(firstPart.classList.contains('is-collapsed')).toBe(false);
+
+        panel.querySelector('[data-tab="request"]').click();
+        expect(panel.querySelectorAll('.interaction-multiform-part')).toHaveLength(2);
+
+        panel.querySelector('[data-tab="attachments"]').click();
+        expect(panel.textContent).toContain('request · Part 1');
+        expect(panel.textContent).toContain('request · Part 2');
+        expect(panel.textContent).toContain('token=abc');
+        expect(panel.querySelector('a[download="request.body.multiform.2:binarypart"]')).toBeTruthy();
+        const attachmentPart = panel.querySelector('[data-role="multiform-part"]');
+        expect(attachmentPart).toBeTruthy();
+        const attachmentToggle = attachmentPart.querySelector('[data-action="toggle-multiform-part"]');
+        attachmentToggle.click();
+        expect(attachmentPart.classList.contains('is-collapsed')).toBe(true);
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 27);
+    });
+
+    /**
+     * 测试思路：列表改为固定槽位的一屏展示模式后，不再依赖 scrollTop 保存历史浏览位置。
+     * 示例：CSS 明确使用 overflow:hidden，新的记录重绘不会产生可滚动列表。
+     */
+    it('固定槽位列表不启用滚动条', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+        const makeRecord = (seq, timeMs) => ({
+            _key: `protocol:1:${seq}`, scope: 'protocol', project_id: 1, protocol_id: 16,
+            cache_instance_id: 1, seq, protocol_type: 'http', time_ms: timeMs,
+            peer_addr: 'peer', result: 'matched', _delivery: 'live',
+            request: { meta: { method: 'GET', path: `/${seq}` }, body: { attachments: [] } },
+            response: { body: { attachments: [] } },
+        });
+        const state = {
+            connectionState: 'active', desiredConnected: true, socket: {}, warnings: [], lastError: '',
+            visibleRecords: [makeRecord(1, 10), makeRecord(2, 20), makeRecord(3, 30)],
+            pendingRecords: [], selectedRecordKey: null,
+        };
+        const fakeClient = {
+            on: vi.fn(() => () => {}),
+            connect: vi.fn(), disconnect: vi.fn(), pause: vi.fn(), resume: vi.fn(), destroy: vi.fn(),
+            getState: vi.fn(() => state), getRecord: vi.fn(key => state.visibleRecords.find(record => record._key === key) || null),
+            selectRecord: vi.fn(), getAttachment: vi.fn(),
+        };
+        context.KitProxy.protocolInteractionLive.createClient = vi.fn(() => fakeClient);
+        const root = context.document.createElement('div');
+        root.id = 'service-card-1';
+        root.className = 'protocol-items-page';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+        const item = context.addProtocolItem(root, { id: 16, name: '锚定 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1, req_cfg: {}, resp_cfg: {} });
+        item.querySelector('.protocol-interaction-btn').click();
+
+        const panel = context.document.querySelector('.protocol-interaction-drawer');
+        const list = panel.querySelector('.interaction-record-items');
+        expect(readRepoFile('css/protocol_interaction_drawer.css')).toContain('overflow: hidden;');
+        expect(readRepoFile('css/protocol_interaction_drawer.css')).toContain('grid-template-rows: repeat(10, minmax(0, 1fr));');
+        expect(list.querySelectorAll('.interaction-record-item')).toHaveLength(3);
+        context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 16);
+    });
+
+    /**
+     * 测试思路：抽屉收起只隐藏 UI，Mock client 应继续接收和合并记录，再次展开复用原 client。
+     * 示例：open -> live_ready -> close drawer -> HTTP/TCP/Notice -> merge -> reopen，createClient 仍只调用 1 次且列表已有记录。
+     */
+    it('抽屉收起后 Mock 继续接收并在重新展开时复用状态', async () => {
+        vi.useFakeTimers();
+        try {
+            const context = createBrowserContext('?apiMode=mock&projectId=1');
+            loadCoreScripts(context);
+            context.KitProxy.__disableAutoInitMain = true;
+            context.KitProxy.__disableAutoInitProtocolItems = true;
+            loadProtocolListScripts(context);
+            const originalCreateClient = context.KitProxy.protocolInteractionLive.createClient;
+            const createClient = vi.spyOn(context.KitProxy.protocolInteractionLive, 'createClient')
+                .mockImplementation(options => originalCreateClient(options));
+            const root = context.document.createElement('div');
+            root.id = 'service-card-1';
+            root.className = 'protocol-items-page';
+            root.dataset.runtimeState = '1';
+            root.innerHTML = '<div class="protocol-list"></div>';
+            context.document.body.appendChild(root);
+            const item = context.addProtocolItem(root, { id: 17, name: 'Mock 缓冲 HTTP', project_id: 1, type: 'HTTP', config_state: 1, status: 1, req_cfg: {}, resp_cfg: {} });
+            const entryButton = item.querySelector('.protocol-interaction-btn');
+
+            entryButton.click();
+            vi.advanceTimersByTime(1);
+            await Promise.resolve();
+            context.document.querySelector('.protocol-interaction-drawer [data-action="connect"]').click();
+            vi.advanceTimersByTime(1);
+            await Promise.resolve();
+            context.KitProxy.protocolInteractionDrawer.close();
+            expect(context.KitProxy.protocolInteractionDrawer.isOpen()).toBe(false);
+
+            vi.advanceTimersByTime(2100);
+            await Promise.resolve();
+            entryButton.click();
+            const panel = context.document.querySelector('.protocol-interaction-drawer');
+            expect(createClient).toHaveBeenCalledTimes(1);
+            expect(panel.querySelectorAll('[data-record-key]').length).toBeGreaterThan(0);
+            expect(panel.querySelector('[data-role="status"]').textContent).toBe('实时');
+            context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 17);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
      * 测试思路：协议项管理页的新增按钮只负责跳转到独立表单页，并保留当前调试参数。
      * 示例：projectId=1 且 apiMode=mock 时，点击按钮应生成 protocol_item_form.html?apiMode=mock&projectId=1。
      */
@@ -29,6 +1399,66 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         expect(addButton.dataset.protocolItemFormUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
         expect(targetUrl).toBe('protocol_item_form.html?apiMode=mock&projectId=1');
+    });
+
+    /**
+     * 测试思路：协议列表渲染完成后，只能根据当前标签有效 marker 自动重开指定协议项抽屉。
+     * 示例：projectId=1、marker 指向 protocolId=1，列表卡片就绪后 restore 只调用一次且目标仍在当前列表。
+     */
+    it('协议列表就绪后按 marker 自动恢复目标抽屉', async () => {
+        const context = createProtocolItemPageContext(1);
+        loadCoreScripts(context);
+        const user = await loginMockUser(context, { note: 'admin', loginType: 'admin', password: 'admin123' });
+        context.KitProxy.auth.applyCurrentUser(user);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = () => Promise.resolve();
+        loadProtocolListScripts(context);
+        const persistence = context.KitProxy.protocolInteractionPersistence;
+        const identity = persistence.createWorkspaceIdentity({
+            apiBaseUrl: context.KitProxy.config.apiBaseUrl,
+            user: context.KitProxy.auth.getCurrentUser(),
+            projectId: 1,
+            protocolId: 1,
+        });
+        persistence.writeRestoreMarker(identity, { drawerOpen: true }, context.sessionStorage);
+        const restore = vi.spyOn(context.KitProxy.protocolInteractionDrawer, 'restore').mockReturnValue(true);
+
+        await context.KitProxy.protocolItemsPage.initPage();
+
+        expect(context.document.querySelector('.protocol-item[data-protocol-id="1"]')).toBeTruthy();
+        expect(restore).toHaveBeenCalledTimes(1);
+        expect(restore.mock.calls[0][0]).toMatchObject({ projectId: 1, protocolId: 1 });
+    });
+
+    /**
+     * 测试思路：marker 指向已删除或当前页不存在协议项时，不构造脱离列表实体的抽屉，并只清理当前恢复 marker。
+     * 示例：protocolId=999 不在列表，initPage 后 restore 不调用，marker 被删除。
+     */
+    it('目标协议不存在时清理 marker 而不创建抽屉', async () => {
+        const context = createProtocolItemPageContext(1);
+        loadCoreScripts(context);
+        const user = await loginMockUser(context, { note: 'admin', loginType: 'admin', password: 'admin123' });
+        context.KitProxy.auth.applyCurrentUser(user);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = () => Promise.resolve();
+        loadProtocolListScripts(context);
+        const persistence = context.KitProxy.protocolInteractionPersistence;
+        const identity = persistence.createWorkspaceIdentity({
+            apiBaseUrl: context.KitProxy.config.apiBaseUrl,
+            user: context.KitProxy.auth.getCurrentUser(),
+            projectId: 1,
+            protocolId: 999,
+        });
+        persistence.writeRestoreMarker(identity, { drawerOpen: true }, context.sessionStorage);
+        const restore = vi.spyOn(context.KitProxy.protocolInteractionDrawer, 'restore').mockReturnValue(true);
+
+        await context.KitProxy.protocolItemsPage.initPage();
+
+        expect(restore).not.toHaveBeenCalled();
+        expect(persistence.readRestoreMarker(context.sessionStorage)).toBeNull();
+        expect(context.document.querySelector('.protocol-interaction-drawer')).toBeNull();
     });
 
     /**
@@ -111,6 +1541,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const root = context.document.createElement('div');
         root.className = 'protocol-items-page';
         root.id = 'service-card-1';
+        root.dataset.runtimeState = '1';
         root.innerHTML = '<div class="protocol-list"></div>';
         context.document.body.appendChild(root);
 
@@ -119,6 +1550,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
             name: '接口1',
             project_id: 1,
             type: 'HTTP',
+            config_state: 1,
             req_cfg: { method: 'GET', path: '/api/test1' },
             resp_cfg: {},
             req_body_status: 0,
@@ -129,13 +1561,23 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         const details = protocolItem.querySelector('.protocol-details');
         const toggleButton = protocolItem.querySelector('.protocol-toggle-btn');
+        const interactionButton = protocolItem.querySelector('.protocol-interaction-btn');
+        const headerActions = protocolItem.querySelector('.protocol-header-actions');
         expect(details.classList.contains('is-expanded')).toBe(false);
         expect(toggleButton.querySelector('.protocol-toggle-icon')).toBeTruthy();
         expect(toggleButton.getAttribute('aria-label')).toBe('展开协议项详情');
         expect(toggleButton.getAttribute('aria-expanded')).toBe('false');
+        expect(interactionButton).toBeTruthy();
+        expect(interactionButton.querySelector('.protocol-interaction-icon')).toBeTruthy();
+        expect(interactionButton.getAttribute('aria-label')).toBe('查看协议项实时交互详情');
+        expect(Array.from(headerActions.children).indexOf(interactionButton)).toBe(
+            Array.from(headerActions.children).indexOf(toggleButton) - 1,
+        );
         expect(protocolItem.querySelector('.delete-protocol-btn')).toBeTruthy();
         expect(readRepoFile('css/main.css')).toContain('chevron-down.svg');
+        expect(readRepoFile('css/main.css')).toContain('activity.svg');
         expect(repoFileExists('assets/icons/chevron-down.svg')).toBe(true);
+        expect(repoFileExists('assets/icons/activity.svg')).toBe(true);
 
         toggleButton.click();
         expect(details.classList.contains('is-expanded')).toBe(true);
@@ -271,6 +1713,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime')
             .mockResolvedValue({ protocol_id: 1, config_state: 0 });
+        const cleanupProtocol = vi.fn();
+        context.KitProxy.protocolInteractionDrawer = { cleanupProtocol };
         const protocolItem = context.addProtocolItem(root, {
             id: 1,
             name: '接口1',
@@ -289,6 +1733,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         await flushPromises(8);
 
         expect(setProtocolRuntime).toHaveBeenCalledWith(1, false);
+        expect(cleanupProtocol).toHaveBeenCalledWith(1, 1);
         expect(protocolItem.dataset.configState).toBe('0');
         expect(protocolItem.querySelector('.protocol-runtime-btn').textContent).toBe('未上线');
     });
@@ -327,6 +1772,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         vi.spyOn(context.KitProxy.api, 'setProjectRuntimeState')
             .mockResolvedValue({ runtime_state: 0, listen_port: 0 });
         const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime');
+        const cleanupProject = vi.spyOn(context.KitProxy.protocolInteractionDrawer, 'cleanupProject');
 
         await context.KitProxy.protocolItemsPage.initPage?.();
         await flushPromises(12);
@@ -338,6 +1784,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         await flushPromises(12);
 
         expect(context.document.querySelector('.protocol-items-page').dataset.runtimeState).toBe('0');
+        expect(cleanupProject).toHaveBeenCalledWith(1);
         expect(runtimeButton.disabled).toBe(true);
         runtimeButton.click();
         await flushPromises(4);

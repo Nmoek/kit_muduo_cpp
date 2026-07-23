@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createBrowserContext, loadCoreScripts, loginMockUser } from './helpers/browser_context.js';
+import {
+    createBrowserContext,
+    loadCoreScripts,
+    loginMockUser,
+    readFormDataValueAsText,
+} from './helpers/browser_context.js';
 
 describe('V1 config and API layer', () => {
     /**
@@ -372,7 +377,11 @@ describe('V1 config and API layer', () => {
         expect(context.fetch.mock.calls.at(-1)[0]).toBe('/protocols/9/reconfig');
         expect(options.method).toBe('POST');
         expect(options.body).toBeInstanceOf(context.FormData);
-        expect(JSON.parse(options.body.get('protocol_cfg_header')).config_state).toBe(0);
+        const cfgHeader = JSON.parse(await readFormDataValueAsText(
+            context,
+            options.body.get('protocol_cfg_header'),
+        ));
+        expect(cfgHeader.config_state).toBe(0);
     });
 
     /**

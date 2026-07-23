@@ -12,8 +12,11 @@
         { value: 'binary', label: 'Binary', enabled: true },
     ]);
     const NO_CONTENT_BODY_TYPES = Object.freeze(['none', 'empty']);
-    const TEXT_INPUT_COLLAPSED_BODY_TYPES = Object.freeze(['none', 'empty', 'image', 'binary']);
+    const TEXT_INPUT_COLLAPSED_BODY_TYPES = Object.freeze(['none', 'empty', 'image', 'binary', 'multiform']);
     const REQUEST_TEXTLESS_BODY_TYPES = TEXT_INPUT_COLLAPSED_BODY_TYPES;
+    const CONTENT_NORMALIZATION_EMPTY_BODY_TYPES = Object.freeze(['none', 'empty', 'image', 'binary']);
+    const MULTIFORM_BODY_TYPE = 'multiform';
+    const HIDDEN_BODY_TYPES = Object.freeze([MULTIFORM_BODY_TYPE]);
     const HIGHLIGHT_SIZE_LIMIT = 100 * 1024;
     const EDITOR_LINE_HEIGHT = 20;
     const EDITOR_VERTICAL_PADDING = 24;
@@ -170,6 +173,15 @@
             };
         }
 
+        if (normalizedType === MULTIFORM_BODY_TYPE) {
+            return {
+                valid: true,
+                line: null,
+                column: null,
+                message: 'Multiform 使用字段表格配置',
+            };
+        }
+
         if (normalizedType === 'json') {
             return validateJson(text);
         }
@@ -221,7 +233,9 @@
      * @returns {string}
      */
     function normalizeBodyContent(text, bodyType) {
-        return isTextlessRequestBodyType(bodyType) ? '' : String(text == null ? '' : text);
+        return CONTENT_NORMALIZATION_EMPTY_BODY_TYPES.includes(String(bodyType || '').toLowerCase())
+            ? ''
+            : String(text == null ? '' : text);
     }
 
     /**
@@ -393,13 +407,56 @@
             typeMap[option.value] = option;
         });
 
-        return allowedTypes.map(option => {
+        const resolved = allowedTypes.map(option => {
             if (typeof option === 'string') {
                 return typeMap[option] || { value: option, label: option.toUpperCase(), enabled: true };
             }
 
             return Object.assign({}, typeMap[option.value] || {}, option);
-        });
+        }).filter(option => !HIDDEN_BODY_TYPES.includes(String(option.value || '').toLowerCase()));
+
+        return resolved.length ? resolved : BODY_TYPE_OPTIONS.map(option => Object.assign({}, option));
+    }
+
+    function normalizeMultiformField(field, index) {
+        const source = field && typeof field === 'object' ? field : {};
+        const type = String(source.type || 'text').toLowerCase() === 'file' ? 'file' : 'text';
+        return {
+            id: String(source.id || `multiform-field-${Date.now()}-${index}`),
+            enabled: source.enabled !== false,
+            name: String(source.name || ''),
+            value: type === 'text' ? String(source.value == null ? '' : source.value) : '',
+            type,
+            description: String(source.description || ''),
+            filename: String(source.filename || source.file_name || ''),
+            content_type: String(source.content_type || source.contentType || ''),
+            data_base64: String(source.data_base64 || source.dataBase64 || ''),
+        };
+    }
+
+    function normalizeMultiformFields(fields) {
+        return (Array.isArray(fields) ? fields : []).map(normalizeMultiformField);
+    }
+
+    function tryParseMultiformFields(value) {
+        if (!value || typeof value !== 'string') return [];
+        try {
+            const parsed = JSON.parse(value);
+            return normalizeMultiformFields(parsed && Array.isArray(parsed.fields) ? parsed.fields : parsed);
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function createEmptyMultiformField() {
+        return normalizeMultiformField({}, Math.floor(Math.random() * 100000));
+    }
+
+    function serializeMultiformFields(fields) {
+        const normalized = normalizeMultiformFields(fields);
+        return normalized.some(field => field.enabled && field.name.trim())
+            ? JSON.stringify({ version: 1, fields: normalized })
+            : '';
     }
 
     function lineNumbersHTML(lineCount) {
@@ -510,6 +567,8 @@
             : (allowedTypes[0]?.value || 'json');
         const initialType = String(options.bodyType || defaultType).toLowerCase();
         const initialValue = decodeBodyData(options.value || '');
+        let currentBodyType = initialType;
+        let preservedUnsupportedValue = HIDDEN_BODY_TYPES.includes(initialType) ? initialValue : '';
         let contentHidden = Boolean(options.hideContent);
         let validateFn = typeof options.validate === 'function' ? options.validate : validate;
 
@@ -522,6 +581,7 @@
                     <button type="button" class="body-editor-clear">清空</button>
                     <span class="body-editor-status" aria-live="polite"></span>
                 </div>
+                <p class="body-editor-unsupported-note" hidden aria-live="polite"></p>
                 <div class="body-editor-input-wrap">
                     <div class="body-editor-scroll-content">
                         <div class="body-editor-lines" aria-hidden="true">1</div>
@@ -530,6 +590,24 @@
                             <textarea id="${escapeHtml(idPrefix)}-content" class="body-editor-textarea" spellcheck="false" wrap="off" autocomplete="off" autocapitalize="off" autocorrect="off"></textarea>
                         </div>
                     </div>
+                </div>
+                <div class="body-editor-multiform-wrap is-collapsed" aria-hidden="true">
+                    <div class="body-editor-multiform-toolbar">
+                        <div>
+                            <strong>multipart/form-data</strong>
+                            <span>按字段配置文本或文件参数</span>
+                        </div>
+                        <button type="button" class="body-editor-multiform-add">新增参数</button>
+                    </div>
+                    <div class="body-editor-multiform-scroll">
+                        <table class="body-editor-multiform-table">
+                            <thead>
+                                <tr><th>启用</th><th>参数名</th><th>值</th><th>类型</th><th>描述</th><th aria-label="操作"></th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <p class="body-editor-multiform-empty" hidden>暂无参数，点击“新增参数”开始配置。</p>
                 </div>
                 <div class="body-editor-binary-wrap body-editor-binary-pattern-scope config-pattern-modal is-collapsed" aria-hidden="true"></div>
                 <div class="body-editor-error" aria-live="polite"></div>
@@ -547,12 +625,21 @@
         const clearButton = container.querySelector('.body-editor-clear');
         const statusElement = container.querySelector('.body-editor-status');
         const errorElement = container.querySelector('.body-editor-error');
+        const unsupportedNote = container.querySelector('.body-editor-unsupported-note');
+        const multiformWrap = container.querySelector('.body-editor-multiform-wrap');
+        const multiformTableBody = container.querySelector('.body-editor-multiform-table tbody');
+        const multiformEmpty = container.querySelector('.body-editor-multiform-empty');
+        const multiformAddButton = container.querySelector('.body-editor-multiform-add');
         const binaryConfigWrap = container.querySelector('.body-editor-binary-wrap');
         let binaryFields = normalizeBinaryFields(
             options.binaryFields || tryParseBinaryFields(initialValue) || [],
         );
         let binaryFieldEditor = null;
         let binarySectionMounted = false;
+        let multiformFields = normalizeMultiformFields(
+            options.multiformFields || tryParseMultiformFields(initialValue),
+        );
+        const multiformFileReads = new Set();
 
         /**
          * 重新渲染类型下拉，供请求/响应 Tab 切换时复用同一个编辑器实例。
@@ -573,38 +660,165 @@
                 typeSelect.appendChild(optionElement);
             });
 
-            const normalizedType = String(preferredType || allowedTypes[0]?.value || 'json').toLowerCase();
-            if (!Array.from(typeSelect.options).some(option => option.value === normalizedType)) {
-                const fallbackOption = document.createElement('option');
-                fallbackOption.value = normalizedType;
-                fallbackOption.textContent = normalizedType.toUpperCase();
-                typeSelect.appendChild(fallbackOption);
+            const requestedType = String(preferredType || allowedTypes[0]?.value || 'json').toLowerCase();
+            const unsupported = HIDDEN_BODY_TYPES.includes(requestedType);
+            if (unsupported) {
+                typeSelect.value = '';
+                typeSelect.title = '当前 Body 类型暂不支持编辑';
+            } else {
+                const visibleType = Array.from(typeSelect.options).some(option => option.value === requestedType)
+                    ? requestedType
+                    : (allowedTypes[0]?.value || 'json');
+                typeSelect.value = visibleType;
+                currentBodyType = visibleType;
+                typeSelect.title = '';
             }
-
-            typeSelect.value = normalizedType;
+            typeSelect.disabled = unsupported;
+            if (unsupported) currentBodyType = requestedType;
         }
 
         /**
          * @returns {boolean}
          */
         function isBinaryMode() {
-            return String(typeSelect.value || '').toLowerCase() === 'binary';
+            return currentBodyType === 'binary';
+        }
+
+        function isMultiformMode() {
+            return currentBodyType === MULTIFORM_BODY_TYPE;
         }
 
         /**
          * @returns {boolean}
          */
         function shouldCollapseTextInput() {
-            const bodyType = String(typeSelect.value || '').toLowerCase();
-            return contentHidden || TEXT_INPUT_COLLAPSED_BODY_TYPES.includes(bodyType);
+            return contentHidden || TEXT_INPUT_COLLAPSED_BODY_TYPES.includes(currentBodyType);
         }
 
         /**
          * @returns {boolean}
          */
         function shouldShowContentActions() {
-            const bodyType = String(typeSelect.value || '').toLowerCase();
-            return !contentHidden && !TEXT_INPUT_COLLAPSED_BODY_TYPES.includes(bodyType);
+            return !contentHidden && !TEXT_INPUT_COLLAPSED_BODY_TYPES.includes(currentBodyType)
+                && !HIDDEN_BODY_TYPES.includes(currentBodyType);
+        }
+
+        function renderMultiformFields() {
+            if (!multiformTableBody) return;
+            multiformTableBody.innerHTML = '';
+            multiformFields.forEach(field => {
+                const row = document.createElement('tr');
+                row.dataset.fieldId = field.id;
+                row.innerHTML = `
+                    <td class="body-editor-multiform-enabled"><input type="checkbox" data-field="enabled" aria-label="启用参数"></td>
+                    <td><input type="text" data-field="name" placeholder="参数名"></td>
+                    <td class="body-editor-multiform-value"></td>
+                    <td><select data-field="type"><option value="text">Text</option><option value="file">File</option></select></td>
+                    <td><input type="text" data-field="description" placeholder="可选描述"></td>
+                    <td><button type="button" class="body-editor-multiform-remove" aria-label="删除参数" title="删除参数">×</button></td>
+                `;
+                row.querySelector('[data-field="enabled"]').checked = field.enabled;
+                row.querySelector('[data-field="name"]').value = field.name;
+                row.querySelector('[data-field="type"]').value = field.type;
+                row.querySelector('[data-field="description"]').value = field.description;
+                const valueCell = row.querySelector('.body-editor-multiform-value');
+                if (field.type === 'file') {
+                    valueCell.innerHTML = '<input type="file" data-field="file" aria-label="上传文件"><span class="body-editor-multiform-file-name"></span>';
+                    const fileName = row.querySelector('.body-editor-multiform-file-name');
+                    fileName.textContent = field.filename || '未选择文件';
+                    fileName.title = field.filename || '';
+                } else {
+                    valueCell.innerHTML = '<input type="text" data-field="value" placeholder="字段值">';
+                    valueCell.querySelector('[data-field="value"]').value = field.value;
+                }
+                multiformTableBody.appendChild(row);
+            });
+            if (multiformEmpty) multiformEmpty.hidden = multiformFields.length > 0;
+        }
+
+        function findMultiformField(row) {
+            return multiformFields.find(field => field.id === row.dataset.fieldId);
+        }
+
+        function readMultiformFile(row, input) {
+            const field = findMultiformField(row);
+            const file = input && input.files && input.files[0];
+            if (!field || !file || typeof global.FileReader !== 'function') return;
+            field.filename = file.name || '';
+            field.content_type = file.type || 'application/octet-stream';
+            const reader = new global.FileReader();
+            let readPromise;
+            readPromise = new Promise(resolve => {
+                reader.onload = function() {
+                    const result = String(reader.result || '');
+                    field.data_base64 = result.includes(',') ? result.split(',').slice(1).join(',') : result;
+                    const fileName = row.querySelector('.body-editor-multiform-file-name');
+                    if (fileName) fileName.textContent = field.filename || '未选择文件';
+                    multiformFileReads.delete(readPromise);
+                    resolve();
+                };
+                reader.onerror = function() {
+                    multiformFileReads.delete(readPromise);
+                    resolve();
+                };
+            });
+            multiformFileReads.add(readPromise);
+            reader.readAsDataURL(file);
+        }
+
+        function bindMultiformEvents() {
+            if (!multiformTableBody) return;
+            multiformTableBody.addEventListener('input', function(event) {
+                const row = event.target.closest('tr');
+                const field = row && findMultiformField(row);
+                const name = event.target.dataset.field;
+                if (!field || !name || name === 'file') return;
+                field[name] = name === 'enabled' ? event.target.checked : event.target.value;
+            });
+            multiformTableBody.addEventListener('change', function(event) {
+                const row = event.target.closest('tr');
+                const field = row && findMultiformField(row);
+                const name = event.target.dataset.field;
+                if (!field) return;
+                if (name === 'file') {
+                    readMultiformFile(row, event.target);
+                    return;
+                }
+                if (name === 'enabled') field.enabled = event.target.checked;
+                if (name === 'type') {
+                    field.type = event.target.value === 'file' ? 'file' : 'text';
+                    if (field.type === 'text') {
+                        field.filename = '';
+                        field.content_type = '';
+                        field.data_base64 = '';
+                    } else {
+                        field.value = '';
+                    }
+                    renderMultiformFields();
+                }
+            });
+            multiformTableBody.addEventListener('click', function(event) {
+                const button = event.target.closest('.body-editor-multiform-remove');
+                if (!button) return;
+                const row = button.closest('tr');
+                const field = row && findMultiformField(row);
+                multiformFields = multiformFields.filter(item => item !== field);
+                renderMultiformFields();
+                runValidation();
+            });
+            multiformAddButton?.addEventListener('click', function() {
+                multiformFields.push(createEmptyMultiformField());
+                renderMultiformFields();
+                const rows = multiformTableBody.querySelectorAll('tr');
+                rows[rows.length - 1]?.querySelector('[data-field="name"]')?.focus();
+            });
+        }
+
+        function validateMultiform() {
+            const invalid = multiformFields.find(field => field.enabled && !field.name.trim());
+            return invalid
+                ? { valid: false, line: null, column: null, message: '已启用的 Multiform 参数必须填写参数名' }
+                : { valid: true, line: null, column: null, message: multiformFields.length ? 'Multiform 字段配置正确' : '空 Multiform 将按未设置处理' };
         }
 
         /**
@@ -679,15 +893,27 @@
             contentHidden = Boolean(hidden);
             const textCollapsed = shouldCollapseTextInput();
             const binaryVisible = !contentHidden && isBinaryMode();
+            const multiformVisible = false;
+            const unsupported = HIDDEN_BODY_TYPES.includes(currentBodyType);
 
             root.classList.toggle('is-content-hidden', contentHidden);
             root.classList.toggle('is-text-collapsed', textCollapsed);
             root.classList.toggle('is-binary-mode', binaryVisible);
-            root.classList.toggle('is-no-content-mode', NO_CONTENT_BODY_TYPES.includes(String(typeSelect.value || '').toLowerCase()));
+            root.classList.toggle('is-multiform-mode', multiformVisible);
+            root.classList.toggle('is-unsupported-body-type', unsupported);
+            root.classList.toggle('is-no-content-mode', NO_CONTENT_BODY_TYPES.includes(currentBodyType));
             binaryConfigWrap.classList.toggle('is-collapsed', !binaryVisible);
             binaryConfigWrap.setAttribute('aria-hidden', binaryVisible ? 'false' : 'true');
+            multiformWrap.classList.toggle('is-collapsed', !multiformVisible);
+            multiformWrap.setAttribute('aria-hidden', 'true');
+            if (unsupportedNote) {
+                unsupportedNote.hidden = !unsupported;
+                unsupportedNote.textContent = unsupported
+                    ? `${currentBodyType.toUpperCase()} Body 编辑功能暂未开放，原内容将保持不变。`
+                    : '';
+            }
             formatButton.hidden = !shouldShowContentActions();
-            clearButton.hidden = !shouldShowContentActions();
+            clearButton.hidden = !shouldShowContentActions() || unsupported;
 
             if (binaryVisible && binaryFields.length === 0) {
                 binaryFields = [createEmptyBinaryField()];
@@ -696,6 +922,7 @@
                 const editor = ensureBinaryFieldEditor();
                 if (editor) editor.setFields(binaryFields);
             }
+            if (multiformVisible) renderMultiformFields();
         }
 
         function syncBinaryFieldsFromDOM() {
@@ -717,10 +944,10 @@
         }
 
         function updateTextInputMode() {
-            textarea.readOnly = Boolean(options.readonly || isBinaryMode());
+            textarea.readOnly = Boolean(options.readonly || isBinaryMode() || isMultiformMode() || HIDDEN_BODY_TYPES.includes(currentBodyType));
             textarea.placeholder = isBinaryMode()
                 ? 'Binary Body 使用二进制字段配置'
-                : (options.placeholder || '输入 Body 内容...');
+                : (isMultiformMode() ? 'Multiform 使用字段表格配置' : (options.placeholder || '输入 Body 内容...'));
         }
 
         /**
@@ -728,13 +955,14 @@
          */
         function notifyTypeChange() {
             if (typeof options.onTypeChange === 'function') {
-                options.onTypeChange(typeSelect.value);
+                options.onTypeChange(currentBodyType);
             }
         }
 
         renderTypeOptions(allowedTypes, initialType);
 
         textarea.value = initialValue;
+        bindMultiformEvents();
         updateTextInputMode();
         applyContentVisibility(contentHidden);
 
@@ -857,7 +1085,9 @@
         }
 
         function runValidation() {
-            return renderValidation(validateFn(textarea.value, typeSelect.value));
+            return renderValidation(isMultiformMode()
+                ? validateMultiform()
+                : validateFn(textarea.value, typeSelect.value));
         }
 
         const debouncedValidate = debounce(runValidation, 180);
@@ -886,6 +1116,7 @@
         textarea.addEventListener('focus', scheduleCaretSync);
 
         typeSelect.addEventListener('change', function() {
+            if (!HIDDEN_BODY_TYPES.includes(currentBodyType)) currentBodyType = typeSelect.value;
             updateTextInputMode();
             applyContentVisibility(contentHidden);
             notifyTypeChange();
@@ -926,10 +1157,26 @@
 
         return {
             getValue: function() {
-                return normalizeBodyContent(textarea.value, typeSelect.value);
+                if (HIDDEN_BODY_TYPES.includes(currentBodyType)) return preservedUnsupportedValue;
+                return isMultiformMode()
+                    ? serializeMultiformFields(multiformFields)
+                    : normalizeBodyContent(textarea.value, currentBodyType);
+            },
+            getValueAsync: async function() {
+                if (multiformFileReads.size) await Promise.all(Array.from(multiformFileReads));
+                if (HIDDEN_BODY_TYPES.includes(currentBodyType)) return preservedUnsupportedValue;
+                return isMultiformMode()
+                    ? serializeMultiformFields(multiformFields)
+                    : normalizeBodyContent(textarea.value, currentBodyType);
             },
             setValue: function(value) {
                 textarea.value = decodeBodyData(value || '');
+                if (HIDDEN_BODY_TYPES.includes(currentBodyType)) preservedUnsupportedValue = textarea.value;
+                const parsedMultiformFields = tryParseMultiformFields(textarea.value);
+                if (parsedMultiformFields.length || isMultiformMode()) {
+                    multiformFields = parsedMultiformFields;
+                    renderMultiformFields();
+                }
                 const parsedBinaryFields = tryParseBinaryFields(textarea.value);
                 if (parsedBinaryFields) {
                     binaryFields = normalizeBinaryFields(parsedBinaryFields);
@@ -940,18 +1187,15 @@
                 return runValidation();
             },
             getType: function() {
-                return typeSelect.value;
+                return currentBodyType;
             },
             setType: function(type) {
                 const nextType = String(type || 'text').toLowerCase();
-                if (!Array.from(typeSelect.options).some(option => option.value === nextType)) {
-                    renderTypeOptions(allowedTypes, nextType);
-                }
-                typeSelect.value = nextType;
+                renderTypeOptions(allowedTypes, nextType);
                 typeSelect.dispatchEvent(new Event('change'));
             },
             setAllowedTypes: function(nextAllowedTypes, preferredType) {
-                renderTypeOptions(nextAllowedTypes, preferredType || typeSelect.value);
+                renderTypeOptions(nextAllowedTypes, preferredType || currentBodyType);
                 typeSelect.dispatchEvent(new Event('change'));
             },
             setTypeLabel: function(label) {
@@ -972,6 +1216,9 @@
             getBinaryFields: function() {
                 syncBinaryFieldsFromDOM();
                 return binaryFields.map(field => Object.assign({}, field, { role: 'common' }));
+            },
+            getMultiformFields: function() {
+                return normalizeMultiformFields(multiformFields);
             },
             clearBinaryFields,
             destroy: function() {

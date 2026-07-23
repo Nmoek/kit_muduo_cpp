@@ -357,7 +357,7 @@
         document.body.appendChild(modal);
 
         const closeModal = bindModalCloseActions(modal);
-        modal.querySelector('.confirm-btn').addEventListener('click', function() {
+        modal.querySelector('.confirm-btn').addEventListener('click', async function() {
             if (bodyEditor) {
                 const validation = bodyEditor.validate();
                 if (!validation.valid) {
@@ -368,7 +368,9 @@
 
             if (typeof options.onConfirm === 'function') {
                 options.onConfirm(
-                    bodyEditor ? bodyEditor.getValue() : textarea.value,
+                    bodyEditor
+                        ? (typeof bodyEditor.getValueAsync === 'function' ? await bodyEditor.getValueAsync() : bodyEditor.getValue())
+                        : textarea.value,
                     bodyEditor ? bodyEditor.getType() : options.bodyType,
                 );
             }
@@ -800,6 +802,12 @@
             bodyValue = new Blob(
                 [xmlString],
                 { type: 'application/xml' }
+            );
+        } else if (bodyType.includes('multiform')) {
+            // Multiform body 在存储层是字段描述 JSON，由运行时编码为真正的 multipart 报文。
+            bodyValue = new Blob(
+                [bodyData],
+                { type: 'application/json' }
             );
         } else if (bodyType.includes('binary')) {
             bodyValue = new Blob(

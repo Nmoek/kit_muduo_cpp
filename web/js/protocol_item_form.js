@@ -703,6 +703,19 @@
         };
     }
 
+    async function syncActiveBodyFromEditorAsync() {
+        if (!pageState.bodyEditor) return;
+        const activeTab = pageState.bodyState.activeTab;
+        const bodyType = pageState.bodyEditor.getType();
+        const content = typeof pageState.bodyEditor.getValueAsync === 'function'
+            ? await pageState.bodyEditor.getValueAsync()
+            : pageState.bodyEditor.getValue();
+        pageState.bodyState[activeTab] = {
+            content: normalizeBodyContent(content, bodyType),
+            bodyType,
+        };
+    }
+
     /**
      * @param {'request' | 'response'} tab
      * @param {string=} bodyType
@@ -902,6 +915,11 @@
         });
     }
 
+    async function collectFormDataAsync() {
+        await syncActiveBodyFromEditorAsync();
+        return collectFormData();
+    }
+
     /**
      * @param {any} data
      * @param {number=} configState
@@ -1029,7 +1047,7 @@
             mutationKeyForSubmit(),
             async function() {
                 clearPageError();
-                const data = collectFormData();
+                const data = await collectFormDataAsync();
                 if (pageState.mode === 'edit') {
                     await handleEdit(data);
                 } else if (pageState.mode === 'reconfig') {
@@ -1218,6 +1236,7 @@
         buildProtocolListUrl,
         readURLParams,
         collectFormData,
+        collectFormDataAsync,
         buildAddPayload,
         setActiveBodyTab,
         navigateBack,

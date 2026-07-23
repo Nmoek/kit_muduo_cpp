@@ -18,6 +18,24 @@ export function flushPromises(times = 4) {
 }
 
 /**
+ * 读取 FormData 中的普通字符串或 JSDOM File 值。
+ * 浏览器会把带 filename 的 Blob 作为 File 放入 FormData，测试不能直接 JSON.parse(File)。
+ * @param {vm.Context} context
+ * @param {string|Blob|File} value
+ * @returns {Promise<string>}
+ */
+export function readFormDataValueAsText(context, value) {
+    if (typeof value === 'string') return Promise.resolve(value);
+
+    return new Promise((resolve, reject) => {
+        const reader = new context.FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(value);
+    });
+}
+
+/**
  * @param {vm.Context} context
  * @param {string} filePath
  */
@@ -109,6 +127,9 @@ export function loadCoreScripts(context) {
  */
 export function loadProtocolListScripts(context) {
     [
+        'js/protocol_interaction_persistence.js',
+        'js/protocol_interaction_live.js',
+        'js/protocol_interaction_drawer.js',
         'js/tcp_pattern_modal.js',
         'js/protocol_item.js',
         'js/protocol_registry.js',

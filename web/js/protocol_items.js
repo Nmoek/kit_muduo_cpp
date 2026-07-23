@@ -5,6 +5,7 @@
         project: null,
         protocolRuntimeStateOverrides: new Map(),
     };
+    let restoreAttempted = false;
 
     /**
      * 保留调试参数返回服务列表页。
@@ -193,6 +194,10 @@
                 }
                 renderProjectContext(pageContext.project);
                 syncProtocolRuntimeControls();
+                if (!nextActive && KitProxy.protocolInteractionDrawer
+                    && typeof KitProxy.protocolInteractionDrawer.cleanupProject === 'function') {
+                    KitProxy.protocolInteractionDrawer.cleanupProject(pageContext.project.id);
+                }
             } catch (error) {
                 KitProxy.utils.showGlobalError(`${nextActive ? '启动' : '停止'}测试服务失败：${error.message}`);
                 toggleButton.disabled = false;
@@ -301,6 +306,66 @@
         });
     }
 
+    function currentWorkspaceIdentity(protocolId) {
+        const persistence = KitProxy.protocolInteractionPersistence;
+        const user = KitProxy.auth && typeof KitProxy.auth.getCurrentUser === 'function'
+            ? KitProxy.auth.getCurrentUser()
+            : null;
+        if (!persistence || typeof persistence.createWorkspaceIdentity !== 'function' || !pageContext.project) {
+            return null;
+        }
+        return persistence.createWorkspaceIdentity({
+            apiBaseUrl: KitProxy.config && KitProxy.config.apiBaseUrl,
+            user,
+            projectId: pageContext.project.id,
+            protocolId,
+        });
+    }
+
+    function restoreMarkedDrawer() {
+        if (restoreAttempted) return { status: 'already_attempted' };
+        restoreAttempted = true;
+        const persistence = KitProxy.protocolInteractionPersistence;
+        const drawerApi = KitProxy.protocolInteractionDrawer;
+        if (!persistence || !drawerApi || typeof drawerApi.restore !== 'function' || !pageContext.project) {
+            return { status: 'unavailable' };
+        }
+        const markerStorage = global.sessionStorage;
+        const rawMarker = typeof persistence.readRestoreMarker === 'function'
+            ? persistence.readRestoreMarker(markerStorage)
+            : null;
+        if (!rawMarker || rawMarker.drawerOpen !== true) return { status: 'no_marker' };
+        const identity = currentWorkspaceIdentity(rawMarker.protocolId);
+        const marker = identity && typeof persistence.readValidRestoreMarker === 'function'
+            ? persistence.readValidRestoreMarker(identity, markerStorage)
+            : null;
+        if (!marker) return { status: 'invalid_marker' };
+        const protocolItem = document.querySelector(
+            `.protocol-item[data-project-id="${marker.projectId}"][data-protocol-id="${marker.protocolId}"]`,
+        );
+        if (!protocolItem) {
+            persistence.clearRestoreMarker(markerStorage);
+            return { status: 'target_missing' };
+        }
+        const entry = {
+            projectId: marker.projectId,
+            protocolId: marker.protocolId,
+            name: protocolItem.querySelector('.protocol-name')
+                ? protocolItem.querySelector('.protocol-name').textContent
+                : '',
+            protocolType: protocolItem.dataset.protocolType || '',
+            projectRuntimeState: Number(protocolItem.dataset.projectRuntimeState),
+            configState: Number(protocolItem.dataset.configState),
+            deleted: protocolItem.dataset.status === 'inactive',
+            triggerButton: protocolItem.querySelector('.protocol-interaction-btn'),
+        };
+        if (!drawerApi.isEligible(entry)) {
+            persistence.clearRestoreMarker(markerStorage);
+            return { status: 'target_unavailable' };
+        }
+        return drawerApi.restore(entry) ? { status: 'restored', entry } : { status: 'restore_failed' };
+    }
+
     /**
      * 加载当前服务的协议项分页列表。
      * @param {number=} page
@@ -332,6 +397,7 @@
 
             checkProtocolEmptyState();
             renderProtocolPagination();
+            restoreMarkedDrawer();
         } catch(error) {
             console.error('加载协议项列表出错:', error);
             KitProxy.utils.showGlobalError('加载协议项列表出错： ' + error.message);
@@ -421,12 +487,22 @@
         buildProtocolItemCreateUrl,
         initPage,
         loadProtocolItems,
+        restoreMarkedDrawer,
         rememberProtocolRuntimeState,
         clearProtocolRuntimeStateOverrides,
         handleProtocolAdded: async function() {
             await loadProtocolItems(1);
         },
         handleProtocolDeleted: async function() {
+            if (KitProxy.protocolInteractionDrawer
+                && typeof KitProxy.protocolInteractionDrawer.cleanupProtocol === 'function') {
+                const protocolId = arguments[0] && arguments[0].dataset
+                    ? arguments[0].dataset.protocolId
+                    : null;
+                if (protocolId) {
+                    KitProxy.protocolInteractionDrawer.cleanupProtocol(pageContext.project && pageContext.project.id, protocolId);
+                }
+            }
             const protocolList = getProtocolListElement();
             const visibleCountBeforeDelete = protocolList
                 ? protocolList.querySelectorAll('.protocol-item').length

@@ -2130,6 +2130,12 @@
     grid-template-columns: minmax(0, 1fr);
 }
 
+.config-pattern-modal .pattern-wire-hex-input.is-display-str .pattern-value-editor-input {
+    color: #0f172a;
+    font-size: 13px;
+    letter-spacing: 0.08em;
+}
+
 .config-pattern-modal .pattern-wire-hex-input.is-display-value .pattern-hex-prefix {
     display: none;
 }

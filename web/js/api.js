@@ -736,15 +736,45 @@
         }
 
         function fallbackLoginUrl() {
-            return buildFallbackPageUrl('/html/login.html');
+            const loginUrl = new URL(buildFallbackPageUrl('/html/login.html'), global.location.href);
+            const current = global.location.pathname + global.location.search + global.location.hash;
+            const returnTo = fallbackNormalizeReturnTo(current);
+            if (returnTo) loginUrl.searchParams.set('returnTo', returnTo);
+            return loginUrl.pathname + (loginUrl.search ? `?${loginUrl.searchParams.toString()}` : '') + loginUrl.hash;
         }
 
         function fallbackMainUrl() {
             return buildFallbackPageUrl('/html/main.html');
         }
 
-        function fallbackRedirectToLogin() {
-            if (global.location) global.location.href = fallbackLoginUrl();
+        function fallbackNormalizeReturnTo(href) {
+            const value = String(href || '').trim();
+            if (!value || value.startsWith('//') || value.startsWith('\\')
+                || /^[a-z][a-z\d+.-]*:/i.test(value)) return '';
+            try {
+                const url = new URL(value, global.location.href);
+                if (url.origin !== global.location.origin || !/^\/html\/[^/?#]+\.html$/i.test(url.pathname)) {
+                    return '';
+                }
+                return url.pathname + url.search + url.hash;
+            } catch (error) {
+                return '';
+            }
+        }
+
+        function fallbackPostLoginUrl() {
+            const params = new URLSearchParams(global.location.search);
+            const returnTo = fallbackNormalizeReturnTo(params.get('returnTo'));
+            return returnTo || buildFallbackPageUrl('/html/main.html');
+        }
+
+        function fallbackRedirectToLogin(options = {}) {
+            if (!global.location) return;
+            if (options.includeReturnTo === false) {
+                global.location.href = buildFallbackPageUrl('/html/login.html');
+                return;
+            }
+            global.location.href = fallbackLoginUrl();
         }
 
         function fallbackRedirectToMain() {
@@ -808,6 +838,11 @@
             buildPageUrl: buildFallbackPageUrl,
             buildLoginUrl: fallbackLoginUrl,
             buildMainUrl: fallbackMainUrl,
+            normalizeReturnTo: fallbackNormalizeReturnTo,
+            getSafeReturnToFromLoginUrl: function() {
+                return fallbackNormalizeReturnTo(new URLSearchParams(global.location.search).get('returnTo'));
+            },
+            buildPostLoginUrl: fallbackPostLoginUrl,
             loadCurrentUser: fallbackLoadCurrentUser,
             requireCurrentUser: fallbackRequireCurrentUser,
             applyCurrentUser: fallbackApplyCurrentUser,

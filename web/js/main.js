@@ -117,6 +117,62 @@ function getProtocolConfigStateText(protocol) {
     return '未上线';
 }
 
+/**
+ * 同步协议项实时交互入口的可用状态。
+ * @param {HTMLElement} protocolItem
+ */
+function refreshProtocolInteractionEntry(protocolItem) {
+    const button = protocolItem && protocolItem.querySelector('.protocol-interaction-btn');
+    if (!button) return;
+
+    const projectRuntimeState = Number(protocolItem.dataset.projectRuntimeState) === 1 ? 1 : 0;
+    const configState = Number(protocolItem.dataset.configState);
+    const deleted = protocolItem.dataset.status === 'inactive';
+    const entry = {
+        projectRuntimeState,
+        configState,
+        deleted,
+    };
+    const eligible = !deleted && projectRuntimeState === 1 && configState === 1;
+    let reason = '';
+    if (KitProxy.protocolInteractionDrawer && typeof KitProxy.protocolInteractionDrawer.eligibilityReason === 'function') {
+        reason = KitProxy.protocolInteractionDrawer.eligibilityReason(entry);
+    } else if (deleted) {
+        reason = '协议项已删除';
+    } else if (projectRuntimeState !== 1) {
+        reason = '请先启动测试服务';
+    } else if (configState === 2) {
+        reason = '协议项待重配置';
+    } else if (configState !== 1) {
+        reason = '请先上线协议项';
+    }
+    button.disabled = !eligible;
+    const label = eligible ? '查看协议项实时交互详情' : reason;
+    button.title = label;
+    button.setAttribute('aria-label', label);
+}
+
+function bindProtocolInteractionAction(protocolItem, protocol) {
+    const button = protocolItem.querySelector('.protocol-interaction-btn');
+    if (!button) return;
+    button.addEventListener('click', function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (button.disabled || !KitProxy.protocolInteractionDrawer) return;
+        KitProxy.protocolInteractionDrawer.open({
+            projectId: protocolItem.dataset.projectId,
+            protocolId: protocolItem.dataset.protocolId,
+            protocolType: protocolItem.dataset.protocolType || protocol.type,
+            name: protocol.name,
+            projectRuntimeState: protocolItem.dataset.projectRuntimeState,
+            configState: protocolItem.dataset.configState,
+            deleted: protocolItem.dataset.status === 'inactive',
+            triggerButton: button,
+        });
+    });
+    refreshProtocolInteractionEntry(protocolItem);
+}
+
 // 更新协议项显示
 function updateProtocolItem(id_str, protocol) {
     const protocolItem = document.getElementById(id_str);
@@ -730,6 +786,7 @@ function refreshProtocolRuntimeControl(protocolItem, configState) {
     button.title = disabled
         ? '项目未运行，不能上线或下线'
         : (state === 2 ? '进入重配置页面' : (state === 1 ? '点击下线协议项' : '点击上线协议项'));
+    refreshProtocolInteractionEntry(protocolItem);
 }
 
 function bindProtocolRuntimeAction(protocolItem) {
@@ -776,6 +833,10 @@ function bindProtocolRuntimeAction(protocolItem) {
             const result = await KitProxy.api.setProtocolRuntime(protocolId, enable);
             const nextConfigState = result && result.config_state != null ? Number(result.config_state) : (enable ? 1 : 0);
             refreshProtocolRuntimeControl(protocolItem, nextConfigState);
+            if (nextConfigState !== 1 && KitProxy.protocolInteractionDrawer
+                && typeof KitProxy.protocolInteractionDrawer.cleanupProtocol === 'function') {
+                KitProxy.protocolInteractionDrawer.cleanupProtocol(projectId, protocolId);
+            }
             if (KitProxy.protocolItemsPage && typeof KitProxy.protocolItemsPage.rememberProtocolRuntimeState === 'function') {
                 KitProxy.protocolItemsPage.rememberProtocolRuntimeState(protocolId, nextConfigState);
             }
@@ -1320,14 +1381,21 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
 
     // 注意: 这里只需改变卡片内部子项的呈现，不需要更改整个布局
     const escape = KitProxy.utils.escapeHTML;
+    const interactionButtonHTML = serviceCard.classList.contains('protocol-items-page')
+        ? `<button type="button" class="protocol-interaction-btn" data-testid="protocol-interaction-open" title="查看协议项实时交互详情" aria-label="查看协议项实时交互详情">
+                    <span class="protocol-interaction-icon" aria-hidden="true"></span>
+                </button>`
+        : '';
     const actionHTML = protocolInactive
-        ? '<button type="button" class="restore-protocol-btn">恢复协议项</button>'
+        ? `<button type="button" class="restore-protocol-btn">恢复协议项</button>${interactionButtonHTML}`
         : `<button type="button" class="protocol-runtime-btn is-${configState === 1 ? 'online' : (configState === 2 ? 'reconfig' : 'offline')}" data-config-state="${escape(configState)}">${escape(getProtocolConfigStateText(protocol))}</button>
+                ${interactionButtonHTML}
                 <button type="button" class="protocol-toggle-btn" aria-label="展开协议项详情" aria-expanded="false">
                     <span class="protocol-toggle-icon" aria-hidden="true"></span>
                 </button>
                 <button type="button" class="edit-protocol-btn">修改协议项</button>
-                <button type="button" class="delete-protocol-btn">删除协议</button>`;
+                <button type="button" class="delete-protocol-btn">删除协议</button>
+                `;
     protocolItem.innerHTML =`
         <div class="protocol-header">
             <div class="protocol-primary-row">
@@ -1364,6 +1432,7 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
         bindProtocolFieldEditors(protocolItem);
         bindProtocolBodyEditor(protocolItem);
     }
+    bindProtocolInteractionAction(protocolItem, protocol);
 
     // 将协议项卡片插入到列表中
     if(-1 === pos) {
@@ -2786,9 +2855,6 @@ document.addEventListener('DOMContentLoaded', async function() {
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
         modal.innerHTML = addNewServiceCardModalHTML();
-        // 暂不考虑 模态框不需要重新再去获取
-        // const modal = await loadModal('add_protocol_service.html');
-
         document.body.appendChild(modal);
 
         bindAddServiceDynamicControls(modal);

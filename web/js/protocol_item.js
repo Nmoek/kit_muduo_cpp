@@ -589,7 +589,12 @@ function createProtocolItemBodyModal(body_type, body_data, handleCb, options = {
         }
 
         const newBodyType = bodyEditor.getType();
-        const rawBody = bodyEditor.getValue().trim();
+        const rawBodyValue = typeof bodyEditor.getValueAsync === 'function'
+            ? await bodyEditor.getValueAsync()
+            : bodyEditor.getValue();
+        const rawBody = newBodyType === 'multiform'
+            ? rawBodyValue
+            : String(rawBodyValue || '').trim();
         const newBody = KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeBodyContent === 'function'
             ? KitProxy.bodySyntax.normalizeBodyContent(rawBody, newBodyType)
             : (isRequest && KitProxy.bodySyntax && typeof KitProxy.bodySyntax.normalizeRequestBodyContent === 'function'

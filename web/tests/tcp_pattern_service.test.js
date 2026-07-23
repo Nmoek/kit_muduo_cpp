@@ -196,6 +196,81 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
     });
 
     /**
+     * 测试思路：项目格式中的 STR 长度由用户明确配置，允许范围为 1~32，
+     * 不能留空；0、负号和非数字不能留在输入框内，超过 32 时立即归一为 32。
+     * 示例：UINT8 -> STR 后长度输入框可编辑，输入 0 显示 1，输入 33 显示 32。
+     */
+    it('项目格式 STR 长度可手动配置且限制为 1~32', () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '项目格式字段', {
+            version: 2,
+            header_bytes: 3,
+            byte_order: 'raw',
+            length_policy: 'no_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 1, type: 'UINT8', role: 'start_magic', match: 'H23' },
+                { name: '功能码', byte_pos: 1, byte_len: 1, type: 'UINT8', role: 'function_code' },
+                { name: '字符串字段', byte_pos: 2, byte_len: 1, type: 'UINT8', role: 'common' },
+            ],
+        }, null, true);
+
+        const modal = context.document.querySelector('.config-pattern-modal.is-project-pattern');
+        const field = Array.from(modal.querySelectorAll('.pattern-field-container'))
+            .find(node => node.querySelector('.pattern-field-name').value === '字符串字段');
+        const typeSelect = field.querySelector('.pattern-field-type');
+        const byteLen = field.querySelector('.pattern-field-byte-len');
+
+        typeSelect.value = 'STR';
+        typeSelect.dispatchEvent(new context.Event('change', { bubbles: true }));
+
+        expect(byteLen.value).toBe('1');
+        expect(byteLen.placeholder).toBe('1~32');
+        expect(byteLen.readOnly).toBe(false);
+        expect(byteLen.disabled).toBe(false);
+        expect(byteLen.min).toBe('1');
+        expect(byteLen.max).toBe('32');
+
+        byteLen.value = '';
+        byteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(byteLen.value).toBe('');
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toContain('Byte 长度');
+
+        byteLen.value = '0';
+        byteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(byteLen.value).toBe('1');
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toBe('');
+
+        byteLen.value = '-5';
+        byteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(byteLen.value).toBe('5');
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toBe('');
+
+        byteLen.value = 'a7b';
+        byteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(byteLen.value).toBe('7');
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toBe('');
+
+        byteLen.value = '33';
+        byteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        const cappedPreview = Array.from(modal.querySelectorAll('.pattern-byte-block'))
+            .find(node => node.querySelector('strong')?.textContent === '字符串字段');
+        expect(byteLen.value).toBe('32');
+        expect(cappedPreview?.textContent).toContain('STR · 32 Byte');
+        expect(cappedPreview?.style.getPropertyValue('--pattern-span')).toBe('10');
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toBe('');
+
+        byteLen.value = '5';
+        byteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        const preview = Array.from(modal.querySelectorAll('.pattern-byte-block'))
+            .find(node => node.querySelector('strong')?.textContent === '字符串字段');
+        expect(preview?.textContent).toContain('STR · 5 Byte');
+        expect(modal.querySelector('.pattern-summary-item.is-ok')).toBeTruthy();
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toBe('');
+    });
+
+    /**
      * 测试思路：项目 TCP 格式字段列表的新增按钮位于每行操作列，结构变化后按行顺序重算 Byte 起始。
      * 示例：在 4 字节起始标识下方新增 1 字节字段后，后续 2 字节功能码应从 byte_pos=5 开始；下移、删除后继续自动回填。
      */
@@ -316,10 +391,12 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
     });
 
     /**
-     * 测试思路：字段值按钮只切换显示态，提交语义仍然保持 H 开头 wire hex。
-     * 示例：H313233 的 STR 字段显示真值为 123，再切回时仍是 H313233。
+     * 测试思路：STR 字段进入协议项模态框后默认使用 ASCII 真值编辑，避免
+     * 用户没有点击按钮时把连续字符串送入十六进制过滤器；提交语义仍保持
+     * H 开头的 wire hex。
+     * 示例：配置长度为 3，H313233 -> 默认显示 123 -> 输入 1234 仍截断为 123。
      */
-    it('pattern-field-value-display-btn 支持 STR 真值显示和切回 wire hex', () => {
+    it('STR 字段默认使用 ASCII 真值显示并可切回 wire hex', () => {
         const target = context.document.createElement('button');
         context.document.body.appendChild(target);
 
@@ -341,25 +418,137 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
 
         expect(byteLen.value).toBe('3');
         expect(field.querySelector('.pattern-hex-prefix').textContent).toBe('H');
-        expect(editor.placeholder).toBe('00 00 00');
-        expect(editor.value).toBe('31 32 33');
-        editor.value = '31323344';
-        editor.dispatchEvent(new context.Event('input', { bubbles: true }));
-        expect(input.value).toBe('H313233');
-        expect(editor.value).toBe('31 32 33');
-        expect(button.classList.contains('value-display-hex')).toBe(true);
-
-        button.click();
+        expect(editor.placeholder).toBe('ASCII字符串真值');
+        expect(editor.value).toBe('123');
+        expect(editor.maxLength).toBe(3);
         expect(button.textContent).toBe('S');
+        expect(button.classList.contains('value-display-str')).toBe(true);
+        editor.value = '1234';
+        editor.dispatchEvent(new context.Event('input', { bubbles: true }));
         expect(input.value).toBe('123');
         expect(editor.value).toBe('123');
-        expect(button.classList.contains('value-display-str')).toBe(true);
+        expect(byteLen.value).toBe('3');
+        expect(context.document.querySelector('.pattern-validation-errors').textContent).toBe('');
 
         button.click();
         expect(button.textContent).toBe('H');
         expect(input.value).toBe('H313233');
         expect(editor.value).toBe('31 32 33');
-        expect(byteLen.value).toBe('3');
+        expect(button.classList.contains('value-display-hex')).toBe(true);
+    });
+
+    /**
+     * 测试思路：STR 真值输入只允许 ASCII 且不能超过 32 字节，长度使用
+     * 项目格式中已经配置的值，不因输入内容变化而改写。
+     * 并且粘贴或输入非 ASCII 内容时不能进入字段值模型。
+     * 示例：配置长度为 32，输入 33 个 A 和一个中文字符 -> 编辑器只保留前 32 个 A。
+     */
+    it('STR 真值输入限制为 ASCII 且最多 32 字节', () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+
+        context.createCustomTcpPatternModal(target, '协议项字段', {
+            version: 2,
+            header_bytes: 0,
+            byte_order: 'raw',
+            length_policy: 'no_length',
+            fields: [
+                { name: '字符串字段', byte_pos: 0, byte_len: 32, type: 'STR', role: 'common', value: '' },
+            ],
+        }, null, false);
+
+        const field = context.document.querySelector('.pattern-field-container');
+        const input = field.querySelector('.pattern-field-value');
+        const editor = field.querySelector('.pattern-value-editor-input');
+        const byteLen = field.querySelector('.pattern-field-byte-len');
+        const text = `${'A'.repeat(33)}中`;
+
+        editor.value = '';
+        editor.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(byteLen.value).toBe('32');
+
+        editor.value = text;
+        editor.dispatchEvent(new context.Event('input', { bubbles: true }));
+
+        expect(editor.value).toBe('A'.repeat(32));
+        expect(input.value).toBe('A'.repeat(32));
+        expect(byteLen.value).toBe('32');
+        expect(context.document.querySelector('.pattern-validation-errors').textContent).toBe('');
+    });
+
+    /**
+     * 测试思路：协议项字段值中的 STR 必须由用户提供实际内容，空值不能像
+     * 普通数值字段一样被当作“未配置”放过。
+     * 示例：空 STR 字段打开配置框时立即显示错误，编辑器带 required 属性，提交回调不执行。
+     */
+    it('协议项 STR 字段值不能为空', async () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+        let callbackCalled = false;
+
+        context.createCustomTcpPatternModal(target, '协议项字段', {
+            version: 2,
+            header_bytes: 0,
+            byte_order: 'raw',
+            length_policy: 'no_length',
+            fields: [
+                { name: '字符串字段', byte_pos: 0, byte_len: 0, type: 'STR', role: 'common', value: '' },
+            ],
+        }, null, false, () => {
+            callbackCalled = true;
+        });
+
+        const modal = context.document.querySelector('.config-pattern-modal.is-item-pattern');
+        const editor = modal.querySelector('.pattern-value-editor-input');
+        expect(editor.required).toBe(true);
+        expect(modal.querySelector('.pattern-validation-errors').textContent).toContain('STR字段值不能为空');
+
+        modal.querySelector('#config-pattern-modal-form')
+            .dispatchEvent(new context.Event('submit', { bubbles: true, cancelable: true }));
+        await flushPromises(4);
+
+        expect(callbackCalled).toBe(false);
+        expect(context.document.querySelector('.config-pattern-modal.is-item-pattern')).toBeTruthy();
+    });
+
+    /**
+     * 测试思路：STR 的输入值必须同时满足非空、ASCII、32 字节上限和项目格式
+     * 指定的固定长度。
+     * 示例：项目长度为 1，输入 H414243 应失败，输入 H41 才能通过；不填值也失败。
+     */
+    it('TCP item cfg 对 STR 按配置长度校验并拒绝空值', () => {
+        const patternInfo = {
+            version: 2,
+            header_bytes: 3,
+            byte_order: 'raw',
+            length_policy: 'no_length',
+            fields: [
+                { name: '起始标识', byte_pos: 0, byte_len: 1, type: 'UINT8', role: 'start_magic', match: 'H23' },
+                { name: '功能码', byte_pos: 1, byte_len: 1, type: 'UINT8', role: 'function_code' },
+                { name: '字符串字段', byte_pos: 2, byte_len: 1, type: 'STR', role: 'common' },
+            ],
+        };
+        const validate = context.KitProxy.tcpPatternEditor.validateTcpItemCfg;
+
+        const emptyValidation = validate(patternInfo, {
+            function_code: 'H01',
+            fields: {},
+        });
+        expect(emptyValidation.valid).toBe(false);
+        expect(emptyValidation.errors.join('\n')).toContain('STR字段值不能为空');
+
+        const mismatchValidation = validate(patternInfo, {
+            function_code: 'H01',
+            fields: { 2: 'H414243' },
+        });
+        expect(mismatchValidation.valid).toBe(false);
+        expect(mismatchValidation.errors.join('\n')).toContain('字段值字节数必须等于 1');
+
+        const valueValidation = validate(patternInfo, {
+            function_code: 'H01',
+            fields: { 2: 'H41' },
+        });
+        expect(valueValidation.valid).toBe(true);
     });
 
     /**
