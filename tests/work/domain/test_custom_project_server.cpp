@@ -239,7 +239,11 @@ protected:
 
         // 创建自定义TCP服务器必须带解析格式，否则无法解析。
         // R1 之后 runtime loop 和 TcpServer 生命周期由 CustomTcpProjectServer 自己持有。
-        return std::make_shared<CustomTcpProjectServer>(p.m_id, p.m_patternInfo, result.val);
+        return std::make_shared<CustomTcpProjectServer>(
+            p.m_id,
+            p.m_patternInfo,
+            result.val,
+            InetAddress(0, "127.0.0.1"));
     }
 
     RuntimeLoopPool loop_pool_;
@@ -1072,7 +1076,8 @@ TEST_F(CustomTcpServerSuite, buffer_partial_body_keeps_parser_state)
     auto server = std::make_shared<CustomTcpProjectServer>(
         1001,
         std::vector<char>(pattern_json_partial_body.begin(), pattern_json_partial_body.end()),
-        result.val);
+        result.val,
+        InetAddress(0, "127.0.0.1"));
 
     auto pc = std::make_shared<kit_domain::Protocol>(kit_domain::Protocol{
         .m_id = 1001,

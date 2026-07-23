@@ -18,6 +18,7 @@
 #include "domain/protocol_item.h"
 #include "domain/http_protocol_item.h"
 #include "net/http/http_request.h"
+#include "net/http/multiform.h"
 #include "base/time_stamp.h"
 
 #include <arpa/inet.h>
@@ -143,6 +144,11 @@ static std::string ReadAll(int32_t fd)
 static std::vector<char> Chars(const std::string &text)
 {
     return std::vector<char>(text.begin(), text.end());
+}
+
+static kit_muduo::InetAddress RuntimeServerAddress()
+{
+    return kit_muduo::InetAddress(0, "127.0.0.1");
 }
 
 class RuntimeInteractionCollector
@@ -276,7 +282,9 @@ static std::shared_ptr<Protocol> MakeHttpProtocol(
         int64_t project_id,
         const std::string &path,
         const std::vector<char> &req_body = {},
-        const std::vector<char> &resp_body = {'o', 'k'})
+        const std::vector<char> &resp_body = {'o', 'k'},
+        ProtocolBodyType req_body_type = ProtocolBodyType::kJson,
+        ProtocolBodyType resp_body_type = ProtocolBodyType::kJson)
 {
     auto protocol = std::make_shared<Protocol>();
     protocol->m_id = protocol_id;
@@ -284,8 +292,8 @@ static std::shared_ptr<Protocol> MakeHttpProtocol(
     protocol->m_type = ProtocolType::kHttp;
     protocol->m_projectId = project_id;
     protocol->m_status = ProtocolStatus::kValid;
-    protocol->m_reqBodyType = ProtocolBodyType::kJson;
-    protocol->m_respBodyType = ProtocolBodyType::kJson;
+    protocol->m_reqBodyType = req_body_type;
+    protocol->m_respBodyType = resp_body_type;
     protocol->m_reqBodyDataStatus = req_body.empty() ? 0 : 1;
     protocol->m_respBodyDataStatus = resp_body.empty() ? 0 : 1;
     protocol->m_reqCfg = HttpReqCfg("GET", path, nljson{{"X-Old", "1"}});
@@ -752,7 +760,7 @@ TEST(HttpProjectRuntimeSuite, UpdateReqHeadersKeepsRouteAndBodyViews)
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9001, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9001, result.val, RuntimeServerAddress());
     auto protocol = MakeHttpProtocol(101, 9001, "/d9/http/header", {'r', 'e', 'q'}, {'r', 'e', 's', 'p'});
     auto item = ProtocolItemFactory::Create(protocol, server);
     ASSERT_NE(item, nullptr);
@@ -803,7 +811,7 @@ TEST(HttpProjectRuntimeSuite, UpdateReqSameRouteWithRepeatedSlashDoesNotConflict
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9016, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9016, result.val, RuntimeServerAddress());
     auto protocol = MakeHttpProtocol(151, 9016, "/d9/http/slash");
 
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
@@ -840,7 +848,7 @@ TEST(HttpProjectRuntimeSuite, UpdateReqRouteConflictPreservesOldRouteAndCfg)
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9002, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9002, result.val, RuntimeServerAddress());
     auto old_protocol = MakeHttpProtocol(201, 9002, "/d9/http/old");
     auto conflict_protocol = MakeHttpProtocol(202, 9002, "/d9/http/conflict");
 
@@ -887,7 +895,7 @@ TEST(HttpProjectRuntimeSuite, UpdateReqRouteSuccessReleasesOldRoute)
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9003, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9003, result.val, RuntimeServerAddress());
     auto protocol = MakeHttpProtocol(301, 9003, "/d9/http/move-old");
 
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
@@ -932,7 +940,7 @@ TEST(HttpProjectRuntimeSuite, UpdateReqBodyOnlyReplacesReqBodyView)
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9004, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9004, result.val, RuntimeServerAddress());
     auto protocol = MakeHttpProtocol(401, 9004, "/d9/http/body", {'o', 'l', 'd'}, {'r', 'e', 's', 'p'});
 
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
@@ -983,7 +991,7 @@ TEST(HttpProjectRuntimeSuite, BodyViewStoresProtocolBodyOnlyAndDerivesHttpMetada
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9005, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9005, result.val, RuntimeServerAddress());
     auto protocol = MakeHttpProtocol(501, 9005, "/d9/http/body-meta", {'{', '}'}, {'o', 'k'});
     auto item = ProtocolItemFactory::Create(protocol, server);
     ASSERT_NE(item, nullptr);
@@ -1031,7 +1039,7 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesMatchedObservationThroughPublisher
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9101, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9101, result.val, RuntimeServerAddress());
     RuntimeInteractionPipeline pipeline(9101, 701, true);
     server->setObserveCallback(pipeline.Callback());
 
@@ -1115,7 +1123,7 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesRouteNotFoundProjectNotice)
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9102, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9102, result.val, RuntimeServerAddress());
     RuntimeInteractionPipeline pipeline(9102, 702, true);
     server->setObserveCallback(pipeline.Callback());
     auto protocol_cache = std::make_shared<InteractionRecordCache>(
@@ -1170,7 +1178,7 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesMethodNotAllowedProjectNotice)
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9103, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9103, result.val, RuntimeServerAddress());
     RuntimeInteractionPipeline pipeline(9103, 703, true);
     server->setObserveCallback(pipeline.Callback());
 
@@ -1229,7 +1237,7 @@ TEST(HttpProjectRuntimeSuite, RuntimePublishesParseErrorRawPacketAndKeeps400Resp
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9104, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9104, result.val, RuntimeServerAddress());
     RuntimeInteractionPipeline pipeline(9104, 704, true);
     server->setObserveCallback(pipeline.Callback());
     auto protocol_cache = std::make_shared<InteractionRecordCache>(
@@ -1283,7 +1291,7 @@ TEST(HttpProjectRuntimeSuite, RuntimeObserveCallbackExceptionDoesNotChangeRespon
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9105, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9105, result.val, RuntimeServerAddress());
     std::atomic_int callback_count{0};
     server->setObserveCallback([&callback_count](ProtocolInteractionObservation) {
         callback_count.fetch_add(1);
@@ -1314,6 +1322,119 @@ TEST(HttpProjectRuntimeSuite, RuntimeObserveCallbackExceptionDoesNotChangeRespon
 
 /*
 测试思路：
+1. 配置 response body 为 multipart 描述，而不是已经编码好的 HTTP body。
+2. 真实 runtime 响应必须生成固定 boundary、Content-Type 参数和合法 multipart 字节流。
+3. 同一条请求还要通过 interaction publisher，确认文本 part 进入附件元数据，图片 part 进入 sidecar。
+
+示例：
+  response config(fields=[message, avatar])
+      |
+      v
+  HTTP response multipart/form-data
+      |
+      v
+  record.response.body.attachments + binary_sidecars
+*/
+TEST(HttpProjectRuntimeSuite, RuntimeEncodesMultipartResponseAndCapturesAttachments)
+{
+    constexpr int64_t project_id = 9106;
+    constexpr int64_t protocol_id = 706;
+    constexpr const char *kBoundary = "KitProtocolFormBoundary";
+
+    RuntimeLoopPool pool(1);
+    auto result = pool.acquire(project_id);
+    ASSERT_TRUE(result.ok());
+    ASSERT_NE(result.val, nullptr);
+
+    auto server = std::make_shared<HttpProjectServer>(
+        project_id, result.val, RuntimeServerAddress());
+    RuntimeInteractionPipeline pipeline(project_id, protocol_id, true);
+    server->setObserveCallback(pipeline.Callback());
+
+    const std::string response_descriptor = R"({
+        "fields": [
+            {"name":"message","type":"text","value":"hello multipart"},
+            {"name":"avatar","type":"file","filename":"avatar.png",
+             "content_type":"image/png","data_base64":"iVBORw=="}
+        ]
+    })";
+    auto protocol = MakeHttpProtocol(
+        protocol_id,
+        project_id,
+        "/d9/http/multipart-response",
+        {},
+        Chars(response_descriptor),
+        ProtocolBodyType::kNone,
+        ProtocolBodyType::kMultiForm);
+    auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
+    ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();
+
+    auto runtime_item = GetHttpRuntimeItem(server, protocol_id);
+    ASSERT_NE(runtime_item, nullptr);
+    pipeline.Subscribe(project_id, protocol_id, runtime_item->cache(), server->cache(), true);
+    server->start();
+
+    RuntimeTestFdGuard client_fd(ConnectLoopback(server->getBindAddr().toPort()));
+    ASSERT_GE(client_fd.fd, 0);
+    ASSERT_TRUE(SendAll(client_fd.fd, BuildHttpRequest("GET", "/d9/http/multipart-response")));
+
+    const std::string response = ReadAll(client_fd.fd);
+    EXPECT_NE(response.find("HTTP/1.1 200 OK\r\n"), std::string::npos) << response;
+    EXPECT_NE(response.find("Content-Type: multipart/form-data; boundary=") , std::string::npos)
+        << response;
+
+    const auto header_end = response.find("\r\n\r\n");
+    ASSERT_NE(header_end, std::string::npos);
+    const std::string wire_body = response.substr(header_end + 4);
+    const auto form = kit_muduo::http::MultiForm::parse(
+        reinterpret_cast<const uint8_t *>(wire_body.data()),
+        wire_body.size(),
+        kBoundary);
+    ASSERT_TRUE(form.contains("message"));
+    ASSERT_TRUE(form.contains("avatar"));
+    EXPECT_EQ(form.at("message").strs(), "hello multipart");
+    EXPECT_EQ(form.at("avatar").filename, "avatar.png");
+    EXPECT_EQ(form.at("avatar").meta.media_type, "image/png");
+    EXPECT_EQ(form.at("avatar").data, (std::vector<uint8_t>{0x89, 'P', 'N', 'G'}));
+
+    ASSERT_TRUE(pipeline.collector->WaitForRecordCount(1));
+    EXPECT_TRUE(server->stop());
+
+    const auto records = pipeline.collector->Records();
+    ASSERT_EQ(records.size(), 1U);
+    const auto &record = records.front();
+    EXPECT_EQ(record.response.body.kind, InteractionPayloadKind::kMultiForm);
+    EXPECT_EQ(record.response.body.expect_kind, InteractionPayloadKind::kMultiForm);
+    ASSERT_EQ(record.response.body.attachments.size(), 2U);
+    ASSERT_EQ(record.binary_sidecars.size(), 1U);
+    ASSERT_NE(record.binary_sidecars.front().bytes, nullptr);
+    EXPECT_EQ(*record.binary_sidecars.front().bytes,
+              (std::vector<uint8_t>{0x89, 'P', 'N', 'G'}));
+
+    bool found_text = false;
+    bool found_image = false;
+    for(const auto &attachment : record.response.body.attachments)
+    {
+        if(attachment.kind == InteractionPayloadKind::kText)
+        {
+            found_text = true;
+            EXPECT_EQ(attachment.text, "hello multipart");
+            EXPECT_FALSE(attachment.binary_available);
+        }
+        if(attachment.kind == InteractionPayloadKind::kImage)
+        {
+            found_image = true;
+            EXPECT_TRUE(attachment.binary_available);
+            EXPECT_EQ(attachment.size, 4U);
+            EXPECT_EQ(attachment.flag.rfind("response.body.multiform.", 0), 0U);
+        }
+    }
+    EXPECT_TRUE(found_text);
+    EXPECT_TRUE(found_image);
+}
+
+/*
+测试思路：
 1. HTTP project runtime 是协议测试平台，默认要求请求 Content-Type 精确命中协议项配置的 media type。
 2. 配置 req_body_type=json 时，期望 media_type 是 application/json；application/problem+json 虽然 codec 也是 JSON，但不应命中协议项。
 3. 通过真实 loopback HTTP 请求触发 runtime handler，断言响应明确区分为 media type mismatch，而不是 body parse error。
@@ -1332,7 +1453,7 @@ TEST(HttpProjectRuntimeSuite, DISABLED_RuntimeStrictMatchRejectsProblemJsonForCo
     ASSERT_TRUE(result.ok());
     ASSERT_NE(result.val, nullptr);
 
-    auto server = std::make_shared<HttpProjectServer>(9006, result.val);
+    auto server = std::make_shared<HttpProjectServer>(9006, result.val, RuntimeServerAddress());
     auto protocol = MakeHttpProtocol(601, 9006, "/d9/http/strict-json", {'{', '}'}, {'{', '}'});
     auto add_result = server->AddProtocolItem(ProtocolItemFactory::Create(protocol, server));
     ASSERT_TRUE(add_result.ok()) << add_result.error.toMsg();

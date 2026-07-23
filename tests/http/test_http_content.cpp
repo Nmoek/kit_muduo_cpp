@@ -8,6 +8,7 @@
  */
 #include "gtest/gtest.h"
 
+#include "domain/type.h"
 #include "net/http/http_content.h"
 
 #include <string>
@@ -197,4 +198,27 @@ TEST(HttpContentTest, GuessMediaTypeFromExtensionUsesBuiltinRuntimeAndFallback)
 
     EXPECT_FALSE(RegisterMimeTypeForExtension("/tmp/a.csv", "text/csv"));
     EXPECT_FALSE(RegisterMimeTypeForExtension("bad", "not-a-media-type"));
+}
+
+/*
+测试思路：
+1. ContentMeta 的 codec 推导结果是 HTTP 请求未配置具体 body 类型时的兜底输入。
+2. 缺失 Content-Type 必须保持 kNone，不能再被误判为显式 kEmpty。
+3. multipart/form-data 必须映射到 kMultiForm，供交互捕获和响应编码使用。
+
+示例：
+  Content-Type: multipart/form-data; boundary=demo
+      |
+      v
+  ProtocolBodyType::kMultiForm
+*/
+TEST(HttpContentTest, GuessProtocolBodyTypePreservesNoneAndRecognizesMultipart)
+{
+    EXPECT_EQ(GuessProtocolBodyTypeFromContentMeta(ContentMeta{}), kit_domain::ProtocolBodyType::kNone);
+    EXPECT_EQ(
+        GuessProtocolBodyTypeFromContentMeta(ParseHttpContentType("multipart/form-data; boundary=demo")),
+        kit_domain::ProtocolBodyType::kMultiForm);
+    EXPECT_EQ(
+        GuessProtocolBodyTypeFromContentMeta(ParseHttpContentType("application/json")),
+        kit_domain::ProtocolBodyType::kJson);
 }

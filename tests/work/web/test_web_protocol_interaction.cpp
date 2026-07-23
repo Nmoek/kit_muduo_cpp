@@ -524,7 +524,11 @@ public:
     CatchUpProjectServer(int64_t project_id,
                          std::shared_ptr<RuntimeLease> lease,
                          std::shared_ptr<ProtocolItem> protocol_item)
-        : ProjectServer(project_id, std::move(lease), "catch-up-test-server")
+        : ProjectServer(
+            project_id,
+            std::move(lease),
+            InetAddress(0, "127.0.0.1"),
+            "catch-up-test-server")
         , protocol_item_(std::move(protocol_item))
     {
     }

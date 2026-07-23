@@ -184,7 +184,10 @@ std::shared_ptr<HttpProjectServer> MakeHttpRuntimeServer(
         int64_t project_id,
         const std::vector<std::shared_ptr<Protocol>> &protocols)
 {
-    auto server = std::make_shared<HttpProjectServer>(project_id, GetRuntimeLoopLease(project_id));
+    auto server = std::make_shared<HttpProjectServer>(
+        project_id,
+        GetRuntimeLoopLease(project_id),
+        kit_muduo::InetAddress(0, "127.0.0.1"));
     for(const auto &protocol : protocols)
     {
         auto item = ProtocolItemFactory::Create(protocol, server);

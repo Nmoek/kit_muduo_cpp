@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace kit_domain;
@@ -69,7 +70,32 @@ TEST(TestProtocolBodyPipeline, EmptyBodyIsAllowedForEveryConcreteBodyType)
     EXPECT_TRUE(Check(ProtocolBodyType::kJson, empty).ok);
     EXPECT_TRUE(Check(ProtocolBodyType::kXml, empty).ok);
     EXPECT_TRUE(Check(ProtocolBodyType::kText, empty).ok);
+    EXPECT_TRUE(Check(ProtocolBodyType::kMultiForm, empty).ok);
+    EXPECT_TRUE(Check(ProtocolBodyType::kImage, empty).ok);
     EXPECT_TRUE(Check(ProtocolBodyType::kBinary, empty).ok);
+}
+
+/**
+ * 测试思路：
+ * 1. kEmpty 表示协议项明确配置了“空 body”，和其它 body 类型的空字节兼容规则不同。
+ * 2. 空字节应通过；非空字节必须失败，避免配置为空时仍发送实际内容。
+ * 3. kNone 表示“不关心 body”，即使收到非空字节也应直接通过，不进入具体 policy。
+ *
+ * 示例：
+ *
+ *   kEmpty + []     -> check ok
+ *   kEmpty + "data" -> check failed
+ *   kNone  + "data" -> check ok
+ */
+TEST(TestProtocolBodyPipeline, EmptyAndNoneBodyTypesKeepDistinctSemantics)
+{
+    EXPECT_TRUE(Check(ProtocolBodyType::kEmpty, {}).ok);
+
+    const auto empty_body_result = Check(ProtocolBodyType::kEmpty, Body("data"));
+    EXPECT_FALSE(empty_body_result.ok);
+    EXPECT_NE(empty_body_result.message.find("body not empty"), std::string::npos);
+
+    EXPECT_TRUE(Check(ProtocolBodyType::kNone, Body("data")).ok);
 }
 
 /**
@@ -277,8 +303,35 @@ TEST(TestProtocolBodyPipeline, BinaryBodyAcceptsAnyBytes)
  */
 TEST(TestProtocolBodyPipeline, UnknownOrOutOfRangeBodyTypeFails)
 {
-    EXPECT_FALSE(Check(ProtocolBodyType::kNone, Body("{}")).ok);
+    EXPECT_TRUE(Check(ProtocolBodyType::kNone, Body("{}")).ok);
     EXPECT_FALSE(Check(static_cast<ProtocolBodyType>(static_cast<int>(ProtocolBodyType::kMax)), Body("{}")).ok);
+}
+
+/**
+ * 测试思路：
+ * 1. 本次协议体扩展新增 none、empty、multiform、image 字符串值。
+ * 2. 每个值都要在配置解析、响应序列化和领域字符串 helper 之间保持一致。
+ * 3. 逐项往返可以防止只修改某一个出口，导致数据库或 Web 接口出现隐式回退。
+ *
+ * 示例：
+ *
+ *   "multiform" -> kMultiForm -> "multiform"
+ */
+TEST(TestProtocolBodyPipeline, NewBodyTypesRoundTripThroughExternalStrings)
+{
+    const std::vector<std::pair<ProtocolBodyType, std::string>> cases = {
+        {ProtocolBodyType::kNone, "none"},
+        {ProtocolBodyType::kEmpty, "empty"},
+        {ProtocolBodyType::kMultiForm, "multiform"},
+        {ProtocolBodyType::kImage, "image"},
+    };
+
+    for(const auto &[body_type, encoded] : cases)
+    {
+        SCOPED_TRACE(encoded);
+        EXPECT_EQ(ProtocolBodyTypeFromString(encoded), body_type);
+        EXPECT_EQ(ProtocolBodyTypeToString(body_type), encoded);
+    }
 }
 
 /**

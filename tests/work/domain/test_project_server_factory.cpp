@@ -136,3 +136,40 @@ TEST(TestProjectServerFactory, CreateCustomTcpServerKeepsLoopAliveAfterFactoryRe
     ASSERT_NE(std::dynamic_pointer_cast<CustomTcpProjectServer>(pj_server), nullptr);
     AssertLoopStillOwnedByProjectServer(pj_server);
 }
+
+/**
+ * 测试思路：
+ * 1. 先让 HTTP 工厂使用随机端口创建并停止一个服务，记录停止前的实际监听端口。
+ * 2. 再把这个端口写回 project 配置，交给 TCP 工厂创建第二个服务。
+ * 3. 第二个服务必须复用配置端口，证明 factory -> ProjectServer -> Acceptor 的地址传递没有丢失。
+ *
+ * 示例：
+ *
+ *   HTTP config port=0 -> actual=port-A -> stop
+ *   TCP  config port=port-A -> actual=port-A
+ */
+TEST(TestProjectServerFactory, ConfiguredPortIsReusedAfterPreviousServerStops)
+{
+    Project http_project = MakeBaseProject(103, ProtocolType::kHttp);
+    auto http_lease_result = pool.acquire(103);
+    ASSERT_TRUE(http_lease_result.ok());
+    ASSERT_NE(http_lease_result.val, nullptr);
+
+    auto http_server = ProjectServerFactory::Create(http_project, http_lease_result.val);
+    ASSERT_NE(http_server, nullptr);
+    const auto reused_port = http_server->getBindAddr().toPort();
+    ASSERT_GT(reused_port, 0);
+    ASSERT_TRUE(http_server->stop());
+    http_server.reset();
+
+    Project tcp_project = MakeBaseProject(104, ProtocolType::kCustomTcp);
+    tcp_project.m_listenPort = reused_port;
+    auto tcp_lease_result = pool.acquire(104);
+    ASSERT_TRUE(tcp_lease_result.ok());
+    ASSERT_NE(tcp_lease_result.val, nullptr);
+
+    auto tcp_server = ProjectServerFactory::Create(tcp_project, tcp_lease_result.val);
+    ASSERT_NE(tcp_server, nullptr);
+    EXPECT_EQ(tcp_server->getBindAddr().toPort(), reused_port);
+    ASSERT_TRUE(tcp_server->stop());
+}

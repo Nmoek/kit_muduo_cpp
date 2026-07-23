@@ -11,6 +11,7 @@
 
 #include "gtest/gtest.h"
 
+#include <algorithm>
 #include <chrono>
 #include <atomic>
 #include <condition_variable>
@@ -32,6 +33,29 @@ std::vector<uint8_t> Bytes(const std::string &text)
     return std::vector<uint8_t>(text.begin(), text.end());
 }
 
+std::vector<uint8_t> MultipartBody()
+{
+    const std::string boundary = "interaction-boundary";
+    const std::string text_part =
+        "--" + boundary + "\r\n"
+        "Content-Disposition: form-data; name=\"title\"\r\n"
+        "Content-Type: text/plain; charset=utf-8\r\n"
+        "\r\n"
+        "hello multipart\r\n";
+    const std::string file_prefix =
+        "--" + boundary + "\r\n"
+        "Content-Disposition: form-data; name=\"avatar\"; filename=\"avatar.png\"\r\n"
+        "Content-Type: image/png\r\n"
+        "\r\n";
+    const std::string file_suffix = "\r\n--" + boundary + "--\r\n";
+
+    std::vector<uint8_t> body(text_part.begin(), text_part.end());
+    body.insert(body.end(), file_prefix.begin(), file_prefix.end());
+    body.insert(body.end(), {0x89, 'P', 'N', 'G'});
+    body.insert(body.end(), file_suffix.begin(), file_suffix.end());
+    return body;
+}
+
 InteractionPayloadHint Hint(ProtocolType protocol_type,
                             ProtocolBodyType expect_body_type,
                             std::string media_type = {},
@@ -40,7 +64,7 @@ InteractionPayloadHint Hint(ProtocolType protocol_type,
     return InteractionPayloadHint{
         .protocol_type = protocol_type,
         .expect_body_type = expect_body_type,
-        .media_type = std::move(media_type),
+        .content_meta = kit_muduo::http::ParseHttpContentType(media_type),
         .prefer_hex_text_for_binary = prefer_hex_text_for_binary,
     };
 }
@@ -196,7 +220,7 @@ ProtocolInteractionObservation MakeHttpObservation(
         "Content-Type: application/json\r\n\r\n";
     obs.request.body_bytes = Bytes(request_body);
     obs.request.expect_body_type = ProtocolBodyType::kJson;
-    obs.request.media_type = "application/json";
+    obs.request.content_meta = kit_muduo::http::ParseHttpContentType("application/json");
     obs.response.meta = {
         {"status_code", 200},
     };
@@ -204,7 +228,7 @@ ProtocolInteractionObservation MakeHttpObservation(
         "Content-Type: application/json\r\n\r\n";
     obs.response.body_bytes = Bytes(response_body);
     obs.response.expect_body_type = ProtocolBodyType::kJson;
-    obs.response.media_type = "application/json";
+    obs.response.content_meta = kit_muduo::http::ParseHttpContentType("application/json");
     return obs;
 }
 
@@ -553,6 +577,73 @@ TEST(TestProtocolInteraction, HttpImageBodyBuildsAttachmentAndSidecarBytes)
     EXPECT_EQ(sidecars.front().attachment_ref.attachment_id, ref.attachment_id);
     ASSERT_NE(sidecars.front().bytes, nullptr);
     EXPECT_EQ(*sidecars.front().bytes, data);
+}
+
+/**
+ * 测试思路：
+ * 1. multipart body 不能只被当作一个不可读的二进制附件，需要拆出文本字段和文件字段。
+ * 2. 文本 part 保留在 attachment.text 中，不生成 sidecar；图片 part 生成附件元数据和原始 bytes sidecar。
+ * 3. 字段容器是 unordered_map，断言按 kind/text 查找，避免把实现内部遍历顺序固化进测试。
+ *
+ * 示例：
+ *
+ *   title="hello multipart" + avatar=image/png
+ *        |
+ *        v
+ *   attachments[text] + attachments[image] + one image sidecar
+ */
+TEST(TestProtocolInteraction, MultipartBodySplitsTextAndBinaryParts)
+{
+    const auto data = MultipartBody();
+    std::vector<BinarySidecar> sidecars;
+
+    const auto body = InteractionBody::BuildFromBytes(
+        data,
+        Hint(ProtocolType::kHttp, ProtocolBodyType::kMultiForm,
+             "multipart/form-data; boundary=interaction-boundary"),
+        ProtocolSide::kRequest,
+        Options(),
+        sidecars);
+
+    ASSERT_EQ(body.kind, InteractionPayloadKind::kMultiForm);
+    EXPECT_EQ(body.expect_kind, InteractionPayloadKind::kMultiForm);
+    EXPECT_EQ(body.size, data.size());
+    EXPECT_EQ(body.captured_size, data.size());
+    EXPECT_FALSE(body.truncated);
+    ASSERT_EQ(body.attachments.size(), 2U);
+
+    const InteractionAttachmentRef *text_ref = nullptr;
+    const InteractionAttachmentRef *image_ref = nullptr;
+    for(const auto &ref : body.attachments)
+    {
+        if(ref.kind == InteractionPayloadKind::kText)
+        {
+            text_ref = &ref;
+        }
+        if(ref.kind == InteractionPayloadKind::kImage)
+        {
+            image_ref = &ref;
+        }
+        EXPECT_EQ(ref.side, "request");
+    }
+
+    ASSERT_NE(text_ref, nullptr);
+    EXPECT_EQ(text_ref->text, "hello multipart");
+    EXPECT_EQ(text_ref->size, 15U);
+    EXPECT_EQ(text_ref->captured_size, 15U);
+    EXPECT_FALSE(text_ref->truncated);
+    EXPECT_FALSE(text_ref->binary_available);
+
+    ASSERT_NE(image_ref, nullptr);
+    EXPECT_TRUE(image_ref->text.empty());
+    EXPECT_EQ(image_ref->size, 4U);
+    EXPECT_EQ(image_ref->captured_size, 4U);
+    EXPECT_FALSE(image_ref->truncated);
+    EXPECT_TRUE(image_ref->binary_available);
+    ASSERT_EQ(sidecars.size(), 1U);
+    EXPECT_EQ(sidecars.front().attachment_ref.attachment_id, image_ref->attachment_id);
+    ASSERT_NE(sidecars.front().bytes, nullptr);
+    EXPECT_EQ(*sidecars.front().bytes, (std::vector<uint8_t>{0x89, 'P', 'N', 'G'}));
 }
 
 /**
@@ -1078,14 +1169,14 @@ TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
     obs.request.head_text = "POST /api/create HTTP/1.1\r\nContent-Type: application/json\r\n\r\n";
     obs.request.body_bytes = Bytes(R"({"ok":true})");
     obs.request.expect_body_type = ProtocolBodyType::kJson;
-    obs.request.media_type = "application/json";
+    obs.request.content_meta = kit_muduo::http::ParseHttpContentType("application/json");
     obs.response.meta = {
         {"status_code", 200},
     };
     obs.response.head_text = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n";
     obs.response.body_bytes = Bytes("ok");
     obs.response.expect_body_type = ProtocolBodyType::kText;
-    obs.response.media_type = "text/plain";
+    obs.response.content_meta = kit_muduo::http::ParseHttpContentType("text/plain");
     BindObservationToCache(obs, cache);
 
     publisher.publish(std::move(obs));
@@ -1223,7 +1314,7 @@ TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvan
     first.request.meta = {{"path", "/first"}};
     first.request.body_bytes = Bytes("first");
     first.request.expect_body_type = ProtocolBodyType::kText;
-    first.request.media_type = "text/plain";
+    first.request.content_meta = kit_muduo::http::ParseHttpContentType("text/plain");
     BindObservationToCache(first, cache);
 
     ProtocolInteractionObservation second = first;
@@ -1568,7 +1659,7 @@ TEST(TestProtocolInteraction, BrokenXmlBodyFallsBackToTextAndDoesNotNeedRawPacke
 /**
  * 测试思路：
  * 1. HTTP body 配置为 binary 时，Content-Type 决定前端展示大类。
- * 2. audio/video/archive/form-data/未知二进制都应走附件路径，避免原始 bytes 进入 JSON text。
+ * 2. audio/video/archive/form-data/未知媒体类型都应走附件路径，避免原始 bytes 进入 JSON text。
  * 3. 每种类型都应生成一个 attachment，并在未截断时生成对应 sidecar bytes。
  *
  * 示例：
@@ -1577,7 +1668,7 @@ TEST(TestProtocolInteraction, BrokenXmlBodyFallsBackToTextAndDoesNotNeedRawPacke
  *   video/mp4               -> kind=video
  *   application/zip         -> kind=archive
  *   multipart/form-data     -> kind=form_data
- *   application/x-custom    -> kind=binary
+ *   application/x-custom    -> kind=unknown
  */
 TEST(TestProtocolInteraction, HttpBinaryMediaTypesBuildExpectedAttachmentKinds)
 {
@@ -1592,7 +1683,7 @@ TEST(TestProtocolInteraction, HttpBinaryMediaTypesBuildExpectedAttachmentKinds)
         {"video/mp4", InteractionPayloadKind::kVideo},
         {"application/zip", InteractionPayloadKind::kArchive},
         {"multipart/form-data; boundary=kit", InteractionPayloadKind::kMultiForm},
-        {"application/x-custom-binary", InteractionPayloadKind::kBinary},
+        {"application/x-custom-binary", InteractionPayloadKind::kUnknown},
     };
 
     const std::vector<uint8_t> data{0x01, 0x02, 0x03, 0x04};
@@ -1728,12 +1819,12 @@ TEST(TestProtocolInteraction, PublisherBuildsHttpBinaryBodySidecarsFromObservati
     obs.request.head_text = "POST /upload HTTP/1.1\r\nContent-Type: image/png\r\n\r\n";
     obs.request.body_bytes = std::vector<uint8_t>{0x89, 'P', 'N', 'G'};
     obs.request.expect_body_type = ProtocolBodyType::kBinary;
-    obs.request.media_type = "image/png";
+    obs.request.content_meta = kit_muduo::http::ParseHttpContentType("image/png");
     obs.response.meta = {{"status_code", 200}};
     obs.response.head_text = "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\n\r\n";
     obs.response.body_bytes = std::vector<uint8_t>{'P', 'K', 0x03, 0x04};
     obs.response.expect_body_type = ProtocolBodyType::kBinary;
-    obs.response.media_type = "application/zip";
+    obs.response.content_meta = kit_muduo::http::ParseHttpContentType("application/zip");
     BindObservationToCache(obs, cache);
 
     publisher.start();

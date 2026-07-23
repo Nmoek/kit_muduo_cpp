@@ -154,8 +154,12 @@ class FakeProjectServer final : public ProjectServer
 {
 public:
     explicit FakeProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease)
-        : ProjectServer(project_id, std::move(lease))
-        , bind_addr_(0, "127.0.0.1")
+        : ProjectServer(
+            project_id,
+            std::move(lease),
+            kit_muduo::InetAddress(18080, "127.0.0.1"),
+            "fake-runtime-server")
+        , bind_addr_(18080, "127.0.0.1")
     {
     }
 
@@ -1725,15 +1729,24 @@ TEST(ProjectRuntimeManagerSuite, RepeatedStartAndStopAreIdempotent)
     EXPECT_CALL(*mock_protocol_svc, GetActiveByProject(_, project_id))
         .Times(1)
         .WillOnce(Return(std::vector<Protocol>{}));
-    EXPECT_CALL(*mocksvc, UpdateRuntimeState(_, project_id, ProjectRuntimeState::kRunning, Gt(0)))
-        .Times(1)
-        .WillOnce(Return(true));
-    EXPECT_CALL(*mocksvc, UpdateRuntimeState(_, project_id, ProjectRuntimeState::kStopped, 0))
-        .Times(2)
-        .WillRepeatedly(Return(true));
+    uint16_t persisted_running_port = 0;
+    {
+        InSequence seq;
+        EXPECT_CALL(*mocksvc, UpdateRuntimeState(_, project_id, ProjectRuntimeState::kRunning, Gt(0)))
+            .Times(1)
+            .WillOnce(DoAll(SaveArg<3>(&persisted_running_port), Return(true)));
+        EXPECT_CALL(*mocksvc, UpdateRuntimeState(_, project_id, ProjectRuntimeState::kStopped,
+                         Truly([&persisted_running_port](uint16_t listen_port) {
+                             return listen_port > 0 && listen_port == persisted_running_port;
+                         })))
+            .WillOnce(Return(true));
+        EXPECT_CALL(*mocksvc, UpdateRuntimeState(_, project_id, ProjectRuntimeState::kStopped, 0))
+            .WillOnce(Return(true));
+    }
 
     auto start1 = runtime_manager->startProject(nullptr, project_id);
     ASSERT_TRUE(start1.ok()) << start1.status.message;
+    EXPECT_EQ(start1.snapshot.listen_port, persisted_running_port);
     auto server = runtime_manager->findServer(project_id);
     ASSERT_NE(server, nullptr);
 

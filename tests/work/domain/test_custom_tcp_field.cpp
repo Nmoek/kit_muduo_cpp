@@ -152,6 +152,35 @@ TEST(TestCustomTcpField, EncodeAndDecode)
         std::invalid_argument);
 }
 
+/*
+测试思路：
+1. 字符串字段的长度既不能为 0，也不能超过当前协议实现支持的 32 字节上限。
+2. 32 字节是边界合法值，31 字节和 1 字节用于确认范围没有被错误收窄。
+3. 0 字节和 33 字节必须失败，固定本次提交收紧的校验边界。
+
+示例：
+  string byte_len=32 -> valid
+  string byte_len=33 -> invalid
+*/
+TEST(TestCustomTcpField, StringFieldLengthIsBoundedToThirtyTwoBytes)
+{
+    auto make_string_spec = [](size_t byte_len) {
+        return FieldSpec{
+            .name = "text",
+            .byte_pos = 0,
+            .byte_len = byte_len,
+            .type = FieldType::kString,
+            .role = FieldRole::kCommon,
+            .byte_order = FieldByteOrder::kRaw,
+        };
+    };
+
+    EXPECT_FALSE(make_string_spec(0).validate());
+    EXPECT_TRUE(make_string_spec(1).validate());
+    EXPECT_TRUE(make_string_spec(32).validate());
+    EXPECT_FALSE(make_string_spec(33).validate());
+}
+
 TEST(TestCustomTcpField, RoleBehaviorAndFieldValue)
 {
     // 测试思路：role 行为表是 PatternSpec 校验、Item 覆盖和 serialize 分派的唯一入口。

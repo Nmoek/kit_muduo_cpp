@@ -239,6 +239,53 @@ TEST(TestTcpServer, DISABLED_DestructorAssertsWhenStartedServerWasNotStopped)
 
 /*
 测试思路：
+1. 先用原生 socket 占住一个 loopback 端口，再用 TcpServer 请求同一个端口。
+2. Acceptor 首次 bind 失败时应回退到自由端口，而不是让整个 ProjectServer 创建失败。
+3. getBindAddr() 必须返回回退后的实际端口，供运行态保存和下一次复用。
+
+示例：
+  occupied socket -> bind(port-A)
+  TcpServer(addr=port-A) -> fallback bind(port-B)
+*/
+TEST(TestTcpServer, OccupiedConfiguredPortFallsBackToEphemeralPort)
+{
+    FdGuard occupied_fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0));
+    if(occupied_fd.fd < 0)
+    {
+        GTEST_SKIP() << "socket unavailable: " << std::strerror(errno);
+    }
+
+    sockaddr_in occupied_addr{};
+    occupied_addr.sin_family = AF_INET;
+    occupied_addr.sin_addr.s_addr = ::htonl(INADDR_LOOPBACK);
+    occupied_addr.sin_port = 0;
+    if(::bind(occupied_fd.fd,
+              reinterpret_cast<sockaddr *>(&occupied_addr),
+              sizeof(occupied_addr)) < 0)
+    {
+        GTEST_SKIP() << "bind unavailable: " << std::strerror(errno);
+    }
+
+    socklen_t addr_len = sizeof(occupied_addr);
+    ASSERT_EQ(::getsockname(
+        occupied_fd.fd,
+        reinterpret_cast<sockaddr *>(&occupied_addr),
+        &addr_len), 0);
+    const uint16_t occupied_port = ::ntohs(occupied_addr.sin_port);
+
+    EventLoop loop;
+    TcpServer server(
+        &loop,
+        InetAddress(occupied_port, "127.0.0.1"),
+        "tcp-occupied-port-fallback",
+        TcpServer::KReusePort);
+
+    EXPECT_GT(server.getBindAddr().toPort(), 0);
+    EXPECT_NE(server.getBindAddr().toPort(), occupied_port);
+}
+
+/*
+测试思路：
 1. 服务端连接建立后，在业务线程中跨线程调用 TcpConnection::send(std::string)。
 2. send 入队后立刻污染业务线程栈上字符串，验证发送任务持有了自己的 payload 副本。
 3. 用 stopAsync 等待服务停止完成，再释放 TcpServer，满足析构契约。
