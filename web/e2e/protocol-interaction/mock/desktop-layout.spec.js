@@ -44,7 +44,7 @@ async function openConnectedDrawer(page, context) {
  * 示例：
  * 1440x900 -> 右侧抽屉 -> 全屏 -> 无横向溢出 -> 还原。
  */
-test('电脑端抽屉支持全屏切换且布局容器不横向溢出', async ({ page, context }) => {
+test('电脑端抽屉支持全屏切换且布局容器不横向溢出', async ({ page, context }, testInfo) => {
     const drawer = await openConnectedDrawer(page, context);
     await expect(drawer.locator('#protocol-interaction-drawer-title')).toBeVisible();
     await expect(drawer.locator('.interaction-drawer-status')).toBeVisible();
@@ -62,7 +62,10 @@ test('电脑端抽屉支持全屏切换且布局容器不横向溢出', async ({
     expect(overflow.documentOverflow).toBeLessThanOrEqual(1);
     expect(overflow.drawerOverflow).toBeLessThanOrEqual(1);
 
-    await page.screenshot({ path: 'test-results/protocol-interaction-desktop-fullscreen.png', fullPage: true });
+    await page.screenshot({
+        path: testInfo.outputPath('protocol-interaction-desktop-fullscreen.png'),
+        fullPage: true,
+    });
     await drawer.locator('[data-action="fullscreen"]').click();
     await expect(drawer).not.toHaveClass(/is-fullscreen/);
 });
@@ -90,7 +93,7 @@ test('电脑端抽屉支持全屏切换且布局容器不横向溢出', async ({
  * 示例：
  * 长字段 interaction -> 列表仍可选中 -> 详情可见 -> 顶部控制区不重叠。
  */
-test('电脑端长交互内容不遮挡控制区并可打开详情', async ({ page, context }) => {
+test('电脑端长交互内容不遮挡控制区并可打开详情', async ({ page, context }, testInfo) => {
     const drawer = await openConnectedDrawer(page, context);
     await page.evaluate(() => {
         const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
@@ -131,5 +134,8 @@ test('电脑端长交互内容不遮挡控制区并可打开详情', async ({ pa
     expect(layout.headerStatusOverlap).toBe(0);
     expect(layout.statusToolbarOverlap).toBe(0);
     expect(layout.viewportOverflow).toBeLessThanOrEqual(1);
-    await page.screenshot({ path: 'test-results/protocol-interaction-desktop-long-content.png', fullPage: true });
+    await page.screenshot({
+        path: testInfo.outputPath('protocol-interaction-desktop-long-content.png'),
+        fullPage: true,
+    });
 });

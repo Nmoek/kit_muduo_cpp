@@ -4,7 +4,17 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 run_dir="${TMPDIR:-/tmp}/kit_protocol_playwright_real_${PPID}_$$"
-admin_password_hash="${PLAYWRIGHT_REAL_ADMIN_PASSWORD_HASH:-\$6\$kit_e2e\$8L3iJjBfN6BPr/112Nlea1gpxPUWdMWp5FBOwhYyuVE5SjVdMch.5dMZ/3jZ5j079PSH6H.P/X/EGEN8PZhsQ1}"
+admin_password="${PLAYWRIGHT_REAL_ADMIN_PASSWORD:-admin123}"
+if [[ -n "${PLAYWRIGHT_REAL_ADMIN_PASSWORD_HASH:-}" ]]; then
+    admin_password_hash="$PLAYWRIGHT_REAL_ADMIN_PASSWORD_HASH"
+else
+    hash_tool="$repo_root/bin/kit_password_hash"
+    if [[ ! -x "$hash_tool" ]]; then
+        echo "missing password hash tool: $hash_tool; build kit_password_hash first" >&2
+        exit 1
+    fi
+    admin_password_hash="$($hash_tool "$admin_password")"
+fi
 attachment_protocol_id="${PLAYWRIGHT_REAL_ATTACHMENT_PROTOCOL_ID:-4}"
 attachment_response_body_hex="${PLAYWRIGHT_REAL_ATTACHMENT_RESPONSE_BODY_HEX:-05060708}"
 

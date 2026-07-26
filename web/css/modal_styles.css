@@ -15,9 +15,7 @@
 /* 通用模态框样式 */
 .add-service-modal,
 .add-protocol-item-modal,
-.edit-method-modal,
 .config-pattern-modal,
-.edit-path-modal,
 .tcp-pattern-change-modal {
     background: white;
     border-radius: 8px;
@@ -836,22 +834,6 @@
     color: #999;
 }
 
-/* Body编辑模态框样式 */
-.edit-body-modal {
-    width: 600px;
-    max-width: 90%;
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    animation: modalFadeIn 0.3s ease;
-}
-
-.edit-body-modal textarea {
-    min-height: 200px;
-    font-family: monospace;
-    resize: vertical;
-}
-
 /* 协议项模态框按钮样式 */
 
 .add-protocol-item-modal .cancel-btn {
@@ -1137,11 +1119,8 @@
 
 .add-service-modal,
 .add-protocol-item-modal,
-.edit-method-modal,
 .config-pattern-modal,
-.edit-path-modal,
 .tcp-pattern-change-modal,
-.edit-body-modal,
 .import-modal {
     border: 1px solid var(--v13-border, #d9e6f5);
     border-radius: var(--v13-radius, 8px);
@@ -1153,11 +1132,6 @@
 .add-protocol-item-modal {
     width: min(880px, 96vw);
     min-width: 0;
-}
-
-.edit-body-modal {
-    width: min(1080px, 96vw);
-    max-width: 96vw;
 }
 
 .import-modal {
@@ -1251,13 +1225,8 @@
     border-color: #bce8d4;
 }
 
-.edit-body-modal .body-editor,
 .import-modal .body-editor {
     margin-top: 2px;
-}
-
-.edit-body-modal .form-group > label {
-    margin-bottom: 8px;
 }
 
 .import-modal textarea {
@@ -1461,11 +1430,8 @@
 
 .add-service-modal,
 .add-protocol-item-modal,
-.edit-method-modal,
 .config-pattern-modal,
-.edit-path-modal,
 .tcp-pattern-change-modal,
-.edit-body-modal,
 .import-modal {
     border: 1px solid var(--v13-border, #d9e6f5);
     border-radius: var(--v13-radius, 8px);
@@ -1479,67 +1445,12 @@
     min-width: 0;
 }
 
-.edit-body-modal {
-    position: static;
-    transform: none;
-    width: min(1080px, 96vw);
-    max-width: 96vw;
-    padding: 0;
-}
-
 .import-modal {
     position: static;
     transform: none;
     width: min(760px, 96vw);
     max-width: 96vw;
     padding: 0;
-}
-
-/* 协议卡片 Body 弹窗复用主页面 BodyEditor，避免被 legacy textarea 弹窗样式覆盖字体和行高。 */
-.edit-body-modal .body-editor-input-wrap {
-    --body-editor-gutter-width: 46px;
-    --body-editor-font-size: 14px;
-    --body-editor-line-height: 20px;
-    --body-editor-editor-padding: 12px;
-    --body-editor-min-height: 260px;
-
-    min-height: var(--body-editor-min-height);
-}
-
-.edit-body-modal .body-editor-lines,
-.edit-body-modal .body-editor-highlight,
-.edit-body-modal .body-editor-textarea {
-    box-sizing: border-box;
-    margin: 0;
-    padding: var(--body-editor-editor-padding);
-    border: 0;
-    border-radius: 0;
-    resize: none;
-    font-family: var(--code-font, "JetBrains Mono", "Cascadia Mono", "Fira Code", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
-    font-size: var(--body-editor-font-size);
-    line-height: var(--body-editor-line-height);
-    letter-spacing: 0;
-    tab-size: 2;
-    white-space: pre;
-}
-
-.edit-body-modal .body-editor-highlight-code {
-    font: inherit;
-    line-height: inherit;
-    white-space: pre;
-}
-
-.edit-body-modal .body-editor-textarea {
-    min-height: max(var(--body-editor-min-height), var(--body-editor-content-height, 44px));
-    color: transparent;
-    background: transparent;
-    overflow: hidden;
-    caret-color: #111827;
-}
-
-.edit-body-modal .body-editor.is-highlight-disabled .body-editor-textarea {
-    color: var(--v13-text, #172033);
-    background: #ffffff;
 }
 
 .modal-header {
@@ -2511,121 +2422,4 @@
 
 .body-editor-binary-pattern-scope.config-pattern-modal.is-collapsed {
     max-height: 0;
-}
-
-.edit-body-modal-overlay {
-    --pattern-modal-safe-space: 48px;
-
-    align-items: center;
-    padding: 36px 24px;
-}
-
-.edit-body-modal {
-    display: flex;
-    flex-direction: column;
-    box-sizing: border-box;
-    overflow: hidden;
-    max-height: calc(100vh - 72px);
-}
-
-.edit-body-modal.is-binary-body-mode {
-    height: min(920px, calc(100vh - 72px));
-}
-
-.edit-body-modal .modal-body {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-}
-
-.edit-body-modal .modal-body > .form-group {
-    flex: 1 1 auto;
-    min-height: 0;
-    margin-bottom: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-
-.edit-body-modal.is-binary-body-mode .modal-body > .form-group {
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-}
-
-.edit-body-modal.is-binary-body-mode .modal-body > .form-group > label {
-    flex: 0 0 auto;
-}
-
-.edit-body-modal.is-binary-body-mode .modal-body > .form-group > #body-editor-host {
-    display: flex;
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-.edit-body-modal.is-binary-body-mode .body-editor {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    height: 100%;
-    max-height: 100%;
-    min-height: 0;
-}
-
-.edit-body-modal .form-actions {
-    flex: 0 0 auto;
-    margin-top: 0;
-    background: #ffffff;
-}
-
-.edit-body-modal .body-editor-binary-wrap:not(.is-collapsed) {
-    min-height: 0;
-    overflow: hidden;
-}
-
-.edit-body-modal.is-binary-body-mode .body-editor-binary-wrap:not(.is-collapsed) {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    flex: 1 1 auto;
-    max-height: none;
-}
-
-.edit-body-modal .body-editor-binary-wrap.is-collapsed {
-    overflow: hidden;
-}
-
-.edit-body-modal.is-binary-body-mode .body-editor-binary-field-info {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-}
-
-.edit-body-modal.is-binary-body-mode .body-editor-binary-field-info .pattern-list {
-    flex: 1 1 auto;
-    min-height: 0;
-    max-height: none;
-    padding-bottom: 12px;
-    box-sizing: border-box;
-    scroll-padding-bottom: 12px;
-}
-
-.edit-body-modal.is-binary-body-mode .body-editor-binary-preview {
-    overflow-x: auto;
-    overflow-y: hidden;
-}
-
-@media (max-width: 900px) {
-    .edit-body-modal-overlay {
-        --pattern-modal-safe-space: 24px;
-
-        padding-right: 12px;
-        padding-left: 12px;
-    }
-
-    .edit-body-modal:not(.config-pattern-modal) {
-        width: calc(100vw - 24px);
-        max-width: calc(100vw - 24px);
-    }
 }

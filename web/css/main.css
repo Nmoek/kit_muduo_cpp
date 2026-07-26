@@ -786,22 +786,6 @@ body {
 
 
 
-.protocol-actions-container .edit-protocol-btn {
-    background: #f0f0f0;
-    color: #555;
-    border: 1px solid #ddd;
-    box-shadow: none;
-}
-
-.protocol-actions-container .edit-protocol-btn:hover {
-    background: #e0e0e0;
-    color: #333;
-    transform: none;
-    box-shadow: none;
-}
-
-
-
 .protocol-details {
     margin-top: 0.8rem;
     padding-top: 0.8rem;
@@ -1913,8 +1897,7 @@ button.is-mutation-busy:disabled {
     align-items: flex-start;
 }
 
-.service-title.editable,
-.protocol-name.editable {
+.service-title.editable {
     display: inline-flex;
     align-items: center;
     max-width: 100%;
@@ -1926,8 +1909,7 @@ button.is-mutation-busy:disabled {
     cursor: pointer;
 }
 
-.service-title.editable:after,
-.protocol-name.editable:after {
+.service-title.editable:after {
     content: "编辑";
     margin-left: 8px;
     color: var(--v13-primary);
@@ -1935,26 +1917,22 @@ button.is-mutation-busy:disabled {
     opacity: 0;
 }
 
-.service-title.editable:hover:after,
-.protocol-name.editable:hover:after {
+.service-title.editable:hover:after {
     opacity: 1;
 }
 
-.service-title.editable:hover,
-.protocol-name.editable:hover {
+.service-title.editable:hover {
     background: var(--v13-primary-soft);
     border-color: var(--v13-border);
 }
 
-.service-title.editable.is-editing,
-.protocol-name.editable.is-editing {
+.service-title.editable.is-editing {
     padding: 0;
     border-color: transparent;
     background: transparent;
 }
 
-.service-title.editable.is-editing:after,
-.protocol-name.editable.is-editing:after {
+.service-title.editable.is-editing:after {
     display: none;
 }
 
@@ -2590,102 +2568,6 @@ button.is-mutation-busy:disabled {
     font-weight: 800;
     line-height: 1.45;
     word-break: break-word;
-}
-
-/* V1.5 简单协议字段在卡片内直接编辑，避免为短文本配置打断操作流。 */
-.protocol-field.editable-field {
-    cursor: pointer;
-}
-
-.protocol-field.editable-field:hover,
-.protocol-field.editable-field:focus {
-    border-color: var(--v13-primary);
-    background: #fbfdff;
-    outline: none;
-}
-
-.protocol-field.is-inline-editing {
-    border-color: var(--v13-primary);
-    background: #ffffff;
-}
-
-.field-edit-hint {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    min-height: 20px;
-    padding: 2px 7px;
-    border-radius: 999px;
-    background: var(--v13-primary-soft);
-    color: var(--v13-primary-strong);
-    font-size: 11px;
-    font-weight: 800;
-}
-
-.inline-field-editor {
-    display: grid;
-    gap: 8px;
-    align-self: end;
-    margin-top: 0;
-}
-
-.inline-field-control {
-    width: 100%;
-    min-height: 34px;
-    padding: 7px 9px;
-    border: 1px solid var(--v13-border);
-    border-radius: 6px;
-    background: #fff;
-    color: var(--v13-text);
-    font-size: 14px;
-}
-
-.inline-field-control:focus {
-    border-color: var(--v13-primary);
-    outline: none;
-    box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.12);
-}
-
-.inline-field-hint,
-.inline-field-error {
-    font-size: 12px;
-    line-height: 1.4;
-}
-
-.inline-field-hint {
-    color: var(--v13-muted);
-}
-
-.inline-field-error {
-    min-height: 16px;
-    color: var(--v13-danger);
-}
-
-.inline-field-actions {
-    display: flex;
-    gap: 6px;
-}
-
-.inline-field-actions button {
-    flex: 1 1 0;
-    min-height: 30px;
-    padding: 4px 8px;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 800;
-    cursor: pointer;
-}
-
-.inline-field-save {
-    border: 1px solid var(--v13-primary);
-    background: var(--v13-primary);
-    color: #fff;
-}
-
-.inline-field-cancel {
-    border: 1px solid var(--v13-border);
-    background: var(--v13-surface-soft);
-    color: var(--v13-muted);
 }
 
 .empty-state {
@@ -4341,8 +4223,7 @@ button.is-mutation-busy:disabled {
 }
 
 .protocol-toggle-btn,
-.protocol-runtime-btn,
-.edit-protocol-btn {
+.protocol-runtime-btn {
     min-height: 32px;
     padding: 5px 12px;
     border: 1px solid var(--v13-border);
@@ -4456,12 +4337,8 @@ button.is-mutation-busy:disabled {
     transform: rotate(180deg);
 }
 
-.protocol-header-actions .edit-protocol-btn {
-    display: none;
-}
-
 .protocol-toggle-btn:hover,
-.edit-protocol-btn:hover {
+.protocol-runtime-btn:hover {
     border-color: var(--v13-primary);
     background: var(--v13-primary-soft);
 }
@@ -4511,11 +4388,6 @@ button.is-mutation-busy:disabled {
 
 .protocol-field:hover {
     cursor: default;
-}
-
-.protocol-field.editable-field,
-.protocol-field.editable-field:hover {
-    cursor: pointer;
 }
 
 @media (max-width: 768px) {

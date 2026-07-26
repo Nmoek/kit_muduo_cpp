@@ -102,7 +102,7 @@ async function assertDesktopLayout(drawer) {
  * 示例：
  * 1440x900 + long content -> drawer/list/detail scroll -> fullscreen -> no overlap/no overflow。
  */
-test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', async ({ page, context }) => {
+test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', async ({ page, context }, testInfo) => {
     await loginRealAdmin(page, context);
     await page.goto(protocolItemsPath());
     await page.locator(protocolItemSelector()).getByTestId('protocol-interaction-open').click();
@@ -156,7 +156,9 @@ test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', as
     await detail.evaluate(node => {
         node.scrollTop = node.scrollHeight;
     });
-    await drawer.screenshot({ path: 'test-results/protocol-interaction-real-desktop-long-content.png' });
+    await drawer.screenshot({
+        path: testInfo.outputPath('protocol-interaction-real-desktop-long-content.png'),
+    });
     await expect(drawer).toHaveScreenshot('protocol-interaction-long-content.png', {
         animations: 'disabled',
         caret: 'hide',
@@ -166,7 +168,9 @@ test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', as
     await drawer.getByTestId('protocol-interaction-fullscreen').click();
     await expect(drawer).toHaveClass(/is-fullscreen/);
     await assertDesktopLayout(drawer);
-    await drawer.screenshot({ path: 'test-results/protocol-interaction-real-desktop-fullscreen.png' });
+    await drawer.screenshot({
+        path: testInfo.outputPath('protocol-interaction-real-desktop-fullscreen.png'),
+    });
     await expect(drawer).toHaveScreenshot('protocol-interaction-fullscreen.png', {
         animations: 'disabled',
         caret: 'hide',
