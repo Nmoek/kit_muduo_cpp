@@ -7,7 +7,7 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "web/web_common.h"
-
+#include "base/util.h"
 #include "domain/project.h"
 #include "domain/protocol.h"
 #include "domain/user.h"
@@ -18,6 +18,8 @@
 #include "service/svc_protocol.h"
 
 #include <stdexcept>
+
+using namespace kit_muduo;
 
 namespace kit_domain {
 

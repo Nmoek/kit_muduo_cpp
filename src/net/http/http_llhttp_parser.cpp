@@ -6,6 +6,7 @@
  * @date 2025-06-08 20:39:58
  * @copyright Copyright (c) 2025 Kewin Li
  */
+#include "base/util.h"
 #include "llhttp.h"
 #include "net/http/http_parser.h"
 #include "net/http/http_context.h"
@@ -16,8 +17,6 @@
 #include "net/net_log.h"
 #include "net/call_backs.h"
 
-
-#include <functional>
 
 namespace kit_muduo {
 namespace http {
@@ -73,22 +72,25 @@ LLhttpParser::LLhttpParser(HttpContext *context)
     :HttpParser(context)
     ,is_paused_(false)
 {
-    llhttp_settings_init(&_settings);
-    _settings.on_method = &LLhttpParser::onMethod;
-    _settings.on_status = &LLhttpParser::onStatus;
-    _settings.on_status_complete = &LLhttpParser::onStatusComplete;
-    _settings.on_url = &LLhttpParser::onUrl;
-    _settings.on_url_complete = &LLhttpParser::onUrlComplete;
-    _settings.on_version = &LLhttpParser::onVersion;
-    _settings.on_header_field = &LLhttpParser::onHeaderField;
-    _settings.on_header_value = &LLhttpParser::onHeaderValue;
-    _settings.on_headers_complete = &LLhttpParser::onHeadersComplete;
-    _settings.on_body = &LLhttpParser::onBody;
-    _settings.on_message_complete = &LLhttpParser::onMessageComplete;
+    llhttp_settings_init(&settings_);
+    settings_.on_message_begin = &LLhttpParser::onMessageBegin;
+    settings_.on_method = &LLhttpParser::onMethod;
+    settings_.on_status = &LLhttpParser::onStatus;
+    settings_.on_status_complete = &LLhttpParser::onStatusComplete;
+    settings_.on_url = &LLhttpParser::onUrl;
+    settings_.on_url_complete = &LLhttpParser::onUrlComplete;
+    settings_.on_version = &LLhttpParser::onVersion;
+    settings_.on_header_field = &LLhttpParser::onHeaderField;
+    settings_.on_header_field_complete = &LLhttpParser::onHeaderFieldComplete;
+    settings_.on_header_value = &LLhttpParser::onHeaderValue;
+    settings_.on_header_value_complete = &LLhttpParser::onHeaderValueComplete;
+    settings_.on_headers_complete = &LLhttpParser::onHeadersComplete;
+    settings_.on_body = &LLhttpParser::onBody;
+    settings_.on_message_complete = &LLhttpParser::onMessageComplete;
 
-    llhttp_init(&_parser, HTTP_BOTH, &_settings);
+    llhttp_init(&parser_, HTTP_BOTH, &settings_);
 
-    _parser.data = static_cast<void*>(this);
+    parser_.data = static_cast<void*>(this);
 
 }
 
@@ -103,19 +105,19 @@ bool LLhttpParser::parse(Buffer &buf)
 {
     const char *data = buf.peek();
     const size_t len = buf.readableBytes();
-    auto &raw_capture = _context->rawCapture();
+    auto &raw_capture = context_->rawCapture();
 
     if(is_paused_)
     {
         is_paused_ = false;
-        llhttp_resume(&_parser);
+        llhttp_resume(&parser_);
     }
 
     // 开启解析
     // 注意需要把\0去掉
-    llhttp_errno err = llhttp_execute(&_parser, data, len);
+    llhttp_errno err = llhttp_execute(&parser_, data, len);
 
-    const char *err_pos = llhttp_get_error_pos(&_parser);
+    const char *err_pos = llhttp_get_error_pos(&parser_);
     size_t consumed_len = len;
     if(err_pos != nullptr && err_pos >= data && err_pos <= data + len)
     {
@@ -138,39 +140,66 @@ bool LLhttpParser::parse(Buffer &buf)
         return true;
     }
 
+    if(HttpParseError::kNone == context_->parseError())
+    {
+        context_->setParseError(HttpParseError::kInvalidFormat);
+    }
+
     // 解析错误时是否 reset consumed 要谨慎。当前上层会 400+shutdown，
     // 可以消费已解析部分，也可以保留给日志。最小改动建议先不保留。
+    
 
     // http捕获 解析失败的原始bytes
-    raw_capture.insert(raw_capture.end(), buf.peek(), buf.peek() + std::min(static_cast<size_t>(1*1024), buf.readableBytes()));
+    raw_capture.insert(raw_capture.end(), buf.peek(), buf.peek() + std::min(limits_.max_error_capture_bytes, buf.readableBytes()));
 
 
     buf.reset(consumed_len);
     return false;
 }
 
+int LLhttpParser::onMessageBegin(llhttp_t* parser)
+{
+    LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
+
+    parser_ptr->clear();
+
+    return HPE_OK;
+}
+
+
 int LLhttpParser::onMethod(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
+    HttpRequestPtr request = parser_ptr->context_->request();
+
+    if(!TryConsume(parser_ptr->start_line_bytes_, len, parser_ptr->limits_.max_start_line_bytes))
+    {
+        return parser_ptr->fail(parser, HttpParseError::kStartLineTooLarge, "start line too large");
+    }
 
     const std::string &s = std::string(data, len);
     HTTP_DEBUG() << "method: " << s << std::endl;
     
     request->setMethod(HttpRequest::Method::FromString(s));
-    return 0;
+    return HPE_OK;
 }
 
 int LLhttpParser::onStatus(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
-    HttpResponsePtr response = parser_ptr->_context->response();
+    HttpRequestPtr request = parser_ptr->context_->request();
+    HttpResponsePtr response = parser_ptr->context_->response();
+
+    if(!TryConsume(parser_ptr->start_line_bytes_, len, parser_ptr->limits_.max_start_line_bytes))
+    {
+        return parser_ptr->fail(parser, HttpParseError::kStartLineTooLarge, "start line too large");
+    }
 
     HTTP_DEBUG() << "status: " << llhttp_get_status_code(parser) << std::endl;
 
     response->setStateCode(llhttp_get_status_code(parser));
-    return 0;
+
+    return HPE_OK;
 }
 
 int LLhttpParser::onStatusComplete(llhttp_t* parser)
@@ -180,9 +209,11 @@ int LLhttpParser::onStatusComplete(llhttp_t* parser)
     HTTP_DEBUG() << "response line parse ok" << std::endl;
 
     // 状态转换
-    if(RespType == parser_ptr->_type)
-        parser_ptr->_context->setState(HttpContext::kExpectHeaders);
-    
+    if(RespType == parser_ptr->type_)
+    {
+        parser_ptr->context_->setState(HttpContext::kExpectHeaders);
+    }
+
     return 0;
 }
 
@@ -190,14 +221,19 @@ int LLhttpParser::onStatusComplete(llhttp_t* parser)
 int LLhttpParser::onUrl(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HeaderContext &ctx = parser_ptr->_headerCtx;
+    HeaderContext &ctx = parser_ptr->head_ctx_;
+
+    if(!TryConsume(parser_ptr->start_line_bytes_, len, parser_ptr->limits_.max_start_line_bytes))
+    {
+        return parser_ptr->fail(parser, HttpParseError::kStartLineTooLarge, "start line too large");
+    }
 
     std::string s(data, len);
     HTTP_DEBUG() << "url: " << s << std::endl;
 
     ctx.url.append(data, len);
     
-    return 0;
+    return HPE_OK;
 }
 
 void LLhttpParser::parseQueryParams(const std::string &query, const HttpRequestPtr &request)
@@ -254,11 +290,33 @@ void LLhttpParser::parseUrl(const std::string &url, const HttpRequestPtr &reques
     }
 }
 
+void LLhttpParser::clear()
+{
+    // raw捕获清除
+    context_->rawCapture().clear();
+    head_ctx_.cur_header.clear();
+    head_ctx_.cur_header_val.clear();
+    head_ctx_.url.clear();
+    head_ctx_.headers.clear();
+    start_line_bytes_ = 0;
+    header_bytes_ = 0;
+    header_count_ = 0;
+    body_bytes_ = 0;
+}
+
+int32_t LLhttpParser::fail(llhttp_t *parser, HttpParseError error, const char* reason)
+{
+    context_->setParseError(error);
+    llhttp_set_error_reason(parser, reason);
+    return HPE_USER;
+}
+
+
 int LLhttpParser::onUrlComplete(llhttp_t* parser)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
-    HeaderContext &ctx = parser_ptr->_headerCtx;
+    HttpRequestPtr request = parser_ptr->context_->request();
+    HeaderContext &ctx = parser_ptr->head_ctx_;
 
     request->setUrl(ctx.url);
     parser_ptr->parseUrl(ctx.url, request);
@@ -268,18 +326,27 @@ int LLhttpParser::onUrlComplete(llhttp_t* parser)
 int LLhttpParser::onVersion(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
-    HttpResponsePtr response = parser_ptr->_context->response();
+    HttpRequestPtr request = parser_ptr->context_->request();
+    HttpResponsePtr response = parser_ptr->context_->response();
+
+    if(!TryConsume(parser_ptr->start_line_bytes_, len, parser_ptr->limits_.max_start_line_bytes))
+    {
+        return parser_ptr->fail(parser, HttpParseError::kStartLineTooLarge, "start line too large");
+    }
 
     std::string s = "HTTP/";
     s += std::string(data, len);
     HTTP_DEBUG() << "version: " << s << std::endl;
 
-    if(ReqType == parser_ptr->_type)
+    if(ReqType == parser_ptr->type_)
+    {
         request->setVersion(Version::FromString(s));
+    }
     else
+    {
         response->setVersion(Version::FromString(s));
-    return 0;
+    }
+    return HPE_OK;
 }
 
 
@@ -290,38 +357,74 @@ int LLhttpParser::onVersionComplete(llhttp_t* parser)
     HTTP_DEBUG() << "request line parse ok" << std::endl;
 
     // 状态转换
-    if(ReqType == parser_ptr->_type)
-        parser_ptr->_context->setState(HttpContext::kExpectHeaders);
-    
+    parser_ptr->context_->setState(HttpContext::kExpectHeaders);
     return 0;
 }
 
 int LLhttpParser::onHeaderField(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HeaderContext &ctx = parser_ptr->_headerCtx;
-    ctx.cur_header = std::string(data, len);
-    return 0;
+
+    if(!TryConsume(parser_ptr->header_bytes_, len, parser_ptr->limits_.max_header_bytes))
+    {
+        return parser_ptr->fail(parser, HttpParseError::kHeadersTooLarge, "header too large");
+    }
+
+    // 注意 只能追加
+    parser_ptr->head_ctx_.cur_header.append(data, len);
+    return HPE_OK;
+}
+
+int LLhttpParser::onHeaderFieldComplete(llhttp_t* parser)
+{
+    LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
+    
+    if(!TryConsume(parser_ptr->header_count_, 1, parser_ptr->limits_.max_header_count))
+    {
+        return parser_ptr->fail(parser, HttpParseError::kHeadersTooMany, "header count too many");
+    }
+
+    return HPE_OK;
 }
 
 int LLhttpParser::onHeaderValue(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HeaderContext &ctx = parser_ptr->_headerCtx;
 
-    if(!ctx.cur_header.empty())
+    if(!TryConsume(parser_ptr->header_bytes_, len, parser_ptr->limits_.max_header_bytes))
     {
-        ctx.headers[ctx.cur_header] += std::string(data, len);
+        parser_ptr->fail(parser, HttpParseError::kHeadersTooLarge, "header too large");
+        return HPE_USER;
     }
-    return 0;
+
+    // 注意 只能追加
+    parser_ptr->head_ctx_.cur_header_val.append(data, len);
+
+    return HPE_OK;
+}
+
+int LLhttpParser::onHeaderValueComplete(llhttp_t* parser)
+{
+    LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
+    HeaderContext &ctx = parser_ptr->head_ctx_;
+
+    if(ctx.cur_header.empty())
+    {
+        return parser_ptr->fail(parser, HttpParseError::kInvalidFormat, "format invalid");
+    }
+
+    ctx.headers[ctx.cur_header] = ctx.cur_header_val;
+    ctx.cur_header.clear();
+    ctx.cur_header_val.clear();
+    return HPE_OK;
 }
 
 int LLhttpParser::onHeadersComplete(llhttp_t* parser)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HeaderContext &ctx = parser_ptr->_headerCtx;
-    HttpRequestPtr request = parser_ptr->_context->request();
-    HttpResponsePtr response = parser_ptr->_context->response();
+    HeaderContext &ctx = parser_ptr->head_ctx_;
+    HttpRequestPtr request = parser_ptr->context_->request();
+    HttpResponsePtr response = parser_ptr->context_->response();
 
     for(auto &it : ctx.headers)
     {
@@ -329,32 +432,44 @@ int LLhttpParser::onHeadersComplete(llhttp_t* parser)
     }
 
     // headers字段赋值
-    if(ReqType == parser_ptr->_type)
+    if(ReqType == parser_ptr->type_)
     {
         request->setHeaders(ctx.headers);
         // 特殊处理 Upgrade
-        if(HeaderContainsToken(request->getHeader("Connection"), "Upgrade"))
+        if(parser->flags & F_UPGRADE)
         {
-            parser_ptr->_context->setMaybeUpgrade(true);
+            parser_ptr->context_->setMaybeUpgrade(true);
         }
     }
     else
     {
         response->setHeaders(ctx.headers);
     }
-    
+
+    // 注意 这里报文结束不代表数据全部收完，body可能被拆包了
+    if(0 != (parser->flags & F_CONTENT_LENGTH)
+        && parser->content_length > parser_ptr->limits_.max_body_bytes)
+    {
+        return parser_ptr->fail(parser, HttpParseError::kBodyTooLarge, "body too large");
+    }
+
     // 状态转换
-    parser_ptr->_context->setState(HttpContext::kExpectBody);
-    return 0;
+    parser_ptr->context_->setState(HttpContext::kExpectBody);
+    return HPE_OK;
 }
 
 int LLhttpParser::onBody(llhttp_t* parser, const char *data, size_t len)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
-    HttpResponsePtr response = parser_ptr->_context->response();
+    HttpRequestPtr request = parser_ptr->context_->request();
+    HttpResponsePtr response = parser_ptr->context_->response();
 
-    if(ReqType == parser_ptr->_type)
+    if(!TryConsume(parser_ptr->body_bytes_, len, parser_ptr->limits_.max_body_bytes))
+    {
+        return  parser_ptr->fail(parser, HttpParseError::kBodyTooLarge, "body too large");
+    }
+
+    if(ReqType == parser_ptr->type_)
     {
         request->appendBodyData(data, len);
     }
@@ -363,23 +478,22 @@ int LLhttpParser::onBody(llhttp_t* parser, const char *data, size_t len)
         response->appendBodyData(data, len);
     }
 
-    return 0;
+    return HPE_OK;
 }
 // 该回调函数必须设置
 int LLhttpParser::onMessageComplete(llhttp_t* parser)
 {
     LLhttpParser* parser_ptr = static_cast<LLhttpParser*>(parser->data);
-    HttpRequestPtr request = parser_ptr->_context->request();
-    HttpResponsePtr response = parser_ptr->_context->response();
+    HttpRequestPtr request = parser_ptr->context_->request();
+    HttpResponsePtr response = parser_ptr->context_->response();
  
-    HTTP_F_INFO("http request/response parse finish! body data size: [%lld/%lld]\n", (ReqType == parser_ptr->_type ?
+
+    HTTP_F_INFO("http request/response parse finish! body data size: [%lld/%lld]\n", (ReqType == parser_ptr->type_ ?
         request->bodyData().size() : response->bodyData().size()),
         parser->content_length);
     
-    // 头部上下文清除一下
-    parser_ptr->_headerCtx = HeaderContext();
     // 解析完成
-    parser_ptr->_context->setState(HttpContext::kGotAll);
+    parser_ptr->context_->setState(HttpContext::kGotAll);
 
     return HPE_PAUSED;
 }

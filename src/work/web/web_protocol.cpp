@@ -81,7 +81,6 @@ struct AddProtocolReq {
     nljson protocol_req_cfg;        // 请求协议配置数据json
     nljson protocol_resp_cfg;       // 响应协议配置数据json
 
-    //TODO 这里是否使用json + base64?
     std::vector<char> protocol_req_body;       // 请求协议Body
     std::vector<char> protocol_resp_body;      // 响应协议Body
 

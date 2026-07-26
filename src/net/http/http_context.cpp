@@ -32,12 +32,9 @@ HttpContext::HttpContext()
     ,parser_(std::make_shared<LLhttpParser>(this))
     ,maybeUpgrade_(false)
 {
-    HTTP_DEBUG() << "HttpContext constructor " << this << std::endl;
+
 }
-HttpContext::~HttpContext()
-{
-    HTTP_DEBUG()  << "~HttpContext " << this << std::endl;
-}
+
 
 // 有限状态机 解析
 bool HttpContext::parseRequest(Buffer &buf, TimeStamp receiveTime)

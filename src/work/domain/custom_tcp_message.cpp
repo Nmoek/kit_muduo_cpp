@@ -162,7 +162,6 @@ std::optional<std::vector<uint8_t>> CustomTcpMessage::toBytes()const
             }
         }
 
-        // TODO 这里的强依赖是否能去掉？
         if(!pattern->writeLengthByPatch(headers_data, body_data_.size()))
         {
             return std::nullopt;

@@ -91,6 +91,15 @@ LoginResult AuthService::Login(kit_muduo::HttpContextPtr ctx, const LoginRequest
             result.message = "invalid password";
             return result;
         }
+
+        if(PasswordHasher::NeedsRehash(user.password_hash))
+        {
+            const std::string upgraded_hash = PasswordHasher::Hash(request.password);
+            if(!user_repo_->UpdatePasswordHash(ctx, user.id, upgraded_hash))
+            {
+                SVCAUTH_F_ERROR("password hash upgrade failed, user_id[%ld]\n", user.id);
+            }
+        }
     }
     else
     {

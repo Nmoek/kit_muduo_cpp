@@ -20,6 +20,10 @@
 # 忽略所有 .md 文件，但保留 README.md
 *.md
 !README.md
+!tests/benchmarks/SQLite历史存储基准测试汇总报告.md
+
+# 基准测试报告和原始运行数据只保留在本地
+tests/benchmarks/results/
 
 *.sqlite
 *.sqlite-shm

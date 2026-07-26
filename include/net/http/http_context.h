@@ -12,7 +12,7 @@
 #include "net/http/http_content_codec.h"
 #include "net/http/http_request.h"
 #include "net/call_backs.h"
-
+#include "net/http/http_parser.h"
 
 #include <memory>
 #include <atomic>
@@ -25,8 +25,6 @@ class Buffer;
 class TimeStamp;
 
 namespace http {
-
-class HttpParser;
 
 class HttpContext
 {
@@ -44,7 +42,7 @@ public:
 
 
     HttpContext();
-    ~HttpContext();
+    ~HttpContext() = default;
 
     bool parseRequest(const std::string &data, TimeStamp receiveTime);
     bool parseRequest(Buffer &buf, TimeStamp receiveTime);
@@ -53,6 +51,9 @@ public:
     bool parseResponse(Buffer &buf, TimeStamp receiveTime);
     HttpParseState state() const { return state_; }
     void setState(HttpParseState state) { state_ = state; }
+
+    void setParseError(HttpParseError error) { error_ = error; }
+    HttpParseError parseError() const { return error_; }
 
     bool gotAll() const { return kGotAll == state_; }
 
@@ -103,8 +104,10 @@ private:
     kit_muduo::http::ContentView makeContentView() const;
 
 private:
-    /// @brief HTTP请求解析状态
+    /// @brief HTTP报文解析状态
     HttpParseState  state_{kExpectRequestLine};
+    /// @brief HTTP报文解析错误提示
+    HttpParseError error_{HttpParseError::kNone};
     /// @brief HTTP请求报文
     HttpRequestPtr request_;
     /// @brief  HTTP响应报文

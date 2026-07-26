@@ -129,9 +129,6 @@ void ProjectHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer>
     // 获取所有未软删除的测试服务
     server->Get("/projects/valid", XX(GetAllValid));
 
-    // TODO 使用正则表达式
-    // TODO 查询单个服务 动态路由
-    // TODO 接口需要重新考虑 有点丑陋
     server->Get("/projects/:project_id", XX(SingleProject));
     server->Delete("/projects/:project_id", XX(DelProject));
     server->Post("/projects/:project_id/restore", XX(RestoreProject));
@@ -271,15 +268,21 @@ void ProjectHandler::StartAndStopProject(kit_muduo::TcpConnectionPtr conn, kit_m
 
     WriteOpResult write_result;
 
-    const std::string& project_id_str = ctx->routeParam("project_id");
-    const std::string &operation_str = ctx->queryParam("operation");
+    int64_t project_id = 0;
+    int32_t tmp_state;
 
-    int64_t project_id = atoi(project_id_str.c_str());
-    const ProjectRuntimeState will_state = static_cast<ProjectRuntimeState>(atoi(operation_str.c_str()));
 
-    if(project_id_str.empty()
-        || operation_str.empty()
-        || project_id <= 0
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id)
+        || !ParseQueryArithmetic(ctx, "operation", tmp_state))
+    {
+        PJ_F_ERROR("route dynamic param error\n");
+
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "route dynamic param error"));
+        return;
+    }
+    const ProjectRuntimeState will_state = static_cast<ProjectRuntimeState>(tmp_state);
+
+    if(project_id <= 0
         || (ProjectRuntimeState::kRunning != will_state && ProjectRuntimeState::kStopped != will_state))
     {
         WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "request param invalid"));
@@ -337,26 +340,25 @@ void ProjectHandler::DelProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     // PJ_DEBUG() << "ProjectHandler::DelProject " << std::endl << req->bodyString() << std::endl;
 
     // 获取测试服务主键id
-    std::string val1 = ctx->routeParam("project_id");
-    if(val1.empty())
+    int64_t project_id = 0;
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id))
     {
-        PJ_F_ERROR("query param parse error! \n");
+        PJ_F_ERROR("route dynamic param error! \n");
 
-        WriteOpResponseHelper(ctx, write_result.failed(-200, "query param parse error"));
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "route dynamic param error"));
         return;
     }
 
+    if(!CheckProjectAccess(ctx, svc_.get(), project_id, false, false))
+    {
+        WriteForbidden(ctx);
+        return;
+    }
 
     // 查测试服务 信息
     ProjectRuntimeResult pj_runtime_result;
     try
     {
-        int64_t project_id = std::stol(val1);
-        if(!CheckProjectAccess(ctx, svc_.get(), project_id, false, false))
-        {
-            WriteForbidden(ctx);
-            return;
-        }
 
         pj_runtime_result = project_runtime_manager_->delProject(ctx, project_id);
 
@@ -379,31 +381,29 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
 
-    // user_id怎么获取??
-    // 使用的是query param模式不需要进行body解析
-    // 获取测试服务主键id
-
     int64_t project_id = 0;
-    try {
-        // TODO boost万能转换
-        project_id = std::stol(ctx->routeParam("project_id"));
-        if(project_id <= 0)
-            throw;
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id))
+    {
+        PJ_F_ERROR("route dynamic param error! \n");
 
-    } catch(const std::exception& e) {
-
-        PJ_F_ERROR("query param transform fail! project_id=%d , %s\n", project_id, e.what());
-
-        WriteJsonError(ctx, -200, "query param transform fail");
+        WriteJsonError(ctx, -200, "route dynamic param error");
         return;
     }
-
 
     Project project;
     // 查测试服务 信息
     try
     {
         project = svc_->GetById(ctx, project_id);
+        if(project.m_id <= 0)
+        {
+            WriteJsonResponse(ctx, {
+                {"code", 0}, 
+                {"message", "project is not exists!"}, {"data", nljson::array()}
+            });
+
+            return;
+        }
         auto current_user = CurrentUserFromContext(ctx);
         if(project.m_id > 0 && !current_user.IsAdmin() && project.m_userId != current_user.user_id)
         {
@@ -420,15 +420,8 @@ void ProjectHandler::SingleProject(kit_muduo::TcpConnectionPtr conn, kit_muduo::
         return;
     }
 
-    if(project.m_id <= 0)
-    {
-        WriteJsonResponse(ctx, {{"code", 0}, {"message", "project is not exists!"}, {"data", nljson::array()}});
-
-        return;
-    }
-
     nljson root;
-    root["code"] = 0; // TODO domain错误码统一化
+    root["code"] = 0;
     root["message"] = "success";
     root["data"].push_back(CovertProjectVo(project));
 
@@ -551,18 +544,9 @@ void ProjectHandler::DetailName(kit_muduo::TcpConnectionPtr conn, kit_muduo::Htt
     PC_DEBUG() << std::endl << req->bodyString() << std::endl;
 
     int64_t project_id = 0;
-    try {
-        // TODO boost万能转换
-        project_id = std::stol(ctx->routeParam("project_id"));
-        if(project_id <= 0)
-        {
-            throw std::runtime_error("`project_id` parse error");
-        }
-
-    } catch(const std::exception& e) {
-
-        PJ_F_ERROR("query param fail: %s! pjId[%d] \n", e.what(), project_id);
-
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id))
+    {
+        PJ_F_ERROR("route dynamic param error! \n");
 
         WriteOpResponseHelper(ctx, write_result.failed(-200, "query param  fail"));
         return;
@@ -611,7 +595,17 @@ void ProjectHandler::QueryPatternInfo(kit_muduo::TcpConnectionPtr conn, kit_mudu
     resp->setStateCode(StateCode::k200Ok);
     resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
 
-    int64_t project_id = stoi(ctx->routeParam("project_id"));
+
+    int64_t project_id = 0;
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id))
+    {
+        PJ_F_ERROR("route dynamic param error! \n");
+
+        WriteJsonError(ctx, -200, "route dynamic param error");
+        return;
+    }
+
+
     if(!CheckProjectAccess(ctx, svc_.get(), project_id, false, false))
     {
         WriteForbidden(ctx);
@@ -706,11 +700,11 @@ void ProjectHandler::RestoreProject(kit_muduo::TcpConnectionPtr conn, kit_muduo:
     }
 
     int64_t project_id = 0;
-    try {
-        project_id = std::stol(ctx->routeParam("project_id"));
-    } catch(const std::exception &) {
+    if(!ParseRouteArithmetic(ctx, "project_id", project_id))
+    {
+        PJ_F_ERROR("route dynamic param error! \n");
 
-        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "query param fail"));
+        WriteOpResponseHelper(ctx, write_result.allErr().failed(-200, "route dynamic param error"));
         return;
     }
 

@@ -1,7 +1,9 @@
 #pragma once
 
 #include <gmock/gmock.h>
+
 #include "work/service/svc_project.h"
+#include "domain/project.h"
 
 namespace kit_domain {
 

@@ -9,6 +9,7 @@
 #include "net/http/http_server.h"
 #include "net/call_backs.h"
 #include "net/http/http_context.h"
+#include "net/http/http_parser.h"
 #include "net/http/http_servlet.h"
 #include "net/http/http_util.h"
 #include "net/net_log.h"
@@ -244,6 +245,28 @@ void HttpServer::onConnect(TcpConnectionPtr conn)
     }
 }
 
+inline void CheckHttpParseError(HttpContextPtr ctx)
+{
+    switch (ctx->parseError()) 
+    {
+        // 414 URI Too Long
+        case HttpParseError::kStartLineTooLarge:
+            URITooLong414Servlet::Handle(nullptr, ctx);
+            break;
+        // 431 Request Header Fields Too Large
+        case HttpParseError::kHeadersTooLarge:
+        case HttpParseError::kHeadersTooMany:
+            RequestHeaderFieldsTooLarge431Servlet::Handle(nullptr, ctx);
+            break;
+        // 413 Payload Too Large
+        case HttpParseError::kBodyTooLarge:
+            PayloadTooLarge413Servlet::Handle(nullptr, ctx);
+            break;
+        default:
+            BadRequest400Servlet::Handle(nullptr, ctx);
+    }
+}
+
 void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receiveTime)
 {
     bool is_exception = false;
@@ -262,9 +285,8 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
 
         if(!context->parseRequest(*buf, receiveTime))
         {
-            HTTP_ERROR() << "http request parse error! " << std::endl;
-       
-            BadRequest400Servlet::Handle(conn, context);
+            HTTP_F_ERROR("http request parse error!\n");
+            CheckHttpParseError(context);
 
             (void)sendResponse(conn, context, true);
             return;

@@ -96,6 +96,8 @@ option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OF
 option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
 option(WORK_TEST.USER "build test_user_auth" OFF)
 
+option(WORK_BENCH.SQLITE_INTERACTION "build SQLite interaction history storage benchmark" OFF)
+
 option(EXAMPLE "build all example" OFF)
 option(EXAMPLE.HTTP "build example http_serverv" OFF)
 
@@ -111,6 +113,9 @@ if(COVERAGE_TEST)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
 elseif(MEM_CHECK)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -fsanitize=alignment,address -fno-omit-frame-pointer")
+elseif(CMAKE_BUILD_TYPE MATCHES "^[Dd]ebug$"
+    OR (CMAKE_BUILD_TYPE STREQUAL "" AND (MUDUO_TEST OR WORK_TEST)))
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
 else()
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 endif()
@@ -119,6 +124,7 @@ endif()
 list(APPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/pkg")
 # gtest包添加
 find_package(GTest REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 enable_testing()
 
 # 添加第三方库链接路径
@@ -307,15 +313,19 @@ set(IOC_SRC
     src/ioc/web.cpp
 )
 
-set(WORK_SRC
+set(WORK_APP_SRC
     ${WORK_DAO_SRC}
     ${WORK_REPO_SRC}
     ${WORK_SVC_SRC}
-    ${WORK_DOMAIN_SRC}
     ${WORK_RUNTIME_SRC}
     ${WORK_WEB_SRC}
     ${IOC_SRC}
     src/application.cpp
+)
+
+set(WORK_SRC
+    ${WORK_APP_SRC}
+    ${WORK_DOMAIN_SRC}
 )
 
 # defines
@@ -326,32 +336,52 @@ add_library(kit_muduo SHARED ${MUDUO_SRC})
 redefine_file_macro(kit_muduo)   #重定义 __FILE__
 target_compile_definitions(kit_muduo PRIVATE ${DEF} ${SQLITE3_DEF})
 
-
-# lib 
-set(LIB_LIB
+# 运行时依赖库
+set(KIT_RUNTIME_LIBS
     kit_muduo
     dl
     pthread
-    GTest::gtest 
-    GTest::gtest_main 
-    GTest::gmock 
-    GTest::gmock_main
     llhttp
     crypt
+    OpenSSL::Crypto
     pugixml
     simdutf
 )
 
-set(DEPENDS
-    kit_muduo
-)
+# 测试目标额外依赖 GTest。工作层源码集中编译到静态库，避免每个工作层
+# 测试目标都重新编译一遍业务实现。domain 单测可只链接 kit_work_domain。
+add_library(kit_work_domain STATIC ${WORK_DOMAIN_SRC})
+redefine_file_macro(kit_work_domain)   #重定义 __FILE__
+target_compile_definitions(kit_work_domain PRIVATE ${DEF})
+target_link_libraries(kit_work_domain PUBLIC ${KIT_RUNTIME_LIBS})
 
-#dependency
-set(DEPENDS
-    kit_muduo
+add_library(kit_work STATIC ${WORK_APP_SRC})
+redefine_file_macro(kit_work)   #重定义 __FILE__
+target_compile_definitions(kit_work PRIVATE ${DEF})
+target_link_libraries(kit_work PUBLIC kit_work_domain ${KIT_RUNTIME_LIBS})
+
+# lib
+set(LIB_LIB
+    ${KIT_RUNTIME_LIBS}
+    GTest::gtest
+    GTest::gtest_main
+    GTest::gmock
+    GTest::gmock_main
 )
 
 # **********************************tests**********************************#
+
+if(WORK_BENCH.SQLITE_INTERACTION)
+    find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+    add_executable(interaction_history_storage_bench
+        tests/benchmarks/interaction_history_storage_bench.cpp)
+    redefine_file_macro(interaction_history_storage_bench)
+    target_compile_definitions(interaction_history_storage_bench PRIVATE ${DEF})
+    target_link_libraries(interaction_history_storage_bench PRIVATE
+        ${KIT_RUNTIME_LIBS}
+        OpenSSL::Crypto
+    )
+endif()
 
 function(add_kit_test module_option test_option target_name)
     set(_module_enabled OFF)
@@ -367,10 +397,23 @@ function(add_kit_test module_option test_option target_name)
 
     if(_module_enabled OR _test_enabled)
         add_executable(${target_name} ${ARGN})
-        add_dependencies(${target_name} ${DEPENDS})
         redefine_file_macro(${target_name})   #重定义 __FILE__
         target_compile_definitions(${target_name} PRIVATE ${DEF})
-        target_link_libraries(${target_name} ${LIB_LIB})
+        target_link_libraries(${target_name} PRIVATE ${LIB_LIB})
+    endif()
+endfunction()
+
+function(add_work_test test_option target_name)
+    add_kit_test(WORK_TEST ${test_option} ${target_name} ${ARGN})
+    if(TARGET ${target_name})
+        target_link_libraries(${target_name} PRIVATE kit_work)
+    endif()
+endfunction()
+
+function(add_work_domain_test test_option target_name)
+    add_kit_test(WORK_TEST ${test_option} ${target_name} ${ARGN})
+    if(TARGET ${target_name})
+        target_link_libraries(${target_name} PRIVATE kit_work_domain)
     endif()
 endfunction()
 
@@ -477,10 +520,10 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.WS_SERVER test_websocket_server tests/websock
 
 
 #sqlite3测试相关配置是否生效
-add_kit_test(WORK_TEST WORK_TEST.SQLITE3 test_sqlite3 tests/db/test_sqlite3.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.SQLITE3 test_sqlite3 tests/db/test_sqlite3.cpp)
 
 # sqlite_orm 测试 test_sqlite_orm
-add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM test_sqlite_orm tests/db/test_sqlite_orm.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.SQLITE_ORM test_sqlite_orm tests/db/test_sqlite_orm.cpp)
 
 # sqlite_orm pool 测试 test_sqlite_orm_pool
 add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM_POOL test_sqlite_orm_pool
@@ -489,24 +532,25 @@ add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM_POOL test_sqlite_orm_pool
     src/work/repository/dao/sqlite_orm_pool.cpp)
 
 # web端测试服务 测试 test_web_project
-add_kit_test(WORK_TEST WORK_TEST.WEB_PROJECT test_web_project tests/work/web/test_web_project.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.WEB_PROJECT test_web_project tests/work/web/test_web_project.cpp)
 
 # web端协议项接口测试 test_web_protocol
-add_kit_test(WORK_TEST WORK_TEST.WEB_PROTOCOL test_web_protocol tests/work/web/test_web_protocol.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.WEB_PROTOCOL test_web_protocol tests/work/web/test_web_protocol.cpp)
 
 # 协议项实时交互详情 WebSocket 接口测试 test_web_protocol_interaction
-add_kit_test(WORK_TEST WORK_TEST.WEB_PROTOCOL_INTERACTION test_web_protocol_interaction
-    tests/work/web/test_web_protocol_interaction.cpp
-    ${WORK_SRC})
+add_work_test(WORK_TEST.WEB_PROTOCOL_INTERACTION test_web_protocol_interaction
+    tests/work/web/test_web_protocol_interaction.cpp)
 
 # custom_tcp服务器实例 test_custom_project_server
-add_kit_test(WORK_TEST WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tests/work/domain/test_custom_project_server.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.CUSTOM_PJ_SERVER test_custom_project_server tests/work/domain/test_custom_project_server.cpp)
 
 # 测试服务实例工厂测试 test_project_server_factory
-add_kit_test(WORK_TEST WORK_TEST.PJ_SERVER_FAC test_project_server_factory tests/work/domain/test_project_server_factory.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.PJ_SERVER_FAC test_project_server_factory tests/work/domain/test_project_server_factory.cpp)
 
 # runtime 操作结果类型测试 test_runtime_result
-add_kit_test(WORK_TEST WORK_TEST.RUNTIME_RESULT test_runtime_result tests/work/domain/test_runtime_result.cpp src/work/domain/runtime_result.cpp)
+add_kit_test(WORK_TEST WORK_TEST.RUNTIME_RESULT test_runtime_result
+    tests/work/domain/test_runtime_result.cpp
+    src/work/domain/runtime_result.cpp)
 
 # 协议运行键生成测试 test_protocol_runtime_key
 add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_RUNTIME_KEY test_protocol_runtime_key
@@ -514,14 +558,12 @@ add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_RUNTIME_KEY test_protocol_runtime_key
     src/work/domain/protocol_runtime_key.cpp)
 
 # 协议配置校验与运行态构建 pipeline 测试 test_protocol_config_pipeline
-add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_CONFIG_PIPELINE test_protocol_config_pipeline
-    tests/work/domain/test_protocol_config_pipeline.cpp
-    ${WORK_DOMAIN_SRC})
+add_work_domain_test(WORK_TEST.PROTOCOL_CONFIG_PIPELINE test_protocol_config_pipeline
+    tests/work/domain/test_protocol_config_pipeline.cpp)
 
 # 协议 Body 类型与字节内容匹配校验测试 test_protocol_body_pipeline
-add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_BODY_PIPELINE test_protocol_body_pipeline
-    tests/work/domain/test_protocol_body_pipeline.cpp
-    ${WORK_DOMAIN_SRC})
+add_work_domain_test(WORK_TEST.PROTOCOL_BODY_PIPELINE test_protocol_body_pipeline
+    tests/work/domain/test_protocol_body_pipeline.cpp)
 
 # 协议项实时交互详情领域模型与 payload 捕获测试 test_protocol_interaction
 add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_INTERACTION test_protocol_interaction
@@ -533,42 +575,40 @@ add_kit_test(WORK_TEST WORK_TEST.PROTOCOL_INTERACTION test_protocol_interaction
     src/work/domain/protocol_interaction_publisher.cpp)
 
 # 自定义tcp字段测试 test_custom_tcp_field
-add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_FIELD test_custom_tcp_field tests/work/domain/test_custom_tcp_field.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.CUSTOM_TCP_FIELD test_custom_tcp_field tests/work/domain/test_custom_tcp_field.cpp)
 
 # 自定义tcp格式定义测试 test_custom_pattern_spec
-add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN_SPEC test_custom_pattern_spec tests/work/domain/test_custom_pattern_spec.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC test_custom_pattern_spec tests/work/domain/test_custom_pattern_spec.cpp)
 
 # 自定义tcp格式测试 test_custom_pattern
-add_kit_test(WORK_TEST WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/work/domain/test_custom_pattern.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/work/domain/test_custom_pattern.cpp)
 
 # 运行态测试 test_runtime
-add_kit_test(WORK_TEST WORK_TEST.RUNTIME test_runtime tests/work/domain/test_runtime.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.RUNTIME test_runtime tests/work/domain/test_runtime.cpp)
 
 # 项目运行态管理器测试 test_project_runtime_manager
-add_kit_test(WORK_TEST WORK_TEST.PROJECT_RUNTIME_MANAGER test_project_runtime_manager tests/work/runtime/test_project_runtime_manager.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.PROJECT_RUNTIME_MANAGER test_project_runtime_manager tests/work/runtime/test_project_runtime_manager.cpp)
 
 # 用户登录、会话和用户管理服务测试 test_user_auth
-add_kit_test(WORK_TEST WORK_TEST.USER test_user_auth tests/work/service/test_user_auth.cpp ${WORK_SRC})
+add_work_test(WORK_TEST.USER test_user_auth tests/work/service/test_user_auth.cpp)
 
 
 if(EXAMPLE.HTTP)
 
 # http服务器示例
-add_executable(example_http_server example/example_http_server.cpp ${WORK_SRC})
-add_dependencies(example_http_server ${DEPENDS})
+add_executable(example_http_server example/example_http_server.cpp)
+target_link_libraries(example_http_server PRIVATE kit_work ${KIT_RUNTIME_LIBS})
 redefine_file_macro(example_http_server)   #重定义 __FILE__
 target_compile_definitions(example_http_server PRIVATE ${DEF})
-target_link_libraries(example_http_server ${LIB_LIB})
 
 endif()
 
 
 # app服务器实例
-add_executable(kit_protocol_test_platform main.cpp ${WORK_SRC})
-add_dependencies(kit_protocol_test_platform ${DEPENDS})
+add_executable(kit_protocol_test_platform main.cpp)
+target_link_libraries(kit_protocol_test_platform PRIVATE kit_work ${KIT_RUNTIME_LIBS})
 redefine_file_macro(kit_protocol_test_platform)   #重定义 __FILE__
 target_compile_definitions(kit_protocol_test_platform PRIVATE ${DEF})
-target_link_libraries(kit_protocol_test_platform ${LIB_LIB})
 
 if(COVERAGE_TEST)
     set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin/coverage)

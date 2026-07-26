@@ -45,29 +45,6 @@ void HttpResponse::addHeader(const std::string& head, const std::string &val)
     }
 }
 
-bool HttpResponse::addHeader(const char *start, const char *colon, const char *end)
-{
-    assert(start != end);
-    std::string head(start, colon);
-    DelSpaceHelper(head);
-    // assert(head.size() != 0);
-    if(head.size() <= 0)
-    {
-        return false;
-    }
-    ++colon;
-    std::string val(colon, end);
-    DelSpaceHelper(val);
-    // assert(val.size() != 0);
-    HTTP_F_DEBUG("Header: |%s|-|%s|\n", head.c_str(), val.c_str());
-    if(val.size() <= 0)
-    {
-        return false;
-    }
-    addHeader(head, val);
-    return true;
-}
-
 std::string HttpResponse::getHeader(const std::string &key) const
 {
     return GetHeaderIgnoreCase(headers_, key);

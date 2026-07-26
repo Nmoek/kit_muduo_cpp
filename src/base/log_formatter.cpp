@@ -42,7 +42,6 @@ namespace kit_muduo
 */
 
 // 预处理模版对应的子类
-// BUG【FIX】: 预处理有问题
 LogFormatter::ItemMap& LogFormatter::GetMap()
 {
     static ItemMap m = {

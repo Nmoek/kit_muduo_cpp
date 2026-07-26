@@ -48,6 +48,9 @@ std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
     {k404NotFound,                   "Not Found"},
     {k405MethodNotAllowed,           "Method Not Allowed"},
     {k454SessionNotFound, "Session Not Found"},
+    {k413PayloadTooLarge, "Payload Too Large"},
+    {k414URITooLong, "URI Too Long"},
+    {k431RequestHeaderFieldsTooLarge, "Request Header Fields Too Largeg"},
     {k455MethodNotValid,             "Method Not Valid"},
     {k500InternalServerError,        "Internal Server Error"},
     {k503ServiceUnavailable, "Service Unavailable"}

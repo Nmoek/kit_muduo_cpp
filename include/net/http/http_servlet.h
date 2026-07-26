@@ -172,6 +172,40 @@ public:
     static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
 };
 
+class PayloadTooLarge413Servlet: public HttpServlet
+{
+public:
+    PayloadTooLarge413Servlet();
+    ~PayloadTooLarge413Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+};
+
+class URITooLong414Servlet: public HttpServlet
+{
+public:
+    URITooLong414Servlet();
+    ~URITooLong414Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+};
+
+class RequestHeaderFieldsTooLarge431Servlet: public HttpServlet
+{
+public:
+    RequestHeaderFieldsTooLarge431Servlet();
+    ~RequestHeaderFieldsTooLarge431Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+};
+
+
 
 class ServerErr500Servlet: public HttpServlet
 {

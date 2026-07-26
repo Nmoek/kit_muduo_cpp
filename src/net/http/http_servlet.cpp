@@ -252,6 +252,70 @@ void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     Handle(conn, ctx);
 }
 
+PayloadTooLarge413Servlet::PayloadTooLarge413Servlet()
+    :HttpServlet("PayloadTooLarge413Servlet", "kit_server")
+{
+
+}
+
+void PayloadTooLarge413Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
+
+void PayloadTooLarge413Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k413PayloadTooLarge);
+    resp->setConnectionClosed(true);
+    resp->resetBodyData();
+}
+
+URITooLong414Servlet::URITooLong414Servlet()
+    :HttpServlet("URITooLong414Servlet", "kit_server") 
+{ }
+
+
+
+void URITooLong414Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
+void URITooLong414Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k414URITooLong);
+    resp->setConnectionClosed(true);
+    resp->resetBodyData();
+}
+
+RequestHeaderFieldsTooLarge431Servlet::RequestHeaderFieldsTooLarge431Servlet()
+    :HttpServlet("RequestHeaderFieldsTooLarge431Servlet", "kit_server") 
+{
+
+}
+
+
+void RequestHeaderFieldsTooLarge431Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx) 
+{
+    Handle(conn, ctx);
+}
+
+void RequestHeaderFieldsTooLarge431Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k431RequestHeaderFieldsTooLarge);
+    resp->setConnectionClosed(true);
+    resp->resetBodyData();
+}
 
 ServerErr500Servlet::ServerErr500Servlet()
     :HttpServlet("ServerErr500Servlet", "kit_server")

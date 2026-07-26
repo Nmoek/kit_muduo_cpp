@@ -56,16 +56,13 @@ TimeStamp EpollPoller::poll(int32_t timeout, ChannelList *channelList)
     }
     else if(0 == numEvents)
     {
-        POLLER_F_DEBUG("epoll_wait timeout!\n");
         return now;
     }
-    POLLER_F_DEBUG("%d event trigger \n", numEvents);
     fillActiveEvent(numEvents, channelList);
     if(numEvents == _events.size())
     {
         _events.resize(numEvents * 2);
     }
-    POLLER_F_DEBUG("%d event trigger \n", numEvents);
 
     return now;
 }
@@ -80,7 +77,7 @@ void EpollPoller::updateChannel(Channel *channel)
     {
         if(kNew == status)
         {
-            // BUGFIX: 暂时删除  存在fd重复的可能性
+            // HACK: 暂时删除  存在fd重复的可能性
             // assert(_channels.find(fd) == _channels.end());
             auto it = _channels.find(fd);
             if(it != _channels.end())

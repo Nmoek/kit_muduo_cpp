@@ -42,7 +42,6 @@ public:
     void setVersion(Version version) { version_ = std::move(version); }
 
     void addHeader(const std::string& head, const std::string &val);
-    bool addHeader(const char *start, const char *colon, const char *end);
     std::string getHeader(const std::string &key) const;
 
     const std::unordered_map<std::string, std::string>& headers() const { return headers_; }

@@ -945,7 +945,7 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
 
                 resp->setStateCode(StateCode::k200Ok);
                 resp->setJson({{"code", -200}, {"message", "media type mismatch"}});
-                //TODO： websocket埋点
+
                 return;
             }
 
@@ -991,7 +991,6 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
 
         resp->setStateCode(StateCode::k200Ok);
         resp->setJson({{"code", -200}, {"message", "body parse error!"}});
-        //TODO： websocket埋点
 
         return;
     }

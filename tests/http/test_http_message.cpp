@@ -11,6 +11,7 @@
 #include "net/buffer.h"
 #include "net/http/http_context.h"
 #include "net/http/http_content.h"
+#include "net/http/http_parser.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_util.h"
@@ -19,6 +20,7 @@
 
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -583,4 +585,423 @@ TEST(TestHttpResp, set_octet_stream_preserves_binary_body)
     EXPECT_EQ(resp.contentMeta().known_type, KnownMediaType::kApplicationOctetStream);
     EXPECT_EQ(resp.getHeader("Content-Type"), "application/octet-stream");
     EXPECT_EQ(resp.bodyData(), body);
+}
+
+/*
+测试思路：
+1. 直接验证 TryConsume 的边界条件，确保达到上限合法，超过上限拒绝。
+2. 该函数同时被 CustomHttpParser 和 LLhttpParser 使用，是所有累计限制的基础。
+
+示例：
+  current=4, input=1, limit=5 -> current=5, success
+  current=5, input=1, limit=5 -> reject
+*/
+TEST(TestHttpParserLimits, try_consume_enforces_limit_without_overflow)
+{
+    size_t current = 4;
+    EXPECT_TRUE(HttpParser::TryConsume(current, 1, 5));
+    EXPECT_EQ(current, 5U);
+    EXPECT_FALSE(HttpParser::TryConsume(current, 1, 5));
+    EXPECT_EQ(current, 5U);
+
+    current = std::numeric_limits<size_t>::max();
+    EXPECT_FALSE(HttpParser::TryConsume(current, 1, current));
+}
+
+/*
+测试思路：
+1. 给 CustomHttpParser 一个很小的首行上限。
+2. 请求行在已有 CRLF 的情况下也必须被拒绝，不能只限制“尚未找到 CRLF”的分片。
+3. 错误原始数据捕获还必须受 max_error_capture_bytes 限制。
+
+示例：
+  max_start_line_bytes=16, "GET /too-long HTTP/1.1\\r\\n"
+        |
+        v
+  kStartLineTooLarge, raw_capture.size() <= 4
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_oversized_start_line)
+{
+    HttpParseLimits limits;
+    limits.max_start_line_bytes = 16;
+    limits.max_error_capture_bytes = 4;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string request = "GET /too-long HTTP/1.1\r\n";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(parser.parse(buf));
+    EXPECT_EQ(context.parseError(), HttpParseError::kStartLineTooLarge);
+    EXPECT_LE(context.rawCapture().size(), limits.max_error_capture_bytes);
+}
+
+/*
+测试思路：
+1. 用累计 Header 字节上限覆盖“单个 Header 行超限”的路径。
+2. 当前限制统计 Header 名称和值的有效内容字节，不包含冒号、空白和 CRLF。
+
+示例：
+  max_header_bytes=6, "X: 123456\\r\\n" (head=1, val=6)
+        |
+        v
+  kHeadersTooLarge
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_oversized_headers)
+{
+    HttpParseLimits limits;
+    limits.max_header_bytes = 6;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string request =
+        "GET / HTTP/1.1\r\n"
+        "X: 123456\r\n"
+        "\r\n";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(parser.parse(buf));
+    EXPECT_EQ(context.parseError(), HttpParseError::kHeadersTooLarge);
+}
+
+/*
+测试思路：
+1. 同一条未完成 Header 在两次 parse 之间会继续留在 Buffer 中。
+2. pending Header 防护应按当前未完成原始片段的实际长度判断，不能把旧片段在下一次 parse 中重复累加。
+3. 有效内容总长度未超过限制时，无论 TCP 如何分片都应该成功。
+
+示例：
+  "X: 123" + "456\\r\\n" -> head=1, val=6, total=7 <= 16
+        |
+        v
+  first parse: wait, second parse: gotAll
+*/
+TEST(TestHttpParserLimits, custom_parser_does_not_double_count_fragmented_header)
+{
+    HttpParseLimits limits;
+    limits.max_header_bytes = 16;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string first_part =
+        "GET / HTTP/1.1\r\n"
+        "X: 123";
+    buf.append(first_part.data(), first_part.size());
+
+    EXPECT_TRUE(parser.parse(buf));
+    EXPECT_FALSE(context.gotAll());
+
+    const std::string second_part = "456\r\n\r\n";
+    buf.append(second_part.data(), second_part.size());
+    EXPECT_TRUE(parser.parse(buf));
+    EXPECT_TRUE(context.gotAll());
+    EXPECT_EQ(context.request()->getHeader("X"), "123456");
+}
+
+/*
+测试思路：
+1. Header 没有 CRLF 时，parser 也必须对当前未完成片段执行上限检查。
+2. 该检查用于阻止攻击者持续发送永不结束的超长 Header 行。
+
+示例：
+  max_header_bytes=8, 未结束的 "X: 123456" 原始片段为 9 bytes
+        |
+        v
+  kHeadersTooLarge
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_oversized_incomplete_header)
+{
+    HttpParseLimits limits;
+    limits.max_header_bytes = 8;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string request =
+        "GET / HTTP/1.1\r\n"
+        "X: 123456";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(parser.parse(buf));
+    EXPECT_EQ(context.parseError(), HttpParseError::kHeadersTooLarge);
+}
+
+/*
+测试思路：
+1. 限制 Header 数量为 1。
+2. 第一个 Header 合法，第二个 Header 必须在写入请求前被拒绝。
+
+示例：
+  max_header_count=1, Host + X-Trace
+        |
+        v
+  kHeadersTooMany
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_too_many_headers)
+{
+    HttpParseLimits limits;
+    limits.max_header_count = 1;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string request =
+        "GET / HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "X-Trace: 1\r\n"
+        "\r\n";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(parser.parse(buf));
+    EXPECT_EQ(context.parseError(), HttpParseError::kHeadersTooMany);
+    EXPECT_EQ(context.request()->getHeader("Host"), "localhost");
+    EXPECT_EQ(context.request()->getHeader("X-Trace"), "");
+}
+
+/*
+测试思路：
+1. Content-Length 声明值超过 max_body_bytes 时，在 Body 追加前直接拒绝。
+2. 即使输入中已经带有完整 Body，也不能先分配/保存超限内容再报错。
+
+示例：
+  max_body_bytes=4, Content-Length: 5 + "12345"
+        |
+        v
+  kBodyTooLarge, body.size()==0
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_oversized_declared_body_before_append)
+{
+    HttpParseLimits limits;
+    limits.max_body_bytes = 4;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string request =
+        "POST / HTTP/1.1\r\n"
+        "Content-Length: 5\r\n"
+        "\r\n"
+        "12345";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(parser.parse(buf));
+    EXPECT_EQ(context.parseError(), HttpParseError::kBodyTooLarge);
+    EXPECT_TRUE(context.request()->bodyData().empty());
+}
+
+/*
+测试思路：
+1. Content-Length 是 framing 字段，必须严格按十进制解析。
+2. 非法字符不能被 atoi/宽松转换截断成合法长度。
+
+示例：
+  Content-Length: 1x -> kInvalidFormat
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_malformed_content_length)
+{
+    HttpContext context;
+    CustomHttpParser parser(&context);
+    Buffer buf;
+    const std::string request =
+        "POST / HTTP/1.1\r\n"
+        "Content-Length: 1x\r\n"
+        "\r\n"
+        "1";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(parser.parse(buf));
+    EXPECT_EQ(context.parseError(), HttpParseError::kInvalidFormat);
+    EXPECT_TRUE(context.request()->bodyData().empty());
+}
+
+/*
+测试思路：
+1. 重复 Content-Length 即使数值相同也拒绝，避免多个 framing 来源产生歧义。
+2. Transfer-Encoding 当前没有 chunked framing 实现，因此必须显式返回“不支持”，不能把 chunk 字节当普通 Body。
+
+示例：
+  Content-Length: 1 + Content-Length: 1 -> kInvalidFormat
+  Transfer-Encoding: chunked -> kUnsupportedTransferEncoding
+*/
+TEST(TestHttpParserLimits, custom_parser_rejects_ambiguous_framing_headers)
+{
+    {
+        HttpContext context;
+        CustomHttpParser parser(&context);
+        Buffer buf;
+        const std::string request =
+            "POST / HTTP/1.1\r\n"
+            "Content-Length: 1\r\n"
+            "Content-Length: 1\r\n"
+            "\r\n"
+            "1";
+        buf.append(request.data(), request.size());
+
+        EXPECT_FALSE(parser.parse(buf));
+        EXPECT_EQ(context.parseError(), HttpParseError::kInvalidFormat);
+    }
+
+    {
+        HttpContext context;
+        CustomHttpParser parser(&context);
+        Buffer buf;
+        const std::string request =
+            "POST / HTTP/1.1\r\n"
+            "Transfer-Encoding: chunked\r\n"
+            "\r\n"
+            "0\r\n"
+            "\r\n";
+        buf.append(request.data(), request.size());
+
+        EXPECT_FALSE(parser.parse(buf));
+        EXPECT_EQ(context.parseError(), HttpParseError::kUnsupportedTransferEncoding);
+    }
+}
+
+/*
+测试思路：
+1. 模拟 Header 与部分 Body 同批到达，随后用第二次 parse 补齐 Body。
+2. 当前 Buffer 耗尽时 parser 必须返回等待状态，不能在 kExpectBody 分支死循环。
+3. Body 补齐后才进入 kGotAll，且 Body 字节不能重复或丢失。
+
+示例：
+  "hello" = "he" + "llo"
+        |
+        v
+  first parse: gotAll=false, second parse: body="hello"
+*/
+TEST(TestHttpParserLimits, custom_parser_handles_fragmented_body_without_looping)
+{
+    HttpParseLimits limits;
+    limits.max_body_bytes = 5;
+
+    HttpContext context;
+    CustomHttpParser parser(&context, limits);
+    Buffer buf;
+    const std::string first_part =
+        "POST /partial HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Content-Length: 5\r\n"
+        "\r\n"
+        "he";
+    buf.append(first_part.data(), first_part.size());
+
+    EXPECT_TRUE(parser.parse(buf));
+    EXPECT_FALSE(context.gotAll());
+    EXPECT_EQ(buf.readableBytes(), 0U);
+    EXPECT_EQ(context.request()->bodyString(), "he");
+
+    const std::string second_part = "llo";
+    buf.append(second_part.data(), second_part.size());
+    EXPECT_TRUE(parser.parse(buf));
+    EXPECT_TRUE(context.gotAll());
+    EXPECT_EQ(buf.readableBytes(), 0U);
+    EXPECT_EQ(context.request()->bodyString(), "hello");
+}
+
+/*
+测试思路：
+1. 普通 Header 之前存在多个 Header 时，后续字段仍应保持独立，不能发生字符串拼接。
+2. Content-Length 请求要真正进入 Body 回调并完成解析，覆盖 llhttp 的 Header value complete 与 message complete 路径。
+
+示例：
+  Host + Connection + Content-Length + Content-Type
+        |
+        v
+  headers 保持四个独立键，body == "hello"
+*/
+TEST(TestHttpParserLimits, llhttp_parser_keeps_multiple_headers_independent)
+{
+    HttpContext context;
+    Buffer buf;
+    const std::string request =
+        "POST /upload HTTP/1.1\r\n"
+        "Host: localhost\r\n"
+        "Connection: close\r\n"
+        "Content-Length: 5\r\n"
+        "Content-Type: text/plain\r\n"
+        "\r\n"
+        "hello";
+    buf.append(request.data(), request.size());
+
+    EXPECT_TRUE(context.parseRequest(buf, TimeStamp::Now()));
+    EXPECT_TRUE(context.gotAll());
+    EXPECT_EQ(buf.readableBytes(), 0U);
+
+    const auto request_model = context.request();
+    EXPECT_EQ(request_model->getHeader("Host"), "localhost");
+    EXPECT_EQ(request_model->getHeader("Connection"), "close");
+    EXPECT_EQ(request_model->getHeader("Content-Length"), "5");
+    EXPECT_EQ(request_model->getHeader("Content-Type"), "text/plain");
+    EXPECT_EQ(request_model->bodyString(), "hello");
+}
+
+/*
+测试思路：
+1. 喂入 llhttp 无法接受的 Header 格式。
+2. llhttp 自身错误与主动限制错误都必须在 HttpContext 中留下非 kNone 的错误类型，便于 HTTP Server 映射状态码。
+3. 原始报文捕获必须有上限。
+
+示例：
+  "Broken-Header" (缺少冒号) -> kInvalidFormat, raw_capture <= 1024
+*/
+TEST(TestHttpParserLimits, llhttp_parser_records_builtin_format_errors)
+{
+    HttpContext context;
+    Buffer buf;
+    const std::string request =
+        "GET / HTTP/1.1\r\n"
+        "Broken-Header\r\n"
+        "\r\n";
+    buf.append(request.data(), request.size());
+
+    EXPECT_FALSE(context.parseRequest(buf, TimeStamp::Now()));
+    EXPECT_EQ(context.parseError(), HttpParseError::kInvalidFormat);
+    EXPECT_LE(context.rawCapture().size(), 1024U);
+}
+
+/*
+测试思路：
+1. 通过 Custom parser 验证 Header 名称和值的首尾空白会被规范化。
+2. Request 和 Response 两条解析路径都要覆盖，避免只修复其中一侧。
+
+示例：
+  " Host : localhost " -> request.getHeader("Host") == "localhost"
+  " Content-Type : text/plain " -> response.getHeader("Content-Type") == "text/plain"
+*/
+TEST(TestHttpMessage, custom_parser_normalizes_request_and_response_headers)
+{
+    {
+        HttpContext context;
+        CustomHttpParser parser(&context);
+        Buffer buf;
+        const std::string request =
+            "GET / HTTP/1.1\r\n"
+            " Host : localhost \r\n"
+            "\r\n";
+        buf.append(request.data(), request.size());
+
+        EXPECT_TRUE(parser.parse(buf));
+        EXPECT_TRUE(context.gotAll());
+        EXPECT_EQ(context.request()->getHeader("Host"), "localhost");
+    }
+
+    {
+        HttpContext context;
+        CustomHttpParser parser(&context);
+        parser.setType(HttpParser::RespType);
+        Buffer buf;
+        const std::string response =
+            "HTTP/1.1 200 OK\r\n"
+            " Content-Type : text/plain \r\n"
+            "\r\n";
+        buf.append(response.data(), response.size());
+
+        EXPECT_TRUE(parser.parse(buf));
+        EXPECT_TRUE(context.gotAll());
+        EXPECT_EQ(context.response()->getHeader("Content-Type"), "text/plain");
+    }
 }

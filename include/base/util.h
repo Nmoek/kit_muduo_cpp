@@ -9,6 +9,7 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
+#include <charconv>
 #include <cstdint>
 #include <sys/time.h>
 #include <string>
@@ -121,6 +122,42 @@ bool IsUtf8Safe(const void *data, size_t size, std::string& utf8_error);
  * @return std::string 不会截断在UTF-8多字节字符中间
  */
 std::string Utf8SafePrefix(const void *data, size_t size, size_t max_bytes);
+
+template<typename T, typename = std::enable_if_t< std::is_arithmetic_v<T>, bool>>
+bool ParsePositiveArithmetic(const std::string& value, T& out)
+{
+    if(value.empty())
+    {
+        return false;
+    } 
+
+    try {
+        const char *begin = value.data();
+        const char *end = begin + value.size();
+        const auto& parsed = std::from_chars(begin, begin + value.size(), out);
+        
+        return parsed.ec == std::errc{} && parsed.ptr == end;
+    } catch(const std::exception&) {
+        return false;
+    }
+}
+
+template<typename T, typename = std::enable_if_t< std::is_arithmetic_v<T>, bool>>
+bool ToPositiveArithmetic(const T value, std::string& out)
+{
+    try {
+        out.resize(sizeof(T));
+        const char *begin = out.data();
+        const char *end = begin + out.size();
+        const auto& parsed = std::to_chars(begin, end, value);
+        
+        return parsed.ec == std::errc{} && parsed.ptr == end;
+    } catch(const std::exception&) {
+        return false;
+    }
+}
+
+
 
 } // namespace kit
 #endif

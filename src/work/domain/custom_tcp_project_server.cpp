@@ -543,8 +543,7 @@ void CustomTcpProjectServer::onMessage(kit_muduo::TcpConnectionPtr conn, kit_mud
         {
             PJSERVER_ERROR() << "custom tcp request parse error! " << std::endl;
 
-            // TODO 暂时定为1k的捕捉上
-            context->rawCapture().assign(buf->peek(), buf->peek() + std::min(buf->readableBytes(), static_cast<size_t>(1*1024)));
+            context->rawCapture().assign(buf->peek(), buf->peek() + std::min(buf->readableBytes(), context->limits().max_error_capture_bytes));
 
             // 出错一般直接关闭
             sendAndObserve(conn,

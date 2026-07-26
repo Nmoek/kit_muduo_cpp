@@ -117,6 +117,9 @@ struct StateCode
         k403Forbidden = 403,
         k404NotFound = 404,
         k405MethodNotAllowed = 405,
+        k413PayloadTooLarge = 413,
+        k414URITooLong = 414,
+        k431RequestHeaderFieldsTooLarge = 431,
         k454SessionNotFound = 454,
         k455MethodNotValid = 455,
         //5XX

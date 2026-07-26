@@ -70,6 +70,12 @@ struct CustomTcpParseResult
     }
 };
 
+struct CustomTcpParseLimits
+{
+    size_t max_error_capture_bytes{1 * 1024};
+};
+
+
 class CustomTcpContext 
 {
 public:
@@ -111,6 +117,8 @@ public:
     std::vector<uint8_t>& rawCapture() { return raw_capture_; }
     const std::vector<uint8_t>& rawCapture() const { return raw_capture_; }
 
+    const CustomTcpParseLimits& limits() const { return limits_; }
+
 private:
     /// @brief 这里需要通过功能码反查到配置的格式字段
     CustomTcpProjectServer* server_;
@@ -127,6 +135,8 @@ private:
     std::shared_ptr<CustomTcpMessage> response_;
     /// @brief 用于解析失败捕获raw bytes
     std::vector<uint8_t> raw_capture_;
+    /// @brief tcp解析限制配置
+    CustomTcpParseLimits limits_;
 };
 using CustomTcpContextPtr = std::shared_ptr<CustomTcpContext>;
 

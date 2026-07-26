@@ -812,7 +812,7 @@ static std::vector<HandlerCase> MakeRuntimeStateCases()
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    WriteBody(-200, "request param invalid", 0, 0));
+                    WriteBody(-200, "route dynamic param error", 0, 0));
             }),
 
         /*
@@ -962,7 +962,7 @@ static std::vector<HandlerCase> MakeDelProjectCases()
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    WriteBody(-200, "query param parse error", 0, 0));
+                    WriteBody(-200, "route dynamic param error", 0, 0));
             }),
 
         /*
@@ -992,7 +992,7 @@ static std::vector<HandlerCase> MakeDelProjectCases()
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    WriteBody(-300, "service failed", 0, 0));
+                    WriteBody(-200, "route dynamic param error", 0, 0));
             }),
 
         /*
@@ -1160,7 +1160,7 @@ static std::vector<HandlerCase> MakeRestoreProjectCases()
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    WriteBody(-200, "query param fail", 0, 0));
+                    WriteBody(-200, "route dynamic param error", 0, 0));
             }),
 
         /*
@@ -1313,7 +1313,7 @@ static std::vector<HandlerCase> MakeSingleProjectCases()
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    nljson{{"code", -200}, {"message", "query param transform fail"}});
+                    nljson{{"code", -200}, {"message", "route dynamic param error"}});
             }),
     };
 }
