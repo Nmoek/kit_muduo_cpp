@@ -132,6 +132,7 @@ set(PKG_LIB_PATH
     "pkg/llhttp/lib"
     "pkg/pugixml/lib"
     "pkg/simdutf/lib"
+    "pkg/HowardHinnant_date/lib"
 )
 
 link_directories(${PKG_LIB_PATH})
@@ -152,6 +153,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/pkg/nanoid_cpp/include/
     ${PROJECT_SOURCE_DIR}/pkg/pugixml/include
     ${PROJECT_SOURCE_DIR}/pkg/simdutf/include
+    ${PROJECT_SOURCE_DIR}/pkg/HowardHinnant_date/include
 )
 
 set(BASE_SRC

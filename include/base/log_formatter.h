@@ -19,6 +19,7 @@
 
 #include "base/log_level.h"
 #include "base/log_attr.h"
+#include "base/time_stamp.h"
 
 
 namespace kit_muduo {
@@ -142,17 +143,7 @@ public:
 
     void format(std::stringstream &ss, LogAttr::Ptr pattr) override
     {
-        time_t t = (time_t)(pattr->getTimeStamp() / 1000);
-        struct tm tm = {0};
-        char timeStr[32] = {0};
-        char buf[96] = {0};
-
-        tm = *localtime_r(&t, &tm);
-        strftime(timeStr, sizeof(timeStr), _timeFormat.c_str(), &tm);
-
-        snprintf(buf, sizeof(buf), "%s.%03d", timeStr, (int)(pattr->getTimeStamp() % 1000));
-
-        ss << buf;
+        ss << TimeStamp(pattr->getTimeStamp()).toLogString(_timeFormat);
     }
 private:
     /// @brief 时间日期格式化字符串

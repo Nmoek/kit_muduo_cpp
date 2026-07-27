@@ -20,35 +20,6 @@ namespace kit_muduo
 
 extern thread_local pid_t t_thread_id;
 
-/**
- * @brief 获取ms级系统时间
- * @return uint64_t
- */
-uint64_t GetTimeStampMs();
-
-/**
- * @brief 获取us级系统时间
- * @return uint64_t
- */
-uint64_t GetCurrentUs();
-
-/**
- * @brief 时间秒数转字符串
- * @param[in] ts
- * @param[in] format
- * @return std::string
- */
-std::string Timer2Str(time_t ts, const std::string& format);
-
-/**
- * @brief 获取开机时间, 单位 秒s
- * @return uint32_t 
- */
-int32_t GetMonotonicS();
-
-
-int64_t GetMonotonicMS();
-
 
 /**
  * @brief 获取内核线程pid

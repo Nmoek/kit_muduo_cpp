@@ -1,5 +1,6 @@
 #include "web/web_user.h"
 
+#include "base/time_stamp.h"
 #include "domain/user.h"
 #include "net/http/http_context.h"
 #include "net/http/http_response.h"
@@ -44,8 +45,8 @@ nljson UserJson(const User &user)
         {"note_name", user.note_name},
         {"role", UserRoleToString(user.role)},
         {"status", UserStatusToString(user.status)},
-        {"ctime", user.ctime},
-        {"utime", user.utime},
+        {"ctime", TimeStamp(user.ctime).toUtcRfc3339()},
+        {"utime", TimeStamp(user.utime).toUtcRfc3339()},
     };
 }
 

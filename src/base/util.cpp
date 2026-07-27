@@ -28,50 +28,6 @@ namespace kit_muduo
 thread_local pid_t t_thread_id = 0;
 
 
-uint64_t GetTimeStampMs()
-{
-    struct timeval tv = {0};
-    gettimeofday(&tv, nullptr);
-    return tv.tv_sec * 1000ul + tv.tv_usec / 1000;
-}
-
-
-uint64_t GetCurrentUs()
-{
-    struct timeval tv;
-    gettimeofday(&tv, nullptr);
-    return tv.tv_sec * 1000 * 1000ul + tv.tv_usec;
-}
-
-std::string Timer2Str(time_t ts, const std::string& format)
-{
-    struct tm tm;
-    tm = *localtime_r(&ts, &tm);
-    char buf[100];
-    strftime(buf, sizeof(buf), format.c_str(), &tm);
-
-    return buf;
-}
-
-/**
- * @brief 获取开机时间, 单位 秒s
- * @return uint32_t 
- */
-int32_t GetMonotonicS()
-{
-    struct timespec spec;
-    clock_gettime(CLOCK_MONOTONIC, &spec);
-
-    return static_cast<int32_t>(spec.tv_sec);
-}
-
-int64_t GetMonotonicMS()
-{
-    struct timespec spec;
-    clock_gettime(CLOCK_MONOTONIC, &spec);
-    return spec.tv_sec * 1000 + spec.tv_nsec / 1000000;
-}
-
 
 pid_t GetThreadPid()
 {

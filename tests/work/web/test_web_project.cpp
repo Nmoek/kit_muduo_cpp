@@ -303,7 +303,7 @@ static nljson ProjectVoBody(const Project &p)
         {"user_id", p.m_userId},
         {"status", static_cast<int32_t>(p.m_status)},
         {"runtime_state", static_cast<int32_t>(p.m_runtimeState)},
-        {"ctime", p.m_ctime.toString()},
+        {"ctime", p.m_ctime.toUtcRfc3339()},
     };
 }
 

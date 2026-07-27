@@ -40,7 +40,7 @@ ProjectVo CovertProjectVo(const Project &p)
         p.m_userId,
         static_cast<int32_t>(p.m_status),
         static_cast<int32_t>(p.m_runtimeState),
-        p.m_ctime.toString()
+        p.m_ctime.toUtcRfc3339(),
     };
 }
 

@@ -165,13 +165,12 @@ std::shared_ptr<Timer> EventLoop::runAt(TimeStamp time, TimerCb cb)
 
 std::shared_ptr<Timer> EventLoop::runAfter(int64_t delay, TimerCb cb)
 {
-    return _timerQueue->addTimer(std::move(cb), TimeStamp::Now().addTime(delay));
-
+    return _timerQueue->addTimer(std::move(cb), TimeStamp::MonotonicNowMs() + delay);
 }
 
 std::shared_ptr<Timer> EventLoop::runEvery(int64_t interval, TimerCb cb)
 {
-    return _timerQueue->addTimer(std::move(cb), TimeStamp::Now().addTime(interval), interval);
+    return _timerQueue->addTimer(std::move(cb), TimeStamp::MonotonicNowMs() +  interval, interval);
 }
 
 void EventLoop::cancel(std::shared_ptr<Timer> timer)

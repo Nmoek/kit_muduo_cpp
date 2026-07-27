@@ -21,12 +21,13 @@
 #include "base/log_appender.h"
 #include "base/log_formatter.h"
 #include "base/log_attr.h"
+#include "base/time_stamp.h"
 #include "base/util.h"
 #include "base/singleton.h"
 
 /********1、流式输出 ********/
 #define LOG_LEVEL_OUT(logger, level, module) \
-    kit_muduo::LogAttrWrap(std::make_shared<kit_muduo::LogAttr>(logger, level, logger->getName(), module, __FILE__, __LINE__, 0, kit_muduo::GetThreadTid(), kit_muduo::GetThreadPid(), kit_muduo::GetThreadName().c_str(), kit_muduo::GetTimeStampMs())).getSS()
+    kit_muduo::LogAttrWrap(std::make_shared<kit_muduo::LogAttr>(logger, level, logger->getName(), module, __FILE__, __LINE__, 0, kit_muduo::GetThreadTid(), kit_muduo::GetThreadPid(), kit_muduo::GetThreadName().c_str(), kit_muduo::TimeStamp::NowMs())).getSS()
 
 
 #define KIT_DEBUG(logger, module) LOG_LEVEL_OUT(logger, kit_muduo::LogLevel::DEBUG, module)
@@ -37,7 +38,7 @@
 
 /********2、变参输出********/
 #define LOG_LEVEL_FMT_OUT(logger, level, module, fmt, ...) \
-    kit_muduo::LogAttrWrap(std::make_shared<kit_muduo::LogAttr>(logger, level, logger->getName(), module, __FILE__, __LINE__, 0, kit_muduo::GetThreadTid(), kit_muduo::GetThreadPid(), kit_muduo::GetThreadName().c_str(), kit_muduo::GetTimeStampMs())).getAttr()->format(fmt, ##__VA_ARGS__ )
+    kit_muduo::LogAttrWrap(std::make_shared<kit_muduo::LogAttr>(logger, level, logger->getName(), module, __FILE__, __LINE__, 0, kit_muduo::GetThreadTid(), kit_muduo::GetThreadPid(), kit_muduo::GetThreadName().c_str(), kit_muduo::TimeStamp::NowMs())).getAttr()->format(fmt, ##__VA_ARGS__ )
 
 #define KIT_FMT_DEBUG(logger, module, fmt, ...) LOG_LEVEL_FMT_OUT(logger, kit_muduo::LogLevel::DEBUG, module, fmt, ##__VA_ARGS__)
 #define KIT_FMT_INFO(logger, module, fmt, ...) LOG_LEVEL_FMT_OUT(logger, kit_muduo::LogLevel::INFO, module, fmt, ##__VA_ARGS__)

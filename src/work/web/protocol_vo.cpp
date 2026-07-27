@@ -31,8 +31,8 @@ ProtocolVo CovertProtocolVo(const Protocol &p)
             p.m_reqBodyDataStatus,
             ProtocolBodyTypeToString(p.m_respBodyType),
             p.m_respBodyDataStatus,
-            p.m_ctime.toString(),
-            p.m_utime.toString()
+            p.m_ctime.toUtcRfc3339(),
+            p.m_utime.toUtcRfc3339()
         };
     } catch(const std::exception& e) {
 
