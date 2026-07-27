@@ -2,6 +2,28 @@
     const KitProxy = global.KitProxy || (global.KitProxy = {});
 
     // 通用工具集中在这里，避免 main.js、modal、protocol_item 继续复制实现。
+    /**
+     * Format an API UTC RFC3339 timestamp in the browser's local timezone.
+     * @param {string | null | undefined} value
+     * @returns {string}
+     */
+    function formatUtcTime(value) {
+        if (value == null || String(value).trim() === '') return '未知';
+
+        const text = String(value).trim();
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(text)) {
+            return '未知';
+        }
+
+        const date = new Date(text);
+
+        if (Number.isNaN(date.getTime())) return '未知';
+
+        const pad = number => String(number).padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+            + ` ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
     function delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
@@ -878,6 +900,7 @@
     }
 
     KitProxy.utils = {
+        formatUtcTime,
         delay,
         showLoading,
         hideLoading,

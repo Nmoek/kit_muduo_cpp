@@ -118,7 +118,8 @@
         }
         const requestMeta = record.request && record.request.meta;
         const responseMeta = record.response && record.response.meta;
-        if (String(record.protocol_type || '').toLowerCase() === 'http' || requestMeta) {
+        const protocolType = String(record.protocol_type || '').toLowerCase();
+        if (protocolType === 'http' || (!protocolType && requestMeta)) {
             const method = requestMeta && requestMeta.method ? requestMeta.method : 'HTTP';
             const target = requestMeta && (requestMeta.path || requestMeta.target);
             const status = responseMeta && responseMeta.status_code;

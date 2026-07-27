@@ -63,6 +63,47 @@ describe('V1 config and API layer', () => {
     });
 
     /**
+     * 测试思路：Mock 普通用户从主页面跳转到独立协议项页时，新的 HTML 文档会重新创建内存 state，
+     * 单项目查询必须先补齐该用户的示例项目，再加载项目和协议项。
+     * 示例：文档 A 登录 testuser 得到 projectId=101，文档 B 只带 session 查询 101，仍能得到项目和协议 1001。
+     */
+    it('mock 普通用户跨页面查询示例项目后可以加载协议项', async () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=101');
+        loadCoreScripts(context);
+        const user = await loginMockUser(context);
+        const state = context.KitProxy.mocks.state;
+        const userProjectIds = state.projects
+            .filter(project => Number(project.user_id) === Number(user.id))
+            .map(project => Number(project.id));
+
+        // 登录页已经补过示例；清掉它们以模拟跳转到新 HTML 文档后的初始 Mock state。
+        state.projects = state.projects.filter(project => Number(project.user_id) !== Number(user.id));
+        state.protocols = state.protocols.filter(protocol => !userProjectIds.includes(Number(protocol.project_id)));
+        state.nextProjectId = 100;
+        state.nextProtocolId = 1000;
+
+        const projects = await context.KitProxy.api.getProject(101);
+        const protocols = await context.KitProxy.api.getProtocolList(101, 0, 10);
+
+        expect(projects).toHaveLength(1);
+        expect(projects[0].id).toBe(101);
+        expect(protocols).toHaveLength(1);
+        expect(protocols[0].project_id).toBe(101);
+    });
+
+    /**
+     * 测试思路：Mock 单项目查询也必须执行项目级权限校验，不能让普通用户读取管理员项目上下文。
+     * 示例：testuser 查询 projectId=1 应返回空数组，而不是返回管理员项目后再显示空协议列表。
+     */
+    it('mock 普通用户不能查询其他用户的项目', async () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        await loginMockUser(context);
+
+        await expect(context.KitProxy.api.getProject(1)).resolves.toEqual([]);
+    });
+
+    /**
      * 测试思路：新增项目的协议类型入参和新增协议保持一致，API 请求统一传 HTTP/TCP/HTTPS 字符串。
      * 示例：页面内部选择 protocol_type=1，真实 addProject 发给后端时应变成 protocol_type="HTTP"。
      */

@@ -22,8 +22,8 @@ describe('V1.3 service filters and body editor', () => {
         loadCoreScripts(context);
 
         const projects = [
-            { id: 1, protocol_type: 1, status: 1, runtime_state: 1, ctime: '2025-08-11 07:55:15' },
-            { id: 2, protocol_type: 2, status: 1, runtime_state: 0, ctime: '2025-08-12 07:55:15' },
+            { id: 1, protocol_type: 1, status: 1, runtime_state: 1, ctime: '2025-08-11T07:55:15.000Z' },
+            { id: 2, protocol_type: 2, status: 1, runtime_state: 0, ctime: '2025-08-12T07:55:15.000Z' },
             { id: 3, protocol_type: 1, status: 1, runtime_state: 0, ctime: '' },
         ];
 

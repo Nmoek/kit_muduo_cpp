@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 
-async function loginAndOpenDrawer(page, context) {
+async function loginAndOpenDrawer(page, context, projectId = 1, protocolId = 1) {
     await context.clearCookies();
-    await page.goto('/html/login.html?apiMode=mock&returnTo=%2Fhtml%2Fprotocol_items.html%3FapiMode%3Dmock%26projectId%3D1');
+    await page.goto(`/html/login.html?apiMode=mock&returnTo=%2Fhtml%2Fprotocol_items.html%3FapiMode%3Dmock%26projectId%3D${projectId}`);
     await page.getByRole('button', { name: '切换为管理员登录' }).click();
     await page.getByLabel('note').fill('admin');
     await page.getByLabel('密码').fill('admin123');
@@ -11,7 +11,16 @@ async function loginAndOpenDrawer(page, context) {
         page.getByRole('button', { name: '登录', exact: true }).click(),
     ]);
 
-    const openButton = page.locator('.protocol-item[data-protocol-id="1"] .protocol-interaction-btn');
+    const item = page.locator(`.protocol-item[data-protocol-id="${protocolId}"]`);
+    await expect(item).toBeVisible();
+    if (projectId === 2) {
+        await page.getByRole('button', { name: '启动测试服务', exact: true }).click();
+        await expect(page.getByRole('button', { name: '停止测试服务', exact: true })).toBeVisible();
+        await item.getByRole('button', { name: '未上线', exact: true }).click();
+        await expect(item.getByRole('button', { name: '已上线', exact: true })).toBeVisible();
+    }
+
+    const openButton = item.locator('.protocol-interaction-btn');
     await expect(openButton).toBeEnabled();
     await openButton.click();
     const drawer = page.locator('.protocol-interaction-drawer');
@@ -66,6 +75,40 @@ test('Mock transport 的 live_ready、实时记录和项目 Notice 在抽屉中�
 });
 
 /**
+ * 测试思路：真实 Chromium 中进入 Mock TCP 协议项并连接实时抽屉，确认消息组不会混入 HTTP method/path 或 HTTP raw_packet 样例。
+ * 示例：projectId=2、protocolId=2 连接后，协议记录均为 custom_tcp，且每条请求都包含功能码和 Raw Hex。
+ */
+test('Mock TCP transport 生成 Custom TCP 实时交互数据', async ({ page, context }) => {
+    const drawer = await loginAndOpenDrawer(page, context, 2, 2);
+
+    await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
+    await expect.poll(() => drawer.locator('.interaction-record-item').count())
+        .toBeGreaterThanOrEqual(4);
+    await expect(drawer).not.toContainText('HTTP raw_packet');
+    await expect(drawer).not.toContainText('GET /api/health');
+    await expect(drawer).not.toContainText('POST /api/check');
+
+    const records = await page.evaluate(() => {
+        const clients = window.KitProxy.protocolInteractionLive.clients;
+        const client = clients && Array.from(clients)[0];
+        if (!client) throw new Error('没有找到当前 Mock TCP LiveClient');
+        return client.getState().visibleRecords.map(record => ({
+            scope: record.scope,
+            protocolType: record.protocol_type,
+            functionCode: record.request && record.request.meta && record.request.meta.function_code,
+            method: record.request && record.request.meta && record.request.meta.method,
+            path: record.request && record.request.meta && record.request.meta.path,
+            rawHex: record.request && record.request.raw_packet && record.request.raw_packet.raw_hex,
+        }));
+    });
+    const protocolRecords = records.filter(record => record.scope === 'protocol');
+    expect(protocolRecords).toHaveLength(3);
+    expect(protocolRecords.every(record => record.protocolType === 'custom_tcp')).toBe(true);
+    expect(protocolRecords.every(record => record.functionCode)).toBe(true);
+    expect(protocolRecords.every(record => !record.method && !record.path && record.rawHex)).toBe(true);
+});
+
+/**
  * 测试思路：
  *
  * 测什么：
@@ -108,7 +151,9 @@ test('实时记录按唯一键幂等并安全渲染后端文本', async ({ page,
         const clients = window.KitProxy.protocolInteractionLive.clients;
         const client = clients && Array.from(clients)[0];
         if (!client) throw new Error('没有找到当前 Mock LiveClient');
-        const source = client.getState().visibleRecords[0];
+        const source = client.getState().visibleRecords.find(record => (
+            String(record.protocol_type || '').toLowerCase() === 'http'
+        )) || client.getState().visibleRecords[0];
         const record = JSON.parse(JSON.stringify(source));
         record.seq = 99;
         record.error_message = '<img id="injected-record-node" src="x">';

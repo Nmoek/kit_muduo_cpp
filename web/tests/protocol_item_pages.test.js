@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createBrowserContext, createProtocolItemFormContext, createProtocolItemPageContext, flushPromises, loadCoreScripts, loadProtocolListScripts, loginMockUser, readRepoFile, repoFileExists, runScript } from './helpers/browser_context.js';
 
+const loginMockAdmin = context => loginMockUser(context, {
+    note: 'admin',
+    loginType: 'admin',
+    password: 'admin123',
+});
+
 describe('V1.5 protocol item form page and compact cards', () => {
     /**
      * 测试思路：项目运行且协议项 config_state=1 时，实时详情入口应可用并打开右侧抽屉。
@@ -1380,7 +1386,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemPageContext(1);
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         context.KitProxy.__disableAutoInitMain = true;
         context.KitProxy.__disableAutoInitProtocolItems = true;
         loadProtocolListScripts(context);
@@ -1469,7 +1475,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemPageContext(2);
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         context.KitProxy.__disableAutoInitMain = true;
         context.KitProxy.__disableAutoInitProtocolItems = true;
         loadProtocolListScripts(context);
@@ -1499,7 +1505,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemPageContext(1);
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         context.KitProxy.__disableAutoInitMain = true;
         context.KitProxy.__disableAutoInitProtocolItems = true;
         context.delay = function delayImmediately() {
@@ -1520,7 +1526,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         await flushPromises(12);
 
         expect(context.KitProxy.protocolItemsPage.pageState.pageSize).toBe(5);
-        expect(getProtocolList).toHaveBeenLastCalledWith(1, 0, 6, {});
+        expect(getProtocolList).toHaveBeenLastCalledWith(1, 0, 6, { include_inactive: true });
     });
 
     /**
@@ -1555,8 +1561,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_cfg: {},
             req_body_status: 0,
             resp_body_status: 0,
-            ctime: '2025-12-02 06:01:03',
-            utime: '2025-12-02 06:01:03',
+            ctime: '2025-12-02T06:01:03.000Z',
+            utime: '2025-12-02T06:01:03.000Z',
         });
 
         const details = protocolItem.querySelector('.protocol-details');
@@ -1588,6 +1594,55 @@ describe('V1.5 protocol item form page and compact cards', () => {
         expect(details.classList.contains('is-expanded')).toBe(false);
         expect(toggleButton.getAttribute('aria-expanded')).toBe('false');
 
+    });
+
+    /**
+     * 测试思路：协议卡片的创建时间必须按浏览器时区展示，修改时间和 ID 的显示权限必须独立验证。
+     * 示例：普通用户只看到本地化后的创建时间且没有协议 ID/修改时间，管理员额外看到协议 ID。
+     */
+    it('协议卡片按权限展示协议 ID，并隐藏修改时间', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        [
+            'js/tcp_pattern_modal.js',
+            'js/protocol_item.js',
+            'js/protocol_registry.js',
+        ].forEach(filePath => runScript(context, filePath));
+        context.KitProxy.__disableAutoInitMain = true;
+        runScript(context, 'js/main.js');
+
+        const root = context.document.createElement('div');
+        root.className = 'protocol-items-page';
+        root.id = 'service-card-1';
+        root.dataset.runtimeState = '1';
+        root.innerHTML = '<div class="protocol-list"></div>';
+        context.document.body.appendChild(root);
+
+        const protocol = {
+            id: 7,
+            name: '时间协议',
+            project_id: 1,
+            type: 'HTTP',
+            config_state: 1,
+            req_cfg: { method: 'GET', path: '/api/time' },
+            resp_cfg: {},
+            ctime: '2025-12-02T06:01:03Z',
+            utime: '2025-12-03T06:01:03Z',
+        };
+        const instant = new Date(protocol.ctime);
+        const expected = `${instant.getFullYear()}-${String(instant.getMonth() + 1).padStart(2, '0')}-${String(instant.getDate()).padStart(2, '0')}`
+            + ` ${String(instant.getHours()).padStart(2, '0')}:${String(instant.getMinutes()).padStart(2, '0')}:${String(instant.getSeconds()).padStart(2, '0')}`;
+
+        context.KitProxy.auth.applyCurrentUser({ id: 2, note: 'testuser', role: 'normal' });
+        const normalItem = context.addProtocolItem(root, protocol);
+        expect(normalItem.querySelector('.protocol-id')).toBeNull();
+        expect(normalItem.querySelector('.last-update-time')).toBeNull();
+        expect(normalItem.querySelector('.create-time').textContent).toBe(`创建: ${expected}`);
+
+        context.KitProxy.auth.applyCurrentUser({ id: 1, note: 'admin', role: 'admin' });
+        const adminItem = context.addProtocolItem(root, Object.assign({}, protocol, { id: 8 }));
+        expect(adminItem.querySelector('.protocol-id .meta-value').textContent).toBe('8');
+        expect(adminItem.querySelector('.last-update-time')).toBeNull();
     });
 
     /**
@@ -1623,8 +1678,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_cfg: {},
             req_body_status: 0,
             resp_body_status: 0,
-            ctime: '2025-12-02 06:01:03',
-            utime: '2025-12-02 06:01:03',
+            ctime: '2025-12-02T06:01:03.000Z',
+            utime: '2025-12-02T06:01:03.000Z',
         });
 
         protocolItem.querySelector('.protocol-runtime-btn').click();
@@ -1643,7 +1698,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemPageContext(1);
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         context.KitProxy.__disableAutoInitMain = true;
         context.KitProxy.__disableAutoInitProtocolItems = true;
         context.delay = function delayImmediately() {
@@ -1661,8 +1716,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_cfg: {},
             req_body_status: 0,
             resp_body_status: 0,
-            ctime: '2025-12-02 06:01:03',
-            utime: '2025-12-02 06:01:03',
+            ctime: '2025-12-02T06:01:03.000Z',
+            utime: '2025-12-02T06:01:03.000Z',
         };
         vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue([staleProtocol]);
         const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime')
@@ -1717,8 +1772,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_cfg: {},
             req_body_status: 0,
             resp_body_status: 0,
-            ctime: '2025-12-02 06:01:03',
-            utime: '2025-12-02 06:01:03',
+            ctime: '2025-12-02T06:01:03.000Z',
+            utime: '2025-12-02T06:01:03.000Z',
         });
 
         protocolItem.querySelector('.protocol-runtime-btn').click();
@@ -1738,7 +1793,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemPageContext(1);
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         context.KitProxy.__disableAutoInitMain = true;
         context.KitProxy.__disableAutoInitProtocolItems = true;
         context.delay = function delayImmediately() {
@@ -1757,8 +1812,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
                 resp_cfg: {},
                 req_body_status: 0,
                 resp_body_status: 0,
-                ctime: '2025-12-02 06:01:03',
-                utime: '2025-12-02 06:01:03',
+                ctime: '2025-12-02T06:01:03.000Z',
+                utime: '2025-12-02T06:01:03.000Z',
             },
         ]);
         vi.spyOn(context.KitProxy.api, 'setProjectRuntimeState')
@@ -1858,8 +1913,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_cfg: {},
             req_body_status: 0,
             resp_body_status: 0,
-            ctime: '2025-12-02 06:01:03',
-            utime: '2025-12-02 06:01:03',
+            ctime: '2025-12-02T06:01:03.000Z',
+            utime: '2025-12-02T06:01:03.000Z',
         });
 
         let targetUrl = '';
@@ -1936,7 +1991,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2012,7 +2067,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2161,7 +2216,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=2');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2221,7 +2276,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2256,7 +2311,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=1');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2293,7 +2348,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=2');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2343,7 +2398,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=1&protocolId=1');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',
@@ -2387,7 +2442,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const context = createProtocolItemFormContext('?apiMode=mock&projectId=1&protocolId=1&mode=reconfig');
 
         loadCoreScripts(context);
-        await loginMockUser(context);
+        await loginMockAdmin(context);
         [
             'js/tcp_pattern_modal.js',
             'js/protocol_item.js',

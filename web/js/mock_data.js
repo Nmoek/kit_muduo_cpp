@@ -36,8 +36,8 @@
                 role: 'admin',
                 status: 1,
                 password: 'admin123',
-                ctime: '2025-08-11 07:50:00',
-                utime: '2025-08-11 07:50:00',
+                ctime: '2025-08-11T07:50:00.000Z',
+                utime: '2025-08-11T07:50:00.000Z',
             },
             {
                 id: 2,
@@ -45,8 +45,8 @@
                 role: 'normal',
                 status: 1,
                 password: '',
-                ctime: '2025-08-11 07:51:00',
-                utime: '2025-08-11 07:51:00',
+                ctime: '2025-08-11T07:51:00.000Z',
+                utime: '2025-08-11T07:51:00.000Z',
             },
         ],
         projects: [
@@ -61,7 +61,7 @@
                 runtime_state: 1,
                 target_ip: '',
                 user_id: 1,
-                ctime: '2025-08-11 07:55:15',
+                ctime: '2025-08-11T07:55:15.000Z',
             },
             {
                 id: 2,
@@ -75,7 +75,7 @@
                 runtime_state: 0,
                 target_ip: '',
                 user_id: 1,
-                ctime: '2025-08-11 07:55:27',
+                ctime: '2025-08-11T07:55:27.000Z',
             },
             {
                 // 软删样例保留删除前的业务字段，页面只通过“状态”体现已删除。
@@ -89,7 +89,7 @@
                 runtime_state: 0,
                 target_ip: '',
                 user_id: 1,
-                ctime: '2025-08-12 10:20:15',
+                ctime: '2025-08-12T10:20:15.000Z',
             },
             /*
              * HTTPS 暂未支持，Mock 不生成 HTTPS 服务样例，避免主页面出现暂不可用协议。
@@ -115,8 +115,8 @@
                 resp_body_type: 'json',
                 req_body_status: 0,
                 req_body_type: 'json',
-                ctime: '2025-12-02 06:00:03',
-                utime: '2025-12-02 06:00:03',
+                ctime: '2025-12-02T06:00:03.000Z',
+                utime: '2025-12-02T06:00:03.000Z',
                 status: 1,
                 config_state: 1,
             },
@@ -144,8 +144,8 @@
                 resp_body_type: 'json',
                 req_body_status: 0,
                 req_body_type: 'json',
-                ctime: '2025-12-02 06:01:03',
-                utime: '2025-12-02 06:01:03',
+                ctime: '2025-12-02T06:01:03.000Z',
+                utime: '2025-12-02T06:01:03.000Z',
                 status: 1,
                 config_state: 0,
             },
@@ -167,8 +167,8 @@
                 resp_body_type: 'json',
                 req_body_status: 0,
                 req_body_type: 'json',
-                ctime: '2025-12-03 08:00:00',
-                utime: '2025-12-03 08:30:00',
+                ctime: '2025-12-03T08:00:00.000Z',
+                utime: '2025-12-03T08:30:00.000Z',
                 status: 2,
                 config_state: 0,
             },
@@ -195,8 +195,8 @@
                 resp_body_type: 'json',
                 req_body_status: 0,
                 req_body_type: 'json',
-                ctime: '2025-12-03 09:00:00',
-                utime: '2025-12-03 09:30:00',
+                ctime: '2025-12-03T09:00:00.000Z',
+                utime: '2025-12-03T09:30:00.000Z',
                 status: 2,
                 config_state: 2,
             },
@@ -223,8 +223,8 @@
                 resp_body_type: 'json',
                 req_body_status: 0,
                 req_body_type: 'json',
-                ctime: '2025-12-03 10:00:00',
-                utime: '2025-12-03 10:30:00',
+                ctime: '2025-12-03T10:00:00.000Z',
+                utime: '2025-12-03T10:30:00.000Z',
                 status: 1,
                 config_state: 2,
             },
@@ -247,7 +247,7 @@
     };
 
     function nowText() {
-        return new Date().toISOString().slice(0, 19).replace('T', ' ');
+        return new Date().toISOString();
     }
 
     /**
@@ -381,7 +381,7 @@
                 active: 1,
                 runtime_state: 1,
                 user_id: user.id,
-                ctime: '2025-08-11 07:55:15',
+                ctime: '2025-08-11T07:55:15.000Z',
             });
         }
 
@@ -399,8 +399,8 @@
                     status_code: 200,
                     headers: {},
                 },
-                ctime: '2025-12-02 06:00:03',
-                utime: '2025-12-02 06:00:03',
+                ctime: '2025-12-02T06:00:03.000Z',
+                utime: '2025-12-02T06:00:03.000Z',
             });
         }
 
@@ -419,7 +419,7 @@
                 active: 0,
                 runtime_state: 0,
                 user_id: user.id,
-                ctime: '2025-08-11 07:55:27',
+                ctime: '2025-08-11T07:55:27.000Z',
             });
         }
 
@@ -443,8 +443,8 @@
                         18: 'HA86D9F9F9A010000',
                     },
                 },
-                ctime: '2025-12-02 06:01:03',
-                utime: '2025-12-02 06:01:03',
+                ctime: '2025-12-02T06:01:03.000Z',
+                utime: '2025-12-02T06:01:03.000Z',
             });
         }
     }
@@ -588,8 +588,13 @@
             return clone(decorateProjects(projects.slice(offset, offset + limit)));
         },
         getProject(projectId) {
+            const currentUser = getCurrentMockUser();
+            ensureSupportedProtocolExamples(currentUser);
             const project = findProject(projectId);
-            if (project) ensureSupportedProtocolExamples(getCurrentMockUser());
+            if (!project || (!isAdminUser(currentUser)
+                && (Number(project.user_id) !== Number(currentUser.id) || Number(project.status) !== 1))) {
+                return [];
+            }
             return project ? [clone(decorateProject(project))] : [];
         },
         addProject(project) {

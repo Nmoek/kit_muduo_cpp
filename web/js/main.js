@@ -398,6 +398,14 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
 
     // 注意: 这里只需改变卡片内部子项的呈现，不需要更改整个布局
     const escape = KitProxy.utils.escapeHTML;
+    const isAdmin = Boolean(KitProxy.auth && KitProxy.auth.isCurrentUserAdmin());
+    const protocolIdHTML = isAdmin
+        ? `<span class="service-sub-pill protocol-id">
+                <span class="meta-label">协议ID</span>
+                <span class="meta-value">${escape(protocol.id)}</span>
+            </span>`
+        : '';
+    const createTime = KitProxy.utils.formatUtcTime(protocol.ctime);
     const interactionButtonHTML = serviceCard.classList.contains('protocol-items-page')
         ? `<button type="button" class="protocol-interaction-btn" data-testid="protocol-interaction-open" title="查看协议项实时交互详情" aria-label="查看协议项实时交互详情">
                     <span class="protocol-interaction-icon" aria-hidden="true"></span>
@@ -419,8 +427,8 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
                 <span class="protocol-name">${escape(protocol.name)}</span>
                 ${protocolInactive ? `<span class="protocol-status-badge is-inactive">${escape(getProtocolStatusText(protocol))}</span>` : ''}
                 <div class="protocol-time">
-                    <span class="last-update-time">修改: ${escape(protocol.utime || '未知')}</span>
-                    <span class="create-time">创建: ${escape(protocol.ctime || '未知')}</span>
+                    ${protocolIdHTML}
+                    <span class="create-time">创建: ${escape(createTime)}</span>
                 </div>
             </div>
             <div class="protocol-header-actions">
@@ -1349,9 +1357,16 @@ function serviceCardHTML(project) {
     const protocolText = ProtocolTypeStr[protocol] || '未知协议';
     const modeText = ProjectModeStr[mode] || '未知模式';
     const statusText = getProjectRuntimeStatusText(project);
-    const createTime = project.ctime || '未知';
+    const createTime = KitProxy.utils.formatUtcTime(project.ctime);
+    const isAdmin = Boolean(KitProxy.auth && KitProxy.auth.isCurrentUserAdmin());
+    const projectIdHTML = isAdmin
+        ? `<span class="service-sub-pill project-id">
+                <span class="meta-label">服务ID</span>
+                <span class="meta-value">${escape(id)}</span>
+            </span>`
+        : '';
     const ownerNote = getProjectOwnerNote(project);
-    const ownerHTML = ownerNote && KitProxy.auth && KitProxy.auth.isCurrentUserAdmin()
+    const ownerHTML = ownerNote && isAdmin
         ? `<span class="service-sub-pill project-owner-note">
                 <span class="meta-label">所有者</span>
                 <span class="meta-value field-value">${escape(ownerNote)}</span>
@@ -1377,10 +1392,7 @@ function serviceCardHTML(project) {
                 <div class="service-primary-row">
                     <h3 class="service-title ${deleted ? '' : 'editable'}" data-default="Undef默认测试服务">${escape(displayName)}</h3>
                     <div class="service-sub-meta">
-                        <span class="service-sub-pill project-id">
-                            <span class="meta-label">服务ID</span>
-                            <span class="meta-value">${escape(id)}</span>
-                        </span>
+                        ${projectIdHTML}
                         <span class="service-sub-pill project-create-time">
                             <span class="meta-label">创建时间</span>
                             <span class="meta-value field-value">${escape(createTime)}</span>

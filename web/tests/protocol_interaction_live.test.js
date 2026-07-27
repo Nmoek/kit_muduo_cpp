@@ -1902,6 +1902,41 @@ describe('protocol interaction live data layer', () => {
     });
 
     /**
+     * 测试思路：Mock transport 必须根据当前协议项类型生成对应的交互数据，TCP 不能复用 HTTP 的 method/path 或图片样例。
+     * 示例：projectId=2、protocolId=2、protocolType=TCP 建立连接后，协议记录全部为 custom_tcp，并包含功能码和 Raw Hex。
+     */
+    it('Mock TCP transport 只生成 Custom TCP 实时记录', async () => {
+        vi.useFakeTimers();
+        try {
+            const live = createLiveContext('?apiMode=mock');
+            const client = live.KitProxy.protocolInteractionLive.createClient({
+                projectId: 2,
+                protocolId: 2,
+                protocolType: 'TCP',
+            });
+            client.connect();
+            vi.runAllTimers();
+            await Promise.resolve();
+
+            const records = client.getState().visibleRecords.concat(client.getState().pendingRecords);
+            const protocolRecords = records.filter(record => record.scope === 'protocol');
+            const projectRecords = records.filter(record => record.scope === 'project');
+
+            expect(protocolRecords).toHaveLength(3);
+            expect(protocolRecords.every(record => record.protocol_type === 'custom_tcp')).toBe(true);
+            expect(protocolRecords.every(record => record.request.meta.function_code)).toBe(true);
+            expect(protocolRecords.every(record => !record.request.meta.method && !record.request.meta.path)).toBe(true);
+            expect(protocolRecords.every(record => record.request.raw_packet.raw_hex)).toBe(true);
+            expect(protocolRecords.some(record => record.request.raw_packet.raw_hex.includes('48 31 30 30 30'))).toBe(true);
+            expect(projectRecords).toHaveLength(1);
+            expect(projectRecords[0].protocol_type).toBe('custom_tcp');
+            client.destroy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
      * 测试思路：Mock 暂停期间生成的记录不能实时进入列表，resume 要按 live_ready -> catch_up -> state(active) 发送。
      * 示例：pause #1 -> paused，暂停产生 request_mismatch，resume #2 -> catch_up 记录 -> active。
      */

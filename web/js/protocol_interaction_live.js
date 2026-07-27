@@ -1796,7 +1796,12 @@
                         ? KitProxy.protocolInteractionLive.createMockTransport
                         : null);
                 state.socket = factory
-                    ? factory(url, { client: api, projectId, protocolId })
+                    ? factory(url, {
+                        client: api,
+                        projectId,
+                        protocolId,
+                        protocolType: state.protocolType,
+                    })
                     : new global.WebSocket(url);
                 if (!state.socket) throw new Error('WebSocket transport 创建失败');
                 assignSocketHandlers(state.socket);
@@ -2190,6 +2195,76 @@
         }, overrides);
     }
 
+    function isCustomTcpProtocolType(protocolType) {
+        const normalized = String(protocolType || '').trim().toLowerCase();
+        return Number(protocolType) === 2
+            || normalized === 'tcp'
+            || normalized === 'custom_tcp'
+            || normalized === 'custom-tcp';
+    }
+
+    function mockTcpSide(functionCode, headerText, bodyText) {
+        const body = String(bodyText || '').trim();
+        const bodySize = body ? body.split(/\s+/).length : 0;
+        const header = String(headerText || '').trim();
+        const rawHex = [header, body].filter(Boolean).join(' ');
+        return {
+            meta: {
+                function_code: functionCode,
+                header_size: 8,
+                body_size: bodySize,
+            },
+            head_text: header,
+            body: {
+                kind: 'binary',
+                expect_kind: 'binary',
+                size: bodySize,
+                captured_size: bodySize,
+                truncated: false,
+                sha1: '',
+                text: body,
+                error_message: '',
+                attachments: [],
+            },
+            raw_packet: {
+                raw_hex: rawHex,
+                attachments: [],
+            },
+        };
+    }
+
+    function mockTcpRecord(projectId, protocolId, scope, seq, overrides = {}) {
+        const isNotice = scope === 'project';
+        const requestHeader = isNotice
+            ? '48 39 30 30 30 00 00 00'
+            : '48 31 30 30 30 00 00 04';
+        const responseHeader = isNotice
+            ? '48 46 46 46 46 00 00 00'
+            : '48 31 30 38 30 00 00 02';
+        return Object.assign({
+            seq,
+            scope,
+            project_id: projectId,
+            protocol_id: isNotice ? 0 : protocolId,
+            cache_instance_id: isNotice ? 2002 : 1001,
+            protocol_type: 'custom_tcp',
+            time_ms: Date.now(),
+            peer_addr: isNotice ? '127.0.0.1:50000' : '127.0.0.1:50100',
+            result: isNotice ? 'route_not_found' : 'matched',
+            error_message: isNotice ? '未找到可处理的路由' : '',
+            request: mockTcpSide(
+                isNotice ? 'H9000' : 'H1000',
+                requestHeader,
+                isNotice ? '' : '01 02 03 04',
+            ),
+            response: mockTcpSide(
+                isNotice ? 'HFFFF' : 'H1080',
+                responseHeader,
+                isNotice ? '' : '00 01',
+            ),
+        }, overrides);
+    }
+
     function buildMockAttachmentFrame(header, bytes) {
         const headerBytes = new global.TextEncoder().encode(JSON.stringify(header));
         const payload = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -2203,12 +2278,13 @@
     /**
      * Mock transport 只模拟 WebSocket 事件和当前后端消息组，不把 Mock 分支散落到抽屉 UI。
      * @param {string} url
-     * @param {{projectId: number, protocolId: number}} context
+     * @param {{projectId: number, protocolId: number, protocolType?: string|number}} context
      * @returns {any}
      */
     function createMockTransport(url, context) {
         const projectId = numberId(context.projectId);
         const protocolId = numberId(context.protocolId);
+        const useTcpRecords = isCustomTcpProtocolType(context.protocolType);
         const runtimeKey = `${projectId}:${protocolId}`;
         const runtime = mockRuntime.get(runtimeKey) || {
             protocolSeq: 0,
@@ -2219,6 +2295,9 @@
             failNextConnection: false,
         };
         mockRuntime.set(runtimeKey, runtime);
+        const buildRecord = (scope, seq, overrides = {}) => useTcpRecords
+            ? mockTcpRecord(projectId, protocolId, scope, seq, overrides)
+            : mockRecord(projectId, protocolId, scope, seq, overrides);
         const failThisConnection = runtime.failNextConnection === true;
         runtime.failNextConnection = false;
 
@@ -2284,69 +2363,99 @@
                 });
             },
             _sendInitialRecords() {
-                runtime.protocolSeq += 1;
-                const imageRecordSeq = runtime.protocolSeq;
-                const httpRecord = mockRecord(projectId, protocolId, 'protocol', runtime.protocolSeq, {
-                    response: {
-                        meta: { status_code: 200 },
-                        head_text: 'HTTP/1.1 200 OK',
-                        body: {
-                            kind: 'image', expect_kind: 'image', size: 3, captured_size: 3,
-                            truncated: false, sha1: 'mock-image-sha1', text: '', error_message: '',
-                            attachments: [{ attachment_id: 'mock-image', side: 'response', flag: 'response.body', kind: 'image', size: 3, captured_size: 3, truncated: false, binary_available: true, sha1: 'mock-image-sha1' }],
-                        },
-                    },
-                });
-                socket._emitRecord(httpRecord, 'live');
-                socket._schedule(() => socket.onmessage && socket.onmessage({ data: buildMockAttachmentFrame({
-                    type: 'attachment', scope: 'protocol', project_id: projectId, protocol_id: protocolId,
-                    cache_instance_id: 1001, record_seq: imageRecordSeq, attachment_id: 'mock-image',
-                    captured_size: 3, sha1: 'mock-image-sha1',
-                }, new Uint8Array([137, 80, 78])) }), 10);
+                if (useTcpRecords) {
+                    runtime.protocolSeq += 1;
+                    socket._emitRecord(buildRecord('protocol', runtime.protocolSeq), 'live');
 
-                runtime.protocolSeq += 1;
-                socket._emitRecord(mockRecord(projectId, protocolId, 'protocol', runtime.protocolSeq, {
-                    result: 'request_mismatch',
-                    error_message: '请求 Body 与协议项期望不一致',
-                    request: {
-                        meta: { method: 'POST', path: '/api/check' },
-                        head_text: 'POST /api/check HTTP/1.1',
-                        body: {
-                            kind: 'text', expect_kind: 'json', size: 7, captured_size: 7,
-                            truncated: false, sha1: '', text: 'invalid',
-                            error_message: 'JSON 解析失败', attachments: [],
-                        },
-                    },
-                }), 'live');
+                    runtime.protocolSeq += 1;
+                    socket._emitRecord(buildRecord('protocol', runtime.protocolSeq, {
+                        result: 'request_mismatch',
+                        error_message: '请求功能码与协议项期望不一致',
+                        request: mockTcpSide(
+                            'H9999',
+                            '48 39 39 39 39 00 00 04',
+                            '01 02 03 04',
+                        ),
+                    }), 'live');
 
-                runtime.protocolSeq += 1;
-                socket._emitRecord(mockRecord(projectId, protocolId, 'protocol', runtime.protocolSeq, {
-                    protocol_type: 'custom_tcp',
-                    request: {
-                        meta: { function_code: 'H1000', header_size: 8, body_size: 4 },
-                        head_text: '48 31 30 30 30 00 00 04',
-                        body: {
-                            kind: 'binary', expect_kind: 'binary', size: 4, captured_size: 4,
-                            truncated: false, sha1: 'mock-tcp-request', text: '01 02 03 04',
-                            error_message: '', attachments: [],
+                    runtime.protocolSeq += 1;
+                    socket._emitRecord(buildRecord('protocol', runtime.protocolSeq, {
+                        request: mockTcpSide(
+                            'H1001',
+                            '48 31 30 30 31 00 00 02',
+                            '0A 0B',
+                        ),
+                        response: mockTcpSide(
+                            'H1081',
+                            '48 31 30 38 31 00 00 02',
+                            '00 02',
+                        ),
+                    }), 'live');
+                } else {
+                    runtime.protocolSeq += 1;
+                    const imageRecordSeq = runtime.protocolSeq;
+                    const httpRecord = buildRecord('protocol', runtime.protocolSeq, {
+                        response: {
+                            meta: { status_code: 200 },
+                            head_text: 'HTTP/1.1 200 OK',
+                            body: {
+                                kind: 'image', expect_kind: 'image', size: 3, captured_size: 3,
+                                truncated: false, sha1: 'mock-image-sha1', text: '', error_message: '',
+                                attachments: [{ attachment_id: 'mock-image', side: 'response', flag: 'response.body', kind: 'image', size: 3, captured_size: 3, truncated: false, binary_available: true, sha1: 'mock-image-sha1' }],
+                            },
                         },
-                        raw_packet: { raw_hex: '48 31 30 30 30 00 00 04 01 02 03 04', attachments: [] },
-                    },
-                    response: {
-                        meta: { function_code: 'H1080', header_size: 8, body_size: 2 },
-                        head_text: '48 31 30 38 30 00 00 02',
-                        body: {
-                            kind: 'binary', expect_kind: 'binary', size: 2, captured_size: 2,
-                            truncated: false, sha1: 'mock-tcp-response', text: '00 01',
-                            error_message: '', attachments: [],
+                    });
+                    socket._emitRecord(httpRecord, 'live');
+                    socket._schedule(() => socket.onmessage && socket.onmessage({ data: buildMockAttachmentFrame({
+                        type: 'attachment', scope: 'protocol', project_id: projectId, protocol_id: protocolId,
+                        cache_instance_id: 1001, record_seq: imageRecordSeq, attachment_id: 'mock-image',
+                        captured_size: 3, sha1: 'mock-image-sha1',
+                    }, new Uint8Array([137, 80, 78])) }), 10);
+
+                    runtime.protocolSeq += 1;
+                    socket._emitRecord(buildRecord('protocol', runtime.protocolSeq, {
+                        result: 'request_mismatch',
+                        error_message: '请求 Body 与协议项期望不一致',
+                        request: {
+                            meta: { method: 'POST', path: '/api/check' },
+                            head_text: 'POST /api/check HTTP/1.1',
+                            body: {
+                                kind: 'text', expect_kind: 'json', size: 7, captured_size: 7,
+                                truncated: false, sha1: '', text: 'invalid',
+                                error_message: 'JSON 解析失败', attachments: [],
+                            },
                         },
-                        raw_packet: { raw_hex: '48 31 30 38 30 00 00 02 00 01', attachments: [] },
-                    },
-                }), 'live');
+                    }), 'live');
+
+                    runtime.protocolSeq += 1;
+                    socket._emitRecord(buildRecord('protocol', runtime.protocolSeq, {
+                        protocol_type: 'custom_tcp',
+                        request: {
+                            meta: { function_code: 'H1000', header_size: 8, body_size: 4 },
+                            head_text: '48 31 30 30 30 00 00 04',
+                            body: {
+                                kind: 'binary', expect_kind: 'binary', size: 4, captured_size: 4,
+                                truncated: false, sha1: 'mock-tcp-request', text: '01 02 03 04',
+                                error_message: '', attachments: [],
+                            },
+                            raw_packet: { raw_hex: '48 31 30 30 30 00 00 04 01 02 03 04', attachments: [] },
+                        },
+                        response: {
+                            meta: { function_code: 'H1080', header_size: 8, body_size: 2 },
+                            head_text: '48 31 30 38 30 00 00 02',
+                            body: {
+                                kind: 'binary', expect_kind: 'binary', size: 2, captured_size: 2,
+                                truncated: false, sha1: 'mock-tcp-response', text: '00 01',
+                                error_message: '', attachments: [],
+                            },
+                            raw_packet: { raw_hex: '48 31 30 38 30 00 00 02 00 01', attachments: [] },
+                        },
+                    }), 'live');
+                }
 
                 runtime.projectSeq += 1;
                 socket._schedule(() => socket._emitRecord(
-                    mockRecord(projectId, protocolId, 'project', runtime.projectSeq, {
+                    buildRecord('project', runtime.projectSeq, {
                         error_message: '项目级 Notice：没有协议项可以处理该请求',
                     }),
                     'live',
@@ -2370,7 +2479,7 @@
                     }, cursorPayload)));
                     socket._schedule(() => {
                         runtime.protocolSeq += 1;
-                        runtime.pausedRecords.push(mockRecord(projectId, protocolId, 'protocol', runtime.protocolSeq, {
+                        runtime.pausedRecords.push(buildRecord('protocol', runtime.protocolSeq, {
                             error_message: '暂停期间收到的待补发交互',
                             result: 'request_mismatch',
                         }));

@@ -661,7 +661,7 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
             listen_port: 18080,
             mode: context.ProjectMode.SERVER,
             status: 1,
-            ctime: '2025-08-11 07:55:15',
+            ctime: '2025-08-11T07:55:15.000Z',
         };
 
         const originalHref = context.window.location.href;
@@ -683,6 +683,33 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
     });
 
     /**
+     * Test idea: IDs are administrative metadata and must not leak into normal-user cards.
+     * Example: the same project card has a project-id pill for admin and no pill for normal users.
+     */
+    it('服务卡片只向管理员展示服务 ID，并将创建时间转换为本地时间', () => {
+        const project = {
+            id: 12,
+            name: '时间服务',
+            protocol_type: context.ProtocolType.HTTP,
+            listen_port: 18080,
+            mode: context.ProjectMode.SERVER,
+            status: 1,
+            ctime: '2025-08-11T07:55:15Z',
+        };
+        const instant = new Date(project.ctime);
+        const expected = `${instant.getFullYear()}-${String(instant.getMonth() + 1).padStart(2, '0')}-${String(instant.getDate()).padStart(2, '0')}`
+            + ` ${String(instant.getHours()).padStart(2, '0')}:${String(instant.getMinutes()).padStart(2, '0')}:${String(instant.getSeconds()).padStart(2, '0')}`;
+
+        const normalCard = context.addServiceCard(project);
+        expect(normalCard.querySelector('.project-id')).toBeNull();
+        expect(normalCard.querySelector('.project-create-time .meta-value').textContent).toBe(expected);
+
+        context.KitProxy.auth.applyCurrentUser({ id: 1, note: 'admin', role: 'admin' });
+        const adminCard = context.addServiceCard(project);
+        expect(adminCard.querySelector('.project-id .meta-value').textContent).toBe('12');
+    });
+
+    /**
      * 测试思路：服务卡片状态按钮应调用 setProjectRuntimeState，并用返回端口刷新卡片。
      * 示例：runtime_state=0 的服务器模式服务点击后变为“开启”，监听端口显示 Mock 返回值。
      */
@@ -695,7 +722,7 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
             mode: context.ProjectMode.SERVER,
             status: 1,
             runtime_state: 0,
-            ctime: '2025-08-11 07:55:15',
+            ctime: '2025-08-11T07:55:15.000Z',
         };
         const setRuntimeState = vi.spyOn(context.KitProxy.api, 'setProjectRuntimeState')
             .mockResolvedValue({ runtime_state: 1, listen_port: 39009 });

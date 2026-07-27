@@ -1,6 +1,16 @@
 import { test, expect } from '@playwright/test';
 import { loginAsAdmin } from '../../helpers/auth.js';
 
+async function loginAsNormalWithoutStatePersistence(page) {
+    await page.context().clearCookies();
+    await page.goto('/html/login.html?apiMode=mock&returnTo=%2Fhtml%2Fmain.html%3FapiMode%3Dmock');
+    await page.getByLabel('note').fill('testuser');
+    await Promise.all([
+        page.waitForURL(/\/html\/main\.html\?apiMode=mock/),
+        page.getByRole('button', { name: '登录', exact: true }).click(),
+    ]);
+}
+
 /**
  * 测试思路：
  *
@@ -30,6 +40,26 @@ test('缺少或非法 projectId 的错误处理', async ({ page, context }) => {
 
     await page.goto('/html/protocol_items.html?apiMode=mock&projectId=99999');
     await expect(page.locator('.global-error-popup.is-visible')).toContainText('测试服务信息加载失败');
+});
+
+/**
+ * 测试思路：普通用户从主页面点击自己项目的协议入口后，独立 HTML 文档中的 Mock state 会重新初始化，
+ * 仍必须补齐项目上下文并加载协议项；本用例故意不注入测试专用的 Mock state 持久化脚本。
+ * 示例：testuser -> main.html -> service-card-101 -> protocol_items.html -> HTTP健康检查示例。
+ */
+test('普通用户跨页面进入自己的协议项列表', async ({ page }) => {
+    await loginAsNormalWithoutStatePersistence(page);
+
+    const projectCard = page.locator('#service-card-101');
+    await expect(projectCard).toBeVisible();
+    await Promise.all([
+        page.waitForURL(/protocol_items\.html\?apiMode=mock&projectId=101/),
+        projectCard.locator('.view-protocols-btn').click(),
+    ]);
+
+    await expect(page.locator('#protocol-items-title')).toContainText('HTTP测试服务示例');
+    await expect(page.locator('.protocol-item')).toHaveCount(1);
+    await expect(page.locator('.protocol-item .protocol-name')).toHaveText('HTTP健康检查示例');
 });
 
 /**
@@ -103,8 +133,8 @@ test('协议项分页和每页数量切换', async ({ page, context }) => {
                 resp_body_type: 'json',
                 status: 1,
                 config_state: 0,
-                ctime: '2026-01-01 00:00:00',
-                utime: '2026-01-01 00:00:00',
+                ctime: '2026-01-01T00:00:00.000Z',
+                utime: '2026-01-01T00:00:00.000Z',
             });
         }
         return window.KitProxy.protocolItemsPage.loadProtocolItems(1);

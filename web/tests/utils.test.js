@@ -28,6 +28,20 @@ describe('V1 utils', () => {
     });
 
     /**
+     * Test idea: API timestamps are UTC instants, while the card must use local date getters.
+     * Example: an RFC3339 UTC value is converted to local calendar fields and invalid input is rejected.
+     */
+    it('formats UTC timestamps in the browser timezone', () => {
+        const instant = new Date('2025-08-11T07:55:15Z');
+        const expected = `${instant.getFullYear()}-${String(instant.getMonth() + 1).padStart(2, '0')}-${String(instant.getDate()).padStart(2, '0')}`
+            + ` ${String(instant.getHours()).padStart(2, '0')}:${String(instant.getMinutes()).padStart(2, '0')}:${String(instant.getSeconds()).padStart(2, '0')}`;
+
+        expect(context.KitProxy.utils.formatUtcTime('2025-08-11T07:55:15Z')).toBe(expected);
+        expect(context.KitProxy.utils.formatUtcTime('2025-08-11 07:55:15')).toBe('未知');
+        expect(context.KitProxy.utils.formatUtcTime('')).toBe('未知');
+    });
+
+    /**
      * 测试思路：基础输入校验应拦截不合法 HTTP path 和超出范围的端口。
      * 示例：/api/test 合法，api/test 非法；端口 1-65535 合法，0 和 65536 非法。
      */
