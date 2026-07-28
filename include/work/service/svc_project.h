@@ -9,6 +9,7 @@
 #ifndef __KIT_SVC_PROJECT_H__
 #define __KIT_SVC_PROJECT_H__
 
+#include "domain/project.h"
 #include "net/call_backs.h"
 #include "domain/type.h"
 
@@ -23,7 +24,7 @@ class ProjectRepoInterface;
 class ProjectSvcInterface
 {
 public:
-    ProjectSvcInterface(std::shared_ptr<ProjectRepoInterface> repo): _repo(repo) { }
+    ProjectSvcInterface(std::shared_ptr<ProjectRepoInterface> repo): repo_(repo) { }
     virtual ~ProjectSvcInterface() = default;
 
     virtual int64_t Add(kit_muduo::HttpContextPtr ctx, Project &domainPj) = 0;
@@ -50,8 +51,10 @@ public:
 
     virtual std::vector<Project> GetAllActive(kit_muduo::HttpContextPtr ctx) = 0;
 
+    virtual std::pair<std::vector<ProjectListItem>, int64_t> List(kit_muduo::HttpContextPtr ctx, const ProjectListQuery &query) = 0;
+
 protected:
-    std::shared_ptr<ProjectRepoInterface> _repo;
+    std::shared_ptr<ProjectRepoInterface> repo_;
 };
 
 class ProjectService: public ProjectSvcInterface
@@ -84,6 +87,8 @@ public:
     std::vector<Project> GetAllValid(kit_muduo::HttpContextPtr ctx) override;
 
     std::vector<Project> GetAllActive(kit_muduo::HttpContextPtr ctx) override;
+
+    std::pair<std::vector<ProjectListItem>, int64_t> List(kit_muduo::HttpContextPtr ctx, const ProjectListQuery &query) override;
 };
 
 

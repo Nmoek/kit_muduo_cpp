@@ -80,7 +80,9 @@ option(WORK_TEST.SQLITE3 "build test_sqlite3" OFF)
 option(WORK_TEST.SQLITE_ORM "build test_sqlite_orm" OFF)
 option(WORK_TEST.SQLITE_ORM_POOL "build test_sqlite_orm_pool" OFF)
 option(WORK_TEST.WEB_PROJECT "build test_web_project" OFF)
+option(WORK_TEST.WEB_USER "build test_web_user" OFF)
 option(WORK_TEST.WEB_PROTOCOL "build test_web_protocol" OFF)
+option(WORK_TEST.DAO_PROTOCOL "build test_dao_protocol" OFF)
 option(WORK_TEST.WEB_PROTOCOL_INTERACTION "build test_web_protocol_interaction" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
@@ -536,8 +538,14 @@ add_kit_test(WORK_TEST WORK_TEST.SQLITE_ORM_POOL test_sqlite_orm_pool
 # web端测试服务 测试 test_web_project
 add_work_test(WORK_TEST.WEB_PROJECT test_web_project tests/work/web/test_web_project.cpp)
 
+# web端用户候选接口测试 test_web_user
+add_work_test(WORK_TEST.WEB_USER test_web_user tests/work/web/test_web_user.cpp)
+
 # web端协议项接口测试 test_web_protocol
 add_work_test(WORK_TEST.WEB_PROTOCOL test_web_protocol tests/work/web/test_web_protocol.cpp)
+
+# dao端协议项分页测试 test_dao_protocol
+add_work_test(WORK_TEST.DAO_PROTOCOL test_dao_protocol tests/work/repository/dao/test_dao_protocol.cpp)
 
 # 协议项实时交互详情 WebSocket 接口测试 test_web_protocol_interaction
 add_work_test(WORK_TEST.WEB_PROTOCOL_INTERACTION test_web_protocol_interaction

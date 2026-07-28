@@ -14,6 +14,8 @@
 #include "domain/type.h"
 
 #include <memory>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace kit_muduo {
@@ -57,7 +59,7 @@ public:
 
     virtual Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) = 0;
 
-    virtual std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId,ProtocolStatus status, int32_t offset, int32_t limit) = 0;
+    virtual std::pair<std::vector<Protocol>, int64_t>  GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, std::optional<ProtocolStatus> status, int32_t offset, int32_t limit) = 0;
 
     virtual std::vector<Protocol> GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
@@ -106,7 +108,7 @@ public:
 
     Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) override;
     
-    std::vector<Protocol> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit) override;
+    std::pair<std::vector<Protocol>, int64_t> GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, std::optional<ProtocolStatus> status, int32_t offset, int32_t limit) override;
 
     std::vector<Protocol> GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id) override;
 

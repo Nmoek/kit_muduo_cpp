@@ -41,6 +41,7 @@ using nljson = nlohmann::json;
 
 namespace kit_domain {
 
+
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
 
 struct CustomPatternFieldReq {
@@ -62,7 +63,7 @@ struct CustomPatternMagicNumReq {
 struct AddProjectReq {
     std::string              name;             // 测试名称
     ProjectMode              mode;             // 测试模式
-    ProtocolType                  protocol_type;    // 协议种类 1 2 3
+    ProtocolType             protocol_type;    // 协议种类 1 2 3
     // uint16_t                 listen_port;      // 监听端口号(弃用 不再由用户指定)
     std::string              target_ip;        // 目标ip + 端口 x.x.x.x:8888
     nljson                   pattern_info;  // 解析格式信息
@@ -86,7 +87,47 @@ struct ProjectListReq {
     int32_t                  offset;          // 页码
     int32_t                  limit;           // 页大小
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectListReq, offset, limit)
+    std::optional<int64_t>   created_from;     // 创建时间-起始
+    std::optional<int64_t>   created_to;       // 创建时间-结束
+    std::optional<int32_t>   status;          // 有效状态: 1-有效 0-无效(已删除) 不填-全部
+    std::optional<int32_t>   runtime_state;   // 运行状态: 1-运行中 0-未运行 不填-全部
+    std::optional<int32_t>   protocol_type;   // 协议种类: 不填全部
+    std::optional<int64_t>   user_id;        // 所属用户: 不填-全部
+
+    friend void from_json(const nlohmann::json &j, ProjectListReq &req)
+    {
+        auto it = j.find("offset");
+        if(it == j.end())
+        {
+            throw std::invalid_argument("json 'offset' miss");
+        }
+        it.value().get_to<int32_t>(req.offset);
+
+        it = j.find("limit");
+        if(it == j.end())
+        {
+            throw std::invalid_argument("json 'limit' miss");
+        }
+        it.value().get_to<int32_t>(req.limit);
+
+        it = j.find("created_from");
+        if(it != j.end()) { req.created_from = it.value().get<int64_t>(); }
+
+        it = j.find("created_to");
+        if(it != j.end()) { req.created_to = it.value().get<int64_t>(); }
+
+        it = j.find("status");
+        if(it != j.end()) { req.status = it.value().get<int32_t>(); }
+
+        it = j.find("runtime_state");
+        if(it != j.end()) { req.runtime_state = it.value().get<int32_t>(); }
+
+        it = j.find("protocol_type");
+        if(it != j.end()) { req.protocol_type = it.value().get<int32_t>(); }
+
+        it = j.find("user_id");
+        if(it != j.end()) { req.user_id = it.value().get<int64_t>(); }
+    }
 };
 
 struct ProjectDetailNameReq {
@@ -103,6 +144,59 @@ struct ProjectEditPatternInfoReq {
 
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
+
+namespace {
+
+inline bool CheckListQeury(const ProjectListQuery &query)
+{
+    if((query.created_from.has_value() && !query.created_to.has_value())
+        || (!query.created_from.has_value() && query.created_to.has_value()))
+    {
+        return false;
+    }
+    else if(query.created_from.has_value() && query.created_to.has_value())
+    {
+        if(*query.created_from >= *query.created_to)
+        {
+            PJ_F_DEBUG("created_from > created_to\n");
+            return false;
+        }
+    }
+    // limit: [1, 100]
+    // offset: [0, ..]
+    if(query.limit <= 0 
+        || query.limit > 100 
+        || query.offset < 0 
+        || (query.user_id.has_value() && *query.user_id <= 0))
+    {
+        PJ_F_DEBUG("limit/offset/user_id  invalid\n");
+        return false;
+    }
+
+    if(query.protocol_type.has_value() && (*query.protocol_type <= ProtocolType::kUnknown || *query.protocol_type >= ProtocolType::kMax))
+    {
+        PJ_F_DEBUG("protocol_type invalid\n");
+        return false;
+    }
+
+    if(query.status.has_value() && (*query.status != ProjectStatus::kInvalid && *query.status != ProjectStatus::kValid))
+    {
+        PJ_F_DEBUG("status invalid\n");
+        return false;
+    }
+
+    if(query.runtime_state.has_value() && (*query.runtime_state != ProjectRuntimeState::kRunning && *query.runtime_state != ProjectRuntimeState::kStopped))
+    {
+        PJ_F_DEBUG("runtime_state invalid\n");
+        return false;
+    }
+
+
+    return true;
+
+}
+
+}
 
 ProjectHandler::ProjectHandler(std::shared_ptr<ProjectSvcInterface> svc,
     std::shared_ptr<ProtocolSvcInterface> pc_svc,
@@ -446,21 +540,61 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
         WriteJsonError(ctx, -200, "body parse error");
         return;
     }
+    auto current_user = CurrentUserFromContext(ctx);
 
+    ProjectListQuery query;
+    query.offset = request.offset;
+    query.limit = request.limit;
+    query.created_from = request.created_from;
+    query.created_to = request.created_to;
 
-    std::vector<Project> projects;
+    if(!current_user.IsAdmin())
+    {
+        // 检查普通用户的越权参数
+        // 不允许查别的用户的数据
+        // 不允许查已删数据
+        if(request.user_id.has_value()
+            || (request.status.has_value() && static_cast<int32_t>(ProjectStatus::kValid) != *request.status))
+        {
+            WriteForbidden(ctx);
+            return;
+        }
+
+        query.status = ProjectStatus::kValid;
+
+        query.protocol_type = request.protocol_type.has_value() ? std::optional(static_cast<ProtocolType>(*request.protocol_type)) : std::nullopt;
+
+        query.runtime_state = request.runtime_state.has_value() ? std::optional(static_cast<ProjectRuntimeState>(*request.runtime_state)) : std::nullopt;
+        // 默认只能查询当前用户自己的内容
+        query.user_id = current_user.user_id;
+    }
+    else
+    {
+        query.status = request.status.has_value() ? std::optional(static_cast<ProjectStatus>(*request.status)) : std::nullopt;
+
+        query.protocol_type = request.protocol_type.has_value() ? std::optional(static_cast<ProtocolType>(*request.protocol_type)) : std::nullopt;
+
+        query.runtime_state = request.runtime_state.has_value() ? std::optional(static_cast<ProjectRuntimeState>(*request.runtime_state)) : std::nullopt;
+
+        query.user_id = request.user_id;
+    }
+
+    // 检查参数合法性
+    if(!CheckListQeury(query))
+    {
+        WriteJsonError(ctx, -200, "query param error");
+        return;
+    }
+
+    std::vector<ProjectListItem> pj_items;
+    int64_t total = 0;
     // 查测试服务 信息
     try
     {
-        auto current_user = CurrentUserFromContext(ctx);
-        if(current_user.IsAdmin())
-        {
-            projects = svc_->GetAll(ctx, request.offset, request.limit);
-        }
-        else
-        {
-            projects = svc_->GetByUser(ctx, current_user.user_id, ProjectStatus::kValid, request.offset, request.limit);
-        }
+        // TODO project和user到底分开查询还是join查询
+        auto p = svc_->List(ctx, query);
+        pj_items.swap(p.first);
+        total = p.second;
     }
     catch(const std::exception& e)
     {
@@ -474,13 +608,19 @@ void ProjectHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpConte
     nljson root;
     root["code"] = 0;
     root["message"] = "success";
-    root["data"] = nljson::array();
-    for(const auto& p : projects)
+    root["data"] = nljson::object();
+    root["data"]["items"]  = nljson::array();
+    for(const auto& i : pj_items)
     {
         //VO转换
-        nljson node = CovertProjectVo(p);
-        root["data"].push_back(node);
+        nlohmann::json j = CovertProjectVo(i.p);
+        j["user_note"] = std::move(i.user_note);
+        root["data"]["items"].push_back(std::move(j));
     }
+    root["data"]["total"] = total;
+    root["data"]["offset"] = query.offset;
+    root["data"]["limit"] = query.limit;
+
     WriteJsonResponse(ctx, root);
 
     PJ_DEBUG() << std::endl << root.dump(4) << std::endl;

@@ -5,6 +5,7 @@
 #include "net/http/http_context.h"
 #include "net/http/http_response.h"
 #include "net/http/http_server.h"
+#include "nlohmann/json.hpp"
 #include "service/svc_user.h"
 #include "web/web_common.h"
 
@@ -20,7 +21,7 @@ struct UserListReq {
     int32_t limit{20};
     std::string status{"all"};
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(UserListReq, offset, limit, status)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(UserListReq, offset, limit, status)
 };
 
 struct UserEditReq {
@@ -29,7 +30,15 @@ struct UserEditReq {
     std::string status;
     std::string password;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(UserEditReq, note_name, role, status, password)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(UserEditReq, note_name, role, status, password)
+};
+
+struct UserNoteCondidatesReq
+{
+    std::string keyword;
+    int32_t limit{10};
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(UserNoteCondidatesReq, keyword, limit)
 };
 
 UserStatus ListStatusFromString(const std::string &status)
@@ -68,6 +77,8 @@ void UserHandler::RegisterRoutes(std::shared_ptr<HttpServer> server)
     server->Post("/users/:user_id", XX(Update));
     server->Delete("/users/:user_id", XX(Disable));
     server->Post("/users/:user_id/restore", XX(Restore));
+    server->Post("/users/note_candidates", XX(NoteCondidates));
+
 #undef XX
 }
 
@@ -167,6 +178,37 @@ void UserHandler::Restore(TcpConnectionPtr conn, HttpContextPtr ctx) noexcept
     }
     bool ok = user_svc_->RestoreUser(ctx, user_id);
     WriteOkJsonResponse(ctx, {{"code", ok ? 0 : -300}, {"message", ok ? "success" : "service failed"}, {"data", nljson::object()}});
+}
+
+void UserHandler::NoteCondidates(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpContextPtr ctx) noexcept
+{
+    UserNoteCondidatesReq request;
+    auto bind_result = ctx->bindJson(request);
+    if(!bind_result.ok)
+    {
+        WriteOkJsonResponse(ctx, {{"code", -200}, {"message", "request parse error"}, {"data", nljson::object()}});
+        return;
+    }
+    auto current_user = CurrentUserFromContext(ctx);
+    if(!current_user.IsAdmin())
+    {
+        WriteForbidden(ctx);
+        return;
+    }
+
+    const auto notes = user_svc_->GetNotes(ctx, request.keyword, request.limit);
+
+    nlohmann::json root;
+    root["code"] = 0;
+    root["message"] = "success";
+    root["data"] = nlohmann::json::array();
+    for(auto &n : notes)
+    {
+        nlohmann::json t = n;
+        root["data"].push_back(std::move(t));
+    }
+
+    WriteOkJsonResponse(ctx, root);
 }
 
 } // namespace kit_domain

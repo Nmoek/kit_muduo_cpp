@@ -22,6 +22,7 @@ public:
     virtual kit_dao::User GetByNoteName(kit_muduo::HttpContextPtr ctx, const std::string &note_name) = 0;
     virtual std::vector<kit_dao::User> List(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t offset, int32_t limit) = 0;
     virtual int32_t CountActiveAdmin(kit_muduo::HttpContextPtr ctx) = 0;
+    virtual std::vector<kit_dao::UserCandidate> GetNotesByCondidates(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit) = 0;
 };
 
 class SqliteOrmUserDao : public UserDaoInterface {
@@ -37,6 +38,7 @@ public:
     kit_dao::User GetByNoteName(kit_muduo::HttpContextPtr ctx, const std::string &note_name) override;
     std::vector<kit_dao::User> List(kit_muduo::HttpContextPtr ctx, int32_t status, int32_t offset, int32_t limit) override;
     int32_t CountActiveAdmin(kit_muduo::HttpContextPtr ctx) override;
+    std::vector<kit_dao::UserCandidate> GetNotesByCondidates(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit) override;
 
 private:
     std::shared_ptr<kit_dao::SqliteOrmPool> _db_pool;

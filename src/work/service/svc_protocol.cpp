@@ -70,7 +70,7 @@ Protocol ProtocolService::GetById(kit_muduo::HttpContextPtr ctx, int64_t protoco
     return _repo->GetById(ctx, protocol_id);
 }
 
-std::vector<Protocol> ProtocolService::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, ProtocolStatus status, int32_t offset, int32_t limit)
+std::pair<std::vector<Protocol>, int64_t>  ProtocolService::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, std::optional<ProtocolStatus> status, int32_t offset, int32_t limit)
 {
     return _repo->GetByProject(ctx, projectId, status, offset, limit);
 }

@@ -19,6 +19,7 @@ public:
     MOCK_METHOD(User, GetByNoteName, (kit_muduo::HttpContextPtr ctx, const std::string &note_name), (override));
     MOCK_METHOD(std::vector<User>, List, (kit_muduo::HttpContextPtr ctx, UserStatus status, int32_t offset, int32_t limit), (override));
     MOCK_METHOD(int32_t, CountActiveAdmin, (kit_muduo::HttpContextPtr ctx), (override));
+    MOCK_METHOD(std::vector<UserCandidate>, GetNotes, (kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit), (override));
 };
 
 } // namespace kit_domain

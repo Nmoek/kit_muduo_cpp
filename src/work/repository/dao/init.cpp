@@ -24,16 +24,32 @@ namespace {
 static std::vector<std::vector<const char*>> index_sqls{
     // 0 projects
     {
-        "CREATE INDEX IF NOT EXISTS idx_projects_userid_status ON projects(user_id, status);",
-        "CREATE INDEX IF NOT EXISTS idx_projects_userid_runstate ON projects(user_id, runtime_state);",
-        "CREATE INDEX IF NOT EXISTS idx_projects_runstate ON projects(runtime_state);",
-        "CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);",    
+        "CREATE INDEX IF NOT EXISTS idx_projects_userid_status_ctime_id ON projects(user_id, status, ctime, id);",
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_userid_status_runstate_ctime_id ON projects(user_id, status, runtime_state, ctime, id);",
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_status_runstate_pctype_ctime_id ON projects(status, runtime_state, protocol_type, ctime, id);",
+
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_userid_runstate_ctime_id ON projects(user_id, runtime_state, ctime, id);",
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_status_ctime_id ON projects(status, ctime, id);",
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_runstate_ctime_id ON projects(runtime_state, ctime, id);",
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_ctime_id ON projects(ctime, id);",
+
+        "CREATE INDEX IF NOT EXISTS idx_projects_userid_ctime_id ON projects(user_id, ctime, id);",
+
     },
     // 1 protocols
     {
         "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status ON protocols(project_id, status);",
+
         "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_configstate ON protocols(project_id, config_state);",
+
         "CREATE INDEX IF NOT EXISTS idx_protocols_pjid_status_configstate ON protocols(project_id, status, config_state);",
+        
         // runtime_key 唯一索引的条件: 协议项未软删 且 不处于待配置状态
         "CREATE UNIQUE INDEX IF NOT EXISTS uidx_protocols_pjid_runkey ON protocols(project_id, runtime_key) WHERE status = 1 AND config_state <> 2;",
     },
@@ -41,6 +57,7 @@ static std::vector<std::vector<const char*>> index_sqls{
     {
         "CREATE INDEX IF NOT EXISTS idx_users_role_status ON users(role, status);",
 
+        "CREATE UNIQUE INDEX IF NOT EXISTS uidx_users_notename ON users(note_name COLLATE NOCASE);",
     },
     // 3 sessions
     {

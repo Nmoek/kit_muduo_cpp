@@ -48,5 +48,24 @@ struct Project
     }
 };
 
+struct ProjectListQuery
+{
+    int32_t offset{0};
+    int32_t limit{10};
+    std::optional<int64_t> created_from;
+    std::optional<int64_t> created_to;
+    std::optional<ProjectStatus> status;
+    std::optional<ProjectRuntimeState> runtime_state;
+    std::optional<ProtocolType> protocol_type;
+    std::optional<int64_t> user_id;
+};
+
+struct ProjectListItem
+{
+    Project p;
+    std::string user_note;
+};
+
+
 } //  kit_domain
 #endif //__KIT_DOMAIN_PROJECT_H__

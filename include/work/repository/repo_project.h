@@ -31,12 +31,15 @@ class ProjectDaoInterface;
 namespace kit_domain {
 
 class Project;
+struct ProjectListQuery;
+struct ProjectListItem;
+
 
 class ProjectRepoInterface
 {
 public:
     ProjectRepoInterface(std::shared_ptr<kit_dao::ProjectDaoInterface> dao)
-        :_dao(dao)
+        :dao_(dao)
     {  }
 
     virtual ~ProjectRepoInterface() = default;
@@ -64,9 +67,10 @@ public:
 
     virtual std::vector<Project> GetAllActive(kit_muduo::HttpContextPtr ctx) = 0;
 
+    virtual std::pair<std::vector<ProjectListItem>, int64_t> List(kit_muduo::HttpContextPtr ctx, const ProjectListQuery &query) = 0;
 
 protected:
-    std::shared_ptr<kit_dao::ProjectDaoInterface> _dao;
+    std::shared_ptr<kit_dao::ProjectDaoInterface> dao_;
 };
 
 class ProjectRepository : public ProjectRepoInterface
@@ -98,6 +102,7 @@ public:
 
     std::vector<Project> GetAllActive(kit_muduo::HttpContextPtr ctx) override;
 
+    std::pair<std::vector<ProjectListItem>, int64_t> List(kit_muduo::HttpContextPtr ctx, const ProjectListQuery &query) override;
 };
 
 

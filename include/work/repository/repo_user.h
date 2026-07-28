@@ -13,6 +13,8 @@ class UserDaoInterface;
 
 namespace kit_domain {
 
+struct UserCandidate;
+
 class UserRepoInterface {
 public:
     explicit UserRepoInterface(std::shared_ptr<kit_dao::UserDaoInterface> dao)
@@ -29,6 +31,7 @@ public:
     virtual User GetByNoteName(kit_muduo::HttpContextPtr ctx, const std::string &note_name) = 0;
     virtual std::vector<User> List(kit_muduo::HttpContextPtr ctx, UserStatus status, int32_t offset, int32_t limit) = 0;
     virtual int32_t CountActiveAdmin(kit_muduo::HttpContextPtr ctx) = 0;
+    virtual std::vector<UserCandidate> GetNotes(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit) = 0;
 
 protected:
     std::shared_ptr<kit_dao::UserDaoInterface> _dao;
@@ -47,6 +50,7 @@ public:
     User GetByNoteName(kit_muduo::HttpContextPtr ctx, const std::string &note_name) override;
     std::vector<User> List(kit_muduo::HttpContextPtr ctx, UserStatus status, int32_t offset, int32_t limit) override;
     int32_t CountActiveAdmin(kit_muduo::HttpContextPtr ctx) override;
+    std::vector<UserCandidate> GetNotes(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit) override;
 };
 
 } // namespace kit_domain

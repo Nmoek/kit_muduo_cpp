@@ -5,6 +5,7 @@
 #include "service/password_hasher.h"
 
 #include <stdexcept>
+#include <string_view>
 
 namespace kit_domain {
 
@@ -122,6 +123,20 @@ std::vector<User> UserService::List(kit_muduo::HttpContextPtr ctx, UserListFilte
         filter.offset = 0;
     }
     return user_repo_->List(ctx, filter.status, filter.offset, filter.limit);
+}
+
+std::vector<UserCandidate> UserService::GetNotes(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit)
+{
+    if(keyword.empty())
+    {
+        return {};
+    }
+    if(limit <= 0 || limit > 20)
+    {
+        limit = 10;
+    }
+
+    return user_repo_->GetNotes(ctx, keyword, limit);
 }
 
 bool UserService::IsLastActiveAdmin(kit_muduo::HttpContextPtr ctx, const User &user)

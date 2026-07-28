@@ -150,9 +150,13 @@ Protocol ProtocolRepository::GetById(kit_muduo::HttpContextPtr ctx, int64_t prot
     return CovertDomainProtocol(_dao->GetById(ctx, protocolId));
 }
 
-std::vector<Protocol> ProtocolRepository::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, ProtocolStatus status, int32_t offset, int32_t limit)
+std::pair<std::vector<Protocol>, int64_t> ProtocolRepository::GetByProject(kit_muduo::HttpContextPtr ctx, int64_t protocolId, std::optional<ProtocolStatus> status, int32_t offset, int32_t limit)
 {
-    return CovertDomainProtocols(_dao->ListByProject(ctx, protocolId, static_cast<int32_t>(status), offset, limit));
+    const auto& p = _dao->ListByProject(ctx, protocolId, 
+        status.has_value() ? std::optional(static_cast<int32_t>(status.value())) : std::nullopt, 
+        offset, limit);
+    
+    return {CovertDomainProtocols(p.first), p.second};
 }
 
 std::vector<Protocol> ProtocolRepository::GetValidByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id)

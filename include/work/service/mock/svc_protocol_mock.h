@@ -1,6 +1,9 @@
 #pragma once
 
 #include <gmock/gmock.h>
+
+#include <utility>
+
 #include "work/domain/protocol.h"
 #include "work/service/svc_protocol.h"
 
@@ -21,7 +24,7 @@ public:
     MOCK_METHOD(bool, UpdateRespCfg, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, const nlohmann::json& cfg_json), (override));
     MOCK_METHOD(bool, UpdateBody, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolSide side, ProtocolBodyType body_type, const std::vector<char>& cfg_data), (override));
     MOCK_METHOD(Protocol, GetById, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id), (override));
-    MOCK_METHOD(std::vector<Protocol>, GetByProject, (kit_muduo::HttpContextPtr ctx, int64_t project_id, ProtocolStatus status, int32_t offset, int32_t limit), (override));
+    MOCK_METHOD((std::pair<std::vector<Protocol>, int64_t>), GetByProject, (kit_muduo::HttpContextPtr ctx, int64_t project_id, std::optional<ProtocolStatus> status, int32_t offset, int32_t limit), (override));
     MOCK_METHOD(std::vector<Protocol>, GetValidByProject, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
     MOCK_METHOD(std::vector<Protocol>, GetActiveByProject, (kit_muduo::HttpContextPtr ctx, int64_t project_id), (override));
     MOCK_METHOD(int32_t, GetProtocolCnt, (kit_muduo::HttpContextPtr ctx, int64_t protocol_id, ProtocolStatus status), (override));

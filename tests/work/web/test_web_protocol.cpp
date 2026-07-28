@@ -32,8 +32,10 @@
 #include "web/web_protocol.h"
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace kit_domain;
@@ -117,6 +119,13 @@ HttpContextPtr MakeJsonContextForPath(const nljson &body, const std::string &pat
 {
     auto ctx = MakeJsonContext(body);
     ctx->request()->setPath(path);
+    return ctx;
+}
+
+HttpContextPtr MakeAdminJsonContext(const nljson &body)
+{
+    auto ctx = MakeJsonContext(body);
+    SetCurrentUserToContext(ctx, CurrentUser{100, "web_protocol_admin", UserRole::kAdmin, UserStatus::kActive});
     return ctx;
 }
 
@@ -761,4 +770,217 @@ TEST_F(ProtocolHandlerRuntimeReceiptSuite, LaunchProtocolRejectsMultipartBodyBef
     auto resp = ResponseBody(ctx);
     EXPECT_EQ(resp["code"], -200);
     EXPECT_EQ(resp["message"], "body parse error");
+}
+
+/*
+测试思路：
+1. 管理员不提交 status，语义是查询项目下的有效项和软删除项。
+2. Handler 必须把 status 保持为 std::nullopt，并把 Service 返回的 pair 中的 total 原样放入分页响应。
+3. 返回的 items 同时包含有效项和软删除项，且 data 必须是新的分页对象而不是旧数组。
+
+示意：
+  {project_id: 9401, offset: 0, limit: 2, status: omitted}
+             |
+             v
+  GetByProject(status=nullopt) -> [valid, deleted], total=3
+             |
+             v
+  data={items:[valid, deleted], offset:0, limit:2, total:3}
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, AdminListWithoutStatusReturnsAllStatusesAndPageMetadata)
+{
+    constexpr int64_t project_id = 9401;
+    const auto valid = *MakeHttpProtocol(940101, project_id, "/d9/web/list-valid");
+    auto deleted = *MakeHttpProtocol(940102, project_id, "/d9/web/list-deleted");
+    deleted.m_status = ProtocolStatus::kInvalid;
+
+    EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
+        .WillOnce(testing::Return(MakeActiveProject(project_id)));
+    EXPECT_CALL(*mock_, GetByProject(
+        testing::_,
+        project_id,
+        testing::Eq(std::optional<ProtocolStatus>{}),
+        0,
+        2))
+        .WillOnce(testing::Return(std::make_pair(
+            std::vector<Protocol>{valid, deleted}, int64_t{3})));
+
+    auto ctx = MakeAdminJsonContext(nljson{
+        {"project_id", project_id},
+        {"offset", 0},
+        {"limit", 2},
+    });
+    handler_->List(nullptr, ctx);
+
+    const auto resp = ResponseBody(ctx);
+    ASSERT_EQ(resp["code"], 0);
+    EXPECT_EQ(resp["message"], "success");
+    ASSERT_TRUE(resp["data"].is_object());
+    ASSERT_TRUE(resp["data"]["items"].is_array());
+    ASSERT_EQ(resp["data"]["items"].size(), 2U);
+    EXPECT_EQ(resp["data"]["items"][0]["id"], valid.m_id);
+    EXPECT_EQ(resp["data"]["items"][0]["status"], static_cast<int32_t>(ProtocolStatus::kValid));
+    EXPECT_EQ(resp["data"]["items"][1]["id"], deleted.m_id);
+    EXPECT_EQ(resp["data"]["items"][1]["status"], static_cast<int32_t>(ProtocolStatus::kInvalid));
+    EXPECT_EQ(resp["data"]["offset"], 0);
+    EXPECT_EQ(resp["data"]["limit"], 2);
+    EXPECT_EQ(resp["data"]["total"], 3);
+}
+
+/*
+测试思路：
+1. 管理员分别提交 status=1 和 status=0，验证两个合法筛选值都能到达 Service。
+2. status=1 只返回有效协议，status=0 只返回软删除协议；两个请求都应保留各自的分页参数。
+3. 用两个连续请求覆盖新接口的 optional<ProtocolStatus> 参数，而不是只验证响应内容。
+
+示意：
+  status=1 -> GetByProject(status=kValid)   -> [valid]
+  status=0 -> GetByProject(status=kInvalid) -> [deleted]
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, AdminListPassesExplicitStatusFilters)
+{
+    constexpr int64_t project_id = 9402;
+    const auto valid = *MakeHttpProtocol(940201, project_id, "/d9/web/list-explicit-valid");
+    auto deleted = *MakeHttpProtocol(940202, project_id, "/d9/web/list-explicit-deleted");
+    deleted.m_status = ProtocolStatus::kInvalid;
+
+    EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
+        .Times(2)
+        .WillRepeatedly(testing::Return(MakeActiveProject(project_id)));
+    {
+        testing::InSequence sequence;
+        EXPECT_CALL(*mock_, GetByProject(
+            testing::_,
+            project_id,
+            testing::Eq(std::optional<ProtocolStatus>{ProtocolStatus::kValid}),
+            0,
+            10))
+            .WillOnce(testing::Return(std::make_pair(
+                std::vector<Protocol>{valid}, int64_t{1})));
+        EXPECT_CALL(*mock_, GetByProject(
+            testing::_,
+            project_id,
+            testing::Eq(std::optional<ProtocolStatus>{ProtocolStatus::kInvalid}),
+            0,
+            10))
+            .WillOnce(testing::Return(std::make_pair(
+                std::vector<Protocol>{deleted}, int64_t{1})));
+    }
+
+    auto valid_ctx = MakeAdminJsonContext(nljson{
+        {"project_id", project_id},
+        {"offset", 0},
+        {"limit", 10},
+        {"status", static_cast<int32_t>(ProtocolStatus::kValid)},
+    });
+    handler_->List(nullptr, valid_ctx);
+    const auto valid_resp = ResponseBody(valid_ctx);
+    ASSERT_EQ(valid_resp["code"], 0);
+    ASSERT_EQ(valid_resp["data"]["items"].size(), 1U);
+    EXPECT_EQ(valid_resp["data"]["items"][0]["id"], valid.m_id);
+    EXPECT_EQ(valid_resp["data"]["total"], 1);
+
+    auto deleted_ctx = MakeAdminJsonContext(nljson{
+        {"project_id", project_id},
+        {"offset", 0},
+        {"limit", 10},
+        {"status", static_cast<int32_t>(ProtocolStatus::kInvalid)},
+    });
+    handler_->List(nullptr, deleted_ctx);
+    const auto deleted_resp = ResponseBody(deleted_ctx);
+    ASSERT_EQ(deleted_resp["code"], 0);
+    ASSERT_EQ(deleted_resp["data"]["items"].size(), 1U);
+    EXPECT_EQ(deleted_resp["data"]["items"][0]["id"], deleted.m_id);
+    EXPECT_EQ(deleted_resp["data"]["offset"], 0);
+    EXPECT_EQ(deleted_resp["data"]["limit"], 10);
+    EXPECT_EQ(deleted_resp["data"]["total"], 1);
+}
+
+/*
+测试思路：
+1. 普通用户省略 status，Handler 必须自动补成 ProtocolStatus::kValid，只能查询有效协议。
+2. 普通用户显式提交 status=0，表示尝试读取软删除项；Handler 必须在调用 Service 前返回 403。
+3. 断言第二个请求的 GetByProject 调用次数为 0，验证权限控制不仅是响应码正确，也没有发生越权数据查询。
+
+示意：
+  normal + status omitted -> status=kValid -> service called
+  normal + status=0       -> 403         -> service not called
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, NormalUserListDefaultsToValidAndRejectsDeletedStatus)
+{
+    constexpr int64_t project_id = 9403;
+    const auto valid = *MakeHttpProtocol(940301, project_id, "/d9/web/list-normal-valid");
+
+    EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
+        .Times(2)
+        .WillRepeatedly(testing::Return(MakeActiveProject(project_id)));
+    EXPECT_CALL(*mock_, GetByProject(
+        testing::_,
+        project_id,
+        testing::Eq(std::optional<ProtocolStatus>{ProtocolStatus::kValid}),
+        0,
+        10))
+        .WillOnce(testing::Return(std::make_pair(
+            std::vector<Protocol>{valid}, int64_t{2})));
+
+    auto default_ctx = MakeJsonContext(nljson{
+        {"project_id", project_id},
+        {"offset", 0},
+        {"limit", 10},
+    });
+    handler_->List(nullptr, default_ctx);
+    const auto default_resp = ResponseBody(default_ctx);
+    ASSERT_EQ(default_resp["code"], 0);
+    ASSERT_EQ(default_resp["data"]["items"].size(), 1U);
+    EXPECT_EQ(default_resp["data"]["items"][0]["id"], valid.m_id);
+    EXPECT_EQ(default_resp["data"]["total"], 2);
+
+    auto deleted_ctx = MakeJsonContext(nljson{
+        {"project_id", project_id},
+        {"offset", 0},
+        {"limit", 10},
+        {"status", static_cast<int32_t>(ProtocolStatus::kInvalid)},
+    });
+    handler_->List(nullptr, deleted_ctx);
+    const auto deleted_resp = ResponseBody(deleted_ctx);
+    EXPECT_EQ(deleted_resp["code"], -403);
+    EXPECT_EQ(deleted_resp["message"], "forbidden");
+    EXPECT_EQ(deleted_ctx->response()->stateCode().toInt(), StateCode::k403Forbidden);
+}
+
+/*
+测试思路：
+1. 管理员分别提交 offset=-1、limit=0 和 limit=101，覆盖分页参数的下界与上界外输入。
+2. 每个请求都应在参数校验阶段返回 -200/query param error，不能进入 Service。
+3. 项目鉴权仍会先执行，因此三个请求都返回同一个有效项目；只有 GetByProject 必须保持 0 次调用。
+
+示意：
+  offset=-1 / limit=0 / limit=101
+                  |
+                  v
+       query param error, GetByProject not called
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, ListRejectsInvalidPaginationWithoutCallingService)
+{
+    constexpr int64_t project_id = 9404;
+    EXPECT_CALL(*project_mock_, GetById(testing::_, project_id))
+        .Times(3)
+        .WillRepeatedly(testing::Return(MakeActiveProject(project_id)));
+    EXPECT_CALL(*mock_, GetByProject(testing::_, testing::_, testing::_, testing::_, testing::_))
+        .Times(0);
+
+    const std::vector<nljson> requests{
+        nljson{{"project_id", project_id}, {"offset", -1}, {"limit", 10}},
+        nljson{{"project_id", project_id}, {"offset", 0}, {"limit", 0}},
+        nljson{{"project_id", project_id}, {"offset", 0}, {"limit", 101}},
+    };
+    for(const auto &body : requests)
+    {
+        auto ctx = MakeAdminJsonContext(body);
+        handler_->List(nullptr, ctx);
+
+        const auto resp = ResponseBody(ctx);
+        EXPECT_EQ(resp["code"], -200);
+        EXPECT_EQ(resp["message"], "query param error");
+    }
 }

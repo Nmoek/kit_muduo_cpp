@@ -9,6 +9,7 @@
 #ifndef __KIT_DAOS_PROJECT_H__
 #define __KIT_DAOS_PROJECT_H__
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,18 @@ struct Project
     int64_t                  m_ctime;            // 创建时间
     int64_t                  m_utime;            // 修改时间
 };
-    
+
+struct ProjectListQuery
+{
+    int32_t offset{0};
+    int32_t limit{10};
+    std::optional<int64_t> created_from;
+    std::optional<int64_t> created_to;
+    std::optional<int32_t> status;
+    std::optional<int32_t> runtime_state;
+    std::optional<int32_t> protocol_type;
+    std::optional<int64_t> user_id;
+};
 
 
 } // namespace kit_dao

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "net/call_backs.h"
+#include "nlohmann/json.hpp"
 
 namespace kit_domain {
 
@@ -18,6 +19,19 @@ enum class UserStatus {
     kUnknown = 0,
     kActive = 1,
     kDisabled = 2,
+};
+NLOHMANN_JSON_SERIALIZE_ENUM(UserStatus, {
+    {UserStatus::kUnknown, "unknown"},
+    {UserStatus::kActive, "active"},
+    {UserStatus::kDisabled, "disabled"},
+})
+struct UserCandidate
+{
+    int64_t user_id;
+    std::string note_name;
+    UserStatus status;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(UserCandidate, user_id, note_name, status)
 };
 
 struct CurrentUser {

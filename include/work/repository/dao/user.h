@@ -16,6 +16,14 @@ struct User {
     int64_t m_utime{0};
 };
 
+struct UserCandidate
+{
+    int64_t id;
+    std::string note_name;
+    int32_t status;
+};
+
+
 } // namespace kit_dao
 
 #endif // __KIT_DAO_USER_H__

@@ -11,20 +11,58 @@
 #include "dao/dao_util.h"
 #include "base/time_stamp.h"
 #include "dao/project.h"
+#include "dao/user.h"
 #include "domain/type.h"
 #include "sqlite_orm/sqlite_orm.h"
 #include "dao/sqlite_orm_pool.h"
 #include "nlohmann/json.hpp"
 
+#include <limits>
 #include <thread>
+#include <utility>
 
 using nljson = nlohmann::json;
 using namespace sqlite_orm;
 
 namespace kit_dao {
 
+namespace {
+
+auto BuildProjectListWhere(const kit_dao::ProjectListQuery& query)
+{
+    using namespace sqlite_orm;
+
+return
+    (!query.status.has_value() ||
+        c(&kit_dao::Project::m_status) ==
+            query.status.value_or(0)) &&
+
+    (!query.runtime_state.has_value() ||
+        c(&kit_dao::Project::m_runtimeState) ==
+            query.runtime_state.value_or(0)) &&
+
+    (!query.protocol_type.has_value() ||
+        c(&kit_dao::Project::m_protocolType) ==
+            query.protocol_type.value_or(0)) &&
+
+    (!query.user_id.has_value() ||
+        c(&kit_dao::Project::m_userId) ==
+            query.user_id.value_or(0)) &&
+
+    // 时间查找 [created_from, created_to)
+    (!query.created_from.has_value() ||
+        c(&kit_dao::Project::m_ctime) >=
+            query.created_from.value_or(0)) &&
+
+    (!query.created_to.has_value() ||
+        c(&kit_dao::Project::m_ctime) <
+            query.created_to.value_or(std::numeric_limits<int32_t>::max()));
+}
+
+}
+
 SqliteOrmProjectDao::SqliteOrmProjectDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool)
-    :_db_pool(db_pool)
+    :db_pool_(db_pool)
 {
 
 }
@@ -37,7 +75,7 @@ int64_t SqliteOrmProjectDao::Insert(std::shared_ptr<kit_muduo::http::HttpContext
 
     int64_t project_id = -1;
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -76,7 +114,7 @@ bool SqliteOrmProjectDao::UpdateStatus(kit_muduo::HttpContextPtr ctx, int64_t pr
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -135,7 +173,7 @@ bool SqliteOrmProjectDao::UpdateRuntimeState(kit_muduo::HttpContextPtr ctx, int6
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -197,7 +235,7 @@ bool SqliteOrmProjectDao::UpdateName(kit_muduo::HttpContextPtr ctx, int64_t proj
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -255,7 +293,7 @@ kit_dao::Project SqliteOrmProjectDao::GetById(kit_muduo::HttpContextPtr ctx, int
     pj.m_id = -1;
 
     
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -292,7 +330,7 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetByUser(kit_muduo::HttpCont
 {
     std::vector<kit_dao::Project> pjs;
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -339,7 +377,7 @@ std::vector<kit_dao::Project> SqliteOrmProjectDao::GetAll(kit_muduo::HttpContext
 {
     std::vector<kit_dao::Project> pjs;
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -364,7 +402,7 @@ std::vector<kit_dao::Project>  SqliteOrmProjectDao::GetAllByStatusAndRuntimeStat
 {
     std::vector<kit_dao::Project> pjs;
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -419,7 +457,7 @@ std::vector<kit_dao::Project>  SqliteOrmProjectDao::GetAllByStatusAndRuntimeStat
 std::string SqliteOrmProjectDao::GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id)
 {
     std::string pattern_info;
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -465,7 +503,7 @@ bool SqliteOrmProjectDao::UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpC
 {
     auto now = kit_muduo::TimeStamp::Now().millSeconds();
 
-    auto lease_result = _db_pool->acquire();
+    auto lease_result = db_pool_->acquire();
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
@@ -529,5 +567,134 @@ bool SqliteOrmProjectDao::UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpC
     return true;
 }
 
+std::pair<std::vector<std::pair<kit_dao::Project, std::string>>, int64_t> SqliteOrmProjectDao::GetByListQuery(kit_muduo::HttpContextPtr ctx, const kit_dao::ProjectListQuery &query)
+{
+    std::vector<std::pair<kit_dao::Project, std::string>> pairs;
+    auto lease_result = db_pool_->acquire();
+    if(!lease_result.ok())
+    {
+        DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return {};
+    }
+
+    int64_t total = 0;
+    try {
+        /* SELECT project columns, user.note_name  
+            WHERE ...
+            ORDER BY projects.ctime DESC, projects.id DESC 
+            LIMIT limit 
+            OFFSET offset
+        */
+
+        lease_result.val->db().begin_transaction();
+
+        total = lease_result.val->db().count<kit_dao::Project>(
+            inner_join<kit_dao::User>(
+                on(c(&kit_dao::Project::m_userId) == c(&kit_dao::User::m_id))
+            )
+            ,where(
+               BuildProjectListWhere(query)
+            )
+        );
+        if(!total)
+        {
+            lease_result.val->db().commit();
+            return {};
+        }
+
+        auto rows = lease_result.val->db().select(
+            columns(
+                // projects表
+                &kit_dao::Project::m_id,
+                &kit_dao::Project::m_name,
+                &kit_dao::Project::m_mode,
+                &kit_dao::Project::m_protocolType,
+                &kit_dao::Project::m_listenPort,
+                &kit_dao::Project::m_targetIp,
+                &kit_dao::Project::m_userId,
+                &kit_dao::Project::m_status,
+                &kit_dao::Project::m_runtimeState,
+                &kit_dao::Project:: m_patternInfo,
+                &kit_dao::Project::m_ctime,
+                &kit_dao::Project::m_utime,
+
+                // users表
+                &kit_dao::User::m_noteName
+            )
+            ,from<kit_dao::Project>()
+            ,inner_join<kit_dao::User>(
+                on(c(&kit_dao::Project::m_userId) == c(&kit_dao::User::m_id))
+            )
+            ,where(
+               BuildProjectListWhere(query)
+            )
+            ,multi_order_by(
+                order_by(&Project::m_ctime).desc(),
+                order_by(&Project::m_id).desc()
+            )
+            ,limit(
+                std::max<int32_t>(query.offset, 0),
+                std::max<int32_t>(query.limit, 0)
+            )
+        );
+
+        pairs.reserve(rows.size());
+
+        for(auto &[id,
+                name,
+                mode,
+                protocolType,
+                listenPort,
+                targetIp,
+                userId,
+                status,
+                runtimeState,
+                patternInfo,
+                ctime,
+                utime,
+                // users表
+                noteName] : rows)
+        {
+            pairs.push_back({
+                {
+                    id,
+                    std::move(name),
+                    mode,
+                    protocolType,
+                    listenPort,
+                    targetIp,
+                    userId,
+                    status,
+                    runtimeState,
+                    std::move(patternInfo),
+                    ctime,
+                    utime,
+                },
+                std::move(noteName)
+            });
+        }
+
+        lease_result.val->db().commit();
+
+    } catch (const std::system_error &e) {
+
+        DAOPC_F_ERROR("%s \n",MakeSqliteErrorMsg(e).c_str());
+
+        lease_result.val->db().rollback();
+        return {};
+    }
+
+    DAOPJ_DEBUG() <<  "SqliteOrmProjectDao::UpdatePatternInfo success! "
+        << "offset= " << query.offset
+        << "limit= " << query.limit
+        << "created_from= " << (query.created_from.has_value() ? *query.created_from : -1)
+        << "created_to= " << (query.created_to.has_value() ? *query.created_to : -1) 
+        << "status= " << (query.status.has_value() ? *query.status : -1) 
+        << "runtime_state= " << (query.runtime_state.has_value() ? *query.runtime_state : -1)
+        << "protocol_type= " << (query.protocol_type.has_value() ? *query.protocol_type : -1)
+        << "user_id= " << (query.user_id.has_value() ? *query.user_id : -1) << "\n";
+
+    return {std::move(pairs), total};
+}
 
 } // namespace kit_domain

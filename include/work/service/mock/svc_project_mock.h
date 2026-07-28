@@ -1,7 +1,6 @@
 #pragma once
 
 #include <gmock/gmock.h>
-
 #include "work/service/svc_project.h"
 #include "domain/project.h"
 
@@ -25,6 +24,7 @@ public:
     MOCK_METHOD(bool, UpdatePatternInfoWithProtocolWithdraw, (kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info), (override));
     MOCK_METHOD(std::vector<Project>, GetAllValid, (kit_muduo::HttpContextPtr ctx), (override));
     MOCK_METHOD(std::vector<Project>, GetAllActive, (kit_muduo::HttpContextPtr ctx), (override));
+    MOCK_METHOD((std::pair<std::vector<ProjectListItem>, int64_t>), List, (kit_muduo::HttpContextPtr ctx, const ProjectListQuery &query), (override));
 };
 
 } // namespace kit_domain

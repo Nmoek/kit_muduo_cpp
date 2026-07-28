@@ -42,6 +42,7 @@ public:
     bool RestoreUser(kit_muduo::HttpContextPtr ctx, int64_t user_id);
     User GetById(kit_muduo::HttpContextPtr ctx, int64_t user_id);
     std::vector<User> List(kit_muduo::HttpContextPtr ctx, UserListFilter filter);
+    std::vector<UserCandidate> GetNotes(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit);
 
 private:
     bool IsLastActiveAdmin(kit_muduo::HttpContextPtr ctx, const User &user);

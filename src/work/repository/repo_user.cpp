@@ -1,6 +1,7 @@
 #include "repository/repo_user.h"
 
 #include "dao/dao_user.h"
+#include "domain/user.h"
 
 namespace kit_domain {
 
@@ -82,5 +83,22 @@ int32_t UserRepository::CountActiveAdmin(kit_muduo::HttpContextPtr ctx)
 {
     return _dao->CountActiveAdmin(ctx);
 }
+
+std::vector<UserCandidate> UserRepository::GetNotes(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit)
+{
+    std::vector<UserCandidate>  notes;
+    const auto &dao_notes = _dao->GetNotesByCondidates(ctx, keyword, limit);
+    notes.reserve(dao_notes.size());
+    for(auto &n : dao_notes)
+    {
+        notes.push_back({
+            .user_id = n.id,
+            .note_name = std::move(n.note_name),
+            .status = static_cast<UserStatus>(n.status)
+        });
+    }
+    return notes;
+}
+
 
 } // namespace kit_domain

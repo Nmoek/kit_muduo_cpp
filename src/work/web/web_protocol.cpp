@@ -14,6 +14,7 @@
 #include "domain/user.h"
 #include "net/http/http_content_codec.h"
 #include "net/http/multiform.h"
+#include "nlohmann/json.hpp"
 #include "service/svc_project.h"
 #include "service/svc_protocol.h"
 #include "web/protocol_vo.h"
@@ -126,15 +127,41 @@ struct LaunchAndWithdrawsProtocolReq {
 
 /**
  * @brief List 用于Body解析
+    TODO 后续考虑拓展为和project一样
  */
 struct ProtocolListReq {
     int64_t                  project_id;      // 所属测试服务id
-    ProtocolStatus           status{ProtocolStatus::kValid};  // 状态
-    bool                     include_inactive{false}; // 管理员列表是否包含已删除协议项
     int32_t                  offset;          // 页码
     int32_t                  limit;           // 页大小
-    
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(ProtocolListReq, project_id, status, include_inactive, offset, limit)
+    std::optional<ProtocolStatus> status;    // 协议有效性
+
+
+    friend void from_json(const nlohmann::json &j, ProtocolListReq &req)
+    {
+        auto it  = j.find("project_id");
+        if(it == j.end())
+        {
+            throw std::invalid_argument("json 'project_id' miss");
+        }
+        it.value().get_to<int64_t>(req.project_id);
+
+        it  = j.find("offset");
+        if(it == j.end())
+        {
+            throw std::invalid_argument("json 'offset' miss");
+        }
+        it.value().get_to<int32_t>(req.offset);
+
+        it = j.find("limit");
+        if(it == j.end())
+        {
+            throw std::invalid_argument("json 'limit' miss");
+        }
+        it.value().get_to<int32_t>(req.limit);
+
+        it = j.find("status");
+        if(it != j.end()) { req.status = it.value().get<ProtocolStatus>(); }
+    }
 };
 
 
@@ -187,6 +214,33 @@ inline void from_multiform(const MultiForm &form, DetailReq &req)
 
 
 /***************Body解析临时变量定义 其他模块不允许引用**************** */
+
+namespace {
+inline bool CheckListQeury(const ProtocolListReq &request)
+{
+    // limit: [1, 100]
+    // offset: [0, ..]
+    if(request.limit <= 0 
+        || request.limit > 100 
+        || request.offset < 0)
+    {
+        PJ_F_DEBUG("limit/offset/user_id  invalid\n");
+        return false;
+    }
+
+
+    if(request.status.has_value() && (*request.status != ProtocolStatus::kInvalid && *request.status != ProtocolStatus::kValid))
+    {
+        PJ_F_DEBUG("status invalid\n");
+        return false;
+    }
+
+    return true;
+
+}
+}
+
+
 ProtocolHandler::ProtocolHandler(std::shared_ptr<ProtocolSvcInterface> svc, 
     std::shared_ptr<ProjectSvcInterface> pj_svc, 
     std::shared_ptr<RuntimeControllerInterface> project_runtime_manager)
@@ -630,30 +684,42 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
         return;
     }
 
-    // DTO转换 避免对外暴露领域模型Entity
-    std::vector<Protocol> protocols;
+    
     if(!CheckProjectAccess(ctx, pj_svc_.get(), request.project_id, true, false))
     {
         WriteForbidden(ctx);
         return;
     }
-    // 查测试服务 信息
-    try 
+
+    auto current_user = CurrentUserFromContext(ctx);
+    if(!current_user.IsAdmin())
     {
-        auto current_user = CurrentUserFromContext(ctx);
-        if(current_user.IsAdmin() && request.include_inactive)
+        if(request.status.has_value() && ProtocolStatus::kValid != *request.status)
         {
-            protocols = svc_->GetByProject(ctx, request.project_id, ProtocolStatus::kValid, request.offset, request.limit);
-            auto inactive_protocols = svc_->GetByProject(ctx, request.project_id, ProtocolStatus::kInvalid, 0, request.limit);
-            protocols.insert(protocols.end(), inactive_protocols.begin(), inactive_protocols.end());
+            WriteForbidden(ctx);
+            return;
         }
-        else
-        {
-            protocols = svc_->GetByProject(ctx, request.project_id, ProtocolStatus::kValid, request.offset, request.limit);
-        }
+        request.status = ProtocolStatus::kValid;
     }
-    catch(const std::exception& e)
+
+    // 检查参数合法性
+    if(!CheckListQeury(request))
     {
+        WriteJsonError(ctx, -200, "query param error");
+        return;
+    }
+
+    std::vector<Protocol> protocols;
+    int64_t total = 0;
+    // 查测试服务 信息
+    try {
+
+
+        auto p = svc_->GetByProject(ctx, request.project_id, request.status, request.offset, request.limit);
+        protocols.swap(p.first);
+        total = p.second;
+
+    } catch(const std::exception& e) {
         PC_F_ERROR("service GetByUser exception: %s \n", e.what());
         WriteProtocolJsonError(ctx, -300, "service failed");
         return;
@@ -663,7 +729,13 @@ void ProtocolHandler::List(kit_muduo::TcpConnectionPtr conn, kit_muduo::HttpCont
     nljson root;
     root["code"] = 0;
     root["message"] = "success";
-    root["data"] = CovertProtocolVos(protocols);
+    root["data"] = nlohmann::json::object();
+    root["data"]["items"] =  CovertProtocolVos(protocols);
+
+   
+    root["data"]["offset"] = request.offset;
+    root["data"]["limit"] = request.limit;
+    root["data"]["total"] = total;
 
     WriteJsonResponse(ctx, root);
 

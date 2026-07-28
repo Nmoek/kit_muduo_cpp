@@ -23,6 +23,19 @@ using namespace sqlite_orm;
 
 namespace kit_dao {
 
+namespace {
+
+auto BuildProtocolListWhere(int64_t project_id, std::optional<int32_t> status)
+{
+    using namespace sqlite_orm;
+    return 
+        (c(&Protocol::m_projectId) ==  project_id) &&
+
+        (!status.has_value() || c(&Protocol::m_status) == status.value_or(-1));
+}
+
+}
+
 SqliteOrmProtocolDao::SqliteOrmProtocolDao(std::shared_ptr<kit_dao::SqliteOrmPool> db_pool)
     :_db_pool(db_pool)
 {
@@ -482,7 +495,7 @@ kit_dao::Protocol SqliteOrmProtocolDao::GetById(kit_muduo::HttpContextPtr ctx, i
     return pc;
 }
 
-std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t offset, int32_t limit)
+std::pair<std::vector<kit_dao::Protocol>, int64_t> SqliteOrmProtocolDao::ListByProject(kit_muduo::HttpContextPtr ctx, int64_t project_id, std::optional<int32_t> status, int32_t offset, int32_t limit)
 {
     std::vector<kit_dao::Protocol> pcs;
 
@@ -490,9 +503,10 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
     if(!lease_result.ok())
     {
         DAOPC_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
-        return pcs;
+        return {};
     }
 
+    int64_t total = 0;
     try {
         // 注意 查询指令顺序需要自己排列，orm框架不会自动排列, 这里不查询Body数据
 
@@ -518,44 +532,57 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
 
 
 #else
+        lease_result.val->db().begin_transaction();
+
+        total = lease_result.val->db().count<kit_dao::Protocol>(
+            where(
+                BuildProtocolListWhere(project_id, status)
+            )
+        );
+        if(!total)
+        {
+            DAOPC_F_DEBUG("protocol dont exist! pjId[%ld] \n", project_id);
+            
+            lease_result.val->db().commit();
+            return {};
+        }
 
         // 旧写法是利用元组vector<tutle<10>>
-        auto tmps = lease_result.val->db().select(
-        columns(
-            &Protocol::m_id,
-            &Protocol::m_name,
-            &Protocol::m_type,
-            &Protocol::m_projectId,
-            &Protocol::m_status,
-            &Protocol::m_configState,
-            &Protocol::m_reqBodyType,
-            &Protocol::m_respBodyType,
-            &Protocol::m_reqBodyDataStatus,
-            &Protocol::m_respBodyDataStatus,
-            &Protocol::m_reqCfg,
-            &Protocol::m_respCfg,
-            &Protocol::m_isEndian,
-            &Protocol::m_ctime,
-            &Protocol::m_utime
-        ),
-        where(
-            c(&Protocol::m_projectId) ==  project_id
-            &&
-            c(&Protocol::m_status) == status
-        ),
-        order_by(&Protocol::m_ctime).desc(),
-        sqlite_orm::limit(offset, limit)
+        auto rows = lease_result.val->db().select(
+            columns(
+                &Protocol::m_id,
+                &Protocol::m_name,
+                &Protocol::m_type,
+                &Protocol::m_projectId,
+                &Protocol::m_status,
+                &Protocol::m_configState,
+                &Protocol::m_reqBodyType,
+                &Protocol::m_respBodyType,
+                &Protocol::m_reqBodyDataStatus,
+                &Protocol::m_respBodyDataStatus,
+                &Protocol::m_reqCfg,
+                &Protocol::m_respCfg,
+                &Protocol::m_isEndian,
+                &Protocol::m_ctime,
+                &Protocol::m_utime
+            )
+            ,where(
+                BuildProtocolListWhere(project_id, status)
+            )
+            ,multi_order_by(
+                order_by(&Protocol::m_ctime).desc(),
+                order_by(&Protocol::m_id).desc()
+            )
+            ,sqlite_orm::limit(
+                std::max<int32_t>(offset, 0), 
+                std::max<int32_t>(limit, 0)
+            )
         );
-
-        if(tmps.empty())
-        {
-            DAOPC_F_WARN("protocol dont exist! pjId[%ld] \n", project_id);
-            return pcs;
-        }
+        lease_result.val->db().commit();
 
 
         // 一边转换一边copy
-        std::transform(tmps.begin(), tmps.end(), std::back_inserter(pcs), [](auto &item){
+        std::transform(rows.begin(), rows.end(), std::back_inserter(pcs), [](auto &item){
             // 全部移动 不要拷贝 查询量上去后很损耗性能
             Protocol p;
             p.m_id = std::move(std::get<0>(item));
@@ -587,15 +614,16 @@ std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::ListByProject(kit_muduo::Ht
             "%s pjId[%ld], status[%d], offset[%d], limit[%d]\n",
             MakeSqliteErrorMsg(e).c_str(),
             project_id,
-            status,
+            status.value_or(-1),
             offset,
             limit);
-        return pcs;
+        lease_result.val->db().rollback();
+        return {};
     }
 
-    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", status= " << status << ", size= " << pcs.size() << std::endl;
+    DAOPC_DEBUG() << "SqliteOrmProtocolDao::GetByProject " << project_id << ", status= " << status.value_or(-1) << ", size= " << pcs.size() << std::endl;
 
-    return pcs;
+    return {std::move(pcs), total};
 }
 
 std::vector<kit_dao::Protocol> SqliteOrmProtocolDao::GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t config_state)

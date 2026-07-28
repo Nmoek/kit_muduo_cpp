@@ -19,6 +19,8 @@
 
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace kit_dao
@@ -47,7 +49,7 @@ public:
 
     virtual kit_dao::Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) = 0;
 
-    virtual std::vector<kit_dao::Protocol> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) = 0;
+    virtual std::pair<std::vector<kit_dao::Protocol>, int64_t> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, std::optional<int32_t> status, int32_t offset, int32_t limit) = 0;
 
     virtual std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t config_state) = 0;
 
@@ -93,7 +95,7 @@ public:
 
     kit_dao::Protocol GetById(kit_muduo::HttpContextPtr ctx, int64_t protocolId) override;
 
-    std::vector<kit_dao::Protocol> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, int32_t status, int32_t offset, int32_t limit) override;
+    std::pair<std::vector<kit_dao::Protocol>, int64_t> ListByProject(kit_muduo::HttpContextPtr ctx, int64_t projectId, std::optional<int32_t> status, int32_t offset, int32_t limit) override;
 
     std::vector<kit_dao::Protocol> GetAll(kit_muduo::HttpContextPtr ctx, int64_t project_id, int32_t status, int32_t config_state) override;
 

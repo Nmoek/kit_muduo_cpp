@@ -9,6 +9,7 @@
 #ifndef __KIT_DAO_PROJECT_H__
 #define __KIT_DAO_PROJECT_H__
 
+#include "dao/project.h"
 #include "net/call_backs.h"
 #include "dao/init.h"
 #include "nlohmann/json.hpp"
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace kit_dao
@@ -46,6 +48,8 @@ public:
     virtual std::string GetPatternInfoById(kit_muduo::HttpContextPtr ctx, int64_t project_id) = 0;
 
     virtual bool UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info) = 0;
+
+    virtual std::pair<std::vector<std::pair<kit_dao::Project, std::string>>, int64_t> GetByListQuery(kit_muduo::HttpContextPtr ctx, const kit_dao::ProjectListQuery &query) = 0;
 
 };
 
@@ -78,9 +82,10 @@ public:
     
     bool UpdatePatternInfoWithProtocolWithdraw(kit_muduo::HttpContextPtr ctx, int64_t project_id, const nlohmann::json& pattern_info) override;
 
+    std::pair<std::vector<std::pair<kit_dao::Project, std::string>>, int64_t> GetByListQuery(kit_muduo::HttpContextPtr ctx, const kit_dao::ProjectListQuery &query) override;
 
 private:
-    std::shared_ptr<kit_dao::SqliteOrmPool> _db_pool;
+    std::shared_ptr<kit_dao::SqliteOrmPool> db_pool_;
 };
 
 

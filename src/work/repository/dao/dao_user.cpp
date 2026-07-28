@@ -4,9 +4,13 @@
 #include "dao/dao_log.h"
 #include "dao/dao_util.h"
 #include "dao/sqlite_orm_pool.h"
+#include "dao/user.h"
 #include "domain/user.h"
+#include "sqlite_orm/sqlite_orm.h"
 
 #include <system_error>
+#include <algorithm>
+#include <utility>
 
 using namespace sqlite_orm;
 
@@ -281,5 +285,52 @@ int32_t SqliteOrmUserDao::CountActiveAdmin(kit_muduo::HttpContextPtr ctx)
         return -1;
     }
 }
+
+std::vector<kit_dao::UserCandidate> SqliteOrmUserDao::GetNotesByCondidates(kit_muduo::HttpContextPtr ctx, const std::string &keyword, int32_t limit)
+{
+    std::vector<kit_dao::UserCandidate> notes;
+    auto lease_result = _db_pool->acquire();
+    if(!lease_result.ok())
+    {
+        DAODB_F_ERROR("sqlite connection lease error: %d\n", lease_result.toInt());
+        return {};
+    }
+
+    try {
+        auto rows = lease_result.val->db().select(
+            columns(
+                &kit_dao::User::m_id,
+                &kit_dao::User::m_noteName,
+                &kit_dao::User::m_status
+            )
+            ,where(
+                sqlite_orm::like(&kit_dao::User::m_noteName, keyword + "%")
+            )
+            ,order_by(&kit_dao::User::m_noteName).collate_nocase().asc()
+            ,sqlite_orm::limit(std::clamp<int32_t>(limit, 1, 10))
+        );
+
+        notes.reserve(rows.size());
+        for(const auto &[id, note_name, status] : rows)
+        {
+            notes.push_back(kit_dao::UserCandidate{
+                .id = id,
+                .note_name = std::move(note_name),
+                .status = status
+            });
+        }
+
+    } catch(const std::system_error &e) {
+        DAODB_F_ERROR(
+            "%s keyword[%s], limit[%d]\n",
+            MakeSqliteErrorMsg(e, "select users by note name").c_str(),
+            keyword.c_str(),
+            limit);
+        return {};
+    }
+    return notes;
+}
+
+
 
 } // namespace kit_dao

@@ -75,13 +75,6 @@ struct AddProjectReq {
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AddProjectReq, name, mode, protocol_type, target_ip, pattern_info)
 };
 
-struct ProjectListReq {
-    int32_t offset;
-    int32_t limit;
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(ProjectListReq, offset, limit)
-};
-
 struct ProjectDetailNameReq {
     std::string name;
 
@@ -224,7 +217,7 @@ static HttpContextPtr MakeRuntimeStateContext(const std::string &project_id_rout
     return ctx;
 }
 
-static HttpContextPtr MakeListContext(const ProjectListReq &request, CurrentUser user = NormalUser())
+static HttpContextPtr MakeListContext(const nljson &request, CurrentUser user = NormalUser())
 {
     auto ctx = MakeContext(std::move(user));
     SetJsonBody(ctx->request(), HttpRequest::Method::kPost, "/projects/list", request);
@@ -319,6 +312,57 @@ static nljson ProjectArrayResponse(const std::vector<Project> &projects,
         root["data"].push_back(ProjectVoBody(p));
     }
     return root;
+}
+
+static ProjectListItem MakeProjectListItem(int64_t project_id,
+                                           int64_t user_id,
+                                           const std::string &user_note,
+                                           ProtocolType protocol_type = ProtocolType::kHttp,
+                                           ProjectStatus status = ProjectStatus::kValid,
+                                           ProjectRuntimeState runtime_state = ProjectRuntimeState::kStopped)
+{
+    return ProjectListItem{
+        MakeProject(project_id, user_id, protocol_type, status, runtime_state),
+        user_note,
+    };
+}
+
+static nljson ProjectListResponse(const std::vector<ProjectListItem> &items,
+                                  int64_t total,
+                                  int32_t offset,
+                                  int32_t limit)
+{
+    nljson root{
+        {"code", 0},
+        {"message", "success"},
+        {"data", {
+            {"items", nljson::array()},
+            {"total", total},
+            {"offset", offset},
+            {"limit", limit},
+        }},
+    };
+
+    for(const auto &item : items)
+    {
+        auto project = ProjectVoBody(item.p);
+        project["user_note"] = item.user_note;
+        root["data"]["items"].push_back(std::move(project));
+    }
+    return root;
+}
+
+static void ExpectProjectListQuery(const ProjectListQuery &actual,
+                                   const ProjectListQuery &expected)
+{
+    EXPECT_EQ(actual.offset, expected.offset);
+    EXPECT_EQ(actual.limit, expected.limit);
+    EXPECT_EQ(actual.created_from, expected.created_from);
+    EXPECT_EQ(actual.created_to, expected.created_to);
+    EXPECT_EQ(actual.status, expected.status);
+    EXPECT_EQ(actual.runtime_state, expected.runtime_state);
+    EXPECT_EQ(actual.protocol_type, expected.protocol_type);
+    EXPECT_EQ(actual.user_id, expected.user_id);
 }
 
 static ProjectRuntimeSnapshot RuntimeSnapshot(int64_t project_id,
@@ -1323,58 +1367,475 @@ static std::vector<HandlerCase> MakeListCases()
     return {
         /*
         测试思路：
-        1. 普通用户请求 /projects/list。
-        2. handler 按 current_user.user_id 调用 ProjectSvc::GetByUser，只查询有效 project。
-        3. 返回 ProjectVo 数组。
+        1. 普通用户请求包含日期、运行态和协议筛选。
+        2. handler 必须忽略请求中没有的 owner 条件，并注入当前用户的 user_id/status=valid。
+        3. handler 把 Service 返回的列表投影和 total 转成 data.items 分页响应。
 
         示例：
-          normal user -> GetByUser(user_id=1,status=valid,offset=5,limit=10)
+          normal user -> List({user_id=1,status=valid,runtime_state=running,...})
         */
         Case("NormalUserSuccess",
             "普通用户分页查询 project：只查询自己的有效项目。",
             [] {
-                return MakeListContext(ProjectListReq{5, 10});
+                return MakeListContext(nljson{
+                    {"offset", 5},
+                    {"limit", 10},
+                    {"created_from", kFixedTimeMs - 1000},
+                    {"created_to", kFixedTimeMs + 1000},
+                    {"runtime_state", static_cast<int32_t>(ProjectRuntimeState::kRunning)},
+                    {"protocol_type", static_cast<int32_t>(ProtocolType::kHttp)},
+                });
             },
             [] {
-                const std::vector<Project> projects{MakeProject(1001), MakeProject(1002)};
+                ProjectListQuery expected;
+                expected.offset = 5;
+                expected.limit = 10;
+                expected.created_from = kFixedTimeMs - 1000;
+                expected.created_to = kFixedTimeMs + 1000;
+                expected.status = ProjectStatus::kValid;
+                expected.runtime_state = ProjectRuntimeState::kRunning;
+                expected.protocol_type = ProtocolType::kHttp;
+                expected.user_id = kCurrentUserId;
+
+                const std::vector<ProjectListItem> items{
+                    MakeProjectListItem(1001, kCurrentUserId, kCurrentUserName,
+                                        ProtocolType::kHttp,
+                                        ProjectStatus::kValid,
+                                        ProjectRuntimeState::kRunning),
+                };
                 auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
-                EXPECT_CALL(*svc, GetByUser(_, kCurrentUserId, ProjectStatus::kValid, 5, 10))
-                    .WillOnce(Return(projects));
+                EXPECT_CALL(*svc, List(_, _))
+                    .WillOnce(Invoke([expected, items](HttpContextPtr, const ProjectListQuery &actual) {
+                        ExpectProjectListQuery(actual, expected);
+                        return std::make_pair(items, int64_t{3});
+                    }));
                 return svc;
             },
             InvokeList,
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    ProjectArrayResponse({MakeProject(1001), MakeProject(1002)}));
+                    ProjectListResponse(
+                        {MakeProjectListItem(1001, kCurrentUserId, kCurrentUserName,
+                                             ProtocolType::kHttp,
+                                             ProjectStatus::kValid,
+                                             ProjectRuntimeState::kRunning)},
+                        3,
+                        5,
+                        10));
             }),
 
         /*
         测试思路：
-        1. 管理员请求 /projects/list。
-        2. handler 走 ProjectSvc::GetAll 分支，不按 user_id 过滤。
-        3. 返回 ProjectVo 数组。
+        1. 管理员同时使用 deleted status、runtime_state、protocol_type、user_id 和时间范围。
+        2. handler 必须把所有可选字段转换为 ProjectListQuery，不能退回旧 GetAll 分支。
+        3. 返回项保留 user_note，并返回筛选后的真实 total。
 
         示例：
-          admin -> GetAll(offset=0,limit=20)
+          admin -> List({status=invalid,runtime_state=running,protocol_type=custom_tcp,user_id=2})
         */
         Case("AdminSuccess",
-            "管理员分页查询 project：走 GetAll 分支。",
+            "管理员组合筛选 project：透传完整查询条件。",
             [] {
-                return MakeListContext(ProjectListReq{0, 20}, AdminUser());
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 20},
+                    {"created_from", kFixedTimeMs - 5000},
+                    {"created_to", kFixedTimeMs + 5000},
+                    {"status", static_cast<int32_t>(ProjectStatus::kInvalid)},
+                    {"runtime_state", static_cast<int32_t>(ProjectRuntimeState::kRunning)},
+                    {"protocol_type", static_cast<int32_t>(ProtocolType::kCustomTcp)},
+                    {"user_id", kOtherUserId},
+                }, AdminUser());
             },
             [] {
-                const std::vector<Project> projects{MakeProject(2001, kOtherUserId)};
+                ProjectListQuery expected;
+                expected.offset = 0;
+                expected.limit = 20;
+                expected.created_from = kFixedTimeMs - 5000;
+                expected.created_to = kFixedTimeMs + 5000;
+                expected.status = ProjectStatus::kInvalid;
+                expected.runtime_state = ProjectRuntimeState::kRunning;
+                expected.protocol_type = ProtocolType::kCustomTcp;
+                expected.user_id = kOtherUserId;
+
+                const std::vector<ProjectListItem> items{
+                    MakeProjectListItem(2001, kOtherUserId, "other-user",
+                                        ProtocolType::kCustomTcp,
+                                        ProjectStatus::kInvalid,
+                                        ProjectRuntimeState::kRunning),
+                };
                 auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
-                EXPECT_CALL(*svc, GetAll(_, 0, 20))
-                    .WillOnce(Return(projects));
+                EXPECT_CALL(*svc, List(_, _))
+                    .WillOnce(Invoke([expected, items](HttpContextPtr, const ProjectListQuery &actual) {
+                        ExpectProjectListQuery(actual, expected);
+                        return std::make_pair(items, int64_t{1});
+                    }));
                 return svc;
             },
             InvokeList,
             [](HttpContextPtr ctx) {
                 ExpectJsonResponse(ctx,
                     StateCode::k200Ok,
-                    ProjectArrayResponse({MakeProject(2001, kOtherUserId)}));
+                    ProjectListResponse(
+                        {MakeProjectListItem(2001, kOtherUserId, "other-user",
+                                             ProtocolType::kCustomTcp,
+                                             ProjectStatus::kInvalid,
+                                             ProjectRuntimeState::kRunning)},
+                        1,
+                        0,
+                        20));
+            }),
+
+        /*
+        测试思路：
+        1. 管理员不发送任何可选筛选，只发送分页字段。
+        2. handler 必须保留 status/runtime_state/protocol_type/user_id 的 nullopt，表示查询全部。
+        3. 该用例区分“未筛选”与“使用某个合法枚举值代表全部”。
+
+        示例：
+          admin -> List({offset=0,limit=10,status=null,runtime_state=null,...})
+        */
+        Case("AdminWithoutOptionalFilters",
+            "管理员未启用筛选：可选条件保持未设置。",
+            [] {
+                return MakeListContext(nljson{{"offset", 0}, {"limit", 10}}, AdminUser());
+            },
+            [] {
+                ProjectListQuery expected;
+                expected.offset = 0;
+                expected.limit = 10;
+
+                auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
+                EXPECT_CALL(*svc, List(_, _))
+                    .WillOnce(Invoke([expected](HttpContextPtr, const ProjectListQuery &actual) {
+                        ExpectProjectListQuery(actual, expected);
+                        return std::make_pair(std::vector<ProjectListItem>{}, int64_t{0});
+                    }));
+                return svc;
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    ProjectListResponse({}, 0, 0, 10));
+            }),
+
+        /*
+        测试思路：
+        1. 普通用户显式提交 user_id。
+        2. handler 必须在调用 ProjectSvc 之前返回 403，不能把参数覆盖成当前用户后静默查询。
+
+        示例：
+          normal user + user_id=2 -> HTTP 403, ProjectSvc 不调用
+        */
+        Case("NormalUserCannotSpecifyUserId",
+            "普通用户提交 user_id：返回 403 且不进入 Service。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"user_id", kOtherUserId},
+                });
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k403Forbidden,
+                    nljson{
+                        {"code", -403},
+                        {"message", "forbidden"},
+                        {"data", nljson::object()},
+                    });
+            }),
+
+        /*
+        测试思路：
+        1. 普通用户显式提交 status=0，尝试读取已删除 Project。
+        2. handler 必须返回 403，不允许把 status=0 忽略后继续查询有效数据。
+
+        示例：
+          normal user + status=0 -> HTTP 403, ProjectSvc 不调用
+        */
+        Case("NormalUserCannotSpecifyDeletedStatus",
+            "普通用户提交 status=0：返回 403 且不进入 Service。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"status", static_cast<int32_t>(ProjectStatus::kInvalid)},
+                });
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k403Forbidden,
+                    nljson{
+                        {"code", -403},
+                        {"message", "forbidden"},
+                        {"data", nljson::object()},
+                    });
+            }),
+
+        /*
+        测试思路：
+        1. limit=0 不满足 [1,100]。
+        2. handler 必须在 Service 调用前返回参数错误。
+
+        示例：
+          {offset:0,limit:0} -> code=-200, ProjectSvc 不调用
+        */
+        Case("RejectZeroLimit",
+            "列表 limit=0：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{{"offset", 0}, {"limit", 0}}, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. limit=101 超过接口上限 100。
+        2. handler 必须在 Service 调用前返回参数错误，防止无界分页查询。
+
+        示例：
+          {offset:0,limit:101} -> code=-200, ProjectSvc 不调用
+        */
+        Case("RejectLimitOverMax",
+            "列表 limit=101：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{{"offset", 0}, {"limit", 101}}, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. created_from 和 created_to 必须成对出现且满足前闭后开范围。
+        2. 只提交 created_from 时，handler 应直接拒绝，不调用 Service。
+
+        示例：
+          {offset:0,limit:10,created_from:T} -> code=-200
+        */
+        Case("RejectIncompleteCreatedRange",
+            "创建时间范围缺少结束边界：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"created_from", kFixedTimeMs},
+                }, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. created_from 不小于 created_to，不满足前闭后开时间范围。
+        2. handler 应在 Service 调用前拒绝该查询。
+
+        示例：
+          {offset:0,limit:10,created_from:2000,created_to:1000} -> code=-200
+        */
+        Case("RejectReversedCreatedRange",
+            "创建时间范围起点不早于终点：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"created_from", kFixedTimeMs + 1000},
+                    {"created_to", kFixedTimeMs - 1000},
+                }, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. offset=-1 小于接口允许的最小值 0。
+        2. handler 必须拒绝负偏移，避免 DAO 收到非法分页参数。
+
+        示例：
+          {offset:-1,limit:10} -> code=-200, ProjectSvc 不调用
+        */
+        Case("RejectNegativeOffset",
+            "列表 offset 为负数：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{{"offset", -1}, {"limit", 10}}, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. status=2 不是 valid(1) 或 invalid(0)。
+        2. 管理员查询也必须拒绝未知状态，不能把非法值转换成可用枚举继续查询。
+
+        示例：
+          admin + {offset:0,limit:10,status:2} -> code=-200
+        */
+        Case("RejectInvalidStatus",
+            "管理员提交未知 project status：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"status", 2},
+                }, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. runtime_state=2 不是 running(1) 或 stopped(0)。
+        2. 非法运行态不得进入 ProjectSvc。
+
+        示例：
+          admin + {offset:0,limit:10,runtime_state:2} -> code=-200
+        */
+        Case("RejectInvalidRuntimeState",
+            "管理员提交未知 project runtime_state：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"runtime_state", 2},
+                }, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. protocol_type=4 不属于当前支持的协议类型集合 1/2/3。
+        2. handler 必须在 Service 调用前拒绝未知协议类型。
+
+        示例：
+          admin + {offset:0,limit:10,protocol_type:4} -> code=-200
+        */
+        Case("RejectInvalidProtocolType",
+            "管理员提交未知 protocol_type：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"protocol_type", 4},
+                }, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. 管理员提交 user_id=0，不满足正整数用户 ID 约束。
+        2. handler 必须拒绝无效 owner 条件，不能查询所有项目或调用 Service。
+
+        示例：
+          admin + {offset:0,limit:10,user_id:0} -> code=-200
+        */
+        Case("RejectNonPositiveUserId",
+            "管理员提交非正 user_id：返回参数错误。",
+            [] {
+                return MakeListContext(nljson{
+                    {"offset", 0},
+                    {"limit", 10},
+                    {"user_id", 0},
+                }, AdminUser());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "query param error"}});
+            }),
+
+        /*
+        测试思路：
+        1. 当前 ProjectListReq 要求 offset/limit 字段显式存在。
+        2. 请求体缺少分页字段时应返回 body parse error，不调用 ProjectSvc。
+
+        示例：
+          normal user + {} -> {code:-200,message:"body parse error"}
+        */
+        Case("MissingPagingIsParseError",
+            "列表缺少分页字段：返回 body parse error。",
+            [] {
+                return MakeListContext(nljson::object());
+            },
+            [] {
+                return ExpectNoProjectSvcCalls();
+            },
+            InvokeList,
+            [](HttpContextPtr ctx) {
+                ExpectJsonResponse(ctx,
+                    StateCode::k200Ok,
+                    nljson{{"code", -200}, {"message", "body parse error"}});
             }),
 
         /*
@@ -1410,20 +1871,20 @@ static std::vector<HandlerCase> MakeListCases()
         /*
         测试思路：
         1. body 解析成功。
-        2. ProjectSvc::GetByUser 抛异常，模拟 service 层失败。
+        2. ProjectSvc::List 抛异常，模拟 service 层失败。
         3. handler 返回 service failed。
 
         示例：
-          GetByUser throws -> {"code":-300,"message":"service failed"}
+          List throws -> {"code":-300,"message":"service failed"}
         */
         Case("ServiceListFailed",
             "普通用户列表查询时 service 抛异常：返回 service failed。",
             [] {
-                return MakeListContext(ProjectListReq{0, 10});
+                return MakeListContext(nljson{{"offset", 0}, {"limit", 10}});
             },
             [] {
                 auto svc = std::make_shared<StrictMock<MockProjectSvc>>();
-                EXPECT_CALL(*svc, GetByUser(_, kCurrentUserId, ProjectStatus::kValid, 0, 10))
+                EXPECT_CALL(*svc, List(_, _))
                     .WillOnce(Throw(std::runtime_error("list failed")));
                 return svc;
             },
