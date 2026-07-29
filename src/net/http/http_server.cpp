@@ -321,7 +321,11 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
                 HTTP_F_INFO("authentication fail [%d][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req->path().c_str());
 
                 sendResponse(conn, context, resp->connectionClosed());
-                return;
+
+                // 重置conn中的上下文
+                context = std::make_shared<HttpContext>();
+                conn->setContext(context);
+                continue;
             }
         }
 

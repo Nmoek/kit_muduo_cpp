@@ -16,6 +16,7 @@
 /log
 /协议模版
 /.codegraph
+/.playwright-mcp
 
 # 忽略所有 .md 文件，但保留 README.md
 *.md
