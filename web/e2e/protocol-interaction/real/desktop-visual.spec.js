@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { test, expect } from '@playwright/test';
-import { REAL_E2E, protocolItemSelector, protocolItemsPath } from './test_config.js';
+import { REAL_E2E, ensureRealProjectRunning, protocolItemSelector, protocolItemsPath } from './test_config.js';
 
 async function loginRealAdmin(page, context) {
     await context.clearCookies();
@@ -104,6 +104,7 @@ async function assertDesktopLayout(drawer) {
  */
 test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', async ({ page, context }, testInfo) => {
     await loginRealAdmin(page, context);
+    await ensureRealProjectRunning(page);
     await page.goto(protocolItemsPath());
     await page.locator(protocolItemSelector()).getByTestId('protocol-interaction-open').click();
     const drawer = page.getByTestId('protocol-interaction-drawer');

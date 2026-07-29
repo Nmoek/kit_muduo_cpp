@@ -84,6 +84,7 @@ test('服务上下文、HTTP/TCP 列表、空状态和分页', async ({ page, co
     await expect(httpItem.locator('[data-field-name="path"] .value')).toHaveText('/api/test1');
     await expect(httpItem.locator('[data-field-name="status_code"] .value')).toHaveText('200');
     await expect(page.locator('#add-protocol-item')).toBeEnabled();
+    await expect(page.locator('.protocol-filter-panel')).toBeHidden();
     await expect(page.locator('#protocol-pagination')).toContainText('第 1 页');
 
     await page.goto('/html/protocol_items.html?apiMode=mock&projectId=2');
@@ -101,6 +102,28 @@ test('服务上下文、HTTP/TCP 列表、空状态和分页', async ({ page, co
     });
     await expect(page.locator('.protocol-list .empty-state')).toContainText('暂无协议项，点击按钮添加');
     await expect(page.locator('.protocol-item')).toHaveCount(0);
+});
+
+/**
+ * 测试思路：协议页默认查询不再向前端硬编码 include_inactive，管理员由后端 optional status 的缺省值决定查全量。
+ * 示例：管理员打开 projectId=1 -> 查询参数只包含项目分页字段，列表仍包含有效和软删除协议项。
+ */
+test('协议列表默认查询不发送旧的 include_inactive 参数', async ({ page, context }) => {
+    await loginAsAdmin(page, context, '/html/protocol_items.html?apiMode=mock&projectId=1');
+
+    await page.evaluate(async () => {
+        const original = window.KitProxy.api.getProtocolList;
+        window.__protocolListArguments = [];
+        window.KitProxy.api.getProtocolList = (...args) => {
+            window.__protocolListArguments.push(args[3] || {});
+            return original(...args);
+        };
+        await window.KitProxy.protocolItemsPage.loadProtocolItems(1);
+    });
+
+    expect(await page.evaluate(() => window.__protocolListArguments)).toEqual([{}]);
+    await expect(page.locator('.protocol-item')).toHaveCount(2);
+    await expect(page.locator('.protocol-item').filter({ hasText: '已删除' })).toHaveCount(1);
 });
 
 /**
@@ -152,6 +175,52 @@ test('协议项分页和每页数量切换', async ({ page, context }) => {
     await page.locator('.pagination-page-size').selectOption('10');
     await expect(page.locator('.pagination-current')).toHaveText('第 1 页');
     await expect(page.locator('.protocol-item')).toHaveCount(9);
+    await expect(page.locator('.pagination-next')).toBeDisabled();
+});
+
+/**
+ * 测试思路：管理员查询结果中混合有效和软删除协议项时，分页应该使用统一 total，跨页结果必须无重复、无遗漏。
+ * 示例：projectId=1 构造 7 条混合状态协议项，第一页 5 条、第二页 2 条，合并后的 7 个协议 ID 全部唯一。
+ */
+test('有效和软删除协议项混合分页时无重复无遗漏', async ({ page, context }) => {
+    await loginAsAdmin(page, context, '/html/protocol_items.html?apiMode=mock&projectId=1');
+
+    await page.evaluate(async () => {
+        const state = window.KitProxy.mocks.state;
+        const projectProtocols = state.protocols.filter(protocol => Number(protocol.project_id) === 1);
+        const template = projectProtocols[0];
+        const extraProtocols = Array.from({ length: 5 }, (_, index) => ({
+            ...template,
+            id: 700 + index,
+            name: `混合状态分页协议项-${index + 1}`,
+            status: index % 2 === 0 ? 1 : 2,
+            config_state: 0,
+            ctime: `2026-01-0${index + 1}T00:00:00.000Z`,
+        }));
+        state.protocols = state.protocols
+            .filter(protocol => Number(protocol.project_id) !== 1)
+            .concat(projectProtocols, extraProtocols);
+        return window.KitProxy.protocolItemsPage.loadProtocolItems(1);
+    });
+
+    await expect(page.locator('.protocol-item')).toHaveCount(5);
+    await expect(page.locator('.pagination-current')).toHaveText('第 1 页');
+    await expect(page.locator('.pagination-next')).toBeEnabled();
+    const firstPageIds = await page.locator('.protocol-item').evaluateAll(items => (
+        items.map(item => Number(item.dataset.protocolId))
+    ));
+    expect(firstPageIds).toEqual([1, 3, 700, 701, 702]);
+    await expect(page.locator('.protocol-item.is-inactive')).toHaveCount(2);
+
+    await page.locator('.pagination-next').click();
+    await expect(page.locator('.pagination-current')).toHaveText('第 2 页');
+    await expect(page.locator('.protocol-item')).toHaveCount(2);
+    const secondPageIds = await page.locator('.protocol-item').evaluateAll(items => (
+        items.map(item => Number(item.dataset.protocolId))
+    ));
+    expect(secondPageIds).toEqual([703, 704]);
+    await expect(page.locator('.protocol-item.is-inactive')).toHaveCount(1);
+    expect(new Set([...firstPageIds, ...secondPageIds]).size).toBe(7);
     await expect(page.locator('.pagination-next')).toBeDisabled();
 });
 

@@ -8,12 +8,12 @@ admin_password="${PLAYWRIGHT_REAL_ADMIN_PASSWORD:-admin123}"
 if [[ -n "${PLAYWRIGHT_REAL_ADMIN_PASSWORD_HASH:-}" ]]; then
     admin_password_hash="$PLAYWRIGHT_REAL_ADMIN_PASSWORD_HASH"
 else
-    hash_tool="$repo_root/bin/kit_password_hash"
-    if [[ ! -x "$hash_tool" ]]; then
-        echo "missing password hash tool: $hash_tool; build kit_password_hash first" >&2
+    hash_tool="$repo_root/tools/password_hash.py"
+    if [[ ! -f "$hash_tool" ]]; then
+        echo "missing password hash tool: $hash_tool" >&2
         exit 1
     fi
-    admin_password_hash="$($hash_tool "$admin_password")"
+    admin_password_hash="$(python3 "$hash_tool" "$admin_password")"
 fi
 attachment_protocol_id="${PLAYWRIGHT_REAL_ATTACHMENT_PROTOCOL_ID:-4}"
 attachment_response_body_hex="${PLAYWRIGHT_REAL_ATTACHMENT_RESPONSE_BODY_HEX:-05060708}"

@@ -870,13 +870,43 @@
         return formData;
     }
 
+    /**
+     * 将页面协议头转换为 AddProtocolReqHeader 的 JSON 契约。
+     * @param {any} cfgHeader
+     * @returns {{ id: number; name: string; type: string; project_id: number; req_body_type: string; resp_body_type: string; config_state: number; is_endian: number; }}
+     */
+    function normalizeAddProtocolHeader(cfgHeader) {
+        const source = cfgHeader || {};
+        const rawType = typeof source.type === 'string'
+            ? source.type.trim().toLowerCase()
+            : Number(source.type);
+        let type = 'unknown';
+        if (rawType === 1 || rawType === 'http') type = 'http';
+        if (rawType === 2 || rawType === 'tcp' || rawType === 'custom_tcp') type = 'custom_tcp';
+        if (rawType === 3 || rawType === 'https') type = 'https';
+
+        const configState = Number(source.config_state);
+        const id = source.id == null ? -1 : Number(source.id);
+        return {
+            id: Number.isInteger(id) ? id : -1,
+            name: String(source.name || ''),
+            type,
+            project_id: Number(source.project_id),
+            req_body_type: String(source.req_body_type || 'none').trim().toLowerCase(),
+            resp_body_type: String(source.resp_body_type || 'none').trim().toLowerCase(),
+            config_state: [0, 1, 2].includes(configState) ? configState : 0,
+            is_endian: Number(source.is_endian) === 1 ? 1 : 0,
+        };
+    }
+
     function createAddProtocolFormData(protocol) {
         // /protocols/add 的三个配置字段名是后端约定，重构时不能改名。
         const formData = new FormData();
+        const cfgHeader = normalizeAddProtocolHeader(protocol.cfg_header);
 
         // JSON 数据（指定为 application/json）
         let configBlob = new Blob(
-            [JSON.stringify(protocol.cfg_header)],
+            [JSON.stringify(cfgHeader)],
             { type: 'application/json' }
         );
         formData.append('protocol_cfg_header', configBlob);
@@ -893,8 +923,8 @@
         );
         formData.append('protocol_resp_cfg', configBlob);
 
-        appendProtocolBodyData(formData, 1, protocol.cfg_header.req_body_type, protocol.request_body);
-        appendProtocolBodyData(formData, 2, protocol.cfg_header.resp_body_type, protocol.response_body);
+        appendProtocolBodyData(formData, 1, cfgHeader.req_body_type, protocol.request_body);
+        appendProtocolBodyData(formData, 2, cfgHeader.resp_body_type, protocol.response_body);
 
         return formData;
     }
@@ -929,6 +959,7 @@
         formatXMLHelper,
         appendProtocolBodyData,
         createProtocolBodyFormData,
+        normalizeAddProtocolHeader,
         createAddProtocolFormData,
     };
 

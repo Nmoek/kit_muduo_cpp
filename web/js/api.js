@@ -81,21 +81,23 @@
     }
 
     /**
-     * 新增项目和新增协议统一使用 HTTP/TCP/HTTPS 字符串表达协议类型。
+     * Project JSON 使用后端枚举值 http/custom_tcp/https；页面内部仍使用 1/2/3。
+     * 新增协议的 multipart header 也使用同一组后端枚举值，由 utils 负责转换。
      * @param {any} protocolType
      * @returns {string}
      */
     function projectProtocolTypeForBackend(protocolType) {
         if (typeof protocolType === 'string') {
             const normalized = protocolType.trim().toUpperCase();
-            if (normalized === 'CUSTOM_TCP') return 'TCP';
-            if (normalized === 'HTTP' || normalized === 'TCP' || normalized === 'HTTPS') return normalized;
+            if (normalized === 'CUSTOM_TCP' || normalized === 'TCP') return 'custom_tcp';
+            if (normalized === 'HTTP') return 'http';
+            if (normalized === 'HTTPS') return 'https';
         }
 
         const value = Number(protocolType);
-        if (value === 1) return 'HTTP';
-        if (value === 2) return 'TCP';
-        if (value === 3) return 'HTTPS';
+        if (value === 1) return 'http';
+        if (value === 2) return 'custom_tcp';
+        if (value === 3) return 'https';
         return '';
     }
 
@@ -142,6 +144,24 @@
     }
 
     /**
+     * 项目列表接口返回分页对象；items 仍复用单项 Project VO 的归一化逻辑。
+     * @param {any} page
+     * @returns {{items: Array<any>, total: number, offset: number, limit: number}}
+     */
+    function normalizeProjectPage(page) {
+        const source = page && !Array.isArray(page) ? page : {};
+        const total = Number(source.total);
+        const offset = Number(source.offset);
+        const limit = Number(source.limit);
+        return {
+            items: normalizeProjects(source.items),
+            total: Number.isInteger(total) && total >= 0 ? total : 0,
+            offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+            limit: Number.isInteger(limit) && limit > 0 ? limit : 10,
+        };
+    }
+
+    /**
      * 协议 VO 以 config_state 表示上线态；runtime_enabled 只允许作为命令入参。
      * @param {any} protocol
      * @returns {any}
@@ -149,8 +169,16 @@
     function normalizeProtocol(protocol) {
         if (!protocol) return null;
         const configState = protocol.config_state != null ? Number(protocol.config_state) : 0;
+        const statusValue = String(protocol.status == null ? '1' : protocol.status).toLowerCase();
+        const inactive = protocol.status === 0
+            || protocol.status === 2
+            || statusValue === '0'
+            || statusValue === '2'
+            || statusValue === 'inactive'
+            || statusValue === 'disabled';
         const normalized = Object.assign({}, protocol, {
             config_state: [0, 1, 2].includes(configState) ? configState : 0,
+            status: inactive ? 2 : 1,
         });
         delete normalized.runtime_enabled;
         return normalized;
@@ -162,6 +190,26 @@
      */
     function normalizeProtocols(protocols) {
         return Array.isArray(protocols) ? protocols.map(normalizeProtocol).filter(Boolean) : [];
+    }
+
+    /**
+     * 协议列表接口返回分页对象；数组形式只作为旧 Mock 数据的兼容输入。
+     * @param {any} page
+     * @returns {{items: Array<any>, total: number, offset: number, limit: number}}
+     */
+    function normalizeProtocolPage(page) {
+        const isLegacyArray = Array.isArray(page);
+        const source = page && !isLegacyArray ? page : {};
+        const items = normalizeProtocols(isLegacyArray ? page : source.items);
+        const total = Number(source.total);
+        const offset = Number(source.offset);
+        const limit = Number(source.limit);
+        return {
+            items,
+            total: Number.isInteger(total) && total >= 0 ? total : (isLegacyArray ? items.length : 0),
+            offset: Number.isInteger(offset) && offset >= 0 ? offset : 0,
+            limit: Number.isInteger(limit) && limit > 0 ? limit : 10,
+        };
     }
 
     /**
@@ -266,6 +314,24 @@
     }
 
     /**
+     * 后端候选项当前使用 id/note_name/status，页面同时保留 user_id 便于组装项目筛选条件。
+     * @param {any} candidates
+     * @returns {Array<any>}
+     */
+    function normalizeProjectNoteCandidates(candidates) {
+        return Array.isArray(candidates) ? candidates.map(candidate => {
+            if (!candidate) return null;
+            const id = candidate.user_id != null ? candidate.user_id : candidate.id;
+            return Object.assign({}, candidate, {
+                id,
+                user_id: id,
+                note_name: String(candidate.note_name || candidate.note || ''),
+                status: normalizeUserStatus(candidate.status),
+            });
+        }).filter(candidate => candidate && Number(candidate.user_id) > 0 && candidate.note_name) : [];
+    }
+
+    /**
      * @param {any} data
      * @returns {any}
      */
@@ -284,10 +350,10 @@
         const payload = {
             note_name: String(source.note_name != null ? source.note_name : source.note || '').trim(),
             role: source.role === 'admin' ? 'admin' : 'normal',
+            status: Object.prototype.hasOwnProperty.call(source, 'status')
+                ? normalizeUserStatus(source.status)
+                : 'active',
         };
-        if (Object.prototype.hasOwnProperty.call(source, 'status')) {
-            payload.status = normalizeUserStatus(source.status);
-        }
         if (Object.prototype.hasOwnProperty.call(source, 'password')) {
             payload.password = String(source.password || '');
         }
@@ -360,6 +426,21 @@
                 status: normalizedStatus,
             }, '获取用户列表失败').then(normalizeUsers);
         },
+        async getProjectNoteCandidates(keyword, limit = 10) {
+            const normalizedKeyword = String(keyword || '').trim();
+            if (!normalizedKeyword) return [];
+
+            if (isMockMode()) {
+                return normalizeProjectNoteCandidates(
+                    KitProxy.mocks.getProjectNoteCandidates(normalizedKeyword, limit),
+                );
+            }
+
+            return requestJsonBody('/users/note_candidates', {
+                keyword: normalizedKeyword,
+                limit,
+            }, '获取所有者候选失败').then(normalizeProjectNoteCandidates);
+        },
         async addUser(user) {
             return runMutation('api-add-user', async function() {
                 if (isMockMode()) return KitProxy.mocks.addUser(userPayloadForMock(user));
@@ -406,10 +487,10 @@
         },
         async getProjectList(offset = 0, limit = 10) {
             const options = arguments.length >= 3 && arguments[2] ? arguments[2] : {};
-            if (isMockMode()) return normalizeProjects(KitProxy.mocks.getProjectList(offset, limit, options));
+            if (isMockMode()) return normalizeProjectPage(KitProxy.mocks.getProjectList(offset, limit, options));
 
             return requestJsonBody('/projects/list', Object.assign({ offset, limit }, options), '获取测试服务列表失败')
-                .then(normalizeProjects);
+                .then(normalizeProjectPage);
         },
         async getProject(projectId) {
             if (isMockMode()) return normalizeProjects(KitProxy.mocks.getProject(projectId));
@@ -511,13 +592,13 @@
         },
         async getProtocolList(projectId, offset = 0, limit = 10) {
             const options = arguments.length >= 4 && arguments[3] ? arguments[3] : {};
-            if (isMockMode()) return normalizeProtocols(KitProxy.mocks.getProtocolList(projectId, offset, limit, options));
+            if (isMockMode()) return normalizeProtocolPage(KitProxy.mocks.getProtocolList(projectId, offset, limit, options));
 
             return requestJsonBody('/protocols/list', Object.assign({
                 project_id: projectId,
                 offset,
                 limit,
-            }, options), '获取协议项列表失败').then(normalizeProtocols);
+            }, options), '获取协议项列表失败').then(normalizeProtocolPage);
         },
         async getProtocol(protocolId) {
             if (isMockMode()) return normalizeProtocols(KitProxy.mocks.getProtocol(protocolId));

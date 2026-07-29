@@ -1498,8 +1498,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
     });
 
     /**
-     * 测试思路：协议项管理页分页条要支持切换每页数量，并用 pageSize+1 请求下一页探测数据。
-     * 示例：选择 5 条/页后，页面状态 pageSize=5，列表请求 limit=6。
+     * 测试思路：协议项管理页分页条要支持切换每页数量，并按后端分页契约请求对应数量。
+     * 示例：选择 5 条/页后，页面状态 pageSize=5，列表请求 limit=5。
      */
     it('协议项管理页分页条支持每页数量切换', async () => {
         const context = createProtocolItemPageContext(1);
@@ -1526,7 +1526,75 @@ describe('V1.5 protocol item form page and compact cards', () => {
         await flushPromises(12);
 
         expect(context.KitProxy.protocolItemsPage.pageState.pageSize).toBe(5);
-        expect(getProtocolList).toHaveBeenLastCalledWith(1, 0, 6, { include_inactive: true });
+        expect(getProtocolList).toHaveBeenLastCalledWith(1, 0, 5, {});
+    });
+
+    /**
+     * 测试思路：协议项分页必须直接消费后端统一分页结果，跨页时既不能重复有效项，也不能漏掉软删除项。
+     * 示例：pageSize=2、总数=3，第一页为“有效+已删除”，第二页为另一条有效项，两个页面合并后 ID 唯一。
+     */
+    it('协议项混合有效和软删除结果跨页无重复无遗漏', async () => {
+        const context = createProtocolItemPageContext(1);
+
+        loadCoreScripts(context);
+        await loginMockAdmin(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        context.delay = function delayImmediately() {
+            return Promise.resolve();
+        };
+        loadProtocolListScripts(context);
+
+        const makeProtocol = (id, status) => ({
+            id,
+            name: `分页协议项 ${id}`,
+            project_id: 1,
+            type: 'HTTP',
+            status,
+            config_state: 0,
+            req_cfg: { method: 'GET', path: `/api/page-${id}` },
+            resp_cfg: { status_code: 200 },
+            ctime: '2026-01-01T00:00:00.000Z',
+        });
+        const pages = new Map([
+            [0, {
+                items: [makeProtocol(801, 1), makeProtocol(802, 2)],
+                offset: 0,
+                limit: 2,
+                total: 3,
+            }],
+            [2, {
+                items: [makeProtocol(803, 1)],
+                offset: 2,
+                limit: 2,
+                total: 3,
+            }],
+        ]);
+        const getProtocolList = vi.spyOn(context.KitProxy.api, 'getProtocolList')
+            .mockImplementation((_projectId, offset, limit) => Promise.resolve(
+                pages.get(offset) || { items: [], offset, limit, total: 3 },
+            ));
+
+        context.KitProxy.protocolItemsPage.pageState.pageSize = 2;
+        await context.KitProxy.protocolItemsPage.initPage?.();
+        await flushPromises(12);
+
+        expect(Array.from(context.document.querySelectorAll('.protocol-item'))
+            .map(item => Number(item.dataset.protocolId))).toEqual([801, 802]);
+        expect(context.document.querySelectorAll('.protocol-item.is-inactive')).toHaveLength(1);
+        expect(context.KitProxy.protocolItemsPage.pageState.hasMore).toBe(true);
+
+        context.document.querySelector('.pagination-next').click();
+        await flushPromises(12);
+
+        const secondPageIds = Array.from(context.document.querySelectorAll('.protocol-item'))
+            .map(item => Number(item.dataset.protocolId));
+        expect(secondPageIds).toEqual([803]);
+        expect(new Set([801, 802, ...secondPageIds]).size).toBe(3);
+        expect(context.KitProxy.protocolItemsPage.pageState.total).toBe(3);
+        expect(context.KitProxy.protocolItemsPage.pageState.hasMore).toBe(false);
+        expect(getProtocolList).toHaveBeenNthCalledWith(1, 1, 0, 2, {});
+        expect(getProtocolList).toHaveBeenNthCalledWith(2, 1, 2, 2, {});
     });
 
     /**
@@ -1719,7 +1787,12 @@ describe('V1.5 protocol item form page and compact cards', () => {
             ctime: '2025-12-02T06:01:03.000Z',
             utime: '2025-12-02T06:01:03.000Z',
         };
-        vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue([staleProtocol]);
+        vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue({
+            items: [staleProtocol],
+            total: 1,
+            offset: 0,
+            limit: 5,
+        });
         const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime')
             .mockResolvedValue({ protocol_id: 10, config_state: 1, persisted: 1, runtime_applied: 1 });
 
@@ -1801,8 +1874,8 @@ describe('V1.5 protocol item form page and compact cards', () => {
         };
         loadProtocolListScripts(context);
 
-        vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue([
-            {
+        vi.spyOn(context.KitProxy.api, 'getProtocolList').mockResolvedValue({
+            items: [{
                 id: 10,
                 name: '未上线接口',
                 project_id: 1,
@@ -1814,8 +1887,11 @@ describe('V1.5 protocol item form page and compact cards', () => {
                 resp_body_status: 0,
                 ctime: '2025-12-02T06:01:03.000Z',
                 utime: '2025-12-02T06:01:03.000Z',
-            },
-        ]);
+            }],
+            total: 1,
+            offset: 0,
+            limit: 5,
+        });
         vi.spyOn(context.KitProxy.api, 'setProjectRuntimeState')
             .mockResolvedValue({ runtime_state: 0, listen_port: 0 });
         const setProtocolRuntime = vi.spyOn(context.KitProxy.api, 'setProtocolRuntime');
@@ -2041,8 +2117,16 @@ describe('V1.5 protocol item form page and compact cards', () => {
             const data = context.KitProxy.protocolItemForm.collectFormData();
             const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
 
-            expect(payload.cfg_header.type).toBe('HTTP');
-            expect(payload.cfg_header.config_state).toBe(0);
+            expect(payload.cfg_header).toEqual({
+                id: -1,
+                name: '新增HTTP',
+                type: 'http',
+                project_id: 1,
+                req_body_type: 'json',
+                resp_body_type: 'text',
+                config_state: 0,
+                is_endian: 0,
+            });
             expect(payload.req_cfg).toEqual({
                 method: 'POST',
                 path: '/api/new',
@@ -2202,6 +2286,16 @@ describe('V1.5 protocol item form page and compact cards', () => {
         await flushPromises(8);
 
         expect(context.addHTTPProtocol).toHaveBeenCalledTimes(1);
+        expect(submittedProtocol.cfg_header).toEqual({
+            id: -1,
+            name: '旧弹窗HTTP',
+            type: 'http',
+            project_id: 1,
+            req_body_type: 'binary',
+            resp_body_type: 'text',
+            config_state: 0,
+            is_endian: 0,
+        });
         expect(submittedProtocol.cfg_header.req_body_type).toBe('binary');
         expect(submittedProtocol.cfg_header.resp_body_type).toBe('text');
         expect(submittedProtocol.request_body).toBe('');
@@ -2254,8 +2348,10 @@ describe('V1.5 protocol item form page and compact cards', () => {
             const data = context.KitProxy.protocolItemForm.collectFormData();
             const payload = context.KitProxy.protocolItemForm.buildAddPayload(data);
 
-            expect(payload.cfg_header.type).toBe('TCP');
+            expect(payload.cfg_header.type).toBe('custom_tcp');
             expect(payload.cfg_header.config_state).toBe(0);
+            expect(payload.cfg_header.id).toBe(-1);
+            expect(payload.cfg_header.is_endian).toBe(1);
             expect(payload.req_cfg).toEqual({
             function_code: 'H1000',
             fields: { 4: 'H00000209' },

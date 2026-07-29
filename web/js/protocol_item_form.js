@@ -153,16 +153,16 @@
     }
 
     /**
-     * 页面内部统一用 1/2/3 判断协议类型，兼容后端返回 HTTP/TCP/HTTPS 字符串。
+     * 页面内部统一用 'http'/'tcp'/'https' 判断协议类型，兼容后端返回 HTTP/TCP/HTTPS 字符串。
      * @param {any} protocolType
      * @returns {number}
      */
     function normalizeProtocolTypeForPage(protocolType) {
         if (typeof protocolType === 'string') {
-            const normalized = protocolType.trim().toUpperCase();
-            if (normalized === 'HTTP') return ProtocolType.HTTP;
-            if (normalized === 'TCP' || normalized === 'CUSTOM_TCP') return ProtocolType.CUSTOM_TCP;
-            if (normalized === 'HTTPS') return ProtocolType.HTTPS;
+            const normalized = protocolType.trim().toLowerCase();
+            if (normalized === 'http') return ProtocolType.HTTP;
+            if (normalized === 'tcp' || normalized === 'custom_tcp') return ProtocolType.CUSTOM_TCP;
+            if (normalized === 'https') return ProtocolType.HTTPS;
         }
 
         const value = Number(protocolType);
@@ -926,16 +926,23 @@
      * @returns {any}
      */
     function buildAddPayload(data, configState = 0) {
-        const isTcp = normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.CUSTOM_TCP;
+        const protocolType = normalizeProtocolTypeForPage(pageState.protocolType);
+        const isTcp = protocolType === ProtocolType.CUSTOM_TCP;
+        const backendProtocolType = {
+            [ProtocolType.HTTP]: 'http',
+            [ProtocolType.CUSTOM_TCP]: 'custom_tcp',
+            [ProtocolType.HTTPS]: 'https',
+        }[protocolType] || 'unknown';
         return {
             cfg_header: {
+                id: -1,
                 name: data.name,
-                type: isTcp ? 'TCP' : 'HTTP',
+                type: backendProtocolType,
                 project_id: pageState.projectId,
                 req_body_type: data.req_body_type,
                 resp_body_type: data.resp_body_type,
                 config_state: [0, 1].includes(Number(configState)) ? Number(configState) : 0,
-                ...(isTcp ? { is_endian: 1 } : {}),
+                is_endian: isTcp ? 1 : 0,
             },
             req_cfg: data.req_cfg,
             resp_cfg: data.resp_cfg,

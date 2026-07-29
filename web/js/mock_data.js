@@ -267,7 +267,7 @@
     function decorateProject(project) {
         if (!project) return project;
         return Object.assign({}, project, {
-            owner_note: userNoteById(project.user_id),
+            user_note: userNoteById(project.user_id),
             note_name: userNoteById(project.user_id),
         });
     }
@@ -540,6 +540,18 @@
     }
 
     /**
+     * Mock 的项目排序和时间筛选按后端 ctime 毫秒语义执行。
+     * @param {any} project
+     * @returns {number}
+     */
+    function projectTimeMs(project) {
+        const value = project && project.ctime;
+        if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+        const parsed = Date.parse(String(value || ''));
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    /**
      * Mock 内存态仍按页面现有约定存数值，API 入参可以使用 HTTP/TCP/HTTPS 字符串。
      * @param {any} protocolType
      * @returns {number}
@@ -571,13 +583,13 @@
     const mocks = {
         state,
         clone,
-        getProjectList(offset = 0, limit = state.projects.length) {
+        getProjectList(offset = 0, limit = state.projects.length, options = {}) {
             const currentUser = getCurrentMockUser();
             ensureSupportedProtocolExamples(currentUser);
             let projects = state.projects.slice();
             if (isAdminUser(currentUser)) {
-                if (!(arguments[2] && arguments[2].include_deleted)) {
-                    projects = projects.filter(project => Number(project.status) === 1);
+                if (options.status != null) {
+                    projects = projects.filter(project => Number(project.status) === Number(options.status));
                 }
             } else {
                 projects = projects.filter(project => (
@@ -585,7 +597,52 @@
                     && Number(project.status) === 1
                 ));
             }
-            return clone(decorateProjects(projects.slice(offset, offset + limit)));
+
+            if (options.user_id != null) {
+                projects = projects.filter(project => Number(project.user_id) === Number(options.user_id));
+            }
+            if (options.runtime_state != null) {
+                projects = projects.filter(project => Number(project.runtime_state) === Number(options.runtime_state));
+            }
+            if (options.protocol_type != null) {
+                projects = projects.filter(project => Number(project.protocol_type) === Number(options.protocol_type));
+            }
+            if (options.created_from != null) {
+                projects = projects.filter(project => projectTimeMs(project) >= Number(options.created_from));
+            }
+            if (options.created_to != null) {
+                projects = projects.filter(project => projectTimeMs(project) < Number(options.created_to));
+            }
+
+            projects.sort((left, right) => {
+                const timeDifference = projectTimeMs(right) - projectTimeMs(left);
+                if (timeDifference !== 0) return timeDifference;
+                return Number(right.id) - Number(left.id);
+            });
+
+            const safeOffset = Math.max(0, Number(offset) || 0);
+            const safeLimit = Math.max(1, Number(limit) || 10);
+            return clone({
+                items: decorateProjects(projects.slice(safeOffset, safeOffset + safeLimit)),
+                total: projects.length,
+                offset: safeOffset,
+                limit: safeLimit,
+            });
+        },
+        getProjectNoteCandidates(keyword, limit = 10) {
+            requireAdminUser();
+            const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+            if (!normalizedKeyword) return [];
+
+            return clone(state.users
+                .filter(user => String(user.note || '').toLowerCase().startsWith(normalizedKeyword))
+                .sort((left, right) => String(left.note || '').localeCompare(String(right.note || ''), undefined, { sensitivity: 'base' }))
+                .slice(0, Math.max(1, Number(limit) || 10))
+                .map(user => ({
+                    id: user.id,
+                    note_name: user.note,
+                    status: Number(user.status) === 1 ? 'active' : 'disabled',
+                })));
         },
         getProject(projectId) {
             const currentUser = getCurrentMockUser();
@@ -676,17 +733,34 @@
             const currentUser = getCurrentMockUser();
             ensureSupportedProtocolExamples(currentUser);
             const project = findProject(projectId);
-            const includeInactive = isAdminUser(currentUser) && arguments[3] && arguments[3].include_inactive;
-            return clone(
-                state.protocols
-                    .filter(protocol => Number(protocol.project_id) === Number(projectId))
-                    .filter(protocol => {
-                        if (!project) return false;
-                        if (!isAdminUser(currentUser) && Number(project.user_id) !== Number(currentUser.id)) return false;
-                        return includeInactive ? true : Number(protocol.status || 1) === 1;
-                    })
-                    .slice(offset, offset + limit)
-            );
+            const options = arguments.length >= 4 && arguments[3] ? arguments[3] : {};
+            const hasStatus = Object.prototype.hasOwnProperty.call(options, 'status');
+            const requestedStatus = hasStatus ? Number(options.status) : null;
+            if (!isAdminUser(currentUser) && hasStatus && requestedStatus !== 1) {
+                const error = new Error('普通用户只能查询有效协议项');
+                error.status = 403;
+                throw error;
+            }
+
+            const filtered = state.protocols
+                .filter(protocol => Number(protocol.project_id) === Number(projectId))
+                .filter(protocol => {
+                    if (!project) return false;
+                    if (!isAdminUser(currentUser) && Number(project.user_id) !== Number(currentUser.id)) return false;
+
+                    const protocolStatus = Number(protocol.status == null ? 1 : protocol.status);
+                    if (!isAdminUser(currentUser) || !hasStatus) {
+                        return isAdminUser(currentUser) ? true : protocolStatus === 1;
+                    }
+                    return requestedStatus === 0 ? protocolStatus !== 1 : protocolStatus === 1;
+                });
+
+            return {
+                items: clone(filtered.slice(offset, offset + limit)),
+                offset,
+                limit,
+                total: filtered.length,
+            };
         },
         getProtocol(protocolId) {
             const protocol = findProtocol(protocolId);

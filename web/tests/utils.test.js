@@ -100,8 +100,8 @@ describe('V1 utils', () => {
     });
 
     /**
-     * 测试思路：新增协议项最终走 multipart FormData，工具函数要把配置和 Body 正确分栏。
-     * 示例：cfg_header、req_cfg 转 JSON 字符串，request_body 原样写入 protocol_req_body。
+     * 测试思路：新增协议项最终走 multipart FormData，头部必须转换为后端 AddProtocolReqHeader 的完整契约。
+     * 示例：旧调用传 HTTP 时，protocol_cfg_header 输出 type=http，并补齐 id/config_state/is_endian。
      */
     it('构造新增协议项 FormData payload', async () => {
         const formData = context.KitProxy.utils.createAddProtocolFormData({
@@ -124,7 +124,16 @@ describe('V1 utils', () => {
         const cfgHeader = JSON.parse(await readFormDataValueAsText(context, formData.get('protocol_cfg_header')));
         const reqCfg = JSON.parse(await readFormDataValueAsText(context, formData.get('protocol_req_cfg')));
         const requestBody = await readFormDataValueAsText(context, formData.get('protocol_req_body'));
-        expect(cfgHeader.name).toBe('接口1');
+        expect(cfgHeader).toEqual({
+            id: -1,
+            name: '接口1',
+            type: 'http',
+            project_id: 1,
+            req_body_type: 'json',
+            resp_body_type: 'json',
+            config_state: 0,
+            is_endian: 0,
+        });
         expect(reqCfg.path).toBe('/api/test');
         expect(requestBody).toBe('{"a":1}');
         expect(formData.has('protocol_resp_body')).toBe(true);

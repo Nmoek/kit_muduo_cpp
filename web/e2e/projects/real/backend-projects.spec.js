@@ -76,3 +76,163 @@ test('真实后端项目完成停止和启动生命周期冒烟', async ({ page,
     await expect(card.locator('.project-status .status')).toHaveText('未开启', { timeout: 10_000 });
     await expect(card.locator('.project-listen-port .field-value')).toHaveText('未开启');
 });
+
+/**
+ * 测试思路：真实 Project 列表必须先在后端筛选再分页，不能只对已经取回的第一页做本地过滤。
+ * 示例：limit=1 的未筛选第一页是 TCP，后续页出现 HTTP；按 HTTP 查询第一页仍应返回该后续项，且 total 是 HTTP 总数。
+ */
+test('真实后端 Project 筛选在分页前执行', async ({ page, context }) => {
+    await loginRealAdmin(page, context);
+
+    const result = await page.evaluate(async () => {
+        const firstPage = await window.KitProxy.api.getProjectList(0, 1);
+        const completePage = await window.KitProxy.api.getProjectList(0, 100);
+        const firstType = firstPage.items[0] && Number(firstPage.items[0].protocol_type);
+        const laterItem = completePage.items.find(project => Number(project.protocol_type) !== firstType);
+        if (!laterItem) {
+            throw new Error('Real fixture must contain different Project protocol types across pages');
+        }
+
+        const filteredFirstPage = await window.KitProxy.api.getProjectList(0, 1, {
+            protocol_type: laterItem.protocol_type,
+        });
+        const filteredCompletePage = await window.KitProxy.api.getProjectList(0, 100, {
+            protocol_type: laterItem.protocol_type,
+        });
+        return {
+            firstPageId: firstPage.items[0].id,
+            filteredFirstPageId: filteredFirstPage.items[0] && filteredFirstPage.items[0].id,
+            filteredType: filteredFirstPage.items[0] && filteredFirstPage.items[0].protocol_type,
+            filteredTotal: filteredFirstPage.total,
+            filteredCompleteCount: filteredCompletePage.items.length,
+        };
+    });
+
+    expect(result.filteredFirstPageId).not.toBe(result.firstPageId);
+    expect(result.filteredType).toBeGreaterThan(0);
+    expect(result.filteredTotal).toBe(result.filteredCompleteCount);
+    expect(result.filteredTotal).toBeGreaterThan(0);
+});
+
+/**
+ * 测试思路：
+ * 测什么：验证 Project 新增、详情回读、改名、状态筛选、软删除和管理员恢复均经过真实后端。
+ * 为什么这么测：页面列表冒烟无法发现新增请求的枚举/字段契约、删除后分页归属或恢复时运行态没有
+ * 一起重置的问题；这些状态会直接影响后续协议管理。
+ * 怎么测：创建一个 HTTP 服务器模式项目，回读 ID 后改名，删除后分别查询 status=0/1，最后恢复并
+ * 再删除，保证临时项目不会作为有效数据留在隔离库中。
+ * 示例：add -> get/name -> delete(status=0) -> restore(status=1) -> cleanup。
+ */
+test('真实后端 Project 完成新增改名删除恢复生命周期', async ({ page, context }) => {
+    test.setTimeout(60_000);
+    await loginRealAdmin(page, context);
+
+    const result = await page.evaluate(async () => {
+        const api = window.KitProxy.api;
+        const name = `Real E2E project ${Date.now()}`;
+        const renamed = `${name} renamed`;
+        const added = await api.addProject({
+            name,
+            mode: 1,
+            protocol_type: 1,
+            target_ip: '',
+            pattern_info: {},
+        });
+        const projectId = Number(added && (added.project_id || added.id));
+        if (!Number.isInteger(projectId) || projectId <= 0) {
+            throw new Error(`真实后端新增 Project 未返回有效 project_id: ${JSON.stringify(added)}`);
+        }
+
+        let deleted = false;
+        try {
+            const created = (await api.getProject(projectId))[0];
+            if (!created || Number(created.id) !== projectId || Number(created.status) !== 1) {
+                throw new Error('新增 Project 详情回读不一致');
+            }
+
+            await api.updateProjectName(projectId, renamed);
+            const renamedProject = (await api.getProject(projectId))[0];
+            if (!renamedProject || renamedProject.name !== renamed) {
+                throw new Error('Project 改名后详情回读不一致');
+            }
+
+            await api.deleteProject(projectId);
+            deleted = true;
+            const deletedPage = await api.getProjectList(0, 100, { status: 0 });
+            const validPageAfterDelete = await api.getProjectList(0, 100, { status: 1 });
+            if (!deletedPage.items.some(project => Number(project.id) === projectId)
+                || validPageAfterDelete.items.some(project => Number(project.id) === projectId)) {
+                throw new Error('Project 删除后的状态筛选不一致');
+            }
+
+            await api.restoreProject(projectId);
+            const restoredPage = await api.getProjectList(0, 100, { status: 1 });
+            const restored = restoredPage.items.find(project => Number(project.id) === projectId);
+            if (!restored || Number(restored.status) !== 1 || Number(restored.runtime_state) !== 0) {
+                throw new Error('Project 恢复后状态或运行态不一致');
+            }
+
+            return { projectId, name: restored.name, status: restored.status };
+        } finally {
+            // 删除最终临时项目；即使断言失败也尽量不把有效服务留给后续用例。
+            if (!deleted) {
+                try { await api.deleteProject(projectId); } catch (error) { /* 保留原始断言 */ }
+            } else {
+                try { await api.deleteProject(projectId); } catch (error) { /* 已删除时幂等清理 */ }
+            }
+        }
+    });
+
+    expect(result.name).toContain('renamed');
+    expect(result.status).toBe(1);
+});
+
+/**
+ * 测试思路：
+ * 测什么：验证普通用户只能看到自己的有效 Project，并且不能通过 status/user_id 参数绕过后端权限。
+ * 为什么这么测：前端隐藏筛选项不是权限边界；ProjectList 的普通用户分支必须由 C++ 后端强制固定
+ * status=kValid 和 user_id=current_user。
+ * 怎么测：普通用户查询默认列表，再分别提交管理员可用的已删除筛选和 user_id 筛选，断言业务响应为
+ * 403；同时确认返回项目的 user_note 是当前用户。
+ * 示例：normal -> /projects/list -> own valid projects；status=0/user_id=1 -> forbidden。
+ */
+test('真实后端普通用户 Project 查询权限边界', async ({ page, context }) => {
+    await context.clearCookies();
+    await page.goto('/html/login.html');
+    await page.getByLabel('note').fill(REAL_E2E.normalNote);
+    await Promise.all([
+        page.waitForURL(/\/html\/main\.html/),
+        page.getByRole('button', { name: '登录', exact: true }).click(),
+    ]);
+
+    const result = await page.evaluate(async () => {
+        const api = window.KitProxy.api;
+        const own = await api.getProjectList(0, 100);
+        const statusError = await fetch('/projects/list', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offset: 0, limit: 100, status: 0 }),
+        });
+        const userError = await fetch('/projects/list', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offset: 0, limit: 100, user_id: 1 }),
+        });
+        return {
+            ownItems: own.items,
+            statusStatus: statusError.status,
+            statusBody: await statusError.json(),
+            userStatus: userError.status,
+            userBody: await userError.json(),
+        };
+    });
+
+    expect(result.ownItems.length).toBeGreaterThan(0);
+    expect(result.ownItems.every(project => project.user_note === REAL_E2E.normalNote)).toBe(true);
+    expect(result.statusStatus).toBe(403);
+    expect(result.statusBody.code).toBe(-403);
+    expect(result.userStatus).toBe(403);
+    expect(result.userBody.code).toBe(-403);
+});

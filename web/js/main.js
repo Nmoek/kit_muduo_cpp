@@ -1,7 +1,20 @@
 const servicePageState = KitProxy.pagination.createState(10);
 const serviceFilterState = KitProxy.serviceFilters
     ? KitProxy.serviceFilters.createState()
-    : { filters: { startDate: '', endDate: '', status: 'all', protocolType: 'all', ownerNote: '' }, active: false };
+    : {
+        filters: {
+            startDate: '',
+            endDate: '',
+            startTime: '',
+            endTime: '',
+            status: 'all',
+            protocolType: 'all',
+            ownerKeyword: '',
+            ownerUserId: null,
+            ownerNote: '',
+        },
+        active: false,
+    };
 let currentPageProjects = [];
 
 function isProjectActive(project) {
@@ -39,7 +52,7 @@ function getProjectEndpointDisplay(project) {
 }
 
 function getProjectOwnerNote(project) {
-    return String(project && (project.owner_note || project.note_name || project.note || project.user_note) || '');
+    return String((project && project.user_note) || '');
 }
 
 const readDatasetProjectId = typeof globalThis.readDatasetProjectId === 'function'
@@ -50,42 +63,6 @@ const readDatasetProjectId = typeof globalThis.readDatasetProjectId === 'functio
         return ExtractId(value);
     };
 globalThis.readDatasetProjectId = readDatasetProjectId;
-
-async function buildUserNoteMap() {
-    if (!KitProxy.auth || !KitProxy.auth.isCurrentUserAdmin()) return {};
-
-    try {
-        const users = await KitProxy.api.listUsers(0, 1000, 'all');
-        return (Array.isArray(users) ? users : []).reduce(function(noteMap, user) {
-            const userId = Number(user && (user.id != null ? user.id : user.user_id));
-            const note = String(user && (user.note || user.note_name) || '');
-            if (Number.isInteger(userId) && userId > 0 && note) {
-                noteMap[userId] = note;
-            }
-            return noteMap;
-        }, {});
-    } catch (error) {
-        console.warn('获取用户列表失败，所有者 note 将使用接口已有字段:', error);
-        return {};
-    }
-}
-
-function attachOwnerNotes(projects, userNoteMap) {
-    const list = Array.isArray(projects) ? projects : [];
-    const noteMap = userNoteMap || {};
-    return list.map(function(project) {
-        const ownerNote = getProjectOwnerNote(project);
-        if (ownerNote) return project;
-
-        const userId = Number(project && project.user_id);
-        if (!Number.isInteger(userId) || !noteMap[userId]) return project;
-
-        return Object.assign({}, project, {
-            owner_note: noteMap[userId],
-            note_name: noteMap[userId],
-        });
-    });
-}
 
 function isProtocolInactive(protocol) {
     const status = protocol && protocol.status;
@@ -471,12 +448,9 @@ function addProtocolItem(serviceCard, protocol, pos = -1) {
 
 
 // 获取协议项列表
-async function getProtocolList(project_id, offset = 0, limit = 10) {
+async function getProtocolList(project_id, offset = 0, limit = 10, options = {}) {
 
     try {
-        const options = KitProxy.auth && KitProxy.auth.isCurrentUserAdmin()
-            ? { include_inactive: true }
-            : {};
         const protocols = await KitProxy.api.getProtocolList(project_id, offset, limit, options);
         console.log('获取协议项列表请求成功:', protocols);
         return protocols;
@@ -1173,12 +1147,9 @@ async function addProjectReq(project) {
     }
 }
 
-// 获取项目列表
-async function getProjectList(offset, limit) {
+// 获取项目列表；Project 列表筛选由后端执行，页面只透传已校验的查询字段。
+async function getProjectList(offset, limit, options = {}) {
     try {
-        const options = KitProxy.auth && KitProxy.auth.isCurrentUserAdmin()
-            ? { include_deleted: true }
-            : {};
         const projects = await KitProxy.api.getProjectList(offset, limit, options);
         return projects;
     } catch (error) {
@@ -1685,12 +1656,12 @@ function renderServiceEmptyState(message) {
     serviceCards.appendChild(emptyState);
 }
 
-function updateServiceFilterSummary(visibleCount, totalCount) {
+function updateServiceFilterSummary(totalCount) {
     const summary = document.getElementById('service-filter-summary');
     if (!summary || !KitProxy.serviceFilters) return;
 
     const description = KitProxy.serviceFilters.describe(serviceFilterState.filters);
-    summary.textContent = `当前页筛选：${description}`;
+    summary.textContent = `${description}，共 ${totalCount} 条`;
 }
 
 function setServiceFilterError(message) {
@@ -1705,22 +1676,19 @@ function renderCurrentPageServices() {
     const serviceCards = document.querySelector('.service-cards');
     if (!serviceCards) return;
 
-    const totalCount = currentPageProjects.length;
-    const visibleProjects = serviceFilterState.active && KitProxy.serviceFilters
-        ? KitProxy.serviceFilters.apply(currentPageProjects, serviceFilterState.filters)
-        : currentPageProjects.slice();
-
     serviceCards.innerHTML = '';
-    refreshServiceCards(visibleProjects);
+    refreshServiceCards(currentPageProjects);
 
-    if (visibleProjects.length === 0) {
-        renderServiceEmptyState(totalCount === 0 ? '暂无测试服务，点击按钮添加' : '当前页无匹配测试服务');
+    if (currentPageProjects.length === 0) {
+        renderServiceEmptyState(servicePageState.total === 0 && serviceFilterState.active
+            ? '没有符合筛选条件的测试服务'
+            : '暂无测试服务，点击按钮添加');
     }
 
-    updateServiceFilterSummary(visibleProjects.length, totalCount);
+    updateServiceFilterSummary(servicePageState.total);
 }
 
-function applyServiceFiltersFromDOM() {
+async function applyServiceFiltersFromDOM() {
     if (!KitProxy.serviceFilters) return;
 
     const filters = KitProxy.serviceFilters.readFromDOM(document);
@@ -1734,7 +1702,188 @@ function applyServiceFiltersFromDOM() {
     setServiceFilterError('');
     serviceFilterState.filters = filters;
     serviceFilterState.active = KitProxy.serviceFilters.hasActiveFilters(filters);
-    renderCurrentPageServices();
+    await loadAllProjects(1);
+}
+
+let ownerCandidateTimer = null;
+let ownerCandidateRequestId = 0;
+let ownerNoteComposing = false;
+const OWNER_NOTE_SEARCH_DEBOUNCE_MS = 600;
+const OWNER_NOTE_SEARCH_TIMEOUT_MS = 5000;
+
+function clearOwnerNoteSelection(input) {
+    if (!input) return;
+    delete input.dataset.selectedUserId;
+    delete input.dataset.selectedNote;
+}
+
+function hideOwnerNoteCandidates() {
+    const list = document.getElementById('filter-owner-candidates');
+    if (!list) return;
+    list.hidden = true;
+    list.innerHTML = '';
+}
+
+function setOwnerNoteSearchState(searching) {
+    const input = document.getElementById('filter-owner-note');
+    if (!input) return;
+
+    input.disabled = Boolean(searching);
+    input.setAttribute('aria-busy', searching ? 'true' : 'false');
+}
+
+function focusOwnerNoteInput() {
+    const input = document.getElementById('filter-owner-note');
+    if (!input || input.disabled) return;
+    input.focus({ preventScroll: true });
+}
+
+function renderOwnerNoteStatus(message) {
+    const list = document.getElementById('filter-owner-candidates');
+    if (!list) return;
+
+    const escape = KitProxy.utils.escapeHTML;
+    list.innerHTML = `<div class="filter-candidate-status" role="status">${escape(message)}</div>`;
+    list.hidden = false;
+}
+
+function renderOwnerNoteCandidates(candidates) {
+    const list = document.getElementById('filter-owner-candidates');
+    if (!list) return;
+
+    const escape = KitProxy.utils.escapeHTML;
+    const validCandidates = (Array.isArray(candidates) ? candidates : []).filter(candidate => {
+        const userId = Number(candidate && (candidate.user_id != null ? candidate.user_id : candidate.id));
+        const note = String(candidate && candidate.note_name || '');
+        return Number.isInteger(userId) && userId > 0 && Boolean(note);
+    });
+
+    list.innerHTML = '';
+    if (validCandidates.length === 0) {
+        renderOwnerNoteStatus('未搜索到匹配项');
+        return;
+    }
+
+    validCandidates.forEach(candidate => {
+        const userId = Number(candidate && (candidate.user_id != null ? candidate.user_id : candidate.id));
+        const note = String(candidate && candidate.note_name || '');
+
+        const status = String(candidate.status || '').toLowerCase() === 'active' ? '正常' : '已停用';
+        const option = document.createElement('button');
+        option.type = 'button';
+        option.className = 'filter-candidate-option';
+        option.setAttribute('role', 'option');
+        option.dataset.userId = String(userId);
+        option.dataset.note = note;
+        option.innerHTML = `<span>${escape(note)}</span><small>${escape(status)}</small>`;
+        option.addEventListener('click', function() {
+            const input = document.getElementById('filter-owner-note');
+            if (!input) return;
+            input.value = note;
+            input.dataset.selectedUserId = String(userId);
+            input.dataset.selectedNote = note;
+            hideOwnerNoteCandidates();
+            setServiceFilterError('');
+        });
+        list.appendChild(option);
+    });
+
+    list.hidden = list.children.length === 0;
+}
+
+async function loadOwnerNoteCandidates(keyword) {
+    const requestId = ++ownerCandidateRequestId;
+    const normalizedKeyword = String(keyword || '').trim();
+    if (!normalizedKeyword) {
+        setOwnerNoteSearchState(false);
+        hideOwnerNoteCandidates();
+        return;
+    }
+
+    setOwnerNoteSearchState(true);
+    renderOwnerNoteStatus('正在搜索');
+    setServiceFilterError('');
+
+    let timeoutId = null;
+    try {
+        const request = Promise.resolve().then(() => {
+            return KitProxy.api.getProjectNoteCandidates(normalizedKeyword, 10);
+        });
+        const timeout = new Promise((resolve, reject) => {
+            timeoutId = window.setTimeout(() => {
+                const error = new Error('note 候选搜索超时');
+                error.code = 'OWNER_NOTE_SEARCH_TIMEOUT';
+                reject(error);
+            }, OWNER_NOTE_SEARCH_TIMEOUT_MS);
+        });
+        const candidates = await Promise.race([request, timeout]);
+        if (requestId !== ownerCandidateRequestId) return;
+        renderOwnerNoteCandidates(candidates);
+    } catch (error) {
+        if (requestId !== ownerCandidateRequestId) return;
+        const timedOut = error && error.code === 'OWNER_NOTE_SEARCH_TIMEOUT';
+        renderOwnerNoteStatus(timedOut ? '搜索超时，请重试' : '搜索失败');
+        setServiceFilterError(timedOut
+            ? 'note 候选搜索超时，请重试'
+            : (error && error.message ? error.message : '获取所有者候选失败'));
+    } finally {
+        if (timeoutId !== null) {
+            window.clearTimeout(timeoutId);
+        }
+        if (requestId === ownerCandidateRequestId) {
+            setOwnerNoteSearchState(false);
+            focusOwnerNoteInput();
+        }
+    }
+}
+
+function bindOwnerNoteCandidates() {
+    const input = document.getElementById('filter-owner-note');
+    if (!input || input.dataset.candidatesBound === '1') return;
+    input.dataset.candidatesBound = '1';
+
+    const scheduleSearch = function(ownerInput) {
+        if (!ownerInput || ownerInput.disabled || ownerNoteComposing) return;
+
+        ++ownerCandidateRequestId;
+        window.clearTimeout(ownerCandidateTimer);
+        hideOwnerNoteCandidates();
+        const keyword = ownerInput.value.trim();
+        if (!keyword) {
+            setOwnerNoteSearchState(false);
+            hideOwnerNoteCandidates();
+            return;
+        }
+        ownerCandidateTimer = window.setTimeout(
+            () => loadOwnerNoteCandidates(keyword),
+            OWNER_NOTE_SEARCH_DEBOUNCE_MS,
+        );
+    };
+
+    input.addEventListener('compositionstart', function() {
+        if (this.disabled) return;
+        ownerNoteComposing = true;
+        window.clearTimeout(ownerCandidateTimer);
+        hideOwnerNoteCandidates();
+    });
+
+    input.addEventListener('compositionend', function() {
+        ownerNoteComposing = false;
+        if (!this.disabled) {
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    });
+
+    input.addEventListener('input', function(event) {
+        if (this.disabled || ownerNoteComposing || event.isComposing) return;
+
+        if (this.value.trim() !== String(this.dataset.selectedNote || '')) {
+            clearOwnerNoteSelection(this);
+        }
+
+        scheduleSearch(this);
+    });
+
 }
 
 /**
@@ -1754,39 +1903,67 @@ function syncAdminOnlyServiceFilters() {
         ownerNoteField.hidden = !isAdmin;
         if (!isAdmin) {
             const ownerInput = ownerNoteField.querySelector('#filter-owner-note');
-            if (ownerInput) ownerInput.value = '';
+            if (ownerInput) {
+                ownerInput.value = '';
+                clearOwnerNoteSelection(ownerInput);
+            }
+            setOwnerNoteSearchState(false);
+            hideOwnerNoteCandidates();
         }
     }
 }
 
 function resetServiceFilters() {
-    const startInput = document.getElementById('filter-create-start');
-    const endInput = document.getElementById('filter-create-end');
     const statusSelect = document.getElementById('filter-status');
     const protocolTypeSelect = document.getElementById('filter-protocol-type');
     const ownerNoteInput = document.getElementById('filter-owner-note');
 
-    if (startInput) startInput.value = '';
-    if (endInput) endInput.value = '';
+    const timeRange = KitProxy.timeRangeFilter
+        ? KitProxy.timeRangeFilter.bind(document, {
+            prefix: 'filter-create',
+            inputMask: 'imask',
+            iconTrigger: true,
+        })
+        : null;
+    if (timeRange && typeof timeRange.reset === 'function') timeRange.reset();
     if (statusSelect) statusSelect.value = 'all';
     if (protocolTypeSelect) protocolTypeSelect.value = 'all';
-    if (ownerNoteInput) ownerNoteInput.value = '';
+    if (ownerNoteInput) {
+        ownerNoteInput.value = '';
+        clearOwnerNoteSelection(ownerNoteInput);
+    }
+    ownerNoteComposing = false;
+    ++ownerCandidateRequestId;
+    setOwnerNoteSearchState(false);
+    hideOwnerNoteCandidates();
 
     serviceFilterState.filters = {
         startDate: '',
         endDate: '',
+        startTime: '',
+        endTime: '',
         status: 'all',
         protocolType: 'all',
+        ownerKeyword: '',
+        ownerUserId: null,
         ownerNote: '',
     };
     serviceFilterState.active = false;
     setServiceFilterError('');
-    renderCurrentPageServices();
+    loadAllProjects(1);
 }
 
 function bindServiceFilterActions() {
     const applyBtn = document.getElementById('apply-service-filter');
     const resetBtn = document.getElementById('reset-service-filter');
+
+    if (KitProxy.timeRangeFilter) {
+        KitProxy.timeRangeFilter.bind(document, {
+            prefix: 'filter-create',
+            inputMask: 'imask',
+            iconTrigger: true,
+        });
+    }
 
     if (applyBtn) {
         applyBtn.addEventListener('click', applyServiceFiltersFromDOM);
@@ -1795,6 +1972,8 @@ function bindServiceFilterActions() {
     if (resetBtn) {
         resetBtn.addEventListener('click', resetServiceFilters);
     }
+
+    bindOwnerNoteCandidates();
 }
 
 /**
@@ -1827,19 +2006,31 @@ async function loadAllProjects(page = servicePageState.currentPage) {
     try {
         servicePageState.currentPage = Math.max(1, Number(page) || 1);
 
-        // 获取测试服务列表
-        let projects = await getProjectList(
+        const requestPage = async () => getProjectList(
             KitProxy.pagination.getOffset(servicePageState),
-            KitProxy.pagination.getRequestLimit(servicePageState),
+            servicePageState.pageSize,
+            KitProxy.serviceFilters.toRequest(serviceFilterState.filters),
         );
-        if(!Array.isArray(projects)) {
-            throw new Error("数据格式错误");
+
+        let pageResult = await requestPage();
+        if (!pageResult || !Array.isArray(pageResult.items)) {
+            throw new Error('数据格式错误');
         }
-        projects = attachOwnerNotes(projects, await buildUserNoteMap());
 
-        currentPageProjects = KitProxy.pagination.takeVisibleItems(projects, servicePageState);
+        KitProxy.pagination.setPageResult(pageResult, servicePageState);
+        const lastPage = KitProxy.pagination.getLastPage(servicePageState);
+        if (servicePageState.currentPage > lastPage) {
+            servicePageState.currentPage = lastPage;
+            pageResult = await requestPage();
+            if (!pageResult || !Array.isArray(pageResult.items)) {
+                throw new Error('数据格式错误');
+            }
+            KitProxy.pagination.setPageResult(pageResult, servicePageState);
+        }
 
-        // 更新页面显示。筛选器只作用于当前页，不改变后端分页请求参数。
+        currentPageProjects = pageResult.items;
+
+        // 后端已完成筛选和分页，当前页面只渲染响应中的 items。
         renderCurrentPageServices();
         renderServicePagination();
 

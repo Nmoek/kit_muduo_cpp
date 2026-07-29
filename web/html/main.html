@@ -29,13 +29,63 @@
             <div class="service-platform">
                 <section class="service-filter-panel" aria-label="测试服务筛选">
                     <div class="filter-grid">
-                        <div class="filter-field">
-                            <label for="filter-create-start">创建日期开始</label>
-                            <input type="date" id="filter-create-start">
-                        </div>
-                        <div class="filter-field">
-                            <label for="filter-create-end">创建日期结束</label>
-                            <input type="date" id="filter-create-end">
+                        <div class="filter-field filter-time-range-field">
+                            <div class="filter-time-range-shell">
+                                <div class="filter-time-range-trigger-stack">
+                                    <label for="filter-create-range">起止时间</label>
+                                    <button type="button" id="filter-create-range" class="filter-date-trigger filter-date-icon-trigger" aria-label="配置起止日期" title="配置起止日期" aria-controls="filter-create-range-panel" aria-expanded="false"></button>
+                                </div>
+                                <div id="filter-create-time-range" class="filter-time-range">
+                                    <div class="filter-time-range-display">
+                                        <div class="filter-range-value-display" role="group" aria-label="已配置的开始时间">
+                                            <input type="text" id="filter-create-start" class="filter-range-date-display" placeholder="开始日期" aria-label="开始日期" readonly>
+                                            <input type="text" id="filter-create-start-clock" class="filter-range-time-display" placeholder="开始时间" aria-label="开始时间" readonly>
+                                        </div>
+                                        <span class="filter-time-range-separator">至</span>
+                                        <div class="filter-range-value-display" role="group" aria-label="已配置的结束时间">
+                                            <input type="text" id="filter-create-end" class="filter-range-date-display" placeholder="结束日期" aria-label="结束日期" readonly>
+                                            <input type="text" id="filter-create-end-clock" class="filter-range-time-display" placeholder="结束时间" aria-label="结束时间" readonly>
+                                        </div>
+                                    </div>
+                                    <div id="filter-create-range-panel" class="filter-time-range-panel" hidden>
+                                        <div class="filter-calendar" aria-label="选择起止日期">
+                                            <div class="filter-calendar-header">
+                                                <button type="button" id="filter-create-calendar-prev" class="filter-calendar-nav filter-calendar-prev" aria-label="上个月">‹</button>
+                                                <strong id="filter-create-calendar-title" class="filter-calendar-title"></strong>
+                                                <button type="button" id="filter-create-calendar-next" class="filter-calendar-nav filter-calendar-next" aria-label="下个月">›</button>
+                                            </div>
+                                            <div class="filter-calendar-weekdays" aria-hidden="true">
+                                                <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+                                            </div>
+                                            <div id="filter-create-calendar-days" class="filter-calendar-days" role="grid"></div>
+                                            <p id="filter-create-calendar-status" class="filter-calendar-status" role="status">第一次点击选择开始日期</p>
+                                        </div>
+                                        <div class="filter-time-range-grid">
+                                            <div class="filter-field">
+                                                <label for="filter-create-direct-start">开始日期</label>
+                                                <input type="text" id="filter-create-direct-start" class="filter-masked-input" data-mask-component="imask-date" inputmode="numeric" maxlength="10" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD" autocomplete="off" spellcheck="false">
+                                            </div>
+                                            <div class="filter-field">
+                                                <label for="filter-create-direct-end">结束日期</label>
+                                                <input type="text" id="filter-create-direct-end" class="filter-masked-input" data-mask-component="imask-date" inputmode="numeric" maxlength="10" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD" autocomplete="off" spellcheck="false">
+                                            </div>
+                                            <div class="filter-field">
+                                                <label for="filter-create-start-time">开始时间</label>
+                                                <input type="text" id="filter-create-start-time" class="filter-masked-input" data-mask-component="imask-time" inputmode="numeric" maxlength="8" placeholder="HH:MM:SS" autocomplete="off" spellcheck="false">
+                                            </div>
+                                            <div class="filter-field">
+                                                <label for="filter-create-end-time">结束时间</label>
+                                                <input type="text" id="filter-create-end-time" class="filter-masked-input" data-mask-component="imask-time" inputmode="numeric" maxlength="8" placeholder="HH:MM:SS" autocomplete="off" spellcheck="false">
+                                            </div>
+                                        </div>
+                                        <div id="filter-create-range-error" class="filter-time-range-error" role="alert" aria-live="polite" hidden></div>
+                                        <div class="filter-time-range-actions">
+                                            <button type="button" id="filter-create-range-reset" class="filter-range-reset-btn">重置</button>
+                                            <button type="button" id="filter-create-range-confirm" class="filter-range-confirm-btn">确定</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div class="filter-field">
                             <label for="filter-status">状态</label>
@@ -57,10 +107,13 @@
                                 <!-- <option value="3">HTTPS</option> -->
                             </select>
                         </div>
-                        <!-- 管理员可按测试服务所有者 note 搜索；普通用户只看自己的服务，默认隐藏。 -->
+                        <!-- 管理员通过 note 候选选择所有者；普通用户只看自己的服务，默认隐藏。 -->
                         <div class="filter-field" data-admin-only hidden>
                             <label for="filter-owner-note">note名</label>
-                            <input type="search" id="filter-owner-note" placeholder="按所有者note搜索" autocomplete="off">
+                            <div class="filter-owner-combobox">
+                                <input type="search" id="filter-owner-note" placeholder="输入 note 选择所有者" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="filter-owner-candidates">
+                                <div id="filter-owner-candidates" class="filter-candidate-list" role="listbox" aria-live="polite" hidden></div>
+                            </div>
                         </div>
                         <div class="filter-actions">
                             <button type="button" id="apply-service-filter" class="filter-apply-btn">应用筛选</button>
@@ -69,7 +122,7 @@
                     </div>
                     <div id="service-filter-error" class="filter-error" aria-live="polite"></div>
                     <div class="filter-footer">
-                        <div id="service-filter-summary" class="filter-summary">当前页筛选：未启用筛选</div>
+                        <div id="service-filter-summary" class="filter-summary">未启用筛选，共 0 条</div>
                     </div>
                 </section>
                 <div class="service-cards">
@@ -84,6 +137,7 @@
     <script src="../js/constants.js"></script>
     <script src="../js/utils.js"></script>
     <script src="../js/body_editor.js"></script>
+    <script src="../node_modules/imask/dist/imask.min.js"></script>
     <script src="../js/service_filters.js"></script>
     <script src="../js/mock_data.js"></script>
     <script src="../js/api.js"></script>

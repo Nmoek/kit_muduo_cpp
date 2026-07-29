@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { test, expect } from '@playwright/test';
-import { REAL_E2E, protocolItemSelector, protocolItemsPath } from './test_config.js';
+import { REAL_E2E, ensureRealProjectRunning, protocolItemSelector, protocolItemsPath } from './test_config.js';
 
 async function loginRealAdmin(page, context) {
     await context.clearCookies();
@@ -71,6 +71,7 @@ function sendProtocolOneRequest(port = REAL_E2E.projectTcpPort) {
  */
 test('真实后端 pause/resume 将暂停期间记录以 catch-up 补发', async ({ page, context }) => {
     await loginRealAdmin(page, context);
+    await ensureRealProjectRunning(page);
     await page.goto(protocolItemsPath());
 
     const item = page.locator(protocolItemSelector());

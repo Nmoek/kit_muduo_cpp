@@ -6,13 +6,14 @@
     /**
      * 创建页面级分页状态。
      * @param {number=} pageSize
-     * @returns {{ currentPage: number; pageSize: number; hasMore: boolean; }}
+     * @returns {{ currentPage: number; pageSize: number; hasMore: boolean; total: number; }}
      */
     function createState(pageSize = DEFAULT_PAGE_SIZE) {
         return {
             currentPage: 1,
             pageSize,
             hasMore: false,
+            total: 0,
         };
     }
 
@@ -45,6 +46,30 @@
         const list = Array.isArray(items) ? items : [];
         state.hasMore = list.length > state.pageSize;
         return list.slice(0, state.pageSize);
+    }
+
+    /**
+     * 使用后端分页响应更新 Project 分页状态。Protocol 仍可继续使用哨兵分页函数。
+     * @template T
+     * @param {{items?: T[]; total?: number}} page
+     * @param {{currentPage: number; pageSize: number; hasMore: boolean; total: number}} state
+     * @returns {T[]}
+     */
+    function setPageResult(page, state) {
+        const result = page || {};
+        const items = Array.isArray(result.items) ? result.items : [];
+        const total = Number(result.total);
+        state.total = Number.isInteger(total) && total >= 0 ? total : 0;
+        state.hasMore = state.currentPage * state.pageSize < state.total;
+        return items;
+    }
+
+    /**
+     * @param {{pageSize: number; total: number}} state
+     * @returns {number}
+     */
+    function getLastPage(state) {
+        return Math.max(1, Math.ceil(Math.max(0, Number(state.total) || 0) / state.pageSize));
     }
 
     /**
@@ -137,6 +162,8 @@
         getOffset,
         getRequestLimit,
         takeVisibleItems,
+        setPageResult,
+        getLastPage,
         nextPageAfterDelete,
         render,
     };

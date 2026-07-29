@@ -14,25 +14,37 @@ function readFormDataValueAsText(context, value) {
 
 describe('V1.3 service filters and body editor', () => {
     /**
-     * 测试思路：服务运行态筛选必须看 runtime_state，而 status 只代表软删除有效性。
-     * 示例：status 都是 1 时，只有 runtime_state=1 的 HTTP 服务能命中“开启 + HTTP + 日期”组合。
+     * 测试思路：Project 筛选只负责把页面条件转换为后端查询字段，不再在当前页数组上执行过滤。
+     * 示例：开启 + HTTP + 日期应生成 status=1、runtime_state=1、protocol_type=1 和本地日期边界。
      */
     it('服务筛选支持 runtime_state 运行态、协议种类和日期范围', () => {
         const context = createBrowserContext('?apiMode=mock');
         loadCoreScripts(context);
 
-        const projects = [
-            { id: 1, protocol_type: 1, status: 1, runtime_state: 1, ctime: '2025-08-11T07:55:15.000Z' },
-            { id: 2, protocol_type: 2, status: 1, runtime_state: 0, ctime: '2025-08-12T07:55:15.000Z' },
-            { id: 3, protocol_type: 1, status: 1, runtime_state: 0, ctime: '' },
-        ];
-
-        expect(context.KitProxy.serviceFilters.apply(projects, {
+        const filters = {
             startDate: '2025-08-11',
             endDate: '2025-08-11',
             status: 'active',
             protocolType: '1',
-        })).toEqual([projects[0]]);
+            ownerKeyword: '',
+            ownerUserId: null,
+            ownerNote: '',
+        };
+        const request = context.KitProxy.serviceFilters.toRequest(filters);
+
+        expect(request.status).toBe(1);
+        expect(request.runtime_state).toBe(1);
+        expect(request.protocol_type).toBe(1);
+        expect(request.created_to - request.created_from).toBe(24 * 60 * 60 * 1000);
+
+        const timedRequest = context.KitProxy.serviceFilters.toRequest(Object.assign({}, filters, {
+            startDate: '2025-08-11',
+            endDate: '2025-08-12',
+            startTime: '08:15:20',
+            endTime: '17:20:30',
+        }));
+        expect(timedRequest.created_from).toBe(new Date(2025, 7, 11, 8, 15, 20).getTime());
+        expect(timedRequest.created_to).toBe(new Date(2025, 7, 12, 17, 20, 31).getTime());
 
         expect(context.KitProxy.serviceFilters.validate({
             startDate: '2025-08-12',
@@ -40,6 +52,142 @@ describe('V1.3 service filters and body editor', () => {
             status: 'all',
             protocolType: 'all',
         }).valid).toBe(false);
+        expect(context.KitProxy.serviceFilters.validate({
+            startDate: '2025-08-11',
+            endDate: '2025-08-11',
+            startTime: '18:00:00',
+            endTime: '17:00:00',
+            status: 'all',
+            protocolType: 'all',
+        }).valid).toBe(false);
+    });
+
+    /**
+     * 测试思路：面板中的日历和输入框只维护草稿，必须点击确定才更新已提交的范围。
+     * 示例：日历点击开始和结束日期后 read() 仍为空，点击确定才得到 00:00:00 至 23:59:59。
+     */
+    it('起止时间控件支持日历双次点击、直接输入和默认时分秒', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        const host = context.document.createElement('div');
+        host.innerHTML = `
+            <div id="filter-create-time-range">
+                <input id="filter-create-start" readonly>
+                <input id="filter-create-start-clock" readonly>
+                <input id="filter-create-end" readonly>
+                <input id="filter-create-end-clock" readonly>
+                <button id="filter-create-range" type="button">选择日期</button>
+                <div id="filter-create-range-panel" hidden>
+                    <strong id="filter-create-calendar-title"></strong>
+                    <button id="filter-create-calendar-prev" type="button"></button>
+                    <button id="filter-create-calendar-next" type="button"></button>
+                    <div id="filter-create-calendar-days"></div>
+                    <p id="filter-create-calendar-status"></p>
+                    <input type="text" id="filter-create-direct-start">
+                    <input type="text" id="filter-create-direct-end">
+                    <input type="text" id="filter-create-start-time">
+                    <input type="text" id="filter-create-end-time">
+                    <div id="filter-create-range-error" hidden></div>
+                    <button id="filter-create-range-reset" type="button">重置</button>
+                    <button id="filter-create-range-confirm" type="button">确定</button>
+                </div>
+            </div>
+        `;
+        context.document.body.appendChild(host);
+        const range = context.KitProxy.timeRangeFilter.bind(context.document, { prefix: 'filter-create' });
+
+        const trigger = context.document.getElementById('filter-create-range');
+        const panel = context.document.getElementById('filter-create-range-panel');
+        const confirm = context.document.getElementById('filter-create-range-confirm');
+        trigger.click();
+        const calendarDays = context.document.querySelectorAll('#filter-create-calendar-days [data-date]');
+        const firstDateText = calendarDays[0].dataset.date;
+        const secondDateText = calendarDays[4].dataset.date;
+        calendarDays[0].click();
+        expect(panel.hidden).toBe(false);
+        expect(context.document.getElementById('filter-create-start').value).toBe('');
+        expect(context.document.getElementById('filter-create-end').value).toBe('');
+        expect(context.document.getElementById('filter-create-direct-start').value).toBe(firstDateText);
+
+        const secondDate = context.document.querySelector(`#filter-create-calendar-days [data-date="${secondDateText}"]`);
+        secondDate.click();
+        expect(panel.hidden).toBe(false);
+        expect(context.document.querySelectorAll('#filter-create-calendar-days .is-in-range')).toHaveLength(3);
+        expect(range.read()).toEqual({
+            startDate: '',
+            endDate: '',
+            startTime: '',
+            endTime: '',
+        });
+
+        confirm.click();
+        expect(panel.hidden).toBe(true);
+
+        expect(range.read()).toEqual({
+            startDate: firstDateText,
+            endDate: secondDateText,
+            startTime: '00:00:00',
+            endTime: '23:59:59',
+        });
+        expect(context.document.getElementById('filter-create-start-clock').value).toBe('00:00:00');
+        expect(context.document.getElementById('filter-create-end-clock').value).toBe('23:59:59');
+
+        const directStart = context.document.getElementById('filter-create-direct-start');
+        const directEnd = context.document.getElementById('filter-create-direct-end');
+        trigger.click();
+        directStart.value = '2025-09-01';
+        directStart.dispatchEvent(new context.Event('change', { bubbles: true }));
+        directEnd.value = '2025-09-03';
+        directEnd.dispatchEvent(new context.Event('change', { bubbles: true }));
+        confirm.click();
+        expect(range.read().startDate).toBe('2025-09-01');
+        expect(range.read().endDate).toBe('2025-09-03');
+        expect(range.read().startTime).toBe('00:00:00');
+        expect(range.read().endTime).toBe('23:59:59');
+
+        trigger.click();
+        directStart.value = '20250904';
+        directStart.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(directStart.value).toBe('2025-09-04');
+
+        directStart.value = '20251340';
+        directStart.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(directStart.value).toBe('2025-09-04');
+        expect(directStart.getAttribute('aria-invalid')).toBe('true');
+
+        const startTime = context.document.getElementById('filter-create-start-time');
+        startTime.value = '123456';
+        startTime.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(startTime.value).toBe('12:34:56');
+
+        startTime.value = '296099';
+        startTime.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(startTime.value).toBe('12:34:56');
+        expect(startTime.getAttribute('aria-invalid')).toBe('true');
+    });
+
+    /**
+     * 测试思路：所有者输入只是候选关键字，未点击真实候选时必须阻止查询；选中后只发送 user_id。
+     * 示例：ownerKeyword=adm 且 ownerUserId=null 校验失败，选择 user_id=1 后请求不包含 note 字符串。
+     */
+    it('所有者筛选必须选择真实候选并转换为 user_id', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const pending = {
+            status: 'all',
+            protocolType: 'all',
+            startDate: '',
+            endDate: '',
+            ownerKeyword: 'adm',
+            ownerUserId: null,
+            ownerNote: 'adm',
+        };
+        expect(context.KitProxy.serviceFilters.validate(pending).valid).toBe(false);
+
+        const selected = Object.assign({}, pending, { ownerUserId: 1, ownerNote: 'admin' });
+        expect(context.KitProxy.serviceFilters.validate(selected).valid).toBe(true);
+        expect(context.KitProxy.serviceFilters.toRequest(selected)).toEqual({ user_id: 1 });
     });
 
     /**

@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { test, expect } from '@playwright/test';
-import { REAL_E2E, protocolItemSelector, protocolItemsPath } from './test_config.js';
+import { REAL_E2E, ensureRealProjectRunning, protocolItemSelector, protocolItemsPath } from './test_config.js';
 
 async function loginRealAdmin(page, context) {
     await context.clearCookies();
@@ -105,6 +105,7 @@ test('真实 C++ 后端能提供桌面登录入口', async ({ page }) => {
  */
 test('真实 WebSocket open/live 和 ProjectServer 交互记录在桌面抽屉展示', async ({ page, context }) => {
     await loginRealAdmin(page, context);
+    await ensureRealProjectRunning(page);
     await page.goto(protocolItemsPath());
 
     const item = page.locator(protocolItemSelector());

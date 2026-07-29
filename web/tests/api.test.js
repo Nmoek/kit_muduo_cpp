@@ -19,7 +19,7 @@ describe('V1 config and API layer', () => {
 
     /**
      * 测试思路：URL 查询参数是开发调试入口，应能临时切到 Mock 数据源且不触发 fetch。
-     * 示例：访问 ?apiMode=mock 后，获取服务列表应返回 Mock 数据，并且不会请求真实后端。
+     * 示例：访问 ?apiMode=mock 后，获取服务列表应返回分页对象，并且不会请求真实后端。
      */
     it('URL 参数可以切到 mock 模式', async () => {
         const context = createBrowserContext('?apiMode=mock');
@@ -33,7 +33,8 @@ describe('V1 config and API layer', () => {
         expect(context.KitProxy.config.apiMode).toBe('mock');
         const projects = await context.KitProxy.api.getProjectList();
 
-        expect(projects.length).toBeGreaterThan(0);
+        expect(projects.items.length).toBeGreaterThan(0);
+        expect(projects.total).toBe(projects.items.length);
         expect(context.fetch).not.toHaveBeenCalled();
     });
 
@@ -87,8 +88,8 @@ describe('V1 config and API layer', () => {
 
         expect(projects).toHaveLength(1);
         expect(projects[0].id).toBe(101);
-        expect(protocols).toHaveLength(1);
-        expect(protocols[0].project_id).toBe(101);
+        expect(protocols.items).toHaveLength(1);
+        expect(protocols.items[0].project_id).toBe(101);
     });
 
     /**
@@ -104,8 +105,8 @@ describe('V1 config and API layer', () => {
     });
 
     /**
-     * 测试思路：新增项目的协议类型入参和新增协议保持一致，API 请求统一传 HTTP/TCP/HTTPS 字符串。
-     * 示例：页面内部选择 protocol_type=1，真实 addProject 发给后端时应变成 protocol_type="HTTP"。
+     * 测试思路：新增项目的协议类型入参和新增协议保持一致，API 请求统一传后端枚举字符串。
+     * 示例：页面内部选择 protocol_type=1，真实 addProject 发给后端时应变成 protocol_type="http"。
      */
     it('real 模式 addProject 发送字符串协议类型', async () => {
         const context = createBrowserContext('');
@@ -126,7 +127,7 @@ describe('V1 config and API layer', () => {
 
         const [, options] = context.fetch.mock.calls.at(-1);
         expect(context.fetch.mock.calls.at(-1)[0]).toBe('/projects/add');
-        expect(JSON.parse(options.body).protocol_type).toBe('HTTP');
+        expect(JSON.parse(options.body).protocol_type).toBe('http');
     });
 
     /**
@@ -233,8 +234,8 @@ describe('V1 config and API layer', () => {
     });
 
     /**
-     * 测试思路：Mock 服务列表分页应在内存数据上执行 offset/limit 切片。
-     * 示例：limit=1 分别请求 offset=0 和 offset=1，应得到两个不同服务。
+     * 测试思路：Mock 服务列表返回后端同形状分页对象，total 应在切片前统计。
+     * 示例：limit=1 分别请求 offset=0 和 offset=1，应得到两个不同服务且 total 保持不变。
      */
     it('mock 服务列表支持 offset 和 limit 分页切片', async () => {
         const context = createBrowserContext('?apiMode=mock');
@@ -244,9 +245,87 @@ describe('V1 config and API layer', () => {
         const firstPage = await context.KitProxy.api.getProjectList(0, 1);
         const secondPage = await context.KitProxy.api.getProjectList(1, 1);
 
-        expect(firstPage).toHaveLength(1);
-        expect(secondPage).toHaveLength(1);
-        expect(firstPage[0].id).not.toBe(secondPage[0].id);
+        expect(firstPage.items).toHaveLength(1);
+        expect(secondPage.items).toHaveLength(1);
+        expect(firstPage.total).toBe(secondPage.total);
+        expect(firstPage.items[0].id).not.toBe(secondPage.items[0].id);
+    });
+
+    /**
+     * 测试思路：管理员 note 候选遵循真实接口的前缀匹配和候选 ID 归一化，不复用全量用户列表。
+     * 示例：输入大写 AD 仍能拿到后端 id=1 的 admin 候选，页面同时得到 user_id=1。
+     */
+    it('mock 模式支持管理员 note 前缀候选', async () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        await loginMockUser(context, {
+            note: 'admin',
+            loginType: 'admin',
+            password: 'admin123',
+        });
+
+        const candidates = await context.KitProxy.api.getProjectNoteCandidates(' AD ', 10);
+
+        expect(candidates).toEqual([
+            expect.objectContaining({
+                id: 1,
+                user_id: 1,
+                note_name: 'admin',
+                status: 'active',
+            }),
+        ]);
+        expect(context.fetch).not.toHaveBeenCalled();
+    });
+
+    /**
+     * 测试思路：真实 Project API 必须透传当前后端已落地的 user_id 和分页筛选字段，并归一化分页响应。
+     * 示例：后端返回 data.items/total/offset/limit，调用方拿到同样的 total，请求体不出现 owner_note。
+     */
+    it('real 模式发送 Project 分页查询并归一化响应', async () => {
+        const context = createBrowserContext('');
+        loadCoreScripts(context);
+        context.fetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                code: 0,
+                message: 'success',
+                data: {
+                    items: [{ id: 7, protocol_type: 2, runtime_state: 0 }],
+                    total: 11,
+                    offset: 10,
+                    limit: 5,
+                },
+            }),
+        });
+
+        const page = await context.KitProxy.api.getProjectList(10, 5, {
+            created_from: 100,
+            created_to: 200,
+            status: 1,
+            runtime_state: 0,
+            protocol_type: 2,
+            user_id: 3,
+        });
+
+        expect(page.items[0].id).toBe(7);
+        expect(page.total).toBe(11);
+        expect(page.offset).toBe(10);
+        expect(page.limit).toBe(5);
+
+        const [url, options] = context.fetch.mock.calls[0];
+        expect(url).toBe('/projects/list');
+        expect(JSON.parse(options.body)).toEqual({
+            offset: 10,
+            limit: 5,
+            created_from: 100,
+            created_to: 200,
+            status: 1,
+            runtime_state: 0,
+            protocol_type: 2,
+            user_id: 3,
+        });
+        expect(options.body).not.toContain('owner_note');
     });
 
     /**
@@ -283,9 +362,86 @@ describe('V1 config and API layer', () => {
         const firstPage = await context.KitProxy.api.getProtocolList(1, 0, 1);
         const secondPage = await context.KitProxy.api.getProtocolList(1, 1, 1);
 
-        expect(firstPage).toHaveLength(1);
-        expect(secondPage).toHaveLength(1);
-        expect(firstPage[0].id).not.toBe(secondPage[0].id);
+        expect(firstPage.items).toHaveLength(1);
+        expect(secondPage.items).toHaveLength(1);
+        expect(firstPage.items[0].id).not.toBe(secondPage.items[0].id);
+    });
+
+    /**
+     * 测试思路：协议列表的 status 查询遵循后端 optional 契约，管理员不传 status 查询全部，
+     * 传 1/0 时分别查询有效/已删除；普通用户不传 status 仍只能得到有效协议项。
+     * 示例：管理员 projectId=1 -> 全量包含软删除项；status=1 -> 仅有效；status=0 -> 仅已删除。
+     */
+    it('mock 协议列表遵循 optional status 权限契约', async () => {
+        const adminContext = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(adminContext);
+        await loginMockUser(adminContext, {
+            note: 'admin',
+            loginType: 'admin',
+            password: 'admin123',
+        });
+
+        const all = await adminContext.KitProxy.api.getProtocolList(1, 0, 10);
+        const valid = await adminContext.KitProxy.api.getProtocolList(1, 0, 10, { status: 1 });
+        const deleted = await adminContext.KitProxy.api.getProtocolList(1, 0, 10, { status: 0 });
+
+        expect(all.total).toBeGreaterThan(valid.total);
+        expect(all.items.some(protocol => protocol.status === 2)).toBe(true);
+        expect(valid.items.every(protocol => protocol.status === 1)).toBe(true);
+        expect(deleted.items.length).toBeGreaterThan(0);
+        expect(deleted.items.every(protocol => protocol.status === 2)).toBe(true);
+
+        const normalContext = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(normalContext);
+        await loginMockUser(normalContext, { note: 'testuser' });
+        const normalList = await normalContext.KitProxy.api.getProtocolList(101, 0, 10);
+        expect(normalList.items.every(protocol => protocol.status === 1)).toBe(true);
+    });
+
+    /**
+     * 测试思路：真实协议列表 API 必须把 optional status 和分页字段原样发送给后端，并保留后端 total。
+     * 示例：请求 projectId=1、offset=5、limit=2、status=0，后端返回一条软删除项且 total=3。
+     */
+    it('real 协议列表透传 status 分页条件并归一化软删除分页响应', async () => {
+        const context = createBrowserContext('');
+        loadCoreScripts(context);
+        context.fetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                code: 0,
+                message: 'success',
+                data: {
+                    items: [{
+                        id: 30,
+                        project_id: 1,
+                        type: 'HTTP',
+                        status: 0,
+                        config_state: 0,
+                    }],
+                    total: 3,
+                    offset: 5,
+                    limit: 2,
+                },
+            }),
+        });
+
+        const page = await context.KitProxy.api.getProtocolList(1, 5, 2, { status: 0 });
+
+        expect(page.items).toHaveLength(1);
+        expect(page.items[0]).toMatchObject({ id: 30, status: 2 });
+        expect(page.total).toBe(3);
+        expect(page.offset).toBe(5);
+        expect(page.limit).toBe(2);
+
+        const [url, options] = context.fetch.mock.calls[0];
+        expect(url).toBe('/protocols/list');
+        expect(JSON.parse(options.body)).toEqual({
+            project_id: 1,
+            offset: 5,
+            limit: 2,
+            status: 0,
+        });
     });
 
     /**

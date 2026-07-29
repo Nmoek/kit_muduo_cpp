@@ -1574,6 +1574,11 @@ body {
     box-shadow: 0 8px 24px rgba(47, 128, 237, 0.12);
 }
 
+/* Protocol 筛选条件尚未接入查询，暂时保留结构并隐藏入口。 */
+.protocol-filter-panel {
+    display: none;
+}
+
 .filter-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1583,6 +1588,10 @@ body {
 
 .filter-field {
     min-width: 0;
+}
+
+.filter-time-range-field {
+    grid-column: span 2;
 }
 
 .filter-field label,
@@ -1616,6 +1625,12 @@ body {
     padding: 0 10px;
 }
 
+.filter-field input:disabled {
+    background: #f2f4f7;
+    color: var(--v13-muted);
+    cursor: wait;
+}
+
 .filter-field input:focus,
 .filter-field select:focus,
 .form-group input:focus,
@@ -1624,6 +1639,370 @@ body {
 .body-editor-textarea:focus {
     border-color: var(--v13-primary);
     box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.14);
+}
+
+.filter-field input[aria-invalid="true"] {
+    border-color: #d92d20;
+    box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.12);
+}
+
+.filter-owner-combobox {
+    position: relative;
+}
+
+.filter-time-range {
+    position: relative;
+}
+
+.filter-time-range-shell {
+    --filter-time-trigger-width: 56px;
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--filter-time-trigger-width) minmax(0, 1fr);
+    gap: 8px;
+    align-items: end;
+}
+
+.filter-time-range-trigger-stack {
+    display: grid;
+    min-width: 0;
+    grid-template-rows: 17px 36px;
+    gap: 6px;
+    justify-items: center;
+}
+
+.filter-field .filter-time-range-trigger-stack label {
+    margin: 0;
+    line-height: 17px;
+    white-space: nowrap;
+}
+
+.filter-time-range-display {
+    display: grid;
+    grid-template-columns: minmax(112px, 1fr) auto minmax(112px, 1fr);
+    gap: 8px;
+    align-items: center;
+}
+
+.filter-range-value-display {
+    min-width: 0;
+    overflow: hidden;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: #ffffff;
+}
+
+.filter-field .filter-range-value-display input {
+    display: block;
+    height: 28px;
+    min-width: 0;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    cursor: default;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    text-overflow: clip;
+}
+
+.filter-field .filter-range-value-display .filter-range-time-display {
+    border-top: 1px solid var(--v13-border);
+    color: var(--v13-muted);
+}
+
+.filter-field .filter-range-value-display input:focus {
+    border-color: transparent;
+    box-shadow: none;
+}
+
+.filter-time-range-separator {
+    color: var(--v13-muted);
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.filter-date-trigger {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: #ffffff;
+    color: var(--v13-text);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.filter-date-trigger:hover,
+.filter-date-trigger:focus-visible {
+    border-color: var(--v13-primary);
+    color: var(--v13-primary-strong);
+    outline: none;
+}
+
+.filter-time-range-shell .filter-date-icon-trigger {
+    display: grid;
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    grid-column: auto;
+    place-items: center;
+    padding: 0;
+}
+
+.filter-date-icon-trigger::before {
+    width: 18px;
+    height: 18px;
+    background: currentColor;
+    content: "";
+    mask: url("../assets/icons/calendar-range.svg") center / contain no-repeat;
+    -webkit-mask: url("../assets/icons/calendar-range.svg") center / contain no-repeat;
+}
+
+.filter-time-range-shell .filter-time-range-panel {
+    left: calc(0px - var(--filter-time-trigger-width) - 8px);
+}
+
+.filter-masked-input {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+}
+
+.filter-time-range-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 40;
+    min-width: 430px;
+    padding: 14px;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: var(--v13-surface);
+    box-shadow: 0 12px 28px rgba(16, 24, 40, 0.16);
+}
+
+.filter-time-range.is-open,
+.filter-time-range-shell.is-open {
+    z-index: 45;
+}
+
+.filter-time-range-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
+    gap: 10px 12px;
+}
+
+.filter-calendar {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--v13-border);
+}
+
+.filter-calendar-header {
+    display: grid;
+    grid-template-columns: 32px 1fr 32px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.filter-calendar-title {
+    color: var(--v13-text);
+    font-size: 14px;
+}
+
+.filter-calendar-nav {
+    width: 32px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: #ffffff;
+    color: var(--v13-text);
+    cursor: pointer;
+    font-size: 20px;
+    line-height: 1;
+}
+
+.filter-calendar-nav:hover,
+.filter-calendar-nav:focus-visible {
+    border-color: var(--v13-primary);
+    color: var(--v13-primary-strong);
+    outline: none;
+}
+
+.filter-calendar-weekdays,
+.filter-calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(32px, 1fr));
+    gap: 4px;
+}
+
+.filter-calendar-weekdays {
+    margin-bottom: 4px;
+    color: var(--v13-muted);
+    font-size: 12px;
+    text-align: center;
+}
+
+.filter-calendar-day {
+    min-height: 32px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--v13-radius);
+    background: transparent;
+    color: var(--v13-text);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.filter-calendar-day:hover,
+.filter-calendar-day:focus-visible {
+    border-color: var(--v13-primary);
+    background: var(--v13-primary-soft);
+    outline: none;
+}
+
+.filter-calendar-day.is-in-range {
+    border-color: transparent;
+    border-radius: 0;
+    background: var(--v13-primary-soft);
+    color: var(--v13-primary-strong);
+}
+
+.filter-calendar-day.is-start,
+.filter-calendar-day.is-end {
+    border-color: var(--v13-primary);
+    background: var(--v13-primary);
+    color: #ffffff;
+}
+
+.filter-calendar-day.is-empty {
+    cursor: default;
+}
+
+.filter-calendar-status {
+    min-height: 18px;
+    margin: 10px 0 0;
+    color: var(--v13-muted);
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: center;
+}
+
+.filter-time-range-error {
+    min-height: 18px;
+    margin-top: 12px;
+    color: #d92d20;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.filter-time-range-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--v13-border);
+}
+
+.filter-range-reset-btn,
+.filter-range-confirm-btn {
+    height: 34px;
+    min-width: 72px;
+    padding: 0 14px;
+    border-radius: var(--v13-radius);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.filter-range-reset-btn {
+    border: 1px solid var(--v13-border);
+    background: #ffffff;
+    color: var(--v13-text);
+}
+
+.filter-range-reset-btn:hover,
+.filter-range-reset-btn:focus-visible {
+    border-color: var(--v13-primary);
+    color: var(--v13-primary-strong);
+    outline: none;
+}
+
+.filter-range-confirm-btn {
+    border: 1px solid var(--v13-primary);
+    background: var(--v13-primary);
+    color: #ffffff;
+}
+
+.filter-range-confirm-btn:hover,
+.filter-range-confirm-btn:focus-visible {
+    border-color: var(--v13-primary-strong);
+    background: var(--v13-primary-strong);
+    outline: none;
+}
+
+.filter-range-confirm-btn:disabled {
+    border-color: #d0d5dd;
+    background: #eaecf0;
+    color: #98a2b3;
+    cursor: not-allowed;
+}
+
+.filter-candidate-list {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 30;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--v13-border);
+    border-radius: var(--v13-radius);
+    background: #ffffff;
+    box-shadow: 0 10px 24px rgba(16, 24, 40, 0.14);
+}
+
+.filter-candidate-option {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--v13-text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.filter-candidate-option:hover,
+.filter-candidate-option:focus-visible {
+    background: var(--v13-primary-soft);
+    outline: none;
+}
+
+.filter-candidate-option small {
+    flex: 0 0 auto;
+    color: var(--v13-muted);
+    font-size: 12px;
+}
+
+.filter-candidate-status {
+    padding: 10px;
+    color: var(--v13-muted);
+    font-size: 13px;
+    text-align: center;
 }
 
 .filter-actions {
@@ -3443,6 +3822,33 @@ button.is-mutation-busy:disabled {
 
     .filter-grid {
         grid-template-columns: 1fr;
+    }
+
+    .filter-time-range-field {
+        grid-column: 1 / -1;
+    }
+
+    .filter-time-range-display {
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    }
+
+    .filter-date-trigger {
+        grid-column: 1 / -1;
+    }
+
+    .filter-time-range-panel {
+        min-width: 0;
+        width: calc(100vw - 44px);
+        max-width: 430px;
+    }
+
+    .filter-time-range-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .filter-calendar-weekdays,
+    .filter-calendar-days {
+        grid-template-columns: repeat(7, minmax(28px, 1fr));
     }
 
     .service-filter-panel {

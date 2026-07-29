@@ -1,6 +1,6 @@
 import net from 'node:net';
 import { test, expect } from '@playwright/test';
-import { REAL_E2E, protocolItemSelector, protocolItemsPath } from './test_config.js';
+import { REAL_E2E, ensureRealProjectRunning, protocolItemSelector, protocolItemsPath } from './test_config.js';
 
 async function loginRealAdmin(page, context) {
     await context.clearCookies();
@@ -75,6 +75,7 @@ async function openTcpDrawer(page) {
  */
 test('真实断线双游标恢复并识别项目重启后的 cursor reset', async ({ page, context }) => {
     await loginRealAdmin(page, context);
+    await ensureRealProjectRunning(page);
     const drawer = await openTcpDrawer(page);
     const websocketEvents = [];
     const firstWebSocketPromise = page.waitForEvent('websocket');

@@ -49,6 +49,28 @@ describe('V1.2 pagination and protocol registry', () => {
     });
 
     /**
+     * 测试思路：Project 分页由后端 total 决定下一页，不再依赖 pageSize+1 哨兵记录。
+     * 示例：pageSize=10、total=21 时第一页可继续，第二页不可继续；total=0 时最后一页固定为 1。
+     */
+    it('Project 分页使用后端 total 判断下一页和最后一页', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const state = context.KitProxy.pagination.createState(10);
+        const firstPage = context.KitProxy.pagination.setPageResult({ items: [1], total: 21 }, state);
+        expect(firstPage).toEqual([1]);
+        expect(state.hasMore).toBe(true);
+        expect(context.KitProxy.pagination.getLastPage(state)).toBe(3);
+
+        state.currentPage = 3;
+        context.KitProxy.pagination.setPageResult({ items: [1], total: 21 }, state);
+        expect(state.hasMore).toBe(false);
+
+        context.KitProxy.pagination.setPageResult({ items: [], total: 0 }, state);
+        expect(context.KitProxy.pagination.getLastPage(state)).toBe(1);
+    });
+
+    /**
      * 测试思路：分页条渲染应包含每页数量选择器，并在变更时通知页面刷新。
      * 示例：把选择器从 10 改为 5，应触发 onPageSizeChange(5)。
      */

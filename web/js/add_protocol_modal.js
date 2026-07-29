@@ -340,11 +340,14 @@ var httpProtocolModal = {
 
                 const submit_protocol = {};
                 submit_protocol.cfg_header = {
+                    "id": -1,
                     "name": itemName,
-                    "type": 'HTTP',
+                    "type": "http",
                     "project_id": projectId,
                     "req_body_type": requestBodyType,
                     "resp_body_type": responseBodyType,
+                    "config_state": 0,
+                    "is_endian": 0,
                 };
                 submit_protocol.req_cfg = {
                     "path": pathStr,
@@ -616,11 +619,13 @@ var customTcpProtocolModal = {
 
                 const submit_protocol = {};
                 submit_protocol.cfg_header = {
+                    "id": -1,
                     "name": itemName,
-                    "type": "TCP",
+                    "type": "custom_tcp",
                     "project_id": projectId,
                     "req_body_type": requestBodyType,
                     "resp_body_type": responseBodyType,
+                    "config_state": 0,
                     "is_endian": 1,
                 };
                 submit_protocol.req_cfg = {

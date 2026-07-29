@@ -31,6 +31,81 @@
 
             <div class="protocol-items-page">
                 <div id="protocol-service-meta" class="service-fields-container protocol-service-meta"></div>
+                <!-- 协议筛选器先保留界面，待确认后再接入查询条件。 -->
+                <section class="service-filter-panel protocol-filter-panel" aria-label="协议项筛选">
+                    <div class="filter-grid">
+                        <div class="filter-field filter-time-range-field">
+                            <div class="filter-time-range-shell">
+                                <div class="filter-time-range-trigger-stack">
+                                    <label for="protocol-filter-create-range">起止时间</label>
+                                    <button type="button" id="protocol-filter-create-range" class="filter-date-trigger filter-date-icon-trigger" aria-label="配置起止日期" title="配置起止日期" aria-controls="protocol-filter-create-range-panel" aria-expanded="false"></button>
+                                </div>
+                                <div id="protocol-filter-create-time-range" class="filter-time-range">
+                                    <div class="filter-time-range-display">
+                                        <div class="filter-range-value-display" role="group" aria-label="已配置的开始时间">
+                                            <input type="text" id="protocol-filter-create-start" class="filter-range-date-display" placeholder="开始日期" aria-label="开始日期" readonly>
+                                            <input type="text" id="protocol-filter-create-start-clock" class="filter-range-time-display" placeholder="开始时间" aria-label="开始时间" readonly>
+                                        </div>
+                                        <span class="filter-time-range-separator">至</span>
+                                        <div class="filter-range-value-display" role="group" aria-label="已配置的结束时间">
+                                            <input type="text" id="protocol-filter-create-end" class="filter-range-date-display" placeholder="结束日期" aria-label="结束日期" readonly>
+                                            <input type="text" id="protocol-filter-create-end-clock" class="filter-range-time-display" placeholder="结束时间" aria-label="结束时间" readonly>
+                                        </div>
+                                    </div>
+                                    <div id="protocol-filter-create-range-panel" class="filter-time-range-panel" hidden>
+                                        <div class="filter-calendar" aria-label="选择起止日期">
+                                            <div class="filter-calendar-header">
+                                                <button type="button" id="protocol-filter-create-calendar-prev" class="filter-calendar-nav filter-calendar-prev" aria-label="上个月">‹</button>
+                                                <strong id="protocol-filter-create-calendar-title" class="filter-calendar-title"></strong>
+                                                <button type="button" id="protocol-filter-create-calendar-next" class="filter-calendar-nav filter-calendar-next" aria-label="下个月">›</button>
+                                            </div>
+                                            <div class="filter-calendar-weekdays" aria-hidden="true">
+                                                <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+                                            </div>
+                                            <div id="protocol-filter-create-calendar-days" class="filter-calendar-days" role="grid"></div>
+                                            <p id="protocol-filter-create-calendar-status" class="filter-calendar-status" role="status">第一次点击选择开始日期</p>
+                                        </div>
+                                        <div class="filter-time-range-grid">
+                                            <div class="filter-field">
+                                                <label for="protocol-filter-create-direct-start">开始日期</label>
+                                                <input type="text" id="protocol-filter-create-direct-start" class="filter-masked-input" data-mask-component="imask-date" inputmode="numeric" maxlength="10" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD" autocomplete="off" spellcheck="false">
+                                            </div>
+                                            <div class="filter-field">
+                                                <label for="protocol-filter-create-direct-end">结束日期</label>
+                                                <input type="text" id="protocol-filter-create-direct-end" class="filter-masked-input" data-mask-component="imask-date" inputmode="numeric" maxlength="10" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD" autocomplete="off" spellcheck="false">
+                                            </div>
+                                            <div class="filter-field">
+                                                <label for="protocol-filter-create-start-time">开始时间</label>
+                                                <input type="text" id="protocol-filter-create-start-time" class="filter-masked-input" data-mask-component="imask-time" inputmode="numeric" maxlength="8" placeholder="HH:MM:SS" autocomplete="off" spellcheck="false">
+                                            </div>
+                                            <div class="filter-field">
+                                                <label for="protocol-filter-create-end-time">结束时间</label>
+                                                <input type="text" id="protocol-filter-create-end-time" class="filter-masked-input" data-mask-component="imask-time" inputmode="numeric" maxlength="8" placeholder="HH:MM:SS" autocomplete="off" spellcheck="false">
+                                            </div>
+                                        </div>
+                                        <div id="protocol-filter-create-range-error" class="filter-time-range-error" role="alert" aria-live="polite" hidden></div>
+                                        <div class="filter-time-range-actions">
+                                            <button type="button" id="protocol-filter-create-range-reset" class="filter-range-reset-btn">重置</button>
+                                            <button type="button" id="protocol-filter-create-range-confirm" class="filter-range-confirm-btn">确定</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="filter-field">
+                            <label for="protocol-filter-status">状态</label>
+                            <select id="protocol-filter-status">
+                                <option value="all">全部状态</option>
+                                <option value="1">有效</option>
+                                <option value="0">已删除</option>
+                            </select>
+                        </div>
+                        <div class="filter-actions">
+                            <button type="button" id="apply-protocol-filter" class="filter-apply-btn">应用筛选</button>
+                            <button type="button" id="reset-protocol-filter" class="filter-reset-btn">重置</button>
+                        </div>
+                    </div>
+                </section>
                 <div class="protocol-management">
                     <div class="protocol-list"></div>
                 </div>
@@ -43,6 +118,7 @@
     <script src="../js/constants.js"></script>
     <script src="../js/utils.js"></script>
     <script src="../js/body_editor.js"></script>
+    <script src="../node_modules/imask/dist/imask.min.js"></script>
     <script src="../js/service_filters.js"></script>
     <script src="../js/mock_data.js"></script>
     <script src="../js/api.js"></script>

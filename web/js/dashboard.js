@@ -51,11 +51,11 @@
      * @returns {Promise<Array<any>>}
      */
     async function loadDashboardProjects() {
-        const projects = await KitProxy.api.getProjectList(0, DASHBOARD_PROJECT_LIMIT);
-        if (!Array.isArray(projects)) {
+        const page = await KitProxy.api.getProjectList(0, DASHBOARD_PROJECT_LIMIT);
+        if (!page || !Array.isArray(page.items)) {
             throw new Error('控制面板项目数据格式错误');
         }
-        return projects.filter(project => !isDeletedProject(project));
+        return page.items.filter(project => !isDeletedProject(project));
     }
 
     /**

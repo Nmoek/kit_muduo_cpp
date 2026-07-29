@@ -380,18 +380,37 @@
         try {
             pageState.currentPage = Math.max(1, Number(page) || 1);
 
-            const protocols = await getProtocolList(
+            const requestPage = async () => getProtocolList(
                 pageContext.project.id,
                 KitProxy.pagination.getOffset(pageState),
-                KitProxy.pagination.getRequestLimit(pageState),
+                pageState.pageSize,
             );
 
-            if(!Array.isArray(protocols)) {
-                throw new Error('协议项列表数据格式错误!');
+            let pageResult = await requestPage();
+            let items;
+            if (Array.isArray(pageResult)) {
+                // 保留旧 Mock/调用方的数组响应兼容；真实接口统一走分页对象。
+                items = KitProxy.pagination.takeVisibleItems(pageResult, pageState);
+            } else {
+                if (!pageResult || !Array.isArray(pageResult.items)) {
+                    throw new Error('协议项列表数据格式错误!');
+                }
+
+                KitProxy.pagination.setPageResult(pageResult, pageState);
+                const lastPage = KitProxy.pagination.getLastPage(pageState);
+                if (pageState.currentPage > lastPage) {
+                    pageState.currentPage = lastPage;
+                    pageResult = await requestPage();
+                    if (!pageResult || !Array.isArray(pageResult.items)) {
+                        throw new Error('协议项列表数据格式错误!');
+                    }
+                    KitProxy.pagination.setPageResult(pageResult, pageState);
+                }
+                items = pageResult.items;
             }
 
             protocolList.innerHTML = '';
-            KitProxy.pagination.takeVisibleItems(protocols, pageState).forEach(protocol => {
+            items.forEach(protocol => {
                 addProtocolItem(root, applyProtocolRuntimeStateOverride(protocol));
             });
 
@@ -449,6 +468,14 @@
                 renderPageError(error && error.message ? error.message : '登录态校验失败');
             }
             return;
+        }
+
+        if (KitProxy.timeRangeFilter) {
+            KitProxy.timeRangeFilter.bind(document, {
+                prefix: 'protocol-filter-create',
+                inputMask: 'imask',
+                iconTrigger: true,
+            });
         }
 
         const projectId = readProjectId();
