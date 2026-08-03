@@ -160,8 +160,8 @@ SqliteOrmPoolResult<SqliteOrmWriteTransactionPtr> SqliteOrmWriteTransaction::Cre
 
 SqliteOrmPool::SqliteOrmPool(SqliteOrmPoolConfig config)
     :config_(std::move(config))
-    ,slots_(config.capacity > 0 ? std::make_unique<Slot[]>(config.capacity): nullptr)
-    ,capacity_(config.capacity)
+    ,slots_(config.pool_capacity > 0 ? std::make_unique<Slot[]>(config.pool_capacity): nullptr)
+    ,capacity_(config.pool_capacity)
     ,is_shutdown_(false)
     ,active_count_(0)
 {
@@ -172,7 +172,7 @@ SqliteOrmPool::SqliteOrmPool(SqliteOrmPoolConfig config)
 
     for(size_t i = 0;i < capacity_;++i)
     {
-        slots_[i].db = std::make_unique<SqliteOrmType>(SQLITE_ORM_TABLE_INIT_DEF());
+        slots_[i].db = std::make_unique<SqliteOrmType>(SQLITE_ORM_TABLE_INIT_DEF(config_.path));
         InitStorageParam(*slots_[i].db, config_.sync_schema && 0 == i);
     }
 
@@ -260,7 +260,7 @@ void SqliteOrmPool::InitStorageParam(SqliteOrmType &db, bool sync_schema)
     if(sync_schema)
     {
         db.sync_schema(true);
-        EnsureSqliteIndexes();
+        EnsureSqliteIndexes(db.filename());
     }
 }
 

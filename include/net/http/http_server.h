@@ -33,6 +33,15 @@ enum class HttpDispatchResult
     kClose             // 已发送响应并准备关闭
 };
 
+struct BusinessThreadPoolConfig
+{
+    /// @brief 最大线程数
+    int32_t max_threads{0};
+    int32_t max_task_queue{0};
+    int32_t thread_idle_seconds{0};
+    int32_t submit_timeout_ms{0};
+};
+
 class HttpServer: Noncopyable
 {
 public:
@@ -47,14 +56,6 @@ public:
         bool redirect_to_login{false};
     };
     using AuthCallback = std::function<AuthCheckResult(HttpContextPtr)>;
-
-    struct BusinessThreadPoolConfig
-    {
-        int32_t threadMaxThreshold{0};
-        int32_t taskQueueMaxThreshold{0};
-        int32_t threadMaxIdleInterval{0};
-        int32_t submitTimeoutMs{0};
-    };
 
     HttpServer(kit_muduo::EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool = true, TcpServer::Option option = TcpServer::Option::kNoRusePort);
 

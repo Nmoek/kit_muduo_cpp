@@ -69,14 +69,14 @@ InteractionPayloadHint Hint(ProtocolType protocol_type,
     };
 }
 
-InteractionCaptureOptions Options(size_t max_text_bytes = 64 * 1024,
-                                  size_t max_hex_bytes = 64 * 1024,
+InteractionCaptureOptions Options(size_t capture_max_text_bytes = 64 * 1024,
+                                  size_t capture_max_hex_bytes = 64 * 1024,
                                   size_t max_attachment_bytes = 10 * 1024 * 1024)
 {
     return InteractionCaptureOptions{
-        .max_text_bytes = max_text_bytes,
-        .max_hex_bytes = max_hex_bytes,
-        .max_binary_attachment_bytes = max_attachment_bytes,
+        .capture_max_text_bytes = capture_max_text_bytes,
+        .capture_max_hex_bytes = capture_max_hex_bytes,
+        .capture_max_binary_attachment_bytes = max_attachment_bytes,
     };
 }
 
@@ -654,7 +654,7 @@ TEST(TestProtocolInteraction, MultipartBodySplitsTextAndBinaryParts)
  *
  * 示例：
  *
- *   max_binary_attachment_bytes=3 + pdf bytes size=5
+ *   capture_max_binary_attachment_bytes=3 + pdf bytes size=5
  *        |
  *        v
  *   attachments[0].captured_size=3, binary_available=false, sidecars=[]
@@ -696,7 +696,7 @@ TEST(TestProtocolInteraction, TruncatedAttachmentKeepsMetadataWithoutSidecarByte
  *
  * 示例：
  *
- *   TCP bytes=[0x01,0x02,0xAB,0xCD], max_hex_bytes=3
+ *   TCP bytes=[0x01,0x02,0xAB,0xCD], capture_max_hex_bytes=3
  *        |
  *        v
  *   body.text="H01 02 AB", attachments=[], sidecars=[]
@@ -726,12 +726,12 @@ TEST(TestProtocolInteraction, CustomTcpBinaryBodyUsesHexTextWithoutAttachment)
 /**
  * 测试思路：
  * 1. parser error 场景无法可靠拆出 head/body，需要用 raw_packet 表达整包前缀。
- * 2. raw_packet 的 raw_hex 受 max_hex_bytes 控制，但 sha1 仍基于完整原始 bytes。
+ * 2. raw_packet 的 raw_hex 受 capture_max_hex_bytes 控制，但 sha1 仍基于完整原始 bytes。
  * 3. raw_packet 有值时，InteractionSide JSON 必须输出 raw_packet 字段。
  *
  * 示例：
  *
- *   raw bytes=['B','A','D',0x01,0x02], max_hex_bytes=4
+ *   raw bytes=['B','A','D',0x01,0x02], capture_max_hex_bytes=4
  *        |
  *        v
  *   raw_hex="H42 41 44 01", truncated=true, json["raw_packet"] 存在
@@ -1148,7 +1148,7 @@ TEST(TestProtocolInteraction, PublisherBuildsProtocolRecordAndDeliversToSink)
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1230,7 +1230,7 @@ TEST(TestProtocolInteraction, PublisherNormalizesProjectNoticeProtocolIdAndRawPa
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(64 * 1024, 3, 10 * 1024 * 1024),
         });
 
@@ -1299,7 +1299,7 @@ TEST(TestProtocolInteraction, PublisherDropsObservationWhenQueueFullWithoutAdvan
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 2,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1378,7 +1378,7 @@ TEST(TestProtocolInteraction, PublisherAssignsMonotonicSeqForContinuousObservati
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 8,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
     });
 
@@ -1428,7 +1428,7 @@ TEST(TestProtocolInteraction, PublisherCurrentSeqDoesNotAdvanceBeforeQueuedObser
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1477,7 +1477,7 @@ TEST(TestProtocolInteraction, PublisherDeliversSameSeqToMultipleSinks)
         {sink_a, sink_b},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1522,7 +1522,7 @@ TEST(TestProtocolInteraction, PublisherCatchesSinkExceptionAndContinues)
         {throwing_sink, collecting_sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1567,7 +1567,7 @@ TEST(TestProtocolInteraction, PublisherWithEmptySinksStillProcessesLaterObservat
         {},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1603,7 +1603,7 @@ TEST(TestProtocolInteraction, PublisherStopDrainsQueuedObservationBestEffort)
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 
@@ -1803,7 +1803,7 @@ TEST(TestProtocolInteraction, PublisherBuildsHttpBinaryBodySidecarsFromObservati
         {sink},
         ProtocolInteractionPublisherConfig{
             .queue_capacity = 4,
-            .stop_drain_timeout = 1000,
+            .stop_drain_timeout_ms = 1000,
             .capture_options = Options(),
         });
 

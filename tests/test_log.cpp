@@ -125,7 +125,7 @@ TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
 
     {
         FileAppender appender(file.path());
-        appender.setFomatter("%m");
+        appender.setFormatter("%m");
 
         appender.append(MakeLogAttr("first"));
 
@@ -149,8 +149,8 @@ TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
 
     {
         FileAppender appender(file.path());
-        appender.setFomatter("%m");
-        appender.setWriteMaxSize(8);
+        appender.setFormatter("%m");
+        appender.setFlushThreshold(8);
 
         appender.append(MakeLogAttr("abc"));
         ASSERT_EQ(ReadFile(file.path()), "");
@@ -177,8 +177,8 @@ TEST(TestLog, FileAppenderZeroWriteMaxSizeFlushesEveryWrite)
     TempLogFile file("zero_threshold");
 
     FileAppender appender(file.path());
-    appender.setFomatter("%m");
-    appender.setWriteMaxSize(0);
+    appender.setFormatter("%m");
+    appender.setFlushThreshold(0);
 
     appender.append(MakeLogAttr("a"));
     ASSERT_EQ(ReadFile(file.path()), "a");

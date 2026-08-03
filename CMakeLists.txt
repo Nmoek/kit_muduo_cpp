@@ -51,6 +51,8 @@ option(MUDUO_TEST.SOCKET "build test_socket" OFF)
 option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
 option(MUDUO_TEST.LOG "build test_log" OFF)
+option(MUDUO_TEST.CONFIG "build test_config" OFF)
+
 option(MUDUO_TEST.TCP_SERVER "build test_tcp_server" OFF)
 option(MUDUO_TEST.HTTP_MESSAGE "build test_http_message" OFF)
 option(MUDUO_TEST.HTTP_CONTEXT "build test_http_context" OFF)
@@ -135,6 +137,7 @@ set(PKG_LIB_PATH
     "pkg/pugixml/lib"
     "pkg/simdutf/lib"
     "pkg/HowardHinnant_date/lib"
+    "pkg/yaml-cpp/lib"
 )
 
 link_directories(${PKG_LIB_PATH})
@@ -156,6 +159,7 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/pkg/pugixml/include
     ${PROJECT_SOURCE_DIR}/pkg/simdutf/include
     ${PROJECT_SOURCE_DIR}/pkg/HowardHinnant_date/include
+    ${PROJECT_SOURCE_DIR}/pkg/yaml-cpp/include
 )
 
 set(BASE_SRC
@@ -164,7 +168,8 @@ set(BASE_SRC
     src/base/log_formatter.cpp
     src/base/log_attr.cpp
     src/base/log_appender.cpp
-
+    src/base/log_config.cpp
+    
     src/base/util.cpp
     src/base/time_stamp.cpp
     src/base/bytes_codec.cpp
@@ -174,6 +179,9 @@ set(BASE_SRC
     src/base/event_loop_thread.cpp
     src/base/event_loop_thread_pool.cpp
 
+    src/base/lexical_cast.cpp
+    src/base/config_context.cpp
+    src/base/config.cpp
 )
 
 set(NET_HTTP_SRC
@@ -325,6 +333,7 @@ set(WORK_APP_SRC
     ${WORK_WEB_SRC}
     ${IOC_SRC}
     src/application.cpp
+    src/app_config.cpp
 )
 
 set(WORK_SRC
@@ -350,6 +359,7 @@ set(KIT_RUNTIME_LIBS
     OpenSSL::Crypto
     pugixml
     simdutf
+    yaml-cpp
 )
 
 # 测试目标额外依赖 GTest。工作层源码集中编译到静态库，避免每个工作层
@@ -450,6 +460,10 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)
 # Log测试 test_log
 add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
 
+# Config测试 test_config
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config
+    tests/test_config.cpp
+    src/app_config.cpp)
 
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)

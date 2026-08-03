@@ -385,7 +385,7 @@ TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
         InetAddress addr(port, "127.0.0.1");
         server = std::make_shared<HttpServer>(loop, addr, "http-submit-failure-test", true, TcpServer::KReusePort);
         server->setThreadNum(0);
-        server->setBusinessThreadPoolConfig(HttpServer::BusinessThreadPoolConfig{
+        server->setBusinessThreadPoolConfig(BusinessThreadPoolConfig{
             1,
             0,
             2,
@@ -461,7 +461,7 @@ TEST(TestHttpServer, WebSocketUpgradeAuthFailureReturns401BeforePrepare)
         InetAddress addr(port, "127.0.0.1");
         server = std::make_shared<HttpServer>(loop, addr, "http-ws-auth-test", true, TcpServer::KReusePort);
         server->setThreadNum(0);
-        server->setBusinessThreadPoolConfig(HttpServer::BusinessThreadPoolConfig{
+        server->setBusinessThreadPoolConfig(BusinessThreadPoolConfig{
             1,
             8,
             2,

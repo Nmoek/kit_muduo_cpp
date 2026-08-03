@@ -10,6 +10,7 @@
 #define __KIT_HTTP_UTIL_H__
 
 #include <bits/stdint-intn.h>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -50,6 +51,12 @@ bool HeaderContainsToken(const std::string &header_value, const std::string &tok
  */
 std::string NormalizeHttpPath(const std::string &path);
 
+/**
+ * @brief HTTP路径解码(只解码一次)
+ * @param raw_path 
+ * @return std::optional<std::string> 
+ */
+std::optional<std::string> PercentDecodeHttpPathOnce(const std::string& raw_path);
 
 struct Version
 {

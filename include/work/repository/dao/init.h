@@ -24,8 +24,8 @@ class SqliteOrmPool;
 struct SqliteOrmPoolConfig;
 
 /// @brief  sqlite3 orm库的表头定义
-#define SQLITE_ORM_TABLE_INIT_DEF()  \
-    sqlite_orm::make_storage("kit.sqlite", \
+#define SQLITE_ORM_TABLE_INIT_DEF(PATH)  \
+    sqlite_orm::make_storage(PATH, \
         sqlite_orm::make_table("projects", \
             sqlite_orm::make_column("id", &Project::m_id, sqlite_orm::primary_key().autoincrement()), \
             sqlite_orm::make_column("ctime", &Project::m_ctime), \
@@ -80,15 +80,19 @@ struct SqliteOrmPoolConfig;
 
 
 
-using SqliteOrmType = decltype(SQLITE_ORM_TABLE_INIT_DEF());
+using SqliteOrmType = decltype(SQLITE_ORM_TABLE_INIT_DEF(""));
 
 /**
  * @brief sqlite数据库初始化
  * @return std::unique_ptr<SqliteOrmType> 
  */
+std::shared_ptr<SqliteOrmType> InitSqliteDb(
+    const SqliteOrmPoolConfig& config);
 std::shared_ptr<SqliteOrmType> InitSqliteDb();
-std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(SqliteOrmPoolConfig config);
-void EnsureSqliteIndexes();
+std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(
+    const SqliteOrmPoolConfig& config);
+
+void EnsureSqliteIndexes(std::string path);
 
 } // namespace kit_domain
 #endif // __KIT_DAO_INIT_H__

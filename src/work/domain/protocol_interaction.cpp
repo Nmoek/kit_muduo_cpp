@@ -126,7 +126,7 @@ InteractionBody& InteractionBody::fillJsonBdoy(const std::vector<uint8_t> &data,
     if(!is_utf8_safe)
     {
         INTERAC_F_ERROR("body utf-8 invalid: \n", utf8_error.c_str());
-        AssignHexPrefix(*this, data, options.max_hex_bytes);
+        AssignHexPrefix(*this, data, options.capture_max_hex_bytes);
         this->error_message = "json body utf-8 invalid : " + utf8_error;
         return *this;
     }
@@ -140,13 +140,13 @@ InteractionBody& InteractionBody::fillJsonBdoy(const std::vector<uint8_t> &data,
     {
         INTERAC_F_ERROR("json validate error: %s\n", result.message.c_str());
 
-        AssignTextPrefix(*this, data, options.max_text_bytes);
+        AssignTextPrefix(*this, data, options.capture_max_text_bytes);
         error_message = std::move(result.message);
         return *this;
     }
 
     kind = InteractionPayloadKind::kJson;
-    text = Utf8SafePrefix(data.data(), data.size(), options.max_text_bytes);
+    text = Utf8SafePrefix(data.data(), data.size(), options.capture_max_text_bytes);
     captured_size = text.size();
     truncated = captured_size < data.size();
 
@@ -160,7 +160,7 @@ InteractionBody& InteractionBody::fillXmlBdoy(const std::vector<uint8_t> &data, 
     {
         INTERAC_F_ERROR("body utf-8 invalid: %s\n", utf8_error.c_str());
 
-        AssignHexPrefix(*this, data, options.max_hex_bytes);
+        AssignHexPrefix(*this, data, options.capture_max_hex_bytes);
         this->error_message = "xml body utf-8 invalid : " + utf8_error;
         return *this;
     }
@@ -174,13 +174,13 @@ InteractionBody& InteractionBody::fillXmlBdoy(const std::vector<uint8_t> &data, 
     {
         INTERAC_F_ERROR("xml validate error: %s\n", result.message.c_str());
 
-        AssignTextPrefix(*this, data, options.max_text_bytes);
+        AssignTextPrefix(*this, data, options.capture_max_text_bytes);
         error_message = std::move(result.message);
         return *this;
     }
 
     kind = InteractionPayloadKind::kXml;
-    text = Utf8SafePrefix(data.data(), data.size(), options.max_text_bytes);
+    text = Utf8SafePrefix(data.data(), data.size(), options.capture_max_text_bytes);
     captured_size = text.size();
     truncated = captured_size < data.size();
 
@@ -193,13 +193,13 @@ InteractionBody& InteractionBody::fillTextBdoy(const std::vector<uint8_t> &data,
     {
         INTERAC_F_ERROR("body utf-8 invalid: %s\n", utf8_error.c_str());
 
-        AssignHexPrefix(*this, data, options.max_hex_bytes);
+        AssignHexPrefix(*this, data, options.capture_max_hex_bytes);
         this->error_message = "text body utf-8 invalid : " + utf8_error;
         return *this;
     }
 
     kind = InteractionPayloadKind::kText;
-    text = Utf8SafePrefix(data.data(), data.size(), options.max_text_bytes);
+    text = Utf8SafePrefix(data.data(), data.size(), options.capture_max_text_bytes);
     captured_size = text.size();
     truncated = captured_size < data.size();
 
@@ -216,7 +216,7 @@ InteractionBody& InteractionBody::fillMultiFormBdoy(const std::vector<uint8_t> &
     this->kind = InteractionPayloadKind::kMultiForm;
     this->size = data.size();
     this->sha1 = Sha1BytesBase64Helper(data);
-    this->captured_size =  std::min(data.size(), options.max_binary_attachment_bytes);
+    this->captured_size =  std::min(data.size(), options.capture_max_binary_attachment_bytes);
     this->truncated = this->captured_size < data.size();
 
     // 被截断无法解析
@@ -238,7 +238,7 @@ InteractionBody& InteractionBody::fillMultiFormBdoy(const std::vector<uint8_t> &
     {
         INTERAC_F_ERROR("body parse to multi-form-data error! field[%s]:%s\n", result.field.c_str(), result.message.c_str());
 
-        AssignHexPrefix(*this, data, options.max_hex_bytes);
+        AssignHexPrefix(*this, data, options.capture_max_hex_bytes);
         this->error_message = "body parse to multi-form-data error!";
         return *this;
     }
@@ -256,7 +256,7 @@ InteractionBody& InteractionBody::fillMultiFormBdoy(const std::vector<uint8_t> &
 
         std::string part_text;
 
-        uint64_t part_captured_size =  std::min(part.data.size(), options.max_binary_attachment_bytes);
+        uint64_t part_captured_size =  std::min(part.data.size(), options.capture_max_binary_attachment_bytes);
         const bool part_truncated = part_captured_size < part.data.size();
         bool part_binary_available = !part_truncated && part_captured_size == part.data.size();
 
@@ -279,7 +279,7 @@ InteractionBody& InteractionBody::fillMultiFormBdoy(const std::vector<uint8_t> &
             }
             default:
             {
-                AssignHexPrefix(*this, data, options.max_hex_bytes);
+                AssignHexPrefix(*this, data, options.capture_max_hex_bytes);
                 this->error_message = "body multi-form-data part kind invalid!";
                 return *this;
             }
@@ -337,7 +337,7 @@ InteractionBody& InteractionBody::fillBinaryBdoy(const std::vector<uint8_t> &dat
     // 注意 这里只有CustomTcp使用
     if(hint.prefer_hex_text_for_binary)
     {
-        this->captured_size = static_cast<size_t>(std::min(data.size(), options.max_hex_bytes));
+        this->captured_size = static_cast<size_t>(std::min(data.size(), options.capture_max_hex_bytes));
         this->truncated = captured_size < data.size();
 
         this->text = BytesToHexString(std::vector<uint8_t>(data.begin(), data.begin() + captured_size));
@@ -345,7 +345,7 @@ InteractionBody& InteractionBody::fillBinaryBdoy(const std::vector<uint8_t> &dat
     else
     {
     
-        this->captured_size =  std::min(data.size(), options.max_binary_attachment_bytes);
+        this->captured_size =  std::min(data.size(), options.capture_max_binary_attachment_bytes);
         this->truncated = this->captured_size < data.size();
 
         InteractionAttachmentRef ref{
@@ -424,7 +424,7 @@ InteractionBody InteractionBody::BuildFromBytes(const std::vector<uint8_t> &data
     InteractionRawPacket raw;
     raw.kind = InteractionPayloadKind::kBinary;
     raw.size = data.size();
-    raw.captured_size = std::min(options.max_hex_bytes, data.size());
+    raw.captured_size = std::min(options.capture_max_hex_bytes, data.size());
     raw.sha1 = Sha1BytesBase64Helper(data);
     raw.truncated = raw.captured_size < data.size();
 

@@ -21,7 +21,8 @@ namespace kit_dao {
 
 struct SqliteOrmPoolConfig
 {
-    size_t capacity{20};
+    std::string path{"kit.sqlite"};
+    size_t pool_capacity{20};
     int32_t busy_timeout_ms{3000}; // 注意:这里不是pool写锁锁等待时间  是底层DB文件锁时间
     int32_t synchronous{1};       // 1=NORMAL，2=FULL。
     bool sync_schema{true};   // 只在第一个 storage 上执行 sync_schema。
@@ -137,7 +138,7 @@ private:
 class SqliteOrmPool: kit_muduo::Noncopyable
 {
 public:
-    explicit SqliteOrmPool(SqliteOrmPoolConfig config = SqliteOrmPoolConfig());
+    explicit SqliteOrmPool(SqliteOrmPoolConfig config = SqliteOrmPoolConfig{});
 
     ~SqliteOrmPool();
 

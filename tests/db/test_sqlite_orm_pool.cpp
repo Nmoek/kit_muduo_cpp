@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -85,6 +86,11 @@ public:
         ::rmdir(dir_.c_str());
     }
 
+    std::string dbPath(const std::string& filename) const
+    {
+        return dir_ + "/" + filename;
+    }
+
 private:
     std::string DbPath() const
     {
@@ -96,10 +102,13 @@ private:
     std::string old_dir_;
 };
 
-kit_dao::SqliteOrmPoolConfig MakePoolConfig(size_t capacity)
+kit_dao::SqliteOrmPoolConfig MakePoolConfig(
+    size_t capacity,
+    std::string path = "kit.sqlite")
 {
     kit_dao::SqliteOrmPoolConfig config;
-    config.capacity = capacity;
+    config.path = std::move(path);
+    config.pool_capacity = capacity;
     config.busy_timeout_ms = 1000;
     config.synchronous = 1;
     config.sync_schema = true;
@@ -157,6 +166,32 @@ AcquireWriteTransaction(kit_dao::SqliteOrmPool &pool, int64_t time_out_ms)
 }
 
 }   // namespace
+
+/*
+ * 测试思路：SqliteOrmPool 接收的 path 必须完整穿过 storage 建表与原生 SQLite
+ * 索引初始化两个路径。构造函数移动 config 后，不能继续读取移后对象的 path。
+ *
+ * 示例：配置 /tmp/.../configured.sqlite 后，schema 创建完成并且该文件存在；若
+ * storage 错误使用空路径或默认 kit.sqlite，索引初始化会因 projects 表不存在失败。
+ */
+TEST(SqliteOrmPoolTest, ConfiguredPathCreatesSchemaAndIndexesInSameFile)
+{
+    ScopedPoolTestDir test_dir("configured_path");
+    const std::string path = test_dir.dbPath("configured.sqlite");
+    RemoveSqliteFiles(path);
+
+    {
+        kit_dao::SqliteOrmPool pool(MakePoolConfig(1, path));
+        EXPECT_EQ(pool.config().path, path);
+        EXPECT_EQ(::access(path.c_str(), F_OK), 0);
+
+        auto lease_res = pool.acquire();
+        AssertOk(lease_res);
+        EXPECT_EQ(lease_res.val->db().count<kit_dao::Project>(), 0);
+    }
+
+    RemoveSqliteFiles(path);
+}
 
 /*
  * 测试思路：

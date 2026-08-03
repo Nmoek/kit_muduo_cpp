@@ -20,6 +20,7 @@
 #include <vector>
 #include <mutex>
 #include <cstdint>
+#include <filesystem>
 
 namespace kit_muduo {
 namespace http {
@@ -239,12 +240,13 @@ public:
 class StaticFileServlet: public HttpServlet
 {
 public:
-    StaticFileServlet();
+    explicit StaticFileServlet(std::filesystem::path static_root_path);
 
     ~StaticFileServlet() = default;
 
     void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
-
+private:
+    std::filesystem::path static_root_;
 };
 
 

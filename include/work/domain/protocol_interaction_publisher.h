@@ -26,7 +26,7 @@ namespace kit_domain {
 struct ProtocolInteractionPublisherConfig
 {
     size_t queue_capacity{4*1024};
-    int64_t stop_drain_timeout{2000}; // 单位 ms
+    int64_t stop_drain_timeout_ms{2000}; // 单位 ms
     InteractionCaptureOptions capture_options{};
 };
 

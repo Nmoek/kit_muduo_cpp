@@ -90,3 +90,18 @@
 #define CODEC_F_FATAL(fmt, ...)     BASE_F_FATAL("codec", fmt, ##__VA_ARGS__)
 
 /*******bytes codec模块*********/
+
+/*******conifg模块*********/
+#define CONFIG_DEBUG()     BASE_DEBUG("config")
+#define CONFIG_INFO()      BASE_INFO("config")
+#define CONFIG_WARN()      BASE_WARN("config")
+#define CONFIG_ERROR()     BASE_ERROR("config")
+#define CONFIG_FATAL()     BASE_FATAL("config")
+
+#define CONFIG_F_DEBUG(fmt, ...)     BASE_F_DEBUG("config", fmt, ##__VA_ARGS__)
+#define CONFIG_F_INFO(fmt, ...)      BASE_F_INFO("config", fmt, ##__VA_ARGS__)
+#define CONFIG_F_WARN(fmt, ...)      BASE_F_WARN("config", fmt, ##__VA_ARGS__)
+#define CONFIG_F_ERROR(fmt, ...)     BASE_F_ERROR("config", fmt, ##__VA_ARGS__)
+#define CONFIG_F_FATAL(fmt, ...)     BASE_F_FATAL("config", fmt, ##__VA_ARGS__)
+
+/*******conifg模块*********/

@@ -140,9 +140,9 @@ struct InteractionCaptureOptions
     static constexpr size_t kDefaultMaxTextBytes = 64*1024;//64K
     static constexpr size_t kDefaultMaxAttachmentBytes = 5*1024*1024;//5M
 
-    size_t max_text_bytes{kDefaultMaxTextBytes};
-    size_t max_hex_bytes{kDefaultMaxTextBytes};
-    size_t max_binary_attachment_bytes{kDefaultMaxAttachmentBytes};
+    size_t capture_max_text_bytes{kDefaultMaxTextBytes};
+    size_t capture_max_hex_bytes{kDefaultMaxTextBytes};
+    size_t capture_max_binary_attachment_bytes{kDefaultMaxAttachmentBytes};
 };
 
 /**

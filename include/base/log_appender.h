@@ -9,6 +9,7 @@
 #ifndef __LOG_APPENDER_H__
 #define __LOG_APPENDER_H__
 
+#include <atomic>
 #include <memory>
 #include <fstream>
 #include <mutex>
@@ -47,13 +48,13 @@ public:
      * @brief 设置日志格式器
      * @param[in] pfarmatter
      */
-    void setFomatter(LogFormatter::Ptr pfarmatter);
+    void setFormatter(LogFormatter::Ptr pfarmatter);
 
     /**
      * @brief 设置日志格式器
      * @param[in] pattern 模版字符串
      */
-    void setFomatter(const std::string & pattern);
+    void setFormatter(const std::string & pattern);
 
     /**
      * @brief 获取日志格式器
@@ -61,13 +62,25 @@ public:
      */
     LogFormatter::Ptr getFormatter() const;
 
+    /**
+     * @brief 设置日志输出器级别
+     * @param level
+     */
+    void setLevel(const LogLevel::Level level) noexcept { level_.store(level); }
+
+    /**
+     * @brief 获取日志输出器级别
+     * @return LogLevel::Level
+     */
+    LogLevel::Level getLevel() const noexcept { return static_cast<LogLevel::Level>(level_.load()); }
+
 protected:
     /// @brief 日志输出器级别
-    LogLevel::Level _level;
+    std::atomic_int32_t level_;
     /// @brief 日志格式器
-    LogFormatter::Ptr _formatter;
+    LogFormatter::Ptr formatter_;
     /// @brief 日志格式器锁(LogFormatter 内部不支持增删改查,因此内部不用锁,锁最外层即可)
-    mutable std::mutex _formatterMtx;
+    mutable std::mutex mtx_;
 };
 
 /**
@@ -85,6 +98,10 @@ public:
 
 /**
  * @brief 文件输出
+    TODO 重点改造:
+    1. 分级落盘策略
+    2. 文件限制大小 + 压缩 + 轮转
+    3. 异步日志刷盘
  */
 class FileAppender: public LogAppender
 {
@@ -95,23 +112,24 @@ public:
 
     ~FileAppender() = default;
 
-    bool reopen();
+    bool openForAppend(std::string* error_message = nullptr);
 
     void log(LogAttr::Ptr pattr) override;
 
-    void setWriteMaxSize(uint64_t max_size) { _writeMaxSize = max_size; }
+    void setFlushThreshold(uint64_t max_size) { flush_threshold_ = max_size; }
+    uint64_t flushThreshold() const noexcept { return flush_threshold_; }
 
 public:
-    static constexpr uint64_t kWriteMaxSize = 1*1024*1024;
+    static constexpr uint64_t kDefaultFlushThreshold = 1*1024*1024;
 
 private:
     /// @brief 输出文件路径
-    std::string _fileName;
+    std::string file_name_;
     /// @brief  文件流句柄
-    std::fstream _f;
+    std::ofstream file_;
     /// @brief 当前一次性写入的大小
-    uint64_t _curSize;
-    uint64_t _writeMaxSize;
+    uint64_t cur_size_{0};
+    uint64_t flush_threshold_{kDefaultFlushThreshold};
 };
 
 //TODO: 网络传输(分布式)

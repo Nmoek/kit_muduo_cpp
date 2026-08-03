@@ -141,7 +141,7 @@ void ProtocolInteractionPublisher::workLoop()
     }
 
     // 带超时回收逻辑
-    drainQueueTimeOut(kit_muduo::TimeStamp::NowMs() + config_.stop_drain_timeout);
+    drainQueueTimeOut(kit_muduo::TimeStamp::NowMs() + config_.stop_drain_timeout_ms);
 
 }
 

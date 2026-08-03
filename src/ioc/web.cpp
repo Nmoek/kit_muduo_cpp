@@ -17,13 +17,14 @@
 #include "web/web_user.h"
 #include "web/web_protocol_interaction.h"
 
-
 using namespace kit_muduo;
 using namespace kit_muduo::http;
 using namespace kit_domain;
 
 namespace kit_app {
+
 std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
+    const WebServerStartupConfig& startup_config,
     ProjectHandler *projHdl,
     ProtocolHandler *protocHdl,
     AuthHandler *authHdl,
@@ -31,11 +32,19 @@ std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop 
     ProtocolInteractionHandler *interHdl)
 {
 
-    // TODO 使用配置文件
-    auto server = std::make_shared<HttpServer>(loop, InetAddress(5555), "http_server", true, TcpServer::Option::KReusePort);
-    server->setThreadNum(4);
+    auto server = std::make_shared<HttpServer>(loop,
+        InetAddress(startup_config.port, startup_config.host),
+        "http_server",
+        true,
+        TcpServer::Option::KReusePort);
 
-    auto static_file_svl = std::make_shared<StaticFileServlet>();
+    // IO线程组配置
+    server->setThreadNum(startup_config.io_threads);
+
+    // 业务线程池配置
+    server->setBusinessThreadPoolConfig(startup_config.business_thread_pool);
+
+    auto static_file_svl = std::make_shared<StaticFileServlet>(startup_config.static_root);
     //静态资源处理
     server->Get("/html/*.html", static_file_svl);
     server->Get("/css/*.css", static_file_svl);

@@ -9,7 +9,12 @@
 #ifndef __KIT_IOC_WEB_H__
 #define __KIT_IOC_WEB_H__
 
+#include "net/http/http_server.h"
+
+#include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <string>
 
 namespace kit_muduo {
 class EventLoop;
@@ -31,7 +36,17 @@ class ProtocolInteractionHandler;
 
 namespace kit_app {
 
+struct WebServerStartupConfig
+{
+    std::string host;
+    uint16_t port{0};
+    std::filesystem::path static_root;
+    int32_t io_threads{0};
+    kit_muduo::http::BusinessThreadPoolConfig business_thread_pool;
+};
+
 std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
+    const WebServerStartupConfig& startup_config,
     kit_domain::ProjectHandler *projHdl,
     kit_domain::ProtocolHandler *protocHdl,
     kit_domain::AuthHandler *authHdl,

@@ -139,7 +139,7 @@ struct CustomTcpInteractionPipeline
             },
             ProtocolInteractionPublisherConfig{
                 .queue_capacity = 16,
-                .stop_drain_timeout = 1000,
+                .stop_drain_timeout_ms = 1000,
                 .capture_options = InteractionCaptureOptions{},
             })
     {

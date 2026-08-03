@@ -19,101 +19,128 @@ namespace kit_muduo
 /***********LogAppender************/
 
 LogAppender::LogAppender()
-    :_level(LogLevel::DEBUG)
-    ,_formatter(std::make_shared<LogFormatter>())
+    :level_(LogLevel::DEBUG)
+    ,formatter_(std::make_shared<LogFormatter>())
 {
 
 }
 
 LogAppender::LogAppender(LogLevel::Level level, LogFormatter::Ptr formatter)
-    :_level(level)
-    ,_formatter(formatter)
+    :level_(level)
+    ,formatter_(formatter)
 {
 
 }
 
 void LogAppender::append(LogAttr::Ptr pattr)
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
+    std::unique_lock<std::mutex> lock(mtx_);
     log(pattr);
 }
 
-void LogAppender::setFomatter(LogFormatter::Ptr pfarmatter)
+void LogAppender::setFormatter(LogFormatter::Ptr pfarmatter)
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    _formatter = pfarmatter;
+    std::unique_lock<std::mutex> lock(mtx_);
+    formatter_ = pfarmatter;
 }
 
-void LogAppender::setFomatter(const std::string & pattern)
+void LogAppender::setFormatter(const std::string & pattern)
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    _formatter = std::make_shared<LogFormatter>(pattern);
+    std::unique_lock<std::mutex> lock(mtx_);
+    formatter_ = std::make_shared<LogFormatter>(pattern);
 }
 
 
 LogFormatter::Ptr LogAppender::getFormatter() const
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    return _formatter;
+    std::unique_lock<std::mutex> lock(mtx_);
+    return formatter_;
 }
+
+
 
 /*********ConsoleAppender***********/
 
 void ConsoleAppender::log(LogAttr::Ptr pattr)
 {
 
-    if(pattr->getLevel() < _level)
+    if(pattr->getLevel() < level_)
         return;
 
-    if(_formatter)
-        std::cout << _formatter->format(pattr);
+    if(formatter_)
+        std::cout << formatter_->format(pattr);
 }
 
 /*********FileAppender***********/
-FileAppender::FileAppender(const std::string &fileName)
-    :_fileName(fileName)
-    ,_curSize(0)
-    ,_writeMaxSize(kWriteMaxSize)
+FileAppender::FileAppender(const std::string &file_name)
+    :file_name_(file_name)
+    ,cur_size_(0)
+    ,flush_threshold_(kDefaultFlushThreshold)
 {
 
 }
 
-bool FileAppender::reopen()
-{
-    if(_f.is_open())
-        _f.close();
 
-    _f.open(_fileName, std::ios::app | std::ios::binary);
-    if(!_f.is_open())
+
+bool FileAppender::openForAppend(std::string* error_message)
+{
+    if(file_name_.empty())
     {
-        std::cerr << _fileName
-            << ", open error: "
-            << errno << ": " << ::strerror(errno) << std::endl;
+        if(error_message)
+        {
+            *error_message = "file path empty";
+        }
         return false;
     }
+    if(file_.is_open())
+    {
+        file_.close();
+    }
+    file_.clear();
+
+    file_.open(file_name_, std::ios::out | std::ios::app | std::ios::binary);
+
+    if(!file_.is_open())
+    {
+        if(error_message)
+        {
+            *error_message ="cannot open file: " + file_name_
+                + ", errno=" + std::to_string(errno)
+                + ", message=" + std::strerror(errno);
+        }
+        return false;
+    }
+
+    cur_size_ = 0;
     return true;
 }
 
 
-void FileAppender::log(LogAttr::Ptr pattr)
+void FileAppender::log(LogAttr::Ptr attr)
 {
-    if(pattr->getLevel() < _level)
-        return;
-
-    if(_f.is_open() || reopen())
+    
+    if(!attr || attr->getLevel() < level_)
     {
-        if(_formatter)
-        {
-            const std::string& log_data = _formatter->format(pattr);
-            _curSize += log_data.size();
-            _f << log_data;
-            if(_curSize >= _writeMaxSize)
-            {
-                _f.flush();
-                _curSize = 0;
-            }
-        }
+        return;
     }
 
+    // 保留重打开机制
+    if(!file_.is_open() && !openForAppend())
+    {
+        return;
+    }
+
+    if(formatter_)
+    {
+        const std::string& log_data = formatter_->format(attr);
+        cur_size_ += log_data.size();
+        file_ << log_data;
+        if(cur_size_ >= flush_threshold_)
+        {
+            file_.flush();
+            cur_size_ = 0;
+        }
+    }
 }
+
 } //namespace kit

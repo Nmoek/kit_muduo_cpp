@@ -14,6 +14,8 @@
 #include <vector>
 
 #include "nlohmann/json.hpp"
+#include "yaml-cpp/node/parse.h"
+#include "yaml-cpp/yaml.h"
 
 namespace kit_muduo {
 

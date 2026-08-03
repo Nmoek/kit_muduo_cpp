@@ -1,0 +1,11 @@
+prefix=/home/kewin/yaml-cpp/build/install
+exec_prefix=${prefix}
+includedir=/home/kewin/yaml-cpp/build/install/include
+libdir=/home/kewin/yaml-cpp/build/install/lib
+
+Name: Yaml-cpp
+Description: A YAML parser and emitter for C++
+Version: 0.9.0
+Requires:
+Libs: -L${libdir} -lyaml-cpp
+Cflags: -I${includedir}

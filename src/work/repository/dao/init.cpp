@@ -68,12 +68,14 @@ static std::vector<std::vector<const char*>> index_sqls{
 
 };
 
+
+
 }
 
-void EnsureSqliteIndexes()
+void EnsureSqliteIndexes(std::string path)
 {
     sqlite3 *raw_db = nullptr;
-    const int open_rc = sqlite3_open("kit.sqlite", &raw_db);
+    const int open_rc = sqlite3_open(path.c_str(), &raw_db);
     if(open_rc != SQLITE_OK)
     {
         std::string msg = raw_db ? sqlite3_errmsg(raw_db) : "unknown sqlite open error";
@@ -105,10 +107,10 @@ void EnsureSqliteIndexes()
 }
 
 // 注意: 该接口暂时弃用
-std::shared_ptr<SqliteOrmType> InitSqliteDb()
+std::shared_ptr<SqliteOrmType> InitSqliteDb(
+    const SqliteOrmPoolConfig& sqlite_pool_config)
 {
-    // TODO 配置数据库路径
-    auto db = std::make_shared<SqliteOrmType>(SQLITE_ORM_TABLE_INIT_DEF());
+    auto db = std::make_shared<SqliteOrmType>(SQLITE_ORM_TABLE_INIT_DEF(sqlite_pool_config.path));
 
     db->pragma.journal_mode(sqlite_orm::journal_mode::WAL);
     auto journal_mode = db->pragma.get_pragma<std::string>("journal_mode");
@@ -122,7 +124,7 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
     {
         DAODB_INFO() << "table[" << t.first << "]:" << t.second << std::endl;
     }
-    EnsureSqliteIndexes();
+    EnsureSqliteIndexes(sqlite_pool_config.path);
 
     DAODB_INFO() << "sqlite3 version: " << db->libversion() << std::endl;;
     
@@ -151,9 +153,15 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
     return db;
 }
 
-std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(SqliteOrmPoolConfig config)
+std::shared_ptr<SqliteOrmType> InitSqliteDb()
 {
-    return std::make_shared<SqliteOrmPool>(config);
+    return InitSqliteDb(SqliteOrmPoolConfig{});
+}
+
+std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(
+    const SqliteOrmPoolConfig& sqlite_pool_config)
+{
+    return std::make_shared<SqliteOrmPool>(sqlite_pool_config);
 }
 
 }   // namespace kit_dao

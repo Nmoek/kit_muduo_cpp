@@ -147,6 +147,12 @@ struct InteractionLiveConfig
     static constexpr size_t kDefaultPendingLiveMaxRecords = 64;
     static constexpr size_t kDefaultPendingLiveMaxBytes = 64 * 1024 * 1024; // 64M
 
+    /// @brief 交互窗口队列容量 默认20
+    size_t queue_capacity{20};
+    /// @brief 工作线程最晚停止超时
+    int64_t stop_drain_timeout_ms{300};
+
+    
     /// @brief catchup阶段批次打包 每批次bytes大小上限 默认5M
     size_t catch_up_batch_bytes{kDefaultCatchUpBatchBytes};
     /// @brief catchup阶段 live数据缓存队列数量上限

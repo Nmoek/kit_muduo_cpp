@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 namespace kit_muduo::http {
 
@@ -77,6 +78,67 @@ bool ContainsGlobSegment(const std::string &pattern)
         start = slash + 1;
     }
     return false;
+}
+
+bool IsPathWithinRoot(const std::filesystem::path& candidate, const std::filesystem::path& root)
+{
+    auto candidate_it = candidate.begin();
+    auto root_it = root.begin();
+
+    for(; root_it != root.end(); ++root_it, ++candidate_it)
+    {
+        if(candidate_it == candidate.end() || *candidate_it != *root_it)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::optional<std::filesystem::path> ResolveStaticFile(
+    const std::filesystem::path& root,
+    const std::string& raw_http_path)
+{
+    // 校验 path 路径本身是否含有非法转义字符
+    const auto decoded = PercentDecodeHttpPathOnce(raw_http_path);
+    if(!decoded || decoded->empty()
+        || decoded->front() != '/'
+        || decoded->find('\0') != std::string::npos)
+    {
+        HTTP_F_ERROR("http raw path percent decode error: %s\n", raw_http_path.c_str());
+        return std::nullopt;
+    }
+
+    // HTTP path 必须以 / 开头；去掉它后才是可拼接的相对路径。
+    std::filesystem::path relative = decoded->substr(1);
+
+    if(relative.empty() || relative.is_absolute())
+    {
+        return std::nullopt;
+    }
+
+    // root 自身也不能包含 '.'/ '..'
+    for(const auto& part : relative)
+    {
+        if(part == "." || part == "..")
+        {
+            HTTP_F_WARN("http path disallowed .. . \n");
+            return std::nullopt;
+        }
+    }
+
+    // root / relative 拼接后不能包含 '.'/ '..'
+    std::error_code ec;
+    const auto candidate = std::filesystem::weakly_canonical(root / relative, ec);
+    if(ec || !IsPathWithinRoot(candidate, root)
+        || !std::filesystem::is_regular_file(candidate, ec)
+        || ec)
+    {
+        return std::nullopt;
+    }
+
+    return candidate;
 }
 
 } // namespace
@@ -388,9 +450,19 @@ void ServiceUnavailable503Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr 
     resp->appendBodyData(body);
 }
 
-StaticFileServlet::StaticFileServlet()
+StaticFileServlet::StaticFileServlet(std::filesystem::path static_root_path)
     :HttpServlet("FileServlet", "kit_server")
-{}
+    ,static_root_(std::move(static_root_path))
+{
+    std::error_code ec;
+
+    static_root_ = std::filesystem::weakly_canonical(std::filesystem::absolute(static_root_, ec), ec);
+
+    if(ec || !std::filesystem::is_directory(static_root_, ec) || ec)
+    {
+        throw std::invalid_argument("static root must be an accessible directory");
+    }
+}
 
 void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
@@ -400,11 +472,19 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
 
-    const std::string &path = req->path();
-    // 文件名全称
-    auto pos = path.find_last_of("/");
-    std::string file_name = path.substr(pos + 1);
-    const std::string target_path = "web/" + path;
+    // 将路径进行拼接 并验证合法性
+    // 禁止路径穿越 
+    // 类似： /a/b/../c   /a/./../c
+    const auto candidate = ResolveStaticFile(static_root_, ctx->request()->path());
+    if(!candidate)
+    {
+        resp->setStateCode(StateCode::k404NotFound);
+        resp->resetBodyData();
+        return;
+    }
+    const std::string &target_path = candidate->string();
+
+
     auto meta = MakeContentMetaFromMediaType(GuessMediaTypeFromExtension(target_path));
     if(IsTextLikeContent(meta))
     {
@@ -417,7 +497,8 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     if(!tmp_f.is_open())
     {
         HTTP_F_ERROR("file %s open error! %d:%s \n", target_path.c_str(), errno, strerror(errno));
-        resp->setStateCode(StateCode::k500InternalServerError);
+        resp->setStateCode(StateCode::k404NotFound);
+        resp->resetBodyData();
         return;
     }
     std::string data;
@@ -428,6 +509,14 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     data.resize(file_size);
 
     tmp_f.read((char*)data.data(), file_size);
+    if(tmp_f.bad())
+    {
+        HTTP_F_ERROR("file %s read error! %d:%s \n", target_path.c_str(), errno, strerror(errno));
+        resp->setStateCode(StateCode::k500InternalServerError);
+        resp->resetBodyData();
+        return;
+    }
+
     resp->appendBodyData(data);
 
 }

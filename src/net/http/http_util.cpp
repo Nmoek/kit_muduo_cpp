@@ -31,7 +31,25 @@ bool EqualIgnoreCase(const std::string &lhs, const std::string &rhs)
             });
 }
 
+inline bool IsHexDigit(char value)
+{
+    return ('0' <= value && value <= '9')
+        || ('a' <= value && value <= 'f')
+        || ('A' <= value && value <= 'F');
 }
+
+inline uint8_t HexValue(char value)
+{
+    if('0' <= value && value <= '9')
+        return static_cast<uint8_t>(value - '0');
+
+    if('a' <= value && value <= 'f')
+        return static_cast<uint8_t>(value - 'a' + 10);
+
+    return static_cast<uint8_t>(value - 'A' + 10);
+}
+
+} // namespace
 
 std::unordered_map<int32_t, std::string> StateCode::s_m_codeMessageMap{
     {kUnknow, ""},
@@ -178,6 +196,38 @@ std::string NormalizeHttpPath(const std::string &path)
     return normalized;
 }
 
+std::optional<std::string> PercentDecodeHttpPathOnce(const std::string& raw_path)
+{
+    std::string decoded;
+    decoded.reserve(raw_path.size());
 
+    for(size_t index = 0; index < raw_path.size(); ++index)
+    {
+        const char current = raw_path[index];
+
+        if(current != '%')
+        {
+            // URL path 中 '+' 是合法文件名字符，不能按 query 规则转为空格。
+            decoded.push_back(current);
+            continue;
+        }
+
+        if(index + 2 >= raw_path.size()
+            || !IsHexDigit(raw_path[index + 1])
+            || !IsHexDigit(raw_path[index + 2]))
+        {
+            return std::nullopt;
+        }
+
+        const auto byte = static_cast<char>(
+            (HexValue(raw_path[index + 1]) << 4)
+            | HexValue(raw_path[index + 2]));
+
+        decoded.push_back(byte);
+        index += 2;
+    }
+
+    return decoded;
+}
 
 }

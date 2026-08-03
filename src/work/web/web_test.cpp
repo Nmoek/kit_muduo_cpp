@@ -24,8 +24,9 @@ void TestHandler::RegisterRoutes(std::shared_ptr<kit_muduo::http::HttpServer> se
     // 路径 -->>  执行方法
     // 路径模版 --> 执行方法 + 模版匹配方法
     // 默认 把路径加入到精准匹配中
-    server->Get("/html/login.html", std::make_shared<StaticFileServlet>());
-    server->Get("/css/login.css", std::make_shared<StaticFileServlet>());
-    server->Get("/js/login.js", std::make_shared<StaticFileServlet>());
+    const std::filesystem::path static_root{"web/"};
+    server->Get("/html/login.html", std::make_shared<StaticFileServlet>(static_root));
+    server->Get("/css/login.css", std::make_shared<StaticFileServlet>(static_root));
+    server->Get("/js/login.js", std::make_shared<StaticFileServlet>(static_root));
 }
 } // namespace kit_app

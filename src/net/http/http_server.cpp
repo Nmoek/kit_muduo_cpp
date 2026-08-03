@@ -51,9 +51,9 @@ void HttpServer::start()
     if(_isPool)
     {
         _businessThreadPool.setMode(ThreadPool::CACHE_MOD);
-        _businessThreadPool.setThreadMaxThreshHold(_businessThreadPoolConfig.threadMaxThreshold);
-        _businessThreadPool.setTaskQueMaxThreshHold(_businessThreadPoolConfig.taskQueueMaxThreshold);
-        _businessThreadPool.setThreadMaxIdleInterval(_businessThreadPoolConfig.threadMaxIdleInterval);
+        _businessThreadPool.setThreadMaxThreshHold(_businessThreadPoolConfig.max_threads);
+        _businessThreadPool.setTaskQueMaxThreshHold(_businessThreadPoolConfig.max_task_queue);
+        _businessThreadPool.setThreadMaxIdleInterval(_businessThreadPoolConfig.thread_idle_seconds);
         _businessThreadPool.start();
     }
 
@@ -418,7 +418,7 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
     if(_isPool)
     {
-        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, work_func, conn, ctx, _dispatch);
+        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submit_timeout_ms, work_func, conn, ctx, _dispatch);
 
         if(!submit_result.ok())
         {

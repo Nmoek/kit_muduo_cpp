@@ -80,7 +80,7 @@ private:
 kit_dao::SqliteOrmPoolConfig MakePoolConfig()
 {
     kit_dao::SqliteOrmPoolConfig config;
-    config.capacity = 1;
+    config.pool_capacity = 1;
     config.busy_timeout_ms = 1000;
     config.synchronous = 1;
     config.sync_schema = true;
