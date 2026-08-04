@@ -183,6 +183,47 @@ void PrepareIfPresent(
         EnvContext(name, path));
 }
 
+/**
+ * @brief 判断路径指向是否存在且是否是文件类型
+ * @param path 
+ * @return true 
+ * @return false 
+ */
+inline bool IsExistsConfigPath(std::filesystem::path path)
+{
+    const std::string& file_path{path.string()};
+    std::error_code error;
+    const bool exists = std::filesystem::exists(path, error);
+    if(error)
+    {
+        throw kit_muduo::ConfigError(kit_muduo::ConfigContext{
+            .source = file_path,
+        }, "cannot inspect config file: " + error.message());
+    }
+
+    if(exists)
+    {
+        const bool regular_file = std::filesystem::is_regular_file(path, error);
+        if(error)
+        {
+            throw kit_muduo::ConfigError(kit_muduo::ConfigContext{
+                .source = file_path,
+            }, "cannot inspect config file type: " + error.message());
+        }
+        if(!regular_file)
+        {
+            throw kit_muduo::ConfigError(kit_muduo::ConfigContext{
+                .source = file_path,
+            }, "config file path must refer to a regular file");
+        }
+
+        return true;
+    }
+
+    return false;
+
+}
+
 } // namespace app_config_detail
 
 void ValidateAppConfigVars(const AppConfigVars& vars);
@@ -230,9 +271,16 @@ void InitAppConfig(
     // 配置文件加载
     if(input.yaml_file.has_value())
     {
-        WriteDefaultAppConfigFileIfMissing(*input.yaml_file,
-            ConfigType::ToString(config.buildNodeTree()));
-        config.load(*input.yaml_file, kit_muduo::ConfigLoadPolicy::kReject);
+        // 指向文件不存在 创建并写入
+        if(!app_config_detail::IsExistsConfigPath(*input.yaml_file))
+        {
+            WriteDefaultAppConfigFileIfMissing(*input.yaml_file,
+                ConfigType::ToString(config.buildNodeTree()));
+        }
+        else // 存在则从文件加载
+        {
+            config.load(*input.yaml_file, kit_muduo::ConfigLoadPolicy::kReject);
+        }
     }
 
     // 环境变量加载

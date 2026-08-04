@@ -23,6 +23,9 @@
 !README.md
 !tests/benchmarks/SQLite历史存储基准测试汇总报告.md
 
+*env
+!.env.example
+
 # 基准测试报告和原始运行数据只保留在本地
 tests/benchmarks/results/
 

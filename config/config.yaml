@@ -1,0 +1,73 @@
+system:
+  business:
+    max_task_queue: 2147483647
+    max_threads: 100
+    submit_timeout_ms: 300
+    thread_idle_seconds: 30
+  http:
+    host: 0.0.0.0
+    io_threads: 4
+    port: 5555
+    static_root_path: web
+  logs:
+    - name: root
+      level: DEBUG
+      appenders:
+        - type: stdout
+          level: DEBUG
+      formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
+    - name: base
+      level: INFO
+      appenders:
+        - type: stdout
+          level: WARN
+        - type: file
+          level: INFO
+          file_path: log/base.log
+          flush_threshold: 1024
+      formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
+    - name: net
+      level: INFO
+      appenders:
+        - type: stdout
+          level: WARN
+        - type: file
+          level: INFO
+          file_path: log/net.log
+          flush_threshold: 1024
+      formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
+    - name: web
+      level: DEBUG
+      appenders:
+        - type: stdout
+          level: DEBUG
+        - type: file
+          level: DEBUG
+          file_path: log/web.log
+          flush_threshold: 1024
+      formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
+    - name: domain
+      level: INFO
+      appenders:
+        - type: stdout
+          level: INFO
+        - type: file
+          level: INFO
+          file_path: log/domain.log
+          flush_threshold: 1024
+      formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
+  sqlite_db:
+    busy_timeout_ms: 3000
+    path: kit.sqlite
+    pool_capacity: 20
+    sync_schema: true
+    synchronous: 1
+work:
+  interaction:
+    capture_max_binary_attachment_bytes: 5242880
+    capture_max_hex_bytes: 65536
+    capture_max_text_bytes: 65536
+    queue_capacity: 4096
+    stop_drain_timeout_ms: 1000
+  runtime:
+    loop_capacity: 100

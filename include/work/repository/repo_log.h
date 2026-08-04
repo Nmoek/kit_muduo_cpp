@@ -8,32 +8,30 @@
  */
 
 #include "base/log.h"
-static auto g_repo_logger = KIT_LOGGER("repository");
-
 
 /*********流式输出**********/
 #define REPO_DEBUG(module) \
-    KIT_DEBUG(g_repo_logger, module)
+    KIT_DEBUG(KIT_LOGGER("repository"), module)
 #define REPO_INFO(module) \
-    KIT_INFO(g_repo_logger, module)
+    KIT_INFO(KIT_LOGGER("repository"), module)
 #define REPO_WARN(module) \
-    KIT_WARN(g_repo_logger, module)
+    KIT_WARN(KIT_LOGGER("repository"), module)
 #define REPO_ERROR(module) \
-    KIT_ERROR(g_repo_logger, module)
+    KIT_ERROR(KIT_LOGGER("repository"), module)
 #define REPO_FATAL(module) \
-    KIT_FATAL(g_repo_logger, module)
+    KIT_FATAL(KIT_LOGGER("repository"), module)
 
 /**********变参输出***********/
 #define REPO_F_DEBUG(module, fmt, ...) \
-    KIT_FMT_DEBUG(g_repo_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_DEBUG(KIT_LOGGER("repository"), module, fmt, ##__VA_ARGS__)
 #define REPO_F_INFO(module, fmt, ...) \
-    KIT_FMT_INFO(g_repo_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_INFO(KIT_LOGGER("repository"), module, fmt, ##__VA_ARGS__)
 #define REPO_F_WARN(module, fmt, ...) \
-    KIT_FMT_WARN(g_repo_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_WARN(KIT_LOGGER("repository"), module, fmt, ##__VA_ARGS__)
 #define REPO_F_ERROR(module, fmt, ...) \
-    KIT_FMT_ERROR(g_repo_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_ERROR(KIT_LOGGER("repository"), module, fmt, ##__VA_ARGS__)
 #define REPO_F_FATAL(module, fmt, ...) \
-    KIT_FMT_FATAL(g_repo_logger, module, fmt, ##__VA_ARGS__)
+    KIT_FMT_FATAL(KIT_LOGGER("repository"), module, fmt, ##__VA_ARGS__)
 
 /*******project模块*********/
 #define REPOPJ_DEBUG()     REPO_DEBUG("project")

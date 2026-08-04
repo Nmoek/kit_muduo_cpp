@@ -281,6 +281,8 @@ void LogManager::applyConfig(const LogConfig &config)
 
     std::unordered_map<std::string, PreparedLogger> prepared;
     size_t i = 0;
+
+    // 统一创建输出器
     for(auto &config : config.loggers)
     {
         PreparedLogger item;
@@ -299,6 +301,7 @@ void LogManager::applyConfig(const LogConfig &config)
     root_logger_->setLevel(root_item.config.level);
     root_logger_->ReplaceAppenders(std::move(root_item.appenders));
 
+    // 输出器创建成功后批量替换
     for(auto &[name, item] : prepared)
     {
         if("root" == name)
@@ -317,6 +320,7 @@ void LogManager::applyConfig(const LogConfig &config)
     {
         if(name != "root" && prepared.find(name) == prepared.end())
         {
+            std::cerr << "============ not define: " << name << "==================\n";
             logger->UseRootFallback(root_logger_);
         }
     }

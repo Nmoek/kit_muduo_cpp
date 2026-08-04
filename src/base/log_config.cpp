@@ -27,6 +27,8 @@ void ValidateFormatter(const std::string& pattern)
 
 LogConfig DefaultLogConfig()
 {
+    // TODO 忽然发现日志器太零散了需要整理一下
+    // root
     LoggerConfig root;
     root.name = "root";
     root.level = LogLevel::DEBUG;
@@ -35,7 +37,73 @@ LogConfig DefaultLogConfig()
         .type = LogAppenderType::kStdout,
         .level = LogLevel::DEBUG,
     });
-    return LogConfig{{std::move(root)}};
+    // base
+    LoggerConfig base;
+    base.name = "base";
+    base.level = LogLevel::INFO;
+    base.formatter = kLogFormatDefaultPattern;
+    base.appenders.push_back({
+        .type = LogAppenderType::kStdout,
+        .level = LogLevel::WARN,
+    });
+    base.appenders.push_back({
+        .type = LogAppenderType::kFile,
+        .level = LogLevel::INFO,
+        .file_path = "log/base.log",
+        .flush_threshold = 1024
+    });
+    // net
+    LoggerConfig net;
+    net.name = "net";
+    net.level = LogLevel::INFO;
+    net.formatter = kLogFormatDefaultPattern;
+    net.appenders.push_back({
+        .type = LogAppenderType::kStdout,
+        .level = LogLevel::WARN,
+    });
+    net.appenders.push_back({
+        .type = LogAppenderType::kFile,
+        .level = LogLevel::INFO,
+        .file_path = "log/net.log",
+        .flush_threshold = 1024
+    });
+    // web
+    LoggerConfig web;
+    web.name = "web";
+    web.level = LogLevel::DEBUG;
+    web.formatter = kLogFormatDefaultPattern;
+    web.appenders.push_back({
+        .type = LogAppenderType::kStdout,
+        .level = LogLevel::DEBUG,
+    });
+    web.appenders.push_back({
+        .type = LogAppenderType::kFile,
+        .level = LogLevel::DEBUG,
+        .file_path = "log/web.log",
+        .flush_threshold = 1024
+    });
+    // domain
+    LoggerConfig domain;
+    domain.name = "domain";
+    domain.level = LogLevel::INFO;
+    domain.formatter = kLogFormatDefaultPattern;
+    domain.appenders.push_back({
+        .type = LogAppenderType::kStdout,
+        .level = LogLevel::INFO,
+    });
+    domain.appenders.push_back({
+        .type = LogAppenderType::kFile,
+        .level = LogLevel::INFO,
+        .file_path = "log/domain.log",
+        .flush_threshold = 1024
+    });
+    return LogConfig{{
+        std::move(root),
+        std::move(base),
+        std::move(net),
+        std::move(web),
+        std::move(domain),
+    }};
 }
 
 void ValidateLogConfig(const LogConfig& config)

@@ -101,31 +101,6 @@ void WriteDefaultAppConfigFileIfMissing(
 {
     const std::filesystem::path path(file_path);
     std::error_code error;
-    const bool exists = std::filesystem::exists(path, error);
-    if(error)
-    {
-        throw ConfigError(ConfigContext{
-            .source = file_path,
-        }, "cannot inspect config file: " + error.message());
-    }
-
-    if(exists)
-    {
-        const bool regular_file = std::filesystem::is_regular_file(path, error);
-        if(error)
-        {
-            throw ConfigError(ConfigContext{
-                .source = file_path,
-            }, "cannot inspect config file type: " + error.message());
-        }
-        if(!regular_file)
-        {
-            throw ConfigError(ConfigContext{
-                .source = file_path,
-            }, "config file path must refer to a regular file");
-        }
-        return;
-    }
 
     const std::filesystem::path parent = path.parent_path();
     if(!parent.empty())

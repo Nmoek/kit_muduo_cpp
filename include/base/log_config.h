@@ -202,14 +202,18 @@ struct ConfigCodec<LogAppenderConfig, Policy>
             Policy::Put(node, "formatter",
                 ConfigCodec<std::string, Policy>::Encode(value.formatter));
         }
-        if(!value.file_path.empty())
+        if(LogAppenderType::kFile == value.type)
         {
-            Policy::Put(node, "file_path",
-                ConfigCodec<std::string, Policy>::Encode(value.file_path));
+            if(!value.file_path.empty())
+            {
+                Policy::Put(node, "file_path",
+                    ConfigCodec<std::string, Policy>::Encode(value.file_path));
+            }
+    
+            Policy::Put(node, "flush_threshold",
+                ConfigCodec<uint64_t, Policy>::Encode(value.flush_threshold));
         }
-  
-        Policy::Put(node, "flush_threshold",
-            ConfigCodec<uint64_t, Policy>::Encode(value.flush_threshold));
+
         return node;
     }
 };
