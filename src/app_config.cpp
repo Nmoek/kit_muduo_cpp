@@ -72,6 +72,7 @@ AppConfigLoadInput ReadProductionAppConfigLoadInput()
     for(const char* name : {
             "KIT_HTTP_HOST",
             "KIT_HTTP_PORT",
+            "KIT_HTTP_STATIC_ROOT_PATH",
             "KIT_DB_PATH",
             "KIT_DB_POOL_CAPACITY",
             "KIT_DB_BUSY_TIMEOUT_MS",

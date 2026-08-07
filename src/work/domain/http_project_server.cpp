@@ -53,106 +53,10 @@ namespace kit_domain {
 
 namespace {
 
-constexpr std::string_view kConfiguredMultipartBoundary = "KitProtocolFormBoundary";
 
-void AppendMultipartText(std::vector<uint8_t>& output, std::string_view value)
+
+bool IsContentTypeMatch(const ContentMeta& actual_meta, const ContentMeta& expected_meta)
 {
-    output.insert(output.end(), value.begin(), value.end());
-}
-
-std::string EscapeMultipartQuotedValue(const std::string& value)
-{
-    std::string escaped;
-    escaped.reserve(value.size());
-    for(const char ch : value)
-    {
-        if(ch == '\\' || ch == '"') escaped.push_back('\\');
-        if(ch != '\r' && ch != '\n') escaped.push_back(ch);
-    }
-    return escaped;
-}
-
-std::vector<uint8_t> DecodeBase64(const std::string& encoded)
-{
-    static constexpr char alphabet[] =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::vector<uint8_t> output;
-    int value = 0;
-    int bits = -8;
-    for(const unsigned char ch : encoded)
-    {
-        if(ch == '=') break;
-        const char* position = std::find(std::begin(alphabet), std::end(alphabet) - 1, ch);
-        if(position == std::end(alphabet) - 1) continue;
-        value = (value << 6) | static_cast<int>(position - alphabet);
-        bits += 6;
-        if(bits >= 0)
-        {
-            output.push_back(static_cast<uint8_t>((value >> bits) & 0xff));
-            bits -= 8;
-        }
-    }
-    return output;
-}
-
-bool EncodeConfiguredMultipart(const std::vector<char>& descriptor, std::vector<uint8_t>& output)
-{
-    if(descriptor.empty()) return false;
-    nljson root;
-    try {
-        root = nljson::parse(descriptor.begin(), descriptor.end());
-    } catch(const std::exception&) {
-        return false;
-    }
-    const auto fields_it = root.is_object() ? root.find("fields") : root.end();
-    if(fields_it == root.end() || !fields_it->is_array()) return false;
-
-    output.clear();
-    for(const auto& field : *fields_it)
-    {
-        if(!field.is_object() || field.value("enabled", true) == false) continue;
-        const std::string name = field.value("name", "");
-        if(name.empty()) continue;
-        const std::string type = field.value("type", "text");
-        AppendMultipartText(output, "--");
-        AppendMultipartText(output, kConfiguredMultipartBoundary);
-        AppendMultipartText(output, "\r\nContent-Disposition: form-data; name=\"");
-        AppendMultipartText(output, EscapeMultipartQuotedValue(name));
-        AppendMultipartText(output, "\"");
-
-        if(type == "file")
-        {
-            const std::string filename = field.value("filename", "upload.bin");
-            const std::string content_type = field.value("content_type", "application/octet-stream");
-            AppendMultipartText(output, "; filename=\"");
-            AppendMultipartText(output, EscapeMultipartQuotedValue(filename));
-            AppendMultipartText(output, "\"\r\nContent-Type: ");
-            AppendMultipartText(output, content_type.empty() ? "application/octet-stream" : content_type);
-            AppendMultipartText(output, "\r\n\r\n");
-            const auto data = DecodeBase64(field.value("data_base64", ""));
-            output.insert(output.end(), data.begin(), data.end());
-        }
-        else
-        {
-            AppendMultipartText(output, "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n");
-            AppendMultipartText(output, field.value("value", ""));
-        }
-        AppendMultipartText(output, "\r\n");
-    }
-    AppendMultipartText(output, "--");
-    AppendMultipartText(output, kConfiguredMultipartBoundary);
-    AppendMultipartText(output, "--\r\n");
-    return true;
-}
-
-ContentMeta ExpectedHttpContentMeta(kit_domain::ProtocolBodyType body_type)
-{
-    return ProtocolBodyTypeToHttpContentMeta(body_type);
-}
-
-bool IsContentTypeMatch(const ContentMeta& actual_meta, kit_domain::ProtocolBodyType expected_body_type)
-{
-    const auto expected_meta = ExpectedHttpContentMeta(expected_body_type);
     if(expected_meta.media_type.empty())
     {
         return false;
@@ -177,7 +81,7 @@ void AttachHttpRequestCaptureFromContext(
     obs.request.body_bytes = req->bodyData();
     obs.request.expect_body_type = expect_body_type;
     obs.request.content_meta = req->contentMeta();
-    obs.request.prefer_hex_text_for_binary = false;
+    obs.request.prefer_hex_text_for_binary = ProtocolBodyType::kBinary == expect_body_type;
 
 }
 
@@ -195,7 +99,7 @@ void AttachHttpResponseCaptureFromContext(
     obs.response.body_bytes = resp->bodyData();
     obs.response.expect_body_type = expect_body_type;
     obs.response.content_meta = resp->contentMeta();
-    obs.response.prefer_hex_text_for_binary = false;
+    obs.response.prefer_hex_text_for_binary = ProtocolBodyType::kBinary == expect_body_type;
 }
 
 }
@@ -923,10 +827,10 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
 #if 0
 
     try {
-        if(!req_body_view.body_data->empty())
+        if(!req_cfg_body_view.body_data->empty())
         {
             const ContentMeta& actual_meta = req->contentMeta();
-            const auto expected_meta = ExpectedHttpContentMeta(req_body_view.body_type);
+            const ContentMeta& expected_meta = req_cfg_body_view.meta;
             if(req->bodyData().empty())
             {
                 PJSERVER_F_ERROR("protocol body is empty! expect_media_type[%s]\n",
@@ -937,7 +841,7 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
                 return;
             }
 
-            if(!IsContentTypeMatch(actual_meta, req_body_view.body_type))
+            if(!IsContentTypeMatch(actual_meta, expected_meta))
             {
                 PJSERVER_F_ERROR("protocol content type mismatch! real[%s] - expect[%s] \n",
                     actual_meta.media_type.c_str(),
@@ -950,12 +854,12 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
             }
 
             // TODO 这里需要大量的模版方法模式
-            if(ProtocolBodyType::kJson == req_body_view.body_type)
+            if(ProtocolBodyType::kJson == req_cfg_body_view.body_type)
             {
                 PJSERVER_F_DEBUG("protocol body type is json! \n");
                 auto req_root = std::make_unique<nljson>(nljson::parse(req->bodyData()));
                 PJSERVER_DEBUG() << "req body: \n" << req_root->dump(4) << std::endl;
-                auto req_cfg_root = std::make_unique<nljson>(nljson::parse(*req_body_view.body_data));
+                auto req_cfg_root = std::make_unique<nljson>(nljson::parse(*req_cfg_body_view.body_data));
                 PJSERVER_DEBUG() << "req_cfg body: \n" << req_cfg_root->dump(4) << std::endl;
 
                 /************核心校验过程 DFS递归校验***********/
@@ -983,7 +887,7 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
                 http_item->getName().c_str(),
                 http_item->getProjectId(),
                 req->path().c_str(), 
-                ProtocolBodyTypeToString(req_body_view.body_type).c_str());
+                ProtocolBodyTypeToString(req_cfg_body_view.body_type).c_str());
         }
     } catch (const std::exception& e) {
 
@@ -1004,23 +908,12 @@ void HttpProjectServer::HttpProjectProcess(std::shared_ptr<HttpProtocolItem> htt
         http_item->getName().c_str()
     );
 
-    // 响应数据拷贝。Multiform 在配置中保存字段描述，运行时编码成带边界的标准报文。
+    // 响应直接使用协议项配置阶段生成的运行态 body/meta 快照。
     resp->setStateCode(resp_cfg.state_code);
     resp->setHeaders(resp_cfg.headers);
-    auto response_meta = ProtocolBodyTypeToHttpContentMeta(resp_cfg_body_view.body_type);
-    std::vector<uint8_t> response_body;
-    if(resp_cfg_body_view.body_type == ProtocolBodyType::kMultiForm
-        && EncodeConfiguredMultipart(*resp_cfg_body_view.body_data, response_body))
-    {
-        SetContentTypeParam(response_meta, "boundary", std::string(kConfiguredMultipartBoundary));
-        resp->setContentMeta(std::move(response_meta));
-        resp->setBodyData(std::move(response_body));
-    }
-    else
-    {
-        resp->setContentMeta(std::move(response_meta));
-        resp->setBodyData(*resp_cfg_body_view.body_data);
-    }
+
+    resp->setContentMeta(resp_cfg_body_view.meta);
+    resp->setBodyData(*resp_cfg_body_view.body_data);
 
     PJSERVER_DEBUG() << std::endl << resp->toString() << std::endl;
 

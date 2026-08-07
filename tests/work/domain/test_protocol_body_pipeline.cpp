@@ -5,6 +5,9 @@
 
 #include "domain/protocol.h"
 #include "domain/protocol_body_pipeline.h"
+#include "domain/protocol_item.h"
+#include "domain/custom_tcp_field_model.h"
+#include "net/http/multiform.h"
 
 #include "gtest/gtest.h"
 
@@ -268,24 +271,245 @@ TEST(TestProtocolBodyPipeline, TextBodyRejectsInvalidUtf8BySharedValidator)
 
 /**
  * 测试思路：
- * 1. binary body 是原始字节透传，不应该套用 JSON/XML/text 规则。
- * 2. 输入包含 NUL、非法 UTF-8 和不可打印字节的数据。
- * 3. pipeline 应返回成功，保证 TCP 二进制 payload 不被错误过滤。
+ * 1. Binary Body 的配置内容不再是裸字节，而是由 fields[].spec 与 fields[].value
+ *    组成的字段 JSON；pipeline 必须接受前端写出的完整嵌套结构。
+ * 2. spec.match 描述字段规格，value 描述实际响应字节。两者都采用 H 前缀十六进制
+ *    字符串，字段 role 固定为 common。
+ * 3. 该用例固定配置保存入口，避免 Binary policy 退回到只校验“任意内容都通过”。
  *
  * 示例：
  *
- *   body_type=binary + body_data=[0x00, 0xff, 0x01]
+ *   body_type=binary + {fields:[{spec:{type:UINT32,...}, value:"H05060708"}]}
  *        |
  *        v
  *   check ok
  */
-TEST(TestProtocolBodyPipeline, BinaryBodyAcceptsAnyBytes)
+TEST(TestProtocolBodyPipeline, BinaryBodyAcceptsNestedFieldValueConfiguration)
 {
-    const auto result = Check(
-        ProtocolBodyType::kBinary,
-        Body({'\0', static_cast<char>(0xFF), static_cast<char>(0xC3), static_cast<char>(0x28)}));
+    const nlohmann::json binary_config = {
+        {"fields", nlohmann::json::array({
+            {
+                {"spec", {
+                    {"byte_len", 4},
+                    {"byte_pos", 0},
+                    {"match", "HFFFFFFFF"},
+                    {"name", "响应标识"},
+                    {"role", "common"},
+                    {"type", "UINT32"},
+                }},
+                {"value", "H05060708"},
+            },
+        })},
+    };
+
+    const auto result = Check(ProtocolBodyType::kBinary, Body(binary_config.dump()));
 
     EXPECT_TRUE(result.ok) << result.message;
+}
+
+/**
+ * 测试思路：
+ * 1. BinaryBodyPolicy 的职责是提前阻止不满足嵌套 fields/spec 契约的内容进入运行态。
+ * 2. 只含 value 的旧扁平字段、以及不是 JSON 的��二进制内容都缺少 spec，必须失败。
+ * 3. 这样运行态 ProtocolItemBodyView 可以假设输入已经完成基础结构校验。
+ *
+ * 示例：
+ *
+ *   {"fields":[{"value":"H05060708"}]} -> check failed
+ *   [0x00, 0xFF]                         -> check failed
+ */
+TEST(TestProtocolBodyPipeline, BinaryBodyRejectsMissingSpecOrRawBytes)
+{
+    const nlohmann::json missing_spec = {
+        {"fields", nlohmann::json::array({{{"value", "H05060708"}}})},
+    };
+
+    const auto missing_spec_result = Check(
+        ProtocolBodyType::kBinary, Body(missing_spec.dump()));
+    EXPECT_FALSE(missing_spec_result.ok);
+    EXPECT_NE(missing_spec_result.message.find("binary body invalid"), std::string::npos);
+
+    const auto raw_bytes_result = Check(
+        ProtocolBodyType::kBinary,
+        Body({'\0', static_cast<char>(0xFF), static_cast<char>(0xC3), static_cast<char>(0x28)}));
+    EXPECT_FALSE(raw_bytes_result.ok);
+    EXPECT_NE(raw_bytes_result.message.find("binary body invalid"), std::string::npos);
+}
+
+/**
+ * 测试思路：
+ * 1. parser 需要把字段的定义与写入值分离保存：spec.match 不能覆盖外层 value。
+ * 2. 断言解析出的 map 以 byte_pos 为键、总字节数来自 byte_len，且默认采用大端。
+ * 3. 使用不同的 match/value 防止实现退化为只从 spec.match 读取响应字节。
+ *
+ * 示例：
+ *
+ *   spec.match=HFFFFFFFF, value=H05060708
+ *                 |
+ *                 v
+ *   map[0].spec.match == FFFFFFFF, map[0].bytes == 05 06 07 08
+ */
+TEST(TestProtocolBodyPipeline, BinaryFieldValueMapKeepsSpecAndOuterValueSeparate)
+{
+    const nlohmann::json binary_config = {
+        {"fields", nlohmann::json::array({
+            {
+                {"spec", {
+                    {"byte_len", 4},
+                    {"byte_pos", 0},
+                    {"match", "HFFFFFFFF"},
+                    {"name", "响应标识"},
+                    {"role", "common"},
+                    {"type", "UINT32"},
+                }},
+                {"value", "H05060708"},
+            },
+        })},
+    };
+
+    const auto [fields, total_len] = FieldValueMapParseFromJson(binary_config);
+
+    ASSERT_EQ(total_len, 4U);
+    ASSERT_EQ(fields.size(), 1U);
+    const auto field_it = fields.find(0U);
+    ASSERT_NE(field_it, fields.end());
+    EXPECT_EQ(field_it->second.spec.name, "响应标识");
+    EXPECT_EQ(field_it->second.spec.byte_len, 4U);
+    EXPECT_EQ(field_it->second.spec.byte_order, FieldByteOrder::kBigEndian);
+    ASSERT_TRUE(field_it->second.spec.match.has_value());
+    EXPECT_EQ(*field_it->second.spec.match,
+              (std::vector<uint8_t>{0xFF, 0xFF, 0xFF, 0xFF}));
+    EXPECT_EQ(field_it->second.bytes,
+              (std::vector<uint8_t>{0x05, 0x06, 0x07, 0x08}));
+}
+
+/**
+ * 测试思路：
+ * 1. 运行态响应 Body 要按字段 byte_pos 将外层 value 写入连续字节流。
+ * 2. 配置两个相邻字段，覆盖多字段排序和总长度计算；只断言四个配置字节，
+ *    防止旧实现预分配后 insert 导致末尾多出四个 0x00。
+ * 3. spec.match 故意与 value 不同，确认发送内容只由 value 决定。
+ *
+ * 示例：
+ *
+ *   pos=0, len=2, value=H0102  +  pos=2, len=2, value=H0304
+ *                                  |
+ *                                  v
+ *   runtime response = [01 02 03 04]，长度恰为 4
+ */
+TEST(TestProtocolBodyPipeline, BinaryBodyViewAssemblesExactlyConfiguredResponseBytes)
+{
+    const nlohmann::json binary_config = {
+        {"fields", nlohmann::json::array({
+            {
+                {"spec", {
+                    {"byte_len", 2},
+                    {"byte_pos", 0},
+                    {"match", "HFFFF"},
+                    {"name", "起始"},
+                    {"role", "common"},
+                    {"type", "UINT16"},
+                }},
+                {"value", "H0102"},
+            },
+            {
+                {"spec", {
+                    {"byte_len", 2},
+                    {"byte_pos", 2},
+                    {"match", "HFFFF"},
+                    {"name", "状态"},
+                    {"role", "common"},
+                    {"type", "UINT16"},
+                }},
+                {"value", "H0304"},
+            },
+        })},
+    };
+
+    ProtocolItemBodyView view(
+        ProtocolBodyType::kBinary,
+        Body(binary_config.dump()));
+
+    ASSERT_NE(view.body_data, nullptr);
+    EXPECT_EQ(view.body_type, ProtocolBodyType::kBinary);
+    EXPECT_EQ(view.meta.known_type, kit_muduo::http::KnownMediaType::kApplicationOctetStream);
+    EXPECT_EQ(view.meta.media_type, "application/octet-stream");
+    EXPECT_EQ(*view.body_data, Body({0x01, 0x02, 0x03, 0x04}));
+}
+
+/*
+测试思路：
+1. Body 转换可能在 JSON 解析或 multipart 构造阶段失败。
+2. setBody 必须先完成局部转换，再提交 body_type/meta/body_data，避免留下半更新快照。
+3. 旧快照保持完整，运行态更新失败时才能继续使用旧配置。
+
+示例：
+  old text body -> setBody(invalid binary) -> 仍保持 old text body
+*/
+TEST(TestProtocolBodyPipeline, BodyViewKeepsPreviousSnapshotWhenConversionFails)
+{
+    ProtocolItemBodyView view(ProtocolBodyType::kText, Body("previous"));
+
+    EXPECT_THROW(
+        view.setBody(ProtocolBodyType::kBinary, Body("not-json")),
+        std::exception);
+
+    EXPECT_EQ(view.body_type, ProtocolBodyType::kText);
+    EXPECT_EQ(view.meta.known_type, kit_muduo::http::KnownMediaType::kTextPlain);
+    EXPECT_EQ(view.meta.media_type, "text/plain");
+    ASSERT_NE(view.body_data, nullptr);
+    EXPECT_EQ(*view.body_data, Body("previous"));
+}
+
+/*
+测试思路：
+1. Multiform 配置在保存或运行态更新前必须先完成 JSON/字段结构校验。
+2. 合法 fields 描述允许进入运行态，非法 JSON 不应等到 HTTP 请求命中时才失败。
+*/
+TEST(TestProtocolBodyPipeline, MultiFormBodyValidatesConfiguredFields)
+{
+    const auto valid = Body(R"({"fields":[{"name":"message","type":"text","value":"ok"}]})");
+    const auto invalid = Body(R"({"fields":{}})");
+
+    EXPECT_TRUE(Check(ProtocolBodyType::kMultiForm, valid).ok);
+    const auto invalid_result = Check(ProtocolBodyType::kMultiForm, invalid);
+    EXPECT_FALSE(invalid_result.ok);
+    EXPECT_NE(invalid_result.message.find("multiform body invalid"), std::string::npos);
+}
+
+/*
+测试思路：
+1. ProtocolItemBodyView 初始化时应完成 Multiform 配置到 wire body 的转换，并缓存 ContentMeta。
+2. 响应侧不再由 HttpProjectServer 在命中请求时重复编码；这里直接回读缓存 body 验证 boundary 和字段。
+3. 空配置也应生成合法的 final boundary，而不是留下没有 boundary 的 multipart 响应。
+*/
+TEST(TestProtocolBodyPipeline, MultiFormBodyViewCachesWireBodyAndMetadata)
+{
+    constexpr const char *kBoundary = "KitProtocolFormBoundary";
+    const auto config = Body(
+        R"({"fields":[{"name":"message","type":"text","value":"hello"}]})");
+
+    ProtocolItemBodyView view(ProtocolBodyType::kMultiForm, config);
+    EXPECT_EQ(view.meta.known_type, kit_muduo::http::KnownMediaType::kMultipartFormData);
+    EXPECT_EQ(view.meta.media_type, "multipart/form-data");
+    const auto *boundary = kit_muduo::http::GetContentTypeParam(view.meta, "boundary");
+    ASSERT_NE(boundary, nullptr);
+    EXPECT_EQ(*boundary, kBoundary);
+
+    ASSERT_NE(view.body_data, nullptr);
+    const auto form = kit_muduo::http::MultiForm::parse(
+        reinterpret_cast<const uint8_t *>(view.body_data->data()),
+        view.body_data->size(),
+        kBoundary);
+    EXPECT_EQ(form.at("message").strs(), "hello");
+
+    ProtocolItemBodyView empty_view(ProtocolBodyType::kMultiForm, {});
+    ASSERT_NE(empty_view.body_data, nullptr);
+    const auto empty_form = kit_muduo::http::MultiForm::parse(
+        reinterpret_cast<const uint8_t *>(empty_view.body_data->data()),
+        empty_view.body_data->size(),
+        kBoundary);
+    EXPECT_TRUE(empty_form.empty());
 }
 
 /**

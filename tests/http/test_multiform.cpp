@@ -588,3 +588,75 @@ TEST(MultiFormTest, FormPartToContentViewPreservesBytesAndMeta)
     EXPECT_EQ(ResolveContentCodecFormat(view.meta), ContentCodecFormat::kText);
     EXPECT_EQ(view.meta.media_type, "text/plain");
 }
+
+/*
+测试思路：
+1. 协议项 multipart 配置保存的是 fields 描述，不是已经编码好的 wire body。
+2. MultiForm 配置构造器应把 text/file 两类字段转换成 FormPart，并生成合法 boundary。
+3. 再用现有 parser 回读，验证字段顺序、文件名、Content-Type 和二进制字节都保持不变。
+
+示例：
+  fields=[message(text), avatar(file, iVBORw==)]
+       |
+       v
+  MultiForm(config).serialize(boundary) -> MultiForm::parse(...)
+*/
+TEST(MultiFormTest, ConfigConstructorSerializesTextAndFileParts)
+{
+    const std::string boundary = "config-serialize-boundary";
+    const std::string descriptor = R"({
+        "fields": [
+            {"name":"message","type":"text","value":"hello multipart"},
+            {"name":"avatar","type":"file","filename":"avatar.png",
+             "content_type":"image/png","data_base64":"iVBORw=="}
+        ]
+    })";
+    const std::vector<char> config(descriptor.begin(), descriptor.end());
+
+    const MultiForm form(config);
+    const auto wire_body = form.serialize(boundary);
+    const auto parsed = MultiForm::parse(wire_body, boundary);
+
+    ASSERT_TRUE(parsed.contains("message"));
+    ASSERT_TRUE(parsed.contains("avatar"));
+    EXPECT_EQ(parsed.at("message").strs(), "hello multipart");
+    EXPECT_EQ(parsed.at("message").meta.media_type, "text/plain");
+    EXPECT_EQ(parsed.at("avatar").filename, "avatar.png");
+    EXPECT_EQ(parsed.at("avatar").meta.media_type, "image/png");
+    EXPECT_EQ(parsed.at("avatar").data, (std::vector<uint8_t>{0x89, 'P', 'N', 'G'}));
+}
+
+/*
+测试思路：
+1. multipart 允许同名字段，序列化不能退化为只保留 unordered_map 的最后一个值。
+2. PartList 构造器应保留提交顺序，解析后的 all(name) 仍返回全部 part。
+3. 自定义 header 应随 part 一起输出，但由 MultiForm 生成的 Content-Type 不能重复。
+
+示例：
+  dup=first, dup=second -> serialize -> parse -> all(dup)=[first,second]
+*/
+TEST(MultiFormTest, PartListConstructorPreservesDuplicateOrderAndHeaders)
+{
+    FormPart first;
+    first.name = "dup";
+    first.meta = MakeContentMetaFromMediaType("text/plain");
+    first.data = {'f', 'i', 'r', 's', 't'};
+    first.headers["X-Part-Order"] = "1";
+
+    FormPart second;
+    second.name = "dup";
+    second.meta = MakeContentMetaFromMediaType("text/plain");
+    second.data = {'s', 'e', 'c', 'o', 'n', 'd'};
+    second.headers["X-Part-Order"] = "2";
+
+    const MultiForm form(MultiForm::PartList{first, second});
+    const auto wire_body = form.serialize("duplicate-boundary");
+    const auto parsed = MultiForm::parse(wire_body, "duplicate-boundary");
+
+    const auto& parts = parsed.all("dup");
+    ASSERT_EQ(parts.size(), 2U);
+    EXPECT_EQ(parts[0].strs(), "first");
+    EXPECT_EQ(parts[1].strs(), "second");
+    EXPECT_EQ(parts[0].headers.at("X-Part-Order"), "1");
+    EXPECT_EQ(parts[1].headers.at("X-Part-Order"), "2");
+}

@@ -199,20 +199,26 @@ struct CustomTcpFieldCompare
     }
 
     // 支持异构查找--按照byte_pos
-    bool operator()(int32_t a, const FieldSpec& b) const
+    bool operator()(size_t a, const FieldSpec& b) const
     {
         return a < b.byte_pos;
     }
     // 支持异构查找--按照byte_pos
-    bool operator()(const FieldSpec& a, int32_t b) const
+    bool operator()(const FieldSpec& a, size_t b) const
     {
         return a.byte_pos < b;
     }
 };
 /**
- * @brief 按字段pos位置排序的集合
+ * @brief 按字段pos位置排序的字段描述集合
  */
 using FieldSpecSet =  std::set<FieldSpec, CustomTcpFieldCompare>;
+/**
+ * @brief 按字段pos位置排序的完整字段集合
+ */
+using FieldValueMap = std::map<size_t, FieldValue>;
+
+std::pair<FieldValueMap, size_t> FieldValueMapParseFromJson(const nlohmann::json &root);
 
 
 }

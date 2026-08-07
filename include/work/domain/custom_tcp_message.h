@@ -27,7 +27,7 @@ class CustomTcpMessage
 public:
 
     /// byte_pos <---> FieldValue
-    using HeadersValueMap = std::map<size_t, FieldValue>;
+    using HeadersValueMap = FieldValueMap;
 
     explicit CustomTcpMessage(std::shared_ptr<CustomTcpPattern> pattern);
 

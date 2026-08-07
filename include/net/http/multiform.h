@@ -96,9 +96,6 @@ constexpr bool kHasAdlFormMultiform = decltype(TestAdlFormMultiform<T>(0))::valu
 
 };
 
-/**
- * @brief 注意: 这一版只保留解析+查询能力，增删改能力后续encoode时又增加
- */
 class MultiForm
 {
 public:
@@ -106,6 +103,16 @@ public:
     using PartList = std::vector<FormPart>;
     using FieldMap = std::unordered_map<std::string, PartList>;
 
+    MultiForm() = default;
+
+    /// @brief 从已经组织好的 part 列表构造 multipart 表单
+    explicit MultiForm(PartList parts);
+
+    /// @brief 从协议项保存的 fields 描述构造 multipart 表单
+    explicit MultiForm(const std::vector<char>& config_data);
+
+    /// @brief 按 multipart/form-data 线格式序列化，返回不含 HTTP 头的 body
+    std::vector<uint8_t> serialize(const std::string& boundary) const;
 
     static MultiForm parse(const uint8_t *data, size_t len, std::string boundary);
 
@@ -164,6 +171,7 @@ private:
 
 private:
     FieldMap fields_;
+    PartList ordered_parts_;
 };
 
 

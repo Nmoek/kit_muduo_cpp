@@ -12,6 +12,7 @@
 
 #include "domain/project_server.h"
 #include "domain/type.h"
+#include "net/http/http_content.h"
 
 #include <memory>
 #include <string>
@@ -27,6 +28,7 @@ class Protocol;
 struct ProtocolItemBodyView
 {
     ProtocolBodyType body_type{ProtocolBodyType::kNone};
+    kit_muduo::http::ContentMeta meta;
     std::shared_ptr<const std::vector<char>> body_data{std::make_shared<const std::vector<char>>()};
 
     ProtocolItemBodyView() = default;

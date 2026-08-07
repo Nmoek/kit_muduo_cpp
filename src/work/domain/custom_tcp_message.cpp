@@ -6,6 +6,7 @@
  * @date 2025-11-03 18:51:40
  * @copyright Copyright (c) 2025 HIKRayin
  */
+#include "domain/custom_tcp_field_model.h"
 #include "domain/domain_log.h"
 #include "domain/custom_tcp_pattern.h"
 #include "domain/custom_tcp_message.h"

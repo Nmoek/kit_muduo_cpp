@@ -32,6 +32,7 @@
 #include "web/web_protocol.h"
 
 #include <memory>
+#include <initializer_list>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -154,6 +155,52 @@ std::string MakeMinimalMultipartBody(const std::string &boundary)
     body.append("value\r\n");
     body.append("--").append(boundary).append("--\r\n");
     return body;
+}
+
+void AppendMultipartPart(std::string &body,
+                         const std::string &boundary,
+                         const std::string &name,
+                         const std::string &content_type,
+                         const std::vector<char> &data)
+{
+    body.append("--").append(boundary).append("\r\n");
+    body.append("Content-Disposition: form-data; name=\"").append(name).append("\"\r\n");
+    if(!content_type.empty())
+    {
+        body.append("Content-Type: ").append(content_type).append("\r\n");
+    }
+    body.append("\r\n");
+    body.append(data.begin(), data.end());
+    body.append("\r\n");
+}
+
+HttpContextPtr MakeDetailBodyMultipartContext(const std::string &path,
+                                              const nljson &header,
+                                              const std::vector<char> &cfg_data)
+{
+    const std::string boundary = "WEB-PROTOCOL-DETAIL-BODY";
+    std::string body;
+    const auto header_json = header.dump();
+    AppendMultipartPart(body,
+                        boundary,
+                        "detail_header",
+                        "application/json",
+                        std::vector<char>(header_json.begin(), header_json.end()));
+    AppendMultipartPart(body, boundary, "detail_cfg_data", "application/json", cfg_data);
+    body.append("--").append(boundary).append("--\r\n");
+    return MakeRawProtocolContext(path, "multipart/form-data; boundary=" + boundary, body);
+}
+
+std::vector<char> BinaryBodyConfig(std::initializer_list<nljson> fields)
+{
+    nljson config = nljson::object();
+    config["fields"] = nljson::array();
+    for(const auto &field : fields)
+    {
+        config["fields"].push_back(field);
+    }
+    const auto serialized = config.dump();
+    return {serialized.begin(), serialized.end()};
 }
 
 void SetProtocolRouteParam(HttpContextPtr ctx, int64_t protocol_id)
@@ -735,6 +782,94 @@ TEST_F(ProtocolHandlerRuntimeReceiptSuite, DetailBodyRejectsJsonBodyBeforeAccess
     auto resp = ResponseBody(ctx);
     EXPECT_EQ(resp["code"], -200);
     EXPECT_EQ(resp["message"], "body parse error");
+}
+
+/*
+测试思路：
+1. DetailBody 的 multipart cfg_data 对 Binary Body 不再是原始字节，而是 fields[].spec/value JSON。
+2. 通过真实 multipart 绑定进入 Handler，确认 header 的 response/binary 和完整 JSON 均原样转交 runtime manager。
+3. 断言写操作回执与 protocol snapshot 仍按通用接口返回，避免 Binary Body 走到旧的特殊响应分支。
+
+示例：
+  detail_header={side:response,body_type:binary}
+  detail_cfg_data={fields:[{spec:{byte_pos:0,byte_len:2,...},value:"H0102"}]}
+                         |
+                         v
+  updateProtocolBody(project, protocol, response, binary, 完整 JSON)
+*/
+TEST_F(ProtocolHandlerRuntimeReceiptSuite, DetailBodyForBinaryForwardsNestedFieldConfiguration)
+{
+    constexpr int64_t project_id = 930302;
+    constexpr int64_t protocol_id = 93030201;
+    const auto binary_config = BinaryBodyConfig({
+        nljson{
+            {"spec", {
+                {"name", "prefix"},
+                {"byte_pos", 0},
+                {"byte_len", 2},
+                {"type", "UINT16"},
+                {"role", "common"},
+                {"match", "H0102"},
+            }},
+            {"value", "H0102"},
+        },
+        nljson{
+            {"spec", {
+                {"name", "payload"},
+                {"byte_pos", 2},
+                {"byte_len", 2},
+                {"type", "UINT16"},
+                {"role", "common"},
+                {"match", "H0304"},
+            }},
+            {"value", "H0304"},
+        },
+    });
+
+    EXPECT_CALL(*mock_, GetAccessInfo(testing::_, protocol_id, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SetArgReferee<2>(ProtocolAccessInfo{
+                protocol_id,
+                project_id,
+                "HTTP|GET|/d9/web/binary-body",
+                ProtocolType::kHttp,
+                ProtocolStatus::kValid,
+                ProtocolConfigState::kOn,
+                1,
+                ProjectRuntimeState::kRunning,
+                ProjectStatus::kValid}),
+            testing::Return(true)));
+    EXPECT_CALL(*runtime_mock_,
+                updateProtocolBody(testing::_,
+                                   project_id,
+                                   protocol_id,
+                                   ProtocolSide::kResponse,
+                                   ProtocolBodyType::kBinary,
+                                   testing::Eq(binary_config)))
+        .WillOnce(testing::Return(ProtocolRuntimeResult::Success(
+            RuntimeMutationReceipt::AllOk(),
+            ProtocolRuntimeSnapshot{project_id, protocol_id, ProtocolConfigState::kOn},
+            "success")));
+
+    auto ctx = MakeDetailBodyMultipartContext(
+        "/protocols/" + std::to_string(protocol_id) + "/details/body",
+        nljson{
+            {"side", ProtocolSide::kResponse},
+            {"body_type", ProtocolBodyType::kBinary},
+        },
+        binary_config);
+    SetProtocolRouteParam(ctx, protocol_id);
+
+    handler_->DetailBody(nullptr, ctx);
+
+    const auto resp = ResponseBody(ctx);
+    EXPECT_EQ(resp["code"], 0);
+    EXPECT_EQ(resp["message"], "success");
+    EXPECT_EQ(resp["data"]["persisted"], 1);
+    EXPECT_EQ(resp["data"]["runtime_applied"], 1);
+    EXPECT_EQ(resp["data"]["project_id"], project_id);
+    EXPECT_EQ(resp["data"]["protocol_id"], protocol_id);
+    EXPECT_EQ(resp["data"]["config_state"], static_cast<int32_t>(ProtocolConfigState::kOn));
 }
 
 /*

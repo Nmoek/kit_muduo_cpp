@@ -31,6 +31,12 @@ nljson JsonFromString(const std::string &text)
     return nljson::parse(text);
 }
 
+std::vector<char> BinaryBodyConfig()
+{
+    const std::string text = R"({"fields":[{"spec":{"name":"payload","byte_pos":0,"byte_len":2,"type":"UINT16","role":"common","match":"H0102"},"value":"H0102"}]})";
+    return {text.begin(), text.end()};
+}
+
 nljson HttpReqCfg(const std::string &method = "GET", const std::string &path = "/api/users")
 {
     return {
@@ -100,7 +106,8 @@ Protocol MakeTcpProtocol()
     protocol.m_respBodyDataStatus = 1;
     protocol.m_reqCfg = JsonFromString(req_cfg1);
     protocol.m_respCfg = JsonFromString(resp_cfg1);
-    protocol.m_respBodyData = {'o', 'k'};
+    protocol.m_reqBodyData = BinaryBodyConfig();
+    protocol.m_respBodyData = BinaryBodyConfig();
     protocol.m_isEndian = true;
     return protocol;
 }
@@ -469,6 +476,12 @@ TEST(TestProtocolConfigPipeline, CustomTcpBuildItemValidatesBothSidesAndCreatesI
     EXPECT_NE(std::dynamic_pointer_cast<CustomTcpProtocolItem>(result.item), nullptr);
     EXPECT_EQ(result.item->getId(), protocol.m_id);
     EXPECT_EQ(result.item->getProjectId(), protocol.m_projectId);
+    const auto req_body_view = result.item->getReqBodyView();
+    const auto resp_body_view = result.item->getRespBodyView();
+    ASSERT_NE(req_body_view.body_data, nullptr);
+    ASSERT_NE(resp_body_view.body_data, nullptr);
+    EXPECT_EQ(*req_body_view.body_data, std::vector<char>({0x01, 0x02}));
+    EXPECT_EQ(*resp_body_view.body_data, std::vector<char>({0x01, 0x02}));
 }
 
 /**

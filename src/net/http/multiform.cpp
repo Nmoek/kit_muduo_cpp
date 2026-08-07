@@ -10,12 +10,95 @@
 #include "net/net_log.h"
 #include "net/http/multiform.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <iterator>
+#include <sstream>
+#include <utility>
+
 namespace kit_muduo::http {
 
 namespace {
 
 static constexpr char kHeaderSepCRLF[] = "\r\n\r\n";
 static constexpr char kHeaderSepLF[] = "\n\n";
+
+void AppendBytes(std::vector<uint8_t>& output, const std::string& value)
+{
+    output.insert(output.end(), value.begin(), value.end());
+}
+
+void AppendBytes(std::vector<uint8_t>& output, const char* value)
+{
+    output.insert(output.end(), value, value + std::strlen(value));
+}
+
+bool ContainsLineBreak(const std::string& value)
+{
+    return value.find('\r') != std::string::npos || value.find('\n') != std::string::npos;
+}
+
+std::string EscapeQuotedValue(const std::string& value)
+{
+    if(ContainsLineBreak(value))
+    {
+        throw MultiFormException("multipart quoted value contains line break");
+    }
+
+    std::string escaped;
+    escaped.reserve(value.size());
+    for(const char ch : value)
+    {
+        if(ch == '\\' || ch == '"')
+        {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+    return escaped;
+}
+
+std::vector<uint8_t> DecodeBase64(const std::string& encoded)
+{
+    static constexpr char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::vector<uint8_t> output;
+    int value = 0;
+    int bits = -8;
+    for(const unsigned char ch : encoded)
+    {
+        if(ch == '=')
+        {
+            break;
+        }
+        const char* position = std::find(std::begin(alphabet), std::end(alphabet) - 1, ch);
+        if(position == std::end(alphabet) - 1)
+        {
+            continue;
+        }
+        value = (value << 6) | static_cast<int>(position - alphabet);
+        bits += 6;
+        if(bits >= 0)
+        {
+            output.push_back(static_cast<uint8_t>((value >> bits) & 0xff));
+            bits -= 8;
+        }
+    }
+    return output;
+}
+
+bool HeaderNameEquals(const std::string& left, const char* right)
+{
+    if(left.size() != std::strlen(right))
+    {
+        return false;
+    }
+    return std::equal(left.begin(), left.end(), right, [](char lhs, char rhs) {
+        return static_cast<char>(std::tolower(static_cast<unsigned char>(lhs)))
+            == static_cast<char>(std::tolower(static_cast<unsigned char>(rhs)));
+    });
+}
 
 std::string Trim(const std::string& s)
 {
@@ -185,6 +268,150 @@ FormPart ParsePart(const uint8_t* data, size_t len)
 } // namespace
 
 
+MultiForm::MultiForm(PartList parts)
+{
+    for(auto& part : parts)
+    {
+        addPart(std::move(part));
+    }
+}
+
+MultiForm::MultiForm(const std::vector<char>& config_data)
+{
+    try
+    {
+        const auto root = nlohmann::json::parse(config_data.begin(), config_data.end());
+        const auto fields_it = root.is_object() ? root.find("fields") : root.end();
+        if(fields_it == root.end() || !fields_it->is_array())
+        {
+            throw MultiFormException("multipart config fields must be an array");
+        }
+
+        for(const auto& field : *fields_it)
+        {
+            if(!field.is_object() || field.value("enabled", true) == false)
+            {
+                continue;
+            }
+
+            FormPart part;
+            part.name = field.value("name", "");
+            if(part.name.empty())
+            {
+                continue;
+            }
+
+            const auto type = field.value("type", "text");
+            if(type == "file")
+            {
+                part.filename = field.value("filename", "upload.bin");
+                if(part.filename.empty())
+                {
+                    part.filename = "upload.bin";
+                }
+                auto content_type = field.value("content_type", "application/octet-stream");
+                if(content_type.empty())
+                {
+                    content_type = "application/octet-stream";
+                }
+                part.meta = MakeContentMetaFromMediaType(content_type);
+                if(part.meta.media_type.empty())
+                {
+                    throw MultiFormException("multipart file content_type invalid: " + content_type);
+                }
+                part.data = DecodeBase64(field.value("data_base64", ""));
+            }
+            else
+            {
+                part.meta = MakeContentMetaFromMediaType("text/plain");
+                SetContentTypeParam(part.meta, "charset", "utf-8");
+                const auto value = field.value("value", "");
+                part.data.assign(value.begin(), value.end());
+            }
+
+            addPart(std::move(part));
+        }
+    }
+    catch(const MultiFormException&)
+    {
+        throw;
+    }
+    catch(const std::exception& error)
+    {
+        throw MultiFormException(std::string("multipart config invalid: ") + error.what());
+    }
+}
+
+std::vector<uint8_t> MultiForm::serialize(const std::string& boundary) const
+{
+    if(boundary.empty() || ContainsLineBreak(boundary))
+    {
+        throw MultiFormException("multipart boundary invalid");
+    }
+
+    std::vector<uint8_t> output;
+    for(const auto& part : ordered_parts_)
+    {
+        if(part.name.empty())
+        {
+            throw MultiFormException("multipart field name missing");
+        }
+
+        AppendBytes(output, "--");
+        AppendBytes(output, boundary);
+        AppendBytes(output, "\r\nContent-Disposition: form-data; name=\"");
+        AppendBytes(output, EscapeQuotedValue(part.name));
+        AppendBytes(output, "\"");
+        if(!part.filename.empty())
+        {
+            AppendBytes(output, "; filename=\"");
+            AppendBytes(output, EscapeQuotedValue(part.filename));
+            AppendBytes(output, "\"");
+        }
+        AppendBytes(output, "\r\n");
+
+        const auto content_type = ToContentTypeHeaderValue(part.meta);
+        if(!content_type.empty())
+        {
+            AppendBytes(output, "Content-Type: ");
+            AppendBytes(output, content_type);
+            AppendBytes(output, "\r\n");
+        }
+
+        std::vector<std::pair<std::string, std::string>> headers(part.headers.begin(), part.headers.end());
+        std::sort(headers.begin(), headers.end(), [](const auto& left, const auto& right) {
+            return left.first < right.first;
+        });
+        for(const auto& [name, value] : headers)
+        {
+            if(name.empty() || ContainsLineBreak(name) || ContainsLineBreak(value)
+                || HeaderNameEquals(name, "Content-Disposition")
+                || HeaderNameEquals(name, "Content-Type"))
+            {
+                if(name.empty() || ContainsLineBreak(name) || ContainsLineBreak(value))
+                {
+                    throw MultiFormException("multipart header invalid");
+                }
+                continue;
+            }
+            AppendBytes(output, name);
+            AppendBytes(output, ": ");
+            AppendBytes(output, value);
+            AppendBytes(output, "\r\n");
+        }
+
+        AppendBytes(output, "\r\n");
+        output.insert(output.end(), part.data.begin(), part.data.end());
+        AppendBytes(output, "\r\n");
+    }
+
+    AppendBytes(output, "--");
+    AppendBytes(output, boundary);
+    AppendBytes(output, "--\r\n");
+    return output;
+}
+
+
 MultiForm MultiForm::parse(const std::string &body, std::string boundary)
 {
     return parse(reinterpret_cast<const uint8_t*>(body.data()), body.size(), boundary);
@@ -321,7 +548,8 @@ void MultiForm::addPart(FormPart part)
     {
         return;
     }
-    fields_[part.name].push_back(std::move(part));
+    fields_[part.name].push_back(part);
+    ordered_parts_.push_back(std::move(part));
 }
 
 

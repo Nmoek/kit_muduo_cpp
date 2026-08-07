@@ -67,6 +67,14 @@ static std::vector<char> RuntimeBody(const std::string &text)
     return std::vector<char>(text.begin(), text.end());
 }
 
+static std::vector<char> RuntimeBinaryBody(const std::string &value = "H0102")
+{
+    return RuntimeBody(
+        R"({"fields":[{"spec":{"name":"payload","byte_pos":0,"byte_len":2,"type":"UINT16","role":"common","match":"H0102"},"value":")"
+        + value
+        + R"("}]})");
+}
+
 static Protocol MakeRuntimeHttpProtocol(int64_t protocol_id, int64_t project_id, const std::string &path)
 {
     Protocol protocol;
@@ -1466,28 +1474,23 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyRejectsInvalidTextBeforePersi
 
 /*
 测试思路：
-1. binary body 是任意字节透传，NUL 和非法 UTF-8 都应允许保存。
+1. binary body 保存的是 fields[].spec/value 配置，而不是运行态裸字节。
 2. 协议处于 kOff，manager 只写 DB，不触碰 runtime。
-3. 断言 UpdateBody 收到原始字节，返回 persisted=1/runtime_applied=0。
+3. 断言 UpdateBody 收到完整配置 JSON，返回 persisted=1/runtime_applied=0。
 
 示例：
-  updateProtocolBody(request, binary, [0x00,0xff,0xc3,0x28])
+  updateProtocolBody(request, binary, {fields:[{spec:{...},value:"H0102"}]})
        |
        v
   UpdateBody called once
 */
-TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyBinaryPersistsAnyBytes)
+TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyBinaryPersistsFieldConfiguration)
 {
     constexpr int64_t project_id = 9930;
     constexpr int64_t protocol_id = 993001;
     auto protocol = MakeRuntimeHttpProtocolWithState(
         protocol_id, project_id, "/runtime/body-binary", ProtocolConfigState::kOff);
-    const std::vector<char> body_data{
-        '\0',
-        static_cast<char>(0xFF),
-        static_cast<char>(0xC3),
-        static_cast<char>(0x28),
-    };
+    const auto body_data = RuntimeBinaryBody();
 
     auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
     auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
@@ -1508,6 +1511,50 @@ TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyBinaryPersistsAnyBytes)
     EXPECT_EQ(result.receipt.persisted, 1);
     EXPECT_EQ(result.receipt.runtime_applied, 0);
     EXPECT_EQ(result.snapshot.config_state, ProtocolConfigState::kOff);
+}
+
+/*
+测试思路：
+1. Binary Body 现在要求保存 fields[].spec/value 配置，旧版裸字节不能再绕过校验。
+2. manager 应在调用 ProtocolSvc::UpdateBody 前拒绝非法配置。
+3. 断言数据库和 runtime 都没有被修改。
+
+示例：
+  updateProtocolBody(request, binary, [0x00,0xff,0xc3,0x28])
+       |
+       v
+  binary body invalid -> no UpdateBody
+*/
+TEST(ProjectRuntimeManagerSuite, UpdateProtocolBodyBinaryRejectsLegacyRawBytesBeforePersist)
+{
+    constexpr int64_t project_id = 9931;
+    constexpr int64_t protocol_id = 993101;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/body-binary-legacy", ProtocolConfigState::kOff);
+    const std::vector<char> legacy_raw{
+        '\0',
+        static_cast<char>(0xFF),
+        static_cast<char>(0xC3),
+        static_cast<char>(0x28),
+    };
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
+
+    EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+        .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kStopped)),
+                        Return(true)));
+    EXPECT_CALL(*mock_protocol_svc, GetBodyInfoById(_, _, _, _, _)).Times(0);
+    EXPECT_CALL(*mock_protocol_svc, UpdateBody(_, _, _, _, _)).Times(0);
+
+    auto result = runtime_manager->updateProtocolBody(
+        nullptr, project_id, protocol_id, ProtocolSide::kRequest, ProtocolBodyType::kBinary, legacy_raw);
+
+    ASSERT_FALSE(result.ok());
+    EXPECT_EQ(result.status.code, RuntimeControlCode::kInvalidArgument);
+    EXPECT_EQ(result.receipt.persisted, 0);
+    EXPECT_EQ(result.receipt.runtime_applied, 0);
 }
 
 /*

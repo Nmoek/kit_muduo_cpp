@@ -13,10 +13,13 @@
 #include "nlohmann/json.hpp"
 #include "domain/protocol_body_pipeline.h"
 #include "domain/protocol.h"
+#include "net/http/multiform.h"
 #include "pugixml/pugixml.hpp"
+#include "domain/custom_tcp_field_model.h"
 
 #include <cstdint>
 #include <exception>
+#include <vector>
 
 namespace kit_domain {
 
@@ -148,7 +151,7 @@ const ProtocolBodyPolicy* ProtocolBodyPipeline::getPolicy(ProtocolBodyType body_
         static ImageBodyPolicy p;
         return &p;
     }
-    // TODO 暂时默认成功
+    // 按照TCP字段级解析
     if(ProtocolBodyType::kBinary == body_type)
     {
         static BinaryBodyPolicy p;
@@ -246,7 +249,16 @@ ProtocolBodyCheckResult TextBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec
 
 ProtocolBodyCheckResult MultiFormBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
 {
-    (void)spec;
+    try
+    {
+        (void)kit_muduo::http::MultiForm(spec.body_data);
+    }
+    catch(const std::exception& error)
+    {
+        RUNTIME_F_ERROR("multiform body invalid: %s\n", error.what());
+        return ProtocolBodyCheckResult::Failed(
+            std::string("multiform body invalid: ") + error.what());
+    }
     return ProtocolBodyCheckResult::Success();
 }
 
@@ -258,7 +270,16 @@ ProtocolBodyCheckResult ImageBodyPolicy::checkNonEmptyBody(const ProtocolBodySpe
 
 ProtocolBodyCheckResult BinaryBodyPolicy::checkNonEmptyBody(const ProtocolBodySpec &spec) const
 {
-    (void)spec;
+    assert(spec.body_type == ProtocolBodyType::kBinary);
+    try {
+
+        (void)FieldValueMapParseFromJson(nlohmann::json::parse(spec.body_data));
+
+    } catch (const std::exception &e) {
+        RUNTIME_F_ERROR("binary body invalid: %s \n", e.what());
+        return ProtocolBodyCheckResult::Failed("binary body invalid");
+    }
+
     return ProtocolBodyCheckResult::Success();
 }
 

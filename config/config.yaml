@@ -20,17 +20,17 @@ system:
       level: INFO
       appenders:
         - type: stdout
-          level: WARN
+          level: DEBUG
         - type: file
           level: INFO
           file_path: log/base.log
           flush_threshold: 1024
       formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
     - name: net
-      level: INFO
+      level: DEBUG
       appenders:
         - type: stdout
-          level: WARN
+          level: DEBUG
         - type: file
           level: INFO
           file_path: log/net.log
@@ -47,10 +47,10 @@ system:
           flush_threshold: 1024
       formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
     - name: domain
-      level: INFO
+      level: DEBUG
       appenders:
         - type: stdout
-          level: INFO
+          level: DEBUG
         - type: file
           level: INFO
           file_path: log/domain.log

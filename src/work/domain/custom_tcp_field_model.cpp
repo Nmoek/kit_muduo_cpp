@@ -164,7 +164,6 @@ void from_json(const nlohmann::json& j, FieldSpec& spec)
 
     spec.role = FieldRoleFromString(j.at("role").get<std::string>());
 
-    // 注意 'byte_order' 不是从json获取的
     // j.at("byte_order").get_to(spec.byte_order);
 
     auto it = j.find("match");
@@ -280,6 +279,56 @@ uint64_t FieldValue::asUnsignedLength() const
     }, DecodeField(spec, bytes));
 }
 
+std::pair<FieldValueMap, size_t> FieldValueMapParseFromJson(const nlohmann::json &root)
+{
+    FieldValueMap map;
+    size_t total_len = 0;
+    auto it = root.find("fields");
+    if(it == root.end() || !it.value().is_array())
+    {
+        CUSTOM_F_ERROR("json field 'fields' not found, or not array\n");
+        throw std::invalid_argument("json field 'fields' not found, or not array");
+    }
+
+
+    FieldValue field; 
+    for(auto &item : root.at("fields"))
+    {
+        it = item.find("spec");
+        if(it == item.end() || !it->is_object())
+        {
+            CUSTOM_F_ERROR("json field 'fields.spec' not found, or not object\n");
+            throw std::invalid_argument("binary fields json invalid: " + item.dump());
+        }
+
+        it.value().get_to(field.spec);
+        // HACK 默认大端
+        field.spec.byte_order = FieldByteOrder::kBigEndian;
+        if(!field.spec.validate())
+        {
+            CUSTOM_F_ERROR("tcp message fields invalid! %s \n", it.value().dump().c_str());
+
+            throw std::invalid_argument("binary fields json invalid: " + item.dump());
+        }
+
+        it = item.find("value");
+        if(it != item.end() && it->is_string() && !it.value().empty())
+        {
+            field.bytes = kit_muduo::HexStringToBytes(it.value().get<std::string>());
+        }
+        total_len += field.spec.byte_len;
+
+        auto [it2, ok] = map.emplace(field.spec.byte_pos,std::move(field));
+        if(!ok)
+        {
+            CUSTOM_F_ERROR("binary fields field duplicate! exist: pos[%d] name[%s] ---> cur: pos[%d] name[%s] \n", it2->second.spec.byte_pos, it2->second.spec.name.c_str(), field.spec.byte_pos, field.spec.name.c_str());
+
+            throw std::runtime_error("binary fields field duplicate");
+        }
+
+    }
+    return {std::move(map), total_len};
+}
 
 
 

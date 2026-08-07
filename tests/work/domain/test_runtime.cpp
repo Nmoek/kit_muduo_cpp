@@ -975,16 +975,16 @@ TEST(HttpProjectRuntimeSuite, UpdateReqBodyOnlyReplacesReqBodyView)
 
 /*
 测试思路：
-1. ProtocolItemBodyView 是协议无关的运行态 body 快照，只保存业务 body_type 和 body bytes。
-2. HTTP media type 和 codec format 都是 body_type 的派生语义，不应缓存在共享运行态快照中。
-3. 该用例不发网络请求，只验证快照保存事实字段，派生值由转换 helper 现场得到。
+1. ProtocolItemBodyView 是运行态 body 快照，同时保存转换后的 body bytes 和 ContentMeta。
+2. Body 更新后，body_type、meta 和 body_data 必须来自同一次配置转换，不能继续沿用旧 meta。
+3. 该用例不发网络请求，只验证协议项初始化和更新后的缓存快照。
 
 示例：
   req_body_type=json -> body_view.body_type=json
-  ProtocolBodyTypeToHttpContentMeta(json) -> application/json
-  ProtocolBodyTypeToContentCodecFormat(json) -> kJson
+  body_view.meta -> application/json
+  req_body_type=text -> body_view.meta -> text/plain
 */
-TEST(HttpProjectRuntimeSuite, BodyViewStoresProtocolBodyOnlyAndDerivesHttpMetadata)
+TEST(HttpProjectRuntimeSuite, BodyViewCachesProtocolBodyAndHttpMetadata)
 {
     RuntimeLoopPool pool(1);
     auto result = pool.acquire(9005LL);
@@ -1003,9 +1003,9 @@ TEST(HttpProjectRuntimeSuite, BodyViewStoresProtocolBodyOnlyAndDerivesHttpMetada
     ASSERT_NE(runtime_item, nullptr);
     auto body_view = runtime_item->getReqBodyView();
     EXPECT_EQ(body_view.body_type, ProtocolBodyType::kJson);
+    EXPECT_EQ(body_view.meta.known_type, KnownMediaType::kApplicationJson);
+    EXPECT_EQ(body_view.meta.media_type, "application/json");
     EXPECT_EQ(ProtocolBodyTypeToContentCodecFormat(body_view.body_type), ContentCodecFormat::kJson);
-    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).known_type, KnownMediaType::kApplicationJson);
-    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).media_type, "application/json");
 
     const std::vector<char> text_body{'h', 'e', 'l', 'l', 'o'};
     auto update_result = server->UpdateReqBodyProtocolItem(501, ProtocolBodyType::kText, text_body);
@@ -1013,9 +1013,9 @@ TEST(HttpProjectRuntimeSuite, BodyViewStoresProtocolBodyOnlyAndDerivesHttpMetada
 
     body_view = runtime_item->getReqBodyView();
     EXPECT_EQ(body_view.body_type, ProtocolBodyType::kText);
+    EXPECT_EQ(body_view.meta.known_type, KnownMediaType::kTextPlain);
+    EXPECT_EQ(body_view.meta.media_type, "text/plain");
     EXPECT_EQ(ProtocolBodyTypeToContentCodecFormat(body_view.body_type), ContentCodecFormat::kText);
-    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).known_type, KnownMediaType::kTextPlain);
-    EXPECT_EQ(ProtocolBodyTypeToHttpContentMeta(body_view.body_type).media_type, "text/plain");
     EXPECT_EQ(*body_view.body_data, text_body);
 }
 

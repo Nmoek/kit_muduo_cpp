@@ -247,6 +247,8 @@ void PrepareEnvironmentOverrides(
     app_config_detail::PrepareIfPresent<uint16_t>(batch, environment,
         "KIT_HTTP_PORT", "system.http.port", vars.system.http.port);
     app_config_detail::PrepareIfPresent<std::string>(batch, environment,
+        "KIT_HTTP_STATIC_ROOT_PATH", "system.http.static_root_path", vars.system.http.static_root_path);
+    app_config_detail::PrepareIfPresent<std::string>(batch, environment,
         "KIT_DB_PATH", "system.sqlite_db.path", vars.system.sqlite_db.path);
     app_config_detail::PrepareIfPresent<size_t>(batch, environment,
         "KIT_DB_POOL_CAPACITY", "system.sqlite_db.pool_capacity",

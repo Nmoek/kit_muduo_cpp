@@ -499,18 +499,6 @@ struct Pattern2_2 {
     int8_t          field7[3]; //结束字符
 };
 
-struct Pattern2_2_Resp {
-    // int8_t          field1;    //起始字符长度
-    // uint16_t        field2;    //报文总长度
-    // uint8_t         field3;    //功能码
-    uint16_t        field4;    //线体号
-    uint32_t        field5;    //包裹号
-    uint32_t        field6;    //包裹ID
-    int8_t          field7;    //LCR校验
-    int8_t          field8[3]; //结束字符
-};
-
-
 #pragma pack(pop)       // 恢复之前的对齐设置
 
 static void ReqBuilderHelper1(std::vector<char>& req, const nljson& body_root)
@@ -686,39 +674,10 @@ static void ReqBuilderHelper2_2(std::vector<char>& req)
 }
 
 
-static std::vector<char> MakeResp2_2() noexcept
+static std::vector<char> MakeBinaryBodyConfig()
 {
-    Pattern2_2_Resp pattern;
-    std::vector<char> resp(sizeof(Pattern2_2_Resp));
- 
-    TEST_ERROR() << "MakeResp2_2::sizeof(Pattern2_2_Resp)::" << sizeof(Pattern2_2_Resp) << std::endl;
-
-    // 线体号
-    pattern.field4 = 0x01;
-    SwapToBigEndian(pattern.field4);
-
-    // 包裹号
-    pattern.field5 = 0x00000009;
-    SwapToBigEndian(pattern.field5);
-
-    // 包裹ID
-    pattern.field6 = 0x00000001;
-    SwapToBigEndian(pattern.field6);
-
-    // LCR校验
-    pattern.field7 = 0x01;
-    SwapToBigEndian(pattern.field7);
-
-    pattern.field8[0] = 0x03;
-    pattern.field8[1] = 0x0D;
-    pattern.field8[2] = 0x0A;
-
-    memcpy(resp.data(), &pattern, sizeof(Pattern2_2_Resp));
-
-    std::vector<uint8_t> bytes(resp.begin(), resp.end());
-    TEST_DEBUG() << "resp2_2: " << BytesToHexString(bytes) << std::endl;
-
-    return resp;
+    const std::string text = R"({"fields":[{"spec":{"name":"payload","byte_pos":0,"byte_len":2,"type":"UINT16","role":"common","match":"H0102"},"value":"H0102"}]})";
+    return {text.begin(), text.end()};
 }
 
 static kit_domain::Project MakeBodyLengthProject(int64_t project_id)
@@ -958,8 +917,8 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
                 .m_reqCfg = nljson::parse(req_cfg2_2),
                 .m_respCfg = nljson::parse(resp_cfg2_2),
-                .m_reqBodyData = {},
-                .m_respBodyData = MakeResp2_2(),
+                .m_reqBodyData = MakeBinaryBodyConfig(),
+                .m_respBodyData = MakeBinaryBodyConfig(),
                 .m_isEndian = true,
  
                 .m_ctime = TimeStamp::Now(),
@@ -996,8 +955,8 @@ TEST_F(CustomTcpServerSuite, PatternDifferent)
                 // 临时兼容 D1-D6 后的 Protocol cfg 类型调整: m_reqCfg/m_respCfg 已是 JSON。
                 .m_reqCfg = nljson::parse(req_cfg3),
                 .m_respCfg = nljson::parse(resp_cfg3),
-                .m_reqBodyData = {},
-                .m_respBodyData = {},
+                .m_reqBodyData = MakeBinaryBodyConfig(),
+                .m_respBodyData = MakeBinaryBodyConfig(),
                 .m_isEndian = true,
  
                 .m_ctime = TimeStamp::Now(),
