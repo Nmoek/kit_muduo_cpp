@@ -27,8 +27,14 @@
         medium: 650,
         fast: 380,
     });
+    // LiveClient 的历史约定中 asc 表示新记录在前，即时间降序。
+    const LATEST_FIRST_SORT_DIRECTION = 'asc';
+    // 左列始终保留最新的十条；全屏时右列承接后续较早的记录。
+    // 固定分界线避免新记录到达时按总数对半重排两列。
+    const RECORDS_PER_COLUMN = 10;
     const RECORD_TRANSITION_CLEAR_GAP_MS = 40;
     const DRAWER_TRANSITION_MS = 260;
+    const MODE_SWITCH_LOCK_MS = DRAWER_TRANSITION_MS + RECORD_TRANSITION_CLEAR_GAP_MS;
     const clients = new Map();
     const viewStates = new Map();
     let drawer = null;
@@ -40,13 +46,15 @@
             state = {
                 followLive: true,
                 mobileDetail: false,
-                sortDirection: 'asc',
+                sortDirection: LATEST_FIRST_SORT_DIRECTION,
                 readRecordKeys: new Set(),
+                recordColumnByKey: new Map(),
                 enteringRecordKeys: new Set(),
                 exitingRecords: new Map(),
                 transitionBusy: false,
                 transitionPaused: false,
                 transitionTimer: null,
+                modeSwitchTimer: null,
             };
             viewStates.set(key, state);
         }
@@ -343,7 +351,10 @@
                             </div>
                         </div>
                     </div>
-                    <div class="interaction-record-items" data-testid="protocol-interaction-record-list" tabindex="0"></div>
+                    <div class="interaction-record-items" data-testid="protocol-interaction-record-list" tabindex="0">
+                        <div class="interaction-record-column interaction-record-column-primary" data-role="record-column-primary"></div>
+                        <div class="interaction-record-column interaction-record-column-secondary" data-role="record-column-secondary"></div>
+                    </div>
                 </aside>
             <main class="interaction-record-detail detail-pane" data-testid="protocol-interaction-detail">
                 <button type="button" class="interaction-mobile-back" data-action="back-to-list">返回列表</button>
@@ -481,40 +492,29 @@
         const pauseFlow = options.pauseFlow === true;
         const viewState = activeEntry ? viewStateFor(activeEntry.key) : null;
         if (pauseFlow) {
+            if (viewState.modeSwitchTimer) global.clearTimeout(viewState.modeSwitchTimer);
+            viewState.modeSwitchTimer = null;
             drawer.panel.classList.add('is-reflowing');
             pauseRecordTransitions(viewState);
             if (typeof client.pauseMerge === 'function') client.pauseMerge();
         }
-        const isFullscreen = drawer.panel.classList.contains('is-fullscreen');
         const limits = {
-            maxVisibleRecords: isFullscreen ? 20 : 10,
+            // 普通模式也保留右列数据，切全屏时无需重新装载或重排。
+            maxVisibleRecords: RECORDS_PER_COLUMN * 2,
             maxPendingRecords: 20,
         };
-        if (isFullscreen) {
-            client.setBufferLimits(limits);
-        } else {
-            const state = client.getState();
-            const visibleRecords = state.visibleRecords.slice();
-            if (visibleRecords.length) {
-                client.setBufferLimits(limits, {
-                    reflowVisibleRecords: visibleRecords,
-                });
-            } else {
-                client.setBufferLimits(limits);
-            }
-        }
+        client.setBufferLimits(limits);
         if (pauseFlow) {
             const resume = () => {
-                if (!drawer) return;
-                drawer.panel.classList.remove('is-reflowing');
+                if (viewState.modeSwitchTimer !== timer) return;
+                viewState.modeSwitchTimer = null;
+                if (drawer) drawer.panel.classList.remove('is-reflowing');
                 resumeRecordTransitions(viewState);
                 if (typeof client.resumeMerge === 'function') client.resumeMerge();
+                if (activeEntry && activeEntry.client === client) render(true);
             };
-            if (typeof global.requestAnimationFrame === 'function') {
-                global.requestAnimationFrame(resume);
-            } else {
-                global.setTimeout(resume, 0);
-            }
+            const timer = global.setTimeout(resume, MODE_SWITCH_LOCK_MS);
+            viewState.modeSwitchTimer = timer;
         }
     }
 
@@ -560,7 +560,8 @@
             projectId: entry.projectId,
             protocolId: entry.protocolId,
             protocolType: entry.protocolType,
-            maxVisibleRecords: 10,
+            // 初次连接同样预留两列容量，避免普通模式先丢掉右列记录。
+            maxVisibleRecords: RECORDS_PER_COLUMN * 2,
             maxPendingRecords: 20,
         });
         const rerender = (restoreSelectedFocus = false, preserveList = false) => {
@@ -656,7 +657,7 @@
         if (resumeButton) resumeButton.disabled = state.connectionState !== Live.STATES.PAUSED;
     }
 
-    function updateRecordItem(item, record, state, viewState, visibleIndex, isExiting, allowAnimation) {
+    function updateRecordItem(item, record, state, viewState, isExiting, allowAnimation, gridRow) {
         item.dataset.recordKey = record._key;
         item.dataset.testid = 'protocol-interaction-record-item';
         const isSelected = record._key === state.selectedRecordKey;
@@ -664,7 +665,11 @@
         const isEntering = allowAnimation && viewState.enteringRecordKeys.has(record._key);
         const wasEntering = item.classList.contains('is-entering-front')
             || item.classList.contains('is-entering-end');
-        applyRecordGridPlacement(item, visibleIndex, isExiting, viewState.sortDirection);
+        // 每个独立列只有一个 CSS Grid 列；淘汰节点与队尾活动节点
+        // 需要叠放在同一个槽位，不能让 Grid 自动创建隐式第三列。
+        item.style.gridColumn = '1';
+        if (gridRow) item.style.gridRow = String(gridRow);
+        else item.style.removeProperty('grid-row');
         item.classList.remove(
             'is-selected', 'is-unread',
             'is-exiting', 'is-exiting-asc', 'is-exiting-desc',
@@ -681,7 +686,12 @@
         const deliveryMarkup = isAdminViewer() ? '<span data-role="delivery"></span>' : '';
         const noticeMarkup = record.scope === 'project' ? '<span data-role="scope" class="interaction-badge badge-notice"></span>' : '';
         item.innerHTML = `<div class="interaction-record-item-top"><strong data-role="title"></strong>${noticeMarkup}<span data-role="result"></span></div><div class="interaction-record-item-sub">${deliveryMarkup}<span data-role="seq"></span><span data-role="time"></span><span data-role="body"></span></div>`;
-        setText(item.querySelector('[data-role="title"]'), recordTitle(record));
+        const title = recordTitle(record);
+        const titleElement = item.querySelector('[data-role="title"]');
+        setText(titleElement, title);
+        // 保留被省略的完整交互标题，供鼠标悬停时由浏览器显示提示。
+        titleElement.title = title;
+        titleElement.setAttribute('aria-label', title);
         setText(item.querySelector('[data-role="result"]'), resultLabel(record.result));
         const delivery = item.querySelector('[data-role="delivery"]');
         const scope = item.querySelector('[data-role="scope"]');
@@ -710,6 +720,9 @@
         viewState.readRecordKeys.forEach(key => {
             if (!activeRecordKeys.has(key)) viewState.readRecordKeys.delete(key);
         });
+        viewState.recordColumnByKey.forEach((column, key) => {
+            if (!activeRecordKeys.has(key)) viewState.recordColumnByKey.delete(key);
+        });
         const focusedRecordKey = global.document && global.document.activeElement
             && global.document.activeElement.dataset
             && global.document.activeElement.dataset.recordKey;
@@ -722,27 +735,47 @@
         } else {
             items.innerHTML = '';
         }
-        const records = state.visibleRecords
-            .concat(Array.from(viewState.exitingRecords.values()))
+        // 先截取活动记录，再追加淘汰记录。淘汰记录必须保留一个临时
+        // DOM 节点，否则它会在容量截断前就消失，队尾无法播放淡出动画。
+        const visibleRecords = state.visibleRecords
             .filter(record => matchesFilter(record, drawer.filter))
-            .sort((left, right) => compareRecordTime(left, right, viewState.sortDirection));
+            .sort((left, right) => compareRecordTime(left, right, viewState.sortDirection))
+            .slice(0, RECORDS_PER_COLUMN * 2);
+        const exitingRecords = Array.from(viewState.exitingRecords.values())
+            .filter(record => matchesFilter(record, drawer.filter)
+                && !visibleRecords.some(visible => visible._key === record._key));
+        const records = visibleRecords.concat(exitingRecords);
         if (!records.length) {
+            items.innerHTML = '';
             const empty = document.createElement('p');
             empty.className = 'interaction-empty-state';
             empty.textContent = '暂无符合条件的交互记录';
             items.appendChild(empty);
             return;
         }
+        const columns = ensureRecordColumns(items);
         let visibleIndex = 0;
+        const isFullscreen = drawer.panel.classList.contains('is-fullscreen');
         const renderedKeys = new Set();
         records.forEach(record => {
             const item = existingItems.get(record._key) || makeButton('', 'interaction-record-item');
             const isExiting = viewState.exitingRecords.has(record._key);
-            updateRecordItem(item, record, state, viewState, visibleIndex, isExiting, true);
-            if (!isExiting) visibleIndex += 1;
+            let column = viewState.recordColumnByKey.get(record._key);
+            let gridRow;
+            if (!isExiting) {
+                column = visibleIndex < RECORDS_PER_COLUMN ? 'primary' : 'secondary';
+                gridRow = (visibleIndex % RECORDS_PER_COLUMN) + 1;
+                viewState.recordColumnByKey.set(record._key, column);
+                visibleIndex += 1;
+            } else {
+                // 普通模式只有左列可见，淡出应出现在左列队尾；全屏时
+                // 视觉上的单队列队尾位于右列队尾。
+                column = isFullscreen ? 'secondary' : 'primary';
+                gridRow = RECORDS_PER_COLUMN;
+            }
+            updateRecordItem(item, record, state, viewState, isExiting, true, gridRow);
             renderedKeys.add(record._key);
-            // preserveExisting 只复用节点，不保留旧 DOM 顺序；否则新记录虽位于 grid 首行，键盘顺序和动画节点仍在旧位置。
-            items.appendChild(item);
+            (column === 'secondary' ? columns.secondary : columns.primary).appendChild(item);
         });
         if (preserveExisting) {
             existingItems.forEach((item, key) => {
@@ -762,27 +795,21 @@
         }
     }
 
-    function applyRecordGridPlacement(item, index, isExiting, sortDirection) {
-        const isFullscreen = drawer.panel.classList.contains('is-fullscreen');
-        const isCompact = Number(global.innerWidth) > 0 && Number(global.innerWidth) <= 900;
-        const useTwoColumns = isFullscreen && !isCompact;
-        const lastRow = 10;
+    function ensureRecordColumns(items) {
+        let primary = items.querySelector('[data-role="record-column-primary"]');
+        let secondary = items.querySelector('[data-role="record-column-secondary"]');
+        if (primary && secondary) return { primary, secondary };
 
-        if (isExiting) {
-            item.style.gridColumn = useTwoColumns
-                ? (sortDirection === 'asc' ? '2' : '1')
-                : '1';
-            item.style.gridRow = sortDirection === 'asc' ? String(lastRow) : '1';
-            return;
-        }
-
-        if (useTwoColumns) {
-            item.style.gridColumn = String(Math.floor(index / lastRow) + 1);
-            item.style.gridRow = String((index % lastRow) + 1);
-            return;
-        }
-        item.style.gridColumn = '1';
-        item.style.gridRow = String(index + 1);
+        items.innerHTML = '';
+        primary = document.createElement('div');
+        primary.className = 'interaction-record-column interaction-record-column-primary';
+        primary.dataset.role = 'record-column-primary';
+        secondary = document.createElement('div');
+        secondary.className = 'interaction-record-column interaction-record-column-secondary';
+        secondary.dataset.role = 'record-column-secondary';
+        items.appendChild(primary);
+        items.appendChild(secondary);
+        return { primary, secondary };
     }
 
     function appendKeyValue(parent, label, value) {
@@ -1479,9 +1506,9 @@
         const viewState = viewStateFor(key);
         viewState.mobileDetail = false;
         viewState.followLive = true;
-        viewState.sortDirection = 'asc';
+        viewState.sortDirection = LATEST_FIRST_SORT_DIRECTION;
         if (activeEntry.client && typeof activeEntry.client.setRecordOrder === 'function') {
-            activeEntry.client.setRecordOrder('asc');
+            activeEntry.client.setRecordOrder(LATEST_FIRST_SORT_DIRECTION);
         }
         drawer.lastFocus = entry.triggerButton || document.activeElement;
         drawer.filter = 'all';
@@ -1504,11 +1531,12 @@
                 drawer.tab = uiState.detailTab || drawer.tab;
                 viewState.mobileDetail = uiState.mobileDetail === true;
                 viewState.followLive = uiState.followLive !== false;
-                viewState.sortDirection = uiState.sortDirection === 'desc' ? 'desc' : 'asc';
+                // 排序控件隐藏后，忽略旧工作区的排序偏好，始终显示最新记录。
+                viewState.sortDirection = LATEST_FIRST_SORT_DIRECTION;
                 drawer.panel.classList.toggle('is-fullscreen', uiState.fullscreen === true);
                 drawer.backdrop.classList.toggle('is-fullscreen', uiState.fullscreen === true);
                 if (typeof activeEntry.client.setRecordOrder === 'function') {
-                    activeEntry.client.setRecordOrder(viewState.sortDirection);
+                    activeEntry.client.setRecordOrder(LATEST_FIRST_SORT_DIRECTION);
                 }
             }
             syncBufferLimits();

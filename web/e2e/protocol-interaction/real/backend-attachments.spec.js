@@ -1,7 +1,7 @@
-import net from 'node:net';
+import { Buffer } from 'node:buffer';
 import http from 'node:http';
 import { test, expect } from '@playwright/test';
-import { REAL_E2E, protocolItemSelector, protocolItemsPath } from './test_config.js';
+import { REAL_E2E, ensureRealProjectRunning, protocolItemSelector, protocolItemsPath } from './test_config.js';
 
 async function loginRealAdmin(page, context) {
     await context.clearCookies();
@@ -23,8 +23,13 @@ function sendHttpProtocolRequest(port = REAL_E2E.attachmentHttpPort) {
             path: REAL_E2E.attachmentHttpPath,
             method: 'GET',
         }, response => {
-            response.resume();
-            response.once('end', resolve);
+            const chunks = [];
+            response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+            response.once('end', () => resolve({
+                statusCode: response.statusCode,
+                headers: response.headers,
+                body: Buffer.concat(chunks),
+            }));
         });
         const timer = setTimeout(() => {
             request.destroy();
@@ -43,137 +48,80 @@ function sendHttpProtocolRequest(port = REAL_E2E.attachmentHttpPort) {
  * 测试思路：
  *
  * 测什么：
- * 验证真实 C++ 后端在发送一条 interaction JSON 后，会继续发送带 4 字节
- * attachment Header 的 WebSocket binary frame；前端能够校验 Header 中的
- * captured_size、按 attachment_id 关联到正确记录，并把 payload 保存为可读取
- * 的 attachment，不把 binary frame 当成普通 JSON。
+ * 验证 Binary Body 的字段配置会在真实 HTTP ProjectServer 中组装为精确响应
+ * 字节，并以十六进制正文保存至同一条 interaction。HTTP Binary Body 是协议
+ * 配置数据，不是文件附件，记录不应额外产生 WebSocket binary sidecar。
  *
  * 为什么这么测：
- * 二进制帧的边界、JSON Header、payload 长度和异步到达顺序是 Mock transport
- * 无法证明的真实协议风险。B2/B3 只验证文本 interaction 和状态命令，本用例
- * 专门验证后端 `MessageGroup(text + binary)` 到 Chromium WebSocket、LiveClient
- * 和详情数据的完整链路。
+ * 字段 JSON 到运行态字节的转换只能由真实 C++ ProjectServer 验证。此前只在
+ * 浏览器和领域单测中检查序列化，无法发现响应被原始配置 JSON、零填充或错误
+ * MIME 类型替代的回归；本用例同时覆盖真实 HTTP 响应和 WebSocket 观察记录。
  *
  * 怎么测：
  * 1. 启动隔离真实后端，HTTP protocol 4 的 response body 使用固定 05 06 07 08。
- * 2. 登录并打开 project 2/protocol 4 实时抽屉，监听 WebSocket `framereceived`。
+ * 2. 登录并打开 project 2/protocol 4 实时抽屉，等待 `live_ready(open)`。
  * 3. 向真实 HTTP ProjectServer 发送 GET /api/test4，等待页面出现新的 protocol matched 记录。
- * 4. 断言 WebSocket 先收到 interaction text frame，再收到 binary frame。
- * 5. 从生产 LiveClient 读取该记录的 attachment 引用和 payload，断言大小、
- *    attachment id、完整性和四个字节均正确。
- * 6. 刷新页面，断言 IndexedDB hydration 恢复同一 record key、attachment id
- *    和四个 payload 字节。
- * 7. 清理记录并断言 attachment payload 不再保留，防止 Blob/object URL 泄漏。
+ * 4. 断言 HTTP 客户端精确收到 `05 06 07 08` 和 `application/octet-stream`。
+ * 5. 从生产 LiveClient 读取该记录，断言 Binary Body 的大小、十六进制文本和
+ *    预期类型均正确，且 attachments 为空。
  *
  * 示例：
- * interaction JSON -> attachment binary Header+payload -> record incomplete
- * -> payload matched -> record complete。
+ * fields[].spec/value -> HTTP response [05 06 07 08]
+ * -> interaction.response.body.text = H05 06 07 08。
  */
-test('真实二进制附件帧关联记录并完成 payload 恢���', async ({ page, context }) => {
+test('真实 Binary Body 字段配置输出精确 HTTP 响应并记录十六进制正文', async ({ page, context }) => {
     await loginRealAdmin(page, context);
+    await ensureRealProjectRunning(page, REAL_E2E.attachmentProjectId);
     await page.goto(protocolItemsPath(REAL_E2E.attachmentProjectId));
     await page.locator(protocolItemSelector(REAL_E2E.attachmentProtocolId))
         .getByTestId('protocol-interaction-open').click();
     const drawer = page.getByTestId('protocol-interaction-drawer');
     await expect(drawer).toBeVisible();
 
-    const websocketPromise = page.waitForEvent('websocket');
     await drawer.getByTestId('protocol-interaction-connect').click();
-    const websocket = await websocketPromise;
-    const receivedFrameKinds = [];
-    websocket.on('framereceived', frame => {
-        receivedFrameKinds.push(typeof frame.payload === 'string' ? 'text' : 'binary');
-    });
     await expect(drawer.getByTestId('protocol-interaction-state')).toHaveText('实时', { timeout: 10_000 });
 
-    await sendHttpProtocolRequest();
-    await expect.poll(async () => page.evaluate(() => {
-        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        return client.getState().visibleRecords.filter(record => record.scope === 'protocol'
-            && record.result === 'matched').length;
-    }), { timeout: 10_000 }).toBeGreaterThan(0);
-    await expect.poll(() => receivedFrameKinds.includes('binary'), { timeout: 10_000 }).toBe(true);
-    const binaryFrameIndex = receivedFrameKinds.indexOf('binary');
-    expect(binaryFrameIndex).toBeGreaterThan(0);
-    expect(receivedFrameKinds[binaryFrameIndex - 1]).toBe('text');
+    const response = await sendHttpProtocolRequest();
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('application/octet-stream');
+    expect(Array.from(response.body)).toEqual([5, 6, 7, 8]);
 
-    const attachmentState = await page.evaluate(async () => {
-        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        const record = client.getState().visibleRecords.find(item => item.scope === 'protocol'
-            && item.result === 'matched'
-            && item.response && item.response.body && item.response.body.attachments
-            && item.response.body.attachments.length);
-        if (!record) return null;
-        const ref = record.response.body.attachments[0];
-        const payload = client.getAttachment(record._key, ref.attachment_id);
-        await client.flushPersistence();
-        const state = client.getState();
-        const persistedEntry = Array.from(state.persistedRecords.values())
-            .concat(Array.from(state.pendingPersistenceRecords.values()))
-            .find(entry => entry.recordKey === record._key);
-        return {
-            key: record._key,
-            attachmentId: ref.attachment_id,
-            expectedSize: ref.captured_size,
-            completionState: persistedEntry && persistedEntry.completionState,
-            capturedSize: payload && payload.capturedSize,
-            bytes: payload && Array.from(payload.bytes),
-        };
-    });
-
-    expect(attachmentState).toMatchObject({
-        expectedSize: 4,
-        capturedSize: 4,
-        bytes: [5, 6, 7, 8],
-        completionState: 'complete',
-    });
-    expect(attachmentState.attachmentId).toContain('response.body');
-
-    await page.reload();
-    const restoredDrawer = page.getByTestId('protocol-interaction-drawer');
-    await expect(restoredDrawer).toBeVisible();
-    await expect(restoredDrawer.getByTestId('protocol-interaction-state')).toHaveText('实时', { timeout: 10_000 });
-    const restoredAttachment = await expect.poll(() => page.evaluate(({ key, attachmentId }) => {
-        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        if (!client) return null;
-        const state = client.getState();
-        const record = state.visibleRecords.concat(state.pendingRecords)
-            .find(item => item._key === key);
-        if (!record) return null;
-        const payload = client.getAttachment(record, attachmentId);
-        return payload ? {
-            key: record._key,
-            bytes: Array.from(payload.bytes),
-            capturedSize: payload.capturedSize,
-            objectUrl: payload.objectUrl,
-        } : null;
-    }, { key: attachmentState.key, attachmentId: attachmentState.attachmentId }), {
-        timeout: 10_000,
-    }).not.toBeNull().then(() => page.evaluate(({ key, attachmentId }) => {
-        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        const state = client.getState();
-        const record = state.visibleRecords.concat(state.pendingRecords).find(item => item._key === key);
-        const payload = client.getAttachment(record, attachmentId);
-        return {
-            key: record._key,
-            bytes: Array.from(payload.bytes),
-            capturedSize: payload.capturedSize,
-            objectUrl: payload.objectUrl,
-        };
-    }, { key: attachmentState.key, attachmentId: attachmentState.attachmentId }));
-    expect(restoredAttachment).toMatchObject({
-        key: attachmentState.key,
-        bytes: [5, 6, 7, 8],
-        capturedSize: 4,
-    });
-    expect(restoredAttachment.objectUrl).toMatch(/^blob:/);
-
-    await page.evaluate(() => {
-        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        client.clearRecords();
-    });
     await expect.poll(() => page.evaluate(() => {
         const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        return client.getState().attachmentPayloads.size;
-    })).toBe(0);
+        if (!client) return false;
+        const state = client.getState();
+        return state.visibleRecords.concat(state.pendingRecords).some(record => record.scope === 'protocol'
+            && record.result === 'matched'
+            && record.response && record.response.body
+            && record.response.body.text === 'H05 06 07 08');
+    }), { timeout: 10_000 }).toBe(true);
+
+    const interactionState = await page.evaluate(() => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        const state = client.getState();
+        const record = state.visibleRecords.concat(state.pendingRecords).find(item => item.scope === 'protocol'
+            && item.result === 'matched'
+            && item.response && item.response.body
+            && item.response.body.text === 'H05 06 07 08');
+        if (!record) return null;
+        return {
+            key: record._key,
+            kind: record.response.body.kind,
+            expectedKind: record.response.body.expect_kind,
+            size: record.response.body.size,
+            capturedSize: record.response.body.captured_size,
+            text: record.response.body.text,
+            attachments: record.response.body.attachments,
+        };
+    });
+
+    expect(interactionState).toEqual({
+        key: expect.any(String),
+        kind: 'unknown',
+        expectedKind: 'binary',
+        size: 4,
+        capturedSize: 4,
+        text: 'H05 06 07 08',
+        attachments: [],
+    });
 });

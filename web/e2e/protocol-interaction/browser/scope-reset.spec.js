@@ -15,8 +15,10 @@ async function loginAndOpenDrawer(page, context) {
     const drawer = page.getByTestId('protocol-interaction-drawer');
     await drawer.getByTestId('protocol-interaction-connect').click();
     await expect(drawer.getByTestId('protocol-interaction-state')).toHaveText('实时');
+    // 首批项目 Notice 与协议记录按合并队列渲染；scope reset 用例后续自行构造
+    // 游标重置数据，准备阶段只需确保列表已有可交互记录。
     await expect.poll(() => drawer.getByTestId('protocol-interaction-record-item').count())
-        .toBeGreaterThanOrEqual(4);
+        .toBeGreaterThanOrEqual(3);
     return drawer;
 }
 

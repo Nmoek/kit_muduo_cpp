@@ -502,32 +502,62 @@
 
 .interaction-record-items {
     position: relative;
-    display: grid;
+    /* 第二列在普通模式隐藏，但持续保留已分配的记录。 */
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
     flex: 1 1 auto;
-    grid-template-rows: repeat(10, minmax(0, 1fr));
-    grid-auto-flow: row;
-    align-content: stretch;
     gap: 5px;
     overflow: hidden;
     padding-bottom: 8px;
 }
 
 .protocol-interaction-drawer.is-fullscreen .interaction-record-items {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-rows: repeat(10, minmax(0, 1fr));
-    grid-auto-flow: column;
-    align-content: stretch;
+    flex-direction: row;
+    align-items: stretch;
     gap: 8px;
 }
 
-.interaction-record-item {
-    display: block;
-    width: 100%;
+.interaction-record-column {
+    display: grid;
+    flex: 1 1 0;
+    grid-template-rows: repeat(10, minmax(0, 1fr));
+    grid-auto-rows: minmax(54px, auto);
+    min-width: 0;
     min-height: 0;
+    gap: 5px;
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.interaction-record-column-secondary {
+    display: none;
+}
+
+.protocol-interaction-drawer.is-fullscreen .interaction-record-column {
+    gap: 8px;
+}
+
+.protocol-interaction-drawer.is-fullscreen .interaction-record-column-secondary {
+    display: grid;
+}
+
+.interaction-record-item {
+    display: flex;
+    flex-direction: column;
+    inline-size: 100%;
+    block-size: 100%;
+    max-inline-size: 100%;
+    min-width: 0;
+    min-block-size: 0;
+    flex: none;
+    justify-self: stretch;
+    align-self: stretch;
     margin: 0;
     padding: 6px 8px;
+    box-sizing: border-box;
+    overflow: hidden;
     border: 1px solid var(--interaction-line);
     border-radius: var(--interaction-radius-large);
     background: var(--interaction-panel);
@@ -570,8 +600,7 @@
 }
 
 .interaction-record-item.is-exiting {
-    position: absolute;
-    inset: 0;
+    position: relative;
     z-index: 2;
     pointer-events: none;
 }
@@ -586,11 +615,19 @@
     animation: interaction-record-exit var(--interaction-record-transition-duration) ease both;
 }
 
+/* 全屏右列是视觉队尾，淘汰卡片只能在列内淡出，不能横向移出形成伪第三列。 */
+.protocol-interaction-drawer.is-fullscreen .interaction-record-item.is-exiting-asc {
+    animation-name: interaction-record-exit-fullscreen;
+}
+
 .protocol-interaction-drawer.is-reflowing .interaction-record-item {
     animation-play-state: paused !important;
 }
 
 .protocol-interaction-drawer.is-fullscreen .interaction-record-item {
+    block-size: 100%;
+    min-block-size: 0;
+    flex: none;
     margin-bottom: 0;
 }
 
@@ -642,13 +679,23 @@
     }
 }
 
-.protocol-interaction-drawer.is-fullscreen .interaction-empty-state {
-    grid-column: 1 / -1;
+@keyframes interaction-record-exit-fullscreen {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
 }
 
 .interaction-record-items > .interaction-empty-state {
-    grid-column: 1 / -1;
-    grid-row: 1 / -1;
+    flex: 1 1 auto;
+}
+
+.interaction-list-action[data-action="toggle-sort"] {
+    display: none;
 }
 
 .interaction-record-item-top,
@@ -660,8 +707,15 @@
     min-width: 0;
 }
 
+.interaction-record-item-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    max-width: 100%;
+    overflow: hidden;
+}
+
 .interaction-record-item-top [data-role="scope"] {
-    margin-left: auto;
+    margin-left: 0;
 }
 
 .interaction-record-item [hidden] {
@@ -669,12 +723,19 @@
 }
 
 .interaction-record-item-top strong {
+    display: block;
     min-width: 0;
+    max-width: 100%;
     overflow: hidden;
     color: var(--interaction-text);
     font-weight: 700;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.interaction-record-item-top [data-role="result"],
+.interaction-record-item-top [data-role="scope"] {
+    flex: 0 0 auto;
 }
 
 .interaction-record-item-sub {
@@ -1343,20 +1404,27 @@
     }
 
     .interaction-record-items {
-        display: grid;
+        display: flex;
+        flex-direction: column;
         min-height: 0;
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: repeat(10, minmax(0, 1fr));
-        grid-auto-flow: row;
         gap: 5px;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     .protocol-interaction-drawer.is-fullscreen .interaction-record-items {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: repeat(10, minmax(0, 1fr));
-        grid-auto-flow: row;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .interaction-record-column {
+        flex: 0 0 auto;
+        width: 100%;
+    }
+
+    .protocol-interaction-drawer.is-fullscreen .interaction-record-column-secondary,
+    .interaction-record-column-secondary {
+        display: none;
     }
 
     .interaction-record-detail {

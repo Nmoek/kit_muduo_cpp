@@ -1669,6 +1669,92 @@ describe('protocol interaction live data layer', () => {
     });
 
     /**
+     * 测试思路：重连后旧 WebSocket 的迟到事件不能覆盖新 session 的状态。
+     * 示例：session A 异常断开创建 session B，随后 A 再发送 live_ready/close，当前连接仍必须是 B。
+     */
+    it('忽略旧 WebSocket session 的迟到消息和关闭事件', () => {
+        vi.useFakeTimers();
+        try {
+            const live = createLiveContext();
+            const sockets = [];
+            const client = live.KitProxy.protocolInteractionLive.createClient({
+                projectId: 1,
+                protocolId: 10,
+                transportFactory: url => {
+                    const socket = createFakeSocket();
+                    socket.url = url;
+                    sockets.push(socket);
+                    return socket;
+                },
+            });
+
+            client.connect();
+            const first = sockets[0];
+            first.onopen();
+            first.onmessage({ data: liveReady({ session_id: 101 }) });
+            first.onclose({ code: 1006, reason: 'network' });
+
+            vi.advanceTimersByTime(1000);
+            expect(sockets).toHaveLength(2);
+            const second = sockets[1];
+            second.onopen();
+            second.onmessage({ data: liveReady({ session_id: 202 }) });
+
+            first.onmessage({ data: liveReady({ session_id: 101 }) });
+            first.onclose({ code: 1006, reason: 'late old socket close' });
+
+            expect(client.getState()).toMatchObject({
+                connectionState: 'active',
+                sessionId: 202,
+                socketSessionId: 202,
+                socket: second,
+            });
+            expect(second.closeCalls).toHaveLength(0);
+
+            second.onmessage({ data: JSON.stringify({ type: 'state', session_id: 101 }) });
+            expect(second.closeCalls).toHaveLength(1);
+            expect(second.closeCalls[0]).toMatchObject({ code: 1011, reason: 'stale session message' });
+            client.destroy();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    /**
+     * 测试思路：本地快照已恢复的记录再次收到 catch_up 时，重复消息仍必须计入当前 session 的补发进度。
+     * 示例：已有 seq=1/2，live_ready 声明 catch_up_count=2，重放两条重复记录后状态进入 active。
+     */
+    it('重复 catch_up 记录可以完成当前 session 的补发', () => {
+        const live = createLiveContext();
+        const socket = createFakeSocket();
+        const client = live.KitProxy.protocolInteractionLive.createClient({
+            projectId: 1,
+            protocolId: 10,
+            transportFactory: () => socket,
+        });
+
+        client.receiveText(JSON.stringify({ type: 'interaction', delivery: 'live', record: makeRecord({ seq: 1 }) }));
+        client.receiveText(JSON.stringify({ type: 'interaction', delivery: 'live', record: makeRecord({ seq: 2 }) }));
+        client.connect();
+        socket.onopen();
+        socket.onmessage({ data: liveReady({
+            session_id: 303,
+            protocol_cache_info: { cache_instance_id: 7, last_seq: 2, live_start_seq: 3, catch_up_count: 2, catch_up_gap: false, cursor_reset: false },
+        }) });
+        socket.onmessage({ data: JSON.stringify({ type: 'interaction', delivery: 'catch_up', record: makeRecord({ seq: 1 }) }) });
+        socket.onmessage({ data: JSON.stringify({ type: 'interaction', delivery: 'catch_up', record: makeRecord({ seq: 2 }) }) });
+
+        expect(client.getState()).toMatchObject({
+            connectionState: 'active',
+            sessionId: 303,
+            socketSessionId: 303,
+            catchUpExpected: 2,
+            catchUpReceived: 2,
+        });
+        client.destroy();
+    });
+
+    /**
      * 测试思路：默认 client 的 pending 固定为 20，列表与 pending 合计受 40 条上限约束，
      * 记录被淘汰时应释放其附件对象 URL。
      * 示例：发送 41 条时列表尚未消费，pending 只保留最新 20 条并淘汰最早记录；逐条合并后列表最终保留 20 条。
@@ -1880,6 +1966,8 @@ describe('protocol interaction live data layer', () => {
         vi.useFakeTimers();
         try {
             const live = createLiveContext('?apiMode=mock');
+            // 此用例用 runAllTimers 校验首批固定消息；周期 live 消息由独立 E2E 覆盖。
+            live.KitProxy.protocolInteractionLive.setMockScenario(1, 10, { liveEnabled: false });
             const client = live.KitProxy.protocolInteractionLive.createClient({ projectId: 1, protocolId: 10 });
             client.connect();
             vi.runAllTimers();
@@ -1909,6 +1997,8 @@ describe('protocol interaction live data layer', () => {
         vi.useFakeTimers();
         try {
             const live = createLiveContext('?apiMode=mock');
+            // 此用例用 runAllTimers 校验首批固定 TCP 样例，不能递归推进长期 live 定时器。
+            live.KitProxy.protocolInteractionLive.setMockScenario(2, 2, { liveEnabled: false });
             const client = live.KitProxy.protocolInteractionLive.createClient({
                 projectId: 2,
                 protocolId: 2,

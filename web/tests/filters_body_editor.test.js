@@ -293,8 +293,9 @@ describe('V1.3 service filters and body editor', () => {
     });
 
     /**
-     * 测试思路：BodyEditor 按 Body 类型自动折叠文本区，Binary 模式展示 TCP 风格普通字段配置。
-     * 示例：None/Image 收起文本区；JSON 展开文本区；Binary 收起文本区并显示 pattern-layout-section/pattern-field-info。
+     * 测试思路：BodyEditor 按 Body 类型自动折叠文本区，Binary 模式复用 TCP 的普通字段编辑能力，
+     * 但不展示角色列；STR 字段使用可编辑的 1~32 长度和文本/十六进制切换。
+     * 示例：None/Image 收起文本区；JSON 展开文本区；Binary 中 STR 未选长度默认 1，输入 OK 保存为 H4F4B。
      */
     it('Body 输入组件支持类型驱动折叠和 Binary 普通字段配置', async () => {
         const context = createBrowserContext('?apiMode=mock');
@@ -348,7 +349,7 @@ describe('V1.3 service filters and body editor', () => {
         expect(host.querySelector('.body-editor-binary-wrap .pattern-section-title').textContent).toContain('字节布局预览');
         expect(host.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).toContain('名称');
         expect(host.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).toContain('类型');
-        expect(host.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).toContain('角色');
+        expect(host.querySelector('.body-editor-binary-wrap .pattern-field-grid-labels').textContent).not.toContain('角色');
         expect(host.querySelector('.body-editor-binary-wrap .pattern-wire-hex-input')).toBeTruthy();
         expect(host.querySelector('.body-editor-binary-wrap .pattern-value-editor-input')).toBeTruthy();
         expect(host.querySelector('.body-editor-binary-wrap .pattern-field-value-display-btn')).toBeTruthy();
@@ -370,9 +371,7 @@ describe('V1.3 service filters and body editor', () => {
         expect(readBinaryRows()).toHaveLength(1);
         expect(readBinaryRows()[0].querySelector('.del-field-btn').disabled).toBe(true);
 
-        const roleSelect = host.querySelector('.body-editor-binary-wrap .pattern-field-role');
-        expect(roleSelect.disabled).toBe(true);
-        expect(Array.from(roleSelect.options).map(option => option.value)).toEqual(['common']);
+        expect(readBinaryRows()[0].classList.contains('pattern-field-role-hidden')).toBe(true);
         const typeSelect = host.querySelector('.body-editor-binary-wrap .pattern-field-type');
         typeSelect.value = 'UINT16';
         typeSelect.dispatchEvent(new context.Event('change', { bubbles: true }));
@@ -380,12 +379,128 @@ describe('V1.3 service filters and body editor', () => {
         expect(byteLenInput.value).toBe('2');
         expect(byteLenInput.disabled).toBe(true);
         const valueEditor = host.querySelector('.body-editor-binary-wrap .pattern-value-editor-input');
+        const nameInput = host.querySelector('.body-editor-binary-wrap .pattern-field-name');
+        nameInput.value = '请求标识';
+        nameInput.dispatchEvent(new context.Event('input', { bubbles: true }));
         valueEditor.value = '01 02';
         valueEditor.dispatchEvent(new context.Event('input', { bubbles: true }));
         expect(editor.getBinaryFields()[0].value).toBe('H0102');
+        expect(JSON.parse(editor.getValue())).toEqual({
+            fields: [{
+                spec: {
+                    byte_len: 2,
+                    byte_pos: 0,
+                    match: 'H0102',
+                    name: '请求标识',
+                    role: 'common',
+                    type: 'UINT16',
+                },
+                value: 'H0102',
+            }],
+        });
+        expect(context.KitProxy.bodySyntax.normalizeBodyContent(editor.getValue(), 'binary')).toBe(editor.getValue());
+
+        editor.clearBinaryFields();
+        const stringField = readBinaryRows()[0];
+        const stringTypeSelect = stringField.querySelector('.pattern-field-type');
+        const stringByteLen = stringField.querySelector('.pattern-field-byte-len');
+        const stringValueEditor = stringField.querySelector('.pattern-value-editor-input');
+        const stringDisplayButton = stringField.querySelector('.pattern-field-value-display-btn');
+        stringTypeSelect.value = 'STR';
+        stringTypeSelect.dispatchEvent(new context.Event('change', { bubbles: true }));
+
+        expect(stringByteLen.value).toBe('1');
+        expect(stringByteLen.readOnly).toBe(false);
+        expect(stringByteLen.disabled).toBe(false);
+        expect(stringByteLen.min).toBe('1');
+        expect(stringByteLen.max).toBe('32');
+        expect(stringValueEditor.placeholder).toBe('ASCII字符串真值');
+        expect(stringDisplayButton.textContent).toBe('S');
+
+        stringByteLen.value = '2';
+        stringByteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        stringValueEditor.value = 'OK';
+        stringValueEditor.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(editor.getBinaryFields()[0].value).toBe('H4F4B');
+        stringDisplayButton.click();
+        expect(stringDisplayButton.textContent).toBe('H');
+        expect(stringValueEditor.value).toBe('4F 4B');
+
+        stringByteLen.value = '';
+        stringByteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(stringByteLen.value).toBe('1');
+        stringByteLen.value = '33';
+        stringByteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        expect(stringByteLen.value).toBe('32');
+        stringByteLen.value = '4';
+        stringByteLen.dispatchEvent(new context.Event('input', { bubbles: true }));
+        stringField.querySelector('.add-field-btn').click();
+        expect(readBinaryRows()[1].querySelector('.pattern-field-byte-pos').value).toBe('4');
         expect(editor.getValue()).toBe('');
         expect(context.KitProxy.bodySyntax.validate('旧响应内容', 'binary').valid).toBe(true);
         expect(context.KitProxy.bodySyntax.normalizeBodyContent('旧响应内容', 'binary')).toBe('');
+    });
+
+    /**
+     * 测试思路：
+     * 1. Binary Body 落库格式的字段定义在 spec 内，而实际写入字节单独放在 value；
+     *    编辑器重新打开配置时不能把两者展平、混淆或丢失 match。
+     * 2. 回填后再次保存必须仍是同一层级的 JSON，且 spec.match 和 value 都保留，
+     *    保证前端和后端 FieldValueMapParseFromJson 的契约一致。
+     * 3. 当前 UI 用同一个值编辑器配置匹配字节和响应字节，所以保存时两者应规范化
+     *    为相同的 H 前缀十六进制字符串。
+     *
+     * 示例：
+     *
+     *   fields[0].spec.match = H05060708
+     *   fields[0].value      = H05060708
+     *             |
+     *             v
+     *   setValue -> 字段编辑器 -> getValue
+     *             |
+     *             v
+     *   spec/value 层级和同一个字节串均不变
+     */
+    it('Binary Body 回填嵌套 spec 和独立 value 后保持前后端契约', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+        runScript(context, 'js/tcp_pattern_modal.js');
+
+        const host = context.document.createElement('div');
+        context.document.body.appendChild(host);
+        const persistedValue = {
+            fields: [{
+                spec: {
+                    byte_len: 4,
+                    byte_pos: 0,
+                    match: 'H05060708',
+                    name: '响应标识',
+                    role: 'common',
+                    type: 'UINT32',
+                },
+                value: 'H05060708',
+            }],
+        };
+        const editor = context.KitProxy.bodyEditor.create(host, {
+            value: JSON.stringify(persistedValue),
+            bodyType: 'binary',
+            allowedTypes: ['binary'],
+        });
+
+        expect(editor.getBinaryFields()).toEqual([{
+            id: expect.any(String),
+            name: '响应标识',
+            byte_pos: 0,
+            byte_len: 4,
+            type: 'UINT32',
+            role: 'common',
+            value: 'H05060708',
+        }]);
+        expect(JSON.parse(editor.getValue())).toEqual(persistedValue);
+        expect(JSON.parse(context.KitProxy.bodySyntax.normalizeBodyContent(
+            JSON.stringify(persistedValue),
+            'binary',
+        ))).toEqual(persistedValue);
     });
 
     /**

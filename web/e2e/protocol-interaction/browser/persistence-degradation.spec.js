@@ -19,8 +19,16 @@ async function openConnectedDrawer(page, context) {
     await expect(drawer).toBeVisible();
     await drawer.locator('[data-action="connect"]').click();
     await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
-    await expect.poll(() => drawer.locator('.interaction-record-item').count())
+    // 该组用例验证持久化降级后的内存状态。记录卡片带有入场动画，末尾记录可能
+    // 正在等待合并，必须同时计入 visibleRecords 和 pendingRecords。
+    await expect.poll(async () => page.evaluate(() => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        if (!client) return 0;
+        const state = client.getState();
+        return state.visibleRecords.length + state.pendingRecords.length;
+    }))
         .toBeGreaterThanOrEqual(4);
+    await expect(drawer.locator('.interaction-record-item')).not.toHaveCount(0);
     return drawer;
 }
 
@@ -63,7 +71,8 @@ test('IndexedDB 不可用时实时内存流程仍可用', async ({ page, context
     });
 
     expect(clientState.persistenceStatus).toBe('disabled');
-    expect(clientState.visibleRecords.length).toBeGreaterThanOrEqual(4);
+    expect(clientState.visibleRecords.length + clientState.pendingRecords.length)
+        .toBeGreaterThanOrEqual(4);
     await expect(drawer.locator('[data-role="warning"]')).toContainText('实时查看仍可继续');
 });
 
@@ -202,14 +211,21 @@ test('持久化配额错误时实时连接和内存记录不受阻塞', async ({
     await expect(drawer).toBeVisible();
     await drawer.locator('[data-action="connect"]').click();
     await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
-    await expect.poll(() => drawer.locator('.interaction-record-item').count())
+    await expect.poll(async () => page.evaluate(() => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        if (!client) return 0;
+        const state = client.getState();
+        return state.visibleRecords.length + state.pendingRecords.length;
+    }))
         .toBeGreaterThanOrEqual(4);
+    await expect(drawer.locator('.interaction-record-item')).not.toHaveCount(0);
 
     const clientState = await page.evaluate(() => {
         const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
         return client.getState();
     });
     expect(clientState.persistenceStatus).toBe('degraded');
-    expect(clientState.visibleRecords.length).toBeGreaterThanOrEqual(4);
+    expect(clientState.visibleRecords.length + clientState.pendingRecords.length)
+        .toBeGreaterThanOrEqual(4);
     await expect(drawer.locator('[data-role="warning"]')).toContainText('实时查看仍可继续');
 });

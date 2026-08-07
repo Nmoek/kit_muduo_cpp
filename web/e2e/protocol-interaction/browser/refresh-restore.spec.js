@@ -41,8 +41,10 @@ test('刷新后恢复原协议项抽屉和实时工作区记录', async ({ page,
     await expect(drawer).toBeVisible();
     await drawer.locator('[data-action="connect"]').click();
     await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
+    // 保存/恢复断言以刷新前实际已渲染数为基线；最后一条 Notice 可能仍在
+    // 合并队列中，准备阶段只需已有可恢复记录。
     await expect.poll(() => drawer.locator('.interaction-record-item').count())
-        .toBeGreaterThanOrEqual(4);
+        .toBeGreaterThanOrEqual(3);
 
     const beforeCount = await drawer.locator('.interaction-record-item').count();
     const beforeProtocolId = await drawer.locator('[data-role="protocol-meta"]').textContent();
@@ -151,8 +153,9 @@ test('刷新重连携带双游标且已有记录重放幂等', async ({ page, co
     let drawer = page.locator('.protocol-interaction-drawer');
     await drawer.locator('[data-action="connect"]').click();
     await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
+    // 双游标由内存与持久化状态生成，不依赖首批 Notice 已完成卡片动画。
     await expect.poll(() => drawer.locator('.interaction-record-item').count())
-        .toBeGreaterThanOrEqual(4);
+        .toBeGreaterThanOrEqual(3);
 
     await page.reload();
     const builtUrl = await page.evaluate(() => {

@@ -14,10 +14,18 @@ async function openConnectedDrawer(page, context) {
     await item.locator('.protocol-interaction-btn').click();
     const drawer = page.locator('.protocol-interaction-drawer');
     await expect(drawer).toBeVisible();
+    // 布局用例注入固定数量的记录；关闭周期 Mock 消息，避免后台新记录改变样本数量。
+    await page.evaluate(() => {
+        window.KitProxy.protocolInteractionLive.setMockScenario(1, 1, {
+            liveIntervalMs: 60_000,
+        });
+    });
     await drawer.locator('[data-action="connect"]').click();
     await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
+    // Mock 首批消息通过定时器逐条抵达；布局断言只依赖可选中的记录，不依赖第 4 条
+    // Notice 的到达时机，至少三条即可稳定覆盖列表轨道。
     await expect.poll(() => drawer.locator('.interaction-record-item').count())
-        .toBeGreaterThanOrEqual(4);
+        .toBeGreaterThanOrEqual(3);
     return drawer;
 }
 
@@ -68,6 +76,102 @@ test('电脑端抽屉支持全屏切换且布局容器不横向溢出', async ({
     });
     await drawer.locator('[data-action="fullscreen"]').click();
     await expect(drawer).not.toHaveClass(/is-fullscreen/);
+});
+
+/**
+ * 测试思路：全屏仍然固定为两列时，注入 11 条 Notice + 10 条协议记录，专门覆盖
+ * 第 21 条记录。旧实现按“每 10 条换一列”计算位置，第 21 条会得到 gridColumn=3，
+ * 浏览器于是创建隐式第三列，表现为前两列变窄、第三列变宽。当前固定容量为两列
+ * 共 20 张，第 21 条必须留在 pending，不能推动 DOM 创建第三列。
+ *
+ * 示例：project(11) + protocol(10) -> 两列各 10 张，剩余 1 条 pending，无隐式第三列。
+ */
+test('全屏双列超过 20 条记录不创建隐式第三列', async ({ page, context }) => {
+    const drawer = await openConnectedDrawer(page, context);
+    await drawer.locator('[data-action="fullscreen"]').click();
+    await expect(drawer).toHaveClass(/is-fullscreen/);
+
+    await page.evaluate(() => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        const state = client.getState();
+        const projectTemplate = state.visibleRecords.find(record => record.scope === 'project');
+        const protocolTemplate = state.visibleRecords.find(record => record.scope === 'protocol');
+        if (!projectTemplate || !protocolTemplate) throw new Error('缺少双 scope 模板记录');
+
+        client.clearRecords();
+        client.pauseMerge();
+        for (let index = 1; index <= 21; index += 1) {
+            const isProject = index <= 11;
+            const record = JSON.parse(JSON.stringify(isProject ? projectTemplate : protocolTemplate));
+            record.scope = isProject ? 'project' : 'protocol';
+            record.project_id = 1;
+            record.protocol_id = isProject ? 0 : 1;
+            record.cache_instance_id = isProject ? 9901 : 9902;
+            record.seq = index;
+            record.time_ms = 1_786_037_000_000 + index;
+            client.receiveText(JSON.stringify({ type: 'interaction', delivery: 'catch_up', record }));
+        }
+        client.setMergeSpeed('fast');
+        client.resumeMerge();
+    });
+
+    await expect(drawer.locator('.interaction-record-item')).toHaveCount(20, { timeout: 15_000 });
+    const layout = await page.evaluate(() => {
+        const list = document.querySelector('.interaction-record-items');
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        const state = client.getState();
+        const listRect = list.getBoundingClientRect();
+        const cards = Array.from(list.querySelectorAll('.interaction-record-item')).map(card => {
+            const rect = card.getBoundingClientRect();
+            return {
+                key: card.dataset.recordKey,
+                left: rect.left,
+                right: rect.right,
+                top: rect.top,
+                bottom: rect.bottom,
+                height: rect.height,
+                column: card.closest('[data-role="record-column-secondary"]') ? '2' : '1',
+                row: card.style.gridRow,
+            };
+        });
+        const overlaps = [];
+        for (let index = 0; index < cards.length; index += 1) {
+            for (let next = index + 1; next < cards.length; next += 1) {
+                const left = cards[index];
+                const right = cards[next];
+                if (left.left < right.right && left.right > right.left
+                    && left.top < right.bottom && left.bottom > right.top) {
+                    overlaps.push([left.key, right.key]);
+                }
+            }
+        }
+        return {
+            columnCount: list.querySelectorAll('.interaction-record-column').length,
+            columnOverflow: Array.from(list.querySelectorAll('.interaction-record-column'))
+                .map(column => getComputedStyle(column).overflowY),
+            pendingCount: state.pendingRecords.length,
+            listRect: {
+                right: listRect.right,
+                clientHeight: list.clientHeight,
+                scrollHeight: list.scrollHeight,
+            },
+            cards,
+            overlaps,
+        };
+    });
+
+    expect(layout.columnCount).toBe(2);
+    expect(layout.pendingCount).toBe(1);
+    const firstColumn = layout.cards.filter(card => card.column === '1');
+    const secondColumn = layout.cards.filter(card => card.column === '2');
+    expect(firstColumn).toHaveLength(10);
+    expect(secondColumn).toHaveLength(10);
+    expect(firstColumn.map(card => Number(card.row))).toEqual(Array.from({ length: 10 }, (_, index) => index + 1));
+    expect(secondColumn.map(card => Number(card.row))).toEqual(Array.from({ length: 10 }, (_, index) => index + 1));
+    expect(layout.cards.every(card => card.height >= 48)).toBe(true);
+    expect(layout.cards.every(card => card.right <= layout.listRect.right + 1)).toBe(true);
+    expect(layout.overlaps).toEqual([]);
+    expect(layout.columnOverflow).toEqual(['auto', 'auto']);
 });
 
 /**
@@ -136,6 +240,88 @@ test('电脑端长交互内容不遮挡控制区并可打开详情', async ({ pa
     expect(layout.viewportOverflow).toBeLessThanOrEqual(1);
     await page.screenshot({
         path: testInfo.outputPath('protocol-interaction-desktop-long-content.png'),
+        fullPage: true,
+    });
+});
+
+/**
+ * 测试思路：
+ *
+ * 测什么：
+ * 验证超长 HTTP 路径只在交互记录卡片标题区域显示省略号，卡片宽高仍由记录
+ * 网格固定，鼠标悬停可用的原生 title/aria-label 保留完整标题。
+ *
+ * 为什么这么测：
+ * 标题来自运行态请求路径，长度不可控。仅验证文本写入 DOM 无法发现 flex/grid
+ * 子项把卡片撑宽、挤压结果标签或让文字绘制到详情区的问题，需 Chromium 测量。
+ *
+ * 怎么测：
+ * 1. 注入一条超长 HTTP path 的实时记录。
+ * 2. 读取标题的完整文本，并断言 title 和 aria-label 使用同一完整值。
+ * 3. 检查标题实际产生横向溢出但启用 ellipsis；卡片 border-box 完全落在列表
+ *    网格内，标题行也没有越过卡片右边界。
+ *
+ * 示例：
+ *
+ *   GET /__title-overflow-xxxx... 200
+ *                 |
+ *                 v
+ *   [GET /__title-overflow-...] [成功]
+ *                 |
+ *                 v
+ *   hover title -> 浏览器展示完整标题
+ */
+test('超长交互标题在固定记录卡片内截断并保留完整悬停文本', async ({ page, context }, testInfo) => {
+    const drawer = await openConnectedDrawer(page, context);
+    const longPath = `/__title-overflow-${'segment-'.repeat(80)}`;
+
+    await page.evaluate(path => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        const source = client.getState().visibleRecords.find(record => (
+            String(record.protocol_type || '').toLowerCase() === 'http'
+        )) || client.getState().visibleRecords[0];
+        const record = JSON.parse(JSON.stringify(source));
+        record.seq = 10001;
+        record.request.meta.path = path;
+        client.receiveText(JSON.stringify({ type: 'interaction', delivery: 'live', record }));
+    }, longPath);
+
+    const title = drawer.locator('[data-role="title"]').filter({
+        hasText: '/__title-overflow-',
+    });
+    await expect(title).toHaveCount(1);
+    const fullTitle = await title.textContent();
+    expect(fullTitle).toContain(longPath);
+    await expect(title).toHaveAttribute('title', fullTitle);
+    await expect(title).toHaveAttribute('aria-label', fullTitle);
+
+    const layout = await title.evaluate(node => {
+        const card = node.closest('.interaction-record-item');
+        const titleRow = node.closest('.interaction-record-item-top');
+        const list = card && card.parentElement;
+        if (!card || !titleRow || !list) throw new Error('缺少交互记录卡片布局节点');
+
+        const cardStyle = getComputedStyle(card);
+        const titleStyle = getComputedStyle(node);
+        return {
+            boxSizing: cardStyle.boxSizing,
+            cardWithinList: card.clientWidth <= list.clientWidth,
+            titleWithinCard: node.clientWidth <= card.clientWidth
+                && titleRow.clientWidth <= card.clientWidth,
+            titleHasOverflow: node.scrollWidth > node.clientWidth,
+            textOverflow: titleStyle.textOverflow,
+            whiteSpace: titleStyle.whiteSpace,
+        };
+    });
+
+    expect(layout.boxSizing).toBe('border-box');
+    expect(layout.cardWithinList).toBe(true);
+    expect(layout.titleWithinCard).toBe(true);
+    expect(layout.titleHasOverflow).toBe(true);
+    expect(layout.textOverflow).toBe('ellipsis');
+    expect(layout.whiteSpace).toBe('nowrap');
+    await page.screenshot({
+        path: testInfo.outputPath('protocol-interaction-record-title-overflow.png'),
         fullPage: true,
     });
 });

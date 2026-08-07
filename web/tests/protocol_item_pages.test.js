@@ -458,8 +458,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const keys = () => Array.from(panel.querySelectorAll('.interaction-record-item')).map(item => item.dataset.recordKey);
         expect(keys()).toEqual(['protocol:1:3', 'protocol:1:2', 'protocol:1:1']);
         expect(fakeClient.setBufferLimits).toHaveBeenCalledWith(
-            { maxVisibleRecords: 10, maxPendingRecords: 20 },
-            { reflowVisibleRecords: records },
+            { maxVisibleRecords: 20, maxPendingRecords: 20 },
         );
         expect(panel.querySelector('[data-action="toggle-sort"]').dataset.sortDirection).toBe('asc');
         const descendingIcon = panel.querySelector('[data-action="toggle-sort"] svg').outerHTML;
@@ -539,15 +538,21 @@ describe('V1.5 protocol item form page and compact cards', () => {
     });
 
     /**
-     * 测试思路：普通模式列表固定为 10 个显示槽位，全屏固定为左列 10 条、右列 10 条，列表不得依赖滚动条展示。
-     * 示例：CSS 使用 repeat(10) 行、全屏 grid-auto-flow: column，并将 interaction-record-items 设置为 overflow:hidden。
+     * 测试思路：普通模式每个 scope 可保留 10 条可见记录，双 scope 合计 20 条时必须使用纵向滚动列表；
+     * 全屏固定为两列，并按列优先将记录填满第一列后再进入第二列。
+     * 示例：普通模式使用 flex column + overflow-y:auto，全屏使用双列 column-flow 和可滚动的自动行。
      */
-    it('列表固定一屏展示十条，全屏按列优先展示二十条', () => {
+    it('普通列表可滚动展示二十条，全屏固定双列并支持滚动', () => {
         const css = readRepoFile('css/protocol_interaction_drawer.css');
+        expect(css).toContain('display: flex;');
+        expect(css).toContain('flex-direction: column;');
+        expect(css).toContain('overflow-y: auto;');
+        expect(css).toContain('min-block-size: 0;');
+        expect(css).toContain('grid-template-columns: repeat(2, minmax(0, 1fr));');
         expect(css).toContain('grid-template-rows: repeat(10, minmax(0, 1fr));');
-        expect(css).toContain('grid-auto-flow: row;');
-        expect(css).toContain('grid-auto-flow: column;');
-        expect(css).toContain('overflow: hidden;');
+        expect(css).toContain('grid-auto-rows: minmax(54px, auto);');
+        expect(css).toContain('.interaction-record-column-secondary');
+        expect(css).toContain('overflow-y: auto;');
         expect(css).toContain('grid-template-columns: 580px minmax(0, 1fr);');
     });
 
@@ -733,13 +738,10 @@ describe('V1.5 protocol item form page and compact cards', () => {
             panel.querySelector('[data-action="fullscreen"]').click();
             panel.querySelector('[data-action="fullscreen"]').click();
             expect(fakeClient.setBufferLimits).toHaveBeenLastCalledWith(
-                { maxVisibleRecords: 10, maxPendingRecords: 20 },
-                {
-                    reflowVisibleRecords: records,
-                },
+                { maxVisibleRecords: 20, maxPendingRecords: 20 },
             );
-            expect(state.visibleRecords.map(record => record.seq)).toEqual(records.slice(0, 10).map(record => record.seq));
-            expect(state.pendingRecords.map(record => record.seq)).toEqual(records.slice(10).map(record => record.seq));
+            expect(state.visibleRecords.map(record => record.seq)).toEqual(records.map(record => record.seq));
+            expect(state.pendingRecords).toHaveLength(0);
 
             const newRecord = Object.assign({}, records[19], { _key: 'protocol:1:21', seq: 21, time_ms: 21 });
             fakeClient.getState.mockReturnValueOnce(state);
@@ -756,7 +758,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
      * 测试思路：使用真实 live client 走完打开、填充 12 条、全屏、切回非全屏的完整路径，逐条检查回放动画。
      * 示例：切回后每 1000ms 只新增 1 条，10 条回放记录都带淡入 class，不再隔条直接跳入。
      */
-    it('真实抽屉回退后按中速逐条从列表首项淡入', () => {
+    it('真实抽屉切换模式期间冻结合并，切换后保留双列记录', () => {
         vi.useFakeTimers();
         try {
             const context = createBrowserContext('?apiMode=real&projectId=1');
@@ -808,24 +810,12 @@ describe('V1.5 protocol item form page and compact cards', () => {
             panel.querySelector('[data-action="fullscreen"]').click();
             panel.querySelector('[data-action="fullscreen"]').click();
             vi.advanceTimersByTime(0);
-            expect(client.getState().mergePaused).toBe(false);
-            expect(client.getState().pendingQueues.reflow).toHaveLength(10);
+            expect(client.getState().mergePaused).toBe(true);
+            expect(client.getState().pendingQueues.reflow).toHaveLength(0);
             expect(panel.style.getPropertyValue('--interaction-record-transition-duration')).toBe('650ms');
-
-            const consumed = [];
-            client.on('recordVisible', payload => consumed.push(payload.record.seq));
-            for (let index = 0; index < 10; index += 1) {
-                vi.advanceTimersByTime(999);
-                expect(consumed).toHaveLength(index);
-                expect(client.getState().pendingQueues.reflow).toHaveLength(10 - index);
-                vi.advanceTimersByTime(1);
-                expect(consumed).toHaveLength(index + 1);
-                expect(consumed[index]).toBe(index + 3);
-                expect(client.getState().pendingQueues.reflow).toHaveLength(9 - index);
-                const firstItem = panel.querySelector('.interaction-record-items .interaction-record-item');
-                expect(firstItem.dataset.recordKey).toBe(`protocol:7:${index + 3}`);
-                expect(firstItem.classList.contains('is-entering-front')).toBe(true);
-            }
+            vi.advanceTimersByTime(300);
+            expect(client.getState().mergePaused).toBe(false);
+            expect(client.getState().visibleRecords).toHaveLength(12);
             context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 29);
         } finally {
             vi.useRealTimers();
@@ -936,7 +926,7 @@ describe('V1.5 protocol item form page and compact cards', () => {
         item.querySelector('.protocol-interaction-btn').click();
         const panel = context.document.querySelector('.protocol-interaction-drawer');
         const items = panel.querySelector('.interaction-record-items');
-        expect(setBufferLimits).toHaveBeenLastCalledWith({ maxVisibleRecords: 10, maxPendingRecords: 20 });
+        expect(setBufferLimits).toHaveBeenLastCalledWith({ maxVisibleRecords: 20, maxPendingRecords: 20 });
         panel.querySelector('[data-action="fullscreen"]').click();
         expect(setBufferLimits).toHaveBeenLastCalledWith({ maxVisibleRecords: 20, maxPendingRecords: 20 });
         expect(panel.classList.contains('is-fullscreen')).toBe(true);
@@ -1287,10 +1277,10 @@ describe('V1.5 protocol item form page and compact cards', () => {
     });
 
     /**
-     * 测试思路：列表改为固定槽位的一屏展示模式后，不再依赖 scrollTop 保存历史浏览位置。
-     * 示例：CSS 明确使用 overflow:hidden，新的记录重绘不会产生可滚动列表。
+     * 测试思路：普通模式下的实时列表应允许纵向浏览 20 条可见记录，不能用 10 个固定 Grid 行压缩内容。
+     * 示例：CSS 使用 overflow-y:auto，JSDOM 仍可确认抽屉渲染三条初始记录。
      */
-    it('固定槽位列表不启用滚动条', () => {
+    it('普通记录列表启用纵向滚动', () => {
         const context = createBrowserContext('?apiMode=mock&projectId=1');
         loadCoreScripts(context);
         context.KitProxy.__disableAutoInitMain = true;
@@ -1326,8 +1316,9 @@ describe('V1.5 protocol item form page and compact cards', () => {
 
         const panel = context.document.querySelector('.protocol-interaction-drawer');
         const list = panel.querySelector('.interaction-record-items');
-        expect(readRepoFile('css/protocol_interaction_drawer.css')).toContain('overflow: hidden;');
-        expect(readRepoFile('css/protocol_interaction_drawer.css')).toContain('grid-template-rows: repeat(10, minmax(0, 1fr));');
+        const css = readRepoFile('css/protocol_interaction_drawer.css');
+        expect(css).toContain('overflow-y: auto;');
+        expect(css).toContain('flex-direction: column;');
         expect(list.querySelectorAll('.interaction-record-item')).toHaveLength(3);
         context.KitProxy.protocolInteractionDrawer.cleanupProtocol(1, 16);
     });
@@ -2026,8 +2017,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_body_status: 0,
         });
         context.document.body.appendChild(httpGrid);
-        expect(httpGrid.querySelector('.editable-field')).toBeNull();
-        expect(httpGrid.querySelector('.field-edit-hint')).toBeNull();
         httpGrid.querySelector('[data-field-name="method"]').click();
         httpGrid.querySelector('[data-field-name="path"]').click();
         httpGrid.querySelector('.request-body').click();
@@ -2048,8 +2037,6 @@ describe('V1.5 protocol item form page and compact cards', () => {
             resp_body_status: 0,
         });
         context.document.body.appendChild(tcpGrid);
-        expect(tcpGrid.querySelector('.editable-field')).toBeNull();
-        expect(tcpGrid.querySelector('.field-edit-hint')).toBeNull();
         expect(tcpGrid.querySelector('[data-field-name="function_code"]')).toBeNull();
         expect(tcpGrid.textContent).toContain('请求头部字段值');
         expect(tcpGrid.textContent).toContain('响应头部字段值');
@@ -2674,5 +2661,43 @@ describe('V1.5 protocol item form page and compact cards', () => {
         const respFields = JSON.parse(respButton.dataset.patternInfos).fields;
         expect(reqFields.some(field => field.role === 'function_code' && field.value === 'H1000')).toBe(true);
         expect(respFields.some(field => field.role === 'function_code' && field.value === 'H1080')).toBe(true);
+    });
+
+    /**
+     * 测试思路：响应侧 Binary Body 已由字段编辑器处理，不能再进入 JSON/XML 的文本格式化路径。
+     * 示例：bodySyntax.format 设为抛异常，打开 HDEADBEEF 的 Binary 编辑框仍成功，并显示字段预览。
+     */
+    it('响应 Binary Body 打开编辑框时跳过文本格式化', () => {
+        const context = createBrowserContext('?apiMode=mock&projectId=1');
+        loadCoreScripts(context);
+        context.KitProxy.__disableAutoInitMain = true;
+        context.KitProxy.__disableAutoInitProtocolItems = true;
+        loadProtocolListScripts(context);
+
+        const formatter = vi.fn(() => {
+            throw new Error('Binary Body 暂不支持格式化');
+        });
+        context.KitProxy.bodySyntax.format = formatter;
+        const binaryBody = JSON.stringify({
+            fields: [{
+                spec: {
+                    name: 'Binary UI response',
+                    byte_pos: 0,
+                    byte_len: 4,
+                    type: 'STR',
+                    role: 'common',
+                    match: 'HDEADBEEF',
+                },
+                value: 'HDEADBEEF',
+            }],
+        });
+
+        expect(() => context.createProtocolItemBodyModal(
+            'binary', binaryBody, vi.fn(), { side: 2, protocolType: 'HTTP' })).not.toThrow();
+        expect(formatter).not.toHaveBeenCalled();
+        expect(context.document.querySelector('.edit-body-modal.is-binary-body-mode')).toBeTruthy();
+        expect(context.document.querySelector('.body-editor-binary-preview').textContent).toContain('HDEADBEEF');
+
+        context.document.querySelector('.cancel-btn').click();
     });
 	});

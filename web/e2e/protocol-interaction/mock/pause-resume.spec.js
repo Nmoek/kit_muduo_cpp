@@ -15,8 +15,15 @@ async function loginAndConnect(page, context) {
     await item.locator('.protocol-interaction-btn').click();
     const drawer = page.locator('.protocol-interaction-drawer');
     await expect(drawer).toBeVisible();
+    // pause/resume 只验证服务端暂停期间的补发样例，关闭长期周期流避免准备阶段竞态。
+    await page.evaluate(() => {
+        window.KitProxy.protocolInteractionLive.setMockScenario(1, 1, {
+            liveEnabled: false,
+        });
+    });
     await drawer.locator('[data-action="connect"]').click();
     await expect(drawer.locator('[data-role="status"]')).toHaveText('实时');
+    await drawer.locator('[data-action="set-merge-speed"][data-speed="fast"]').click();
     await expect.poll(() => drawer.locator('.interaction-record-item').count())
         .toBeGreaterThanOrEqual(4);
     return drawer;

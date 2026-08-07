@@ -783,7 +783,7 @@
         }
     }
 
-    function syncByteLengthAvailability(fieldNode, isProjectMode) {
+    function syncByteLengthAvailability(fieldNode, isProjectMode, options = {}) {
         const byteLenInput = fieldNode.querySelector('.pattern-field-byte-len');
         const type = fieldNode.querySelector('.pattern-field-type')?.value || '';
         if (!byteLenInput) return;
@@ -797,6 +797,11 @@
         byteLenInput.required = Boolean(isProjectMode && isStringField);
         if (editable) {
             sanitizeStringByteLenInput(fieldNode);
+            const defaultByteLen = Number(options.defaultStringByteLen);
+            if (!byteLenInput.value && Number.isInteger(defaultByteLen)
+                && defaultByteLen >= 1 && defaultByteLen <= STRING_MAX_BYTES) {
+                byteLenInput.value = String(defaultByteLen);
+            }
         }
     }
 
@@ -1612,7 +1617,9 @@
     }
 
     function bindPatternFieldNodeActions(fieldNode, patternList, modal, isProjectMode, options = {}) {
-        const canEditStructure = options.canEditStructure !== false && Boolean(isProjectMode);
+        const canEditStructure = options.canEditStructure != null
+            ? Boolean(options.canEditStructure)
+            : Boolean(isProjectMode);
         const autoRecalculateBytePositions = options.autoRecalculateBytePositions !== false && canEditStructure;
         const valueAvailabilityProjectMode = options.valueAvailabilityProjectMode != null
             ? Boolean(options.valueAvailabilityProjectMode)
@@ -1620,6 +1627,9 @@
         const allowStringLengthEdit = options.allowStringLengthEdit != null
             ? Boolean(options.allowStringLengthEdit)
             : Boolean(isProjectMode);
+        const byteLengthOptions = {
+            defaultStringByteLen: options.defaultStringByteLen,
+        };
         const onRefresh = typeof options.onRefresh === 'function'
             ? options.onRefresh
             : () => refreshPatternModal(modal, isProjectMode);
@@ -1695,6 +1705,7 @@
             }
             if (event.target.classList.contains('pattern-field-byte-len') && allowStringLengthEdit) {
                 sanitizeStringByteLenInput(fieldNode);
+                syncByteLengthAvailability(fieldNode, allowStringLengthEdit, byteLengthOptions);
                 syncValueEditorFromHidden(fieldNode);
                 if (autoRecalculateBytePositions) {
                     recalculatePatternFieldBytePositions(patternList);
@@ -1714,7 +1725,7 @@
                     initializeStringDisplayMode(fieldNode);
                 }
                 updateByteLenByType(fieldNode, { isProjectMode });
-                syncByteLengthAvailability(fieldNode, allowStringLengthEdit);
+                syncByteLengthAvailability(fieldNode, allowStringLengthEdit, byteLengthOptions);
                 syncValueAvailability(fieldNode, valueAvailabilityProjectMode);
                 syncValueEditorFromHidden(fieldNode);
                 if (autoRecalculateBytePositions) {
@@ -1723,6 +1734,7 @@
             }
             if (event.target.classList.contains('pattern-field-byte-len') && allowStringLengthEdit) {
                 sanitizeStringByteLenInput(fieldNode);
+                syncByteLengthAvailability(fieldNode, allowStringLengthEdit, byteLengthOptions);
                 syncValueEditorFromHidden(fieldNode);
                 if (autoRecalculateBytePositions) {
                     recalculatePatternFieldBytePositions(patternList);
@@ -1736,7 +1748,9 @@
     }
 
     function appendFieldNode(patternList, fieldNode, modal, isProjectMode, afterNode = null, options = {}) {
-        const canEditStructure = options.canEditStructure !== false && Boolean(isProjectMode);
+        const canEditStructure = options.canEditStructure != null
+            ? Boolean(options.canEditStructure)
+            : Boolean(isProjectMode);
         const canEditValues = options.canEditValues !== false;
         const lockRole = options.lockRole === true;
         const shouldOverrideValueEditable = Object.prototype.hasOwnProperty.call(options, 'canEditValues');
@@ -1746,7 +1760,9 @@
 
         fieldNode.dataset.structureEditable = canEditStructure ? 'true' : 'false';
         fieldNode.querySelector('.pattern-field-byte-pos').readOnly = Boolean(options.autoRecalculateBytePositions !== false && canEditStructure);
-        syncByteLengthAvailability(fieldNode, allowStringLengthEdit);
+        syncByteLengthAvailability(fieldNode, allowStringLengthEdit, {
+            defaultStringByteLen: options.defaultStringByteLen,
+        });
 
         if (!canEditStructure) {
             setFieldMetadataReadonly(fieldNode, true);
@@ -1817,6 +1833,11 @@
         const editableValues = options.editableValues !== false;
         const autoRecalculateBytePositions = options.autoRecalculateBytePositions !== false;
         const showMoveActions = options.showMoveActions !== false;
+        const allowStringLengthEdit = options.allowStringLengthEdit != null
+            ? Boolean(options.allowStringLengthEdit)
+            : isProjectMode;
+        const defaultStringByteLen = options.defaultStringByteLen;
+        const hideRoleColumn = Boolean(options.hideRoleColumn);
         const emptyPreviewText = options.emptyPreviewText || '暂无字段';
         const countLabel = options.countLabel || '字段';
         const fieldNamePlaceholder = options.fieldNamePlaceholder || '字段名称';
@@ -1907,6 +1928,7 @@
             const normalizedField = normalizeEditorFields([field || createDefaultPatternFieldInfo()])[0];
             const fieldNode = createPatternField(fieldNamePlaceholder, '', normalizedField, { roleOptions });
             updatePatternField(fieldNode, normalizedField, isProjectMode);
+            fieldNode.classList.toggle('pattern-field-role-hidden', hideRoleColumn);
             if (fixedRole) {
                 fieldNode.querySelector('.pattern-field-role').value = fixedRole;
             }
@@ -1925,7 +1947,7 @@
 
         function appendEditorField(field, afterNode = null) {
             const fieldNode = createFieldNode(field);
-            appendFieldNode(fieldList, fieldNode, editorRoot, true, afterNode, {
+            appendFieldNode(fieldList, fieldNode, editorRoot, isProjectMode, afterNode, {
                 canEditStructure: editableStructure,
                 canEditValues: editableValues,
                 autoRecalculateBytePositions,
@@ -1934,7 +1956,9 @@
                 role: fixedRole || undefined,
                 roleOptions,
                 valueAvailabilityProjectMode: isProjectMode,
-                allowStringLengthEdit: isProjectMode,
+                allowStringLengthEdit,
+                defaultStringByteLen,
+                defaultStringDisplay: options.defaultStringDisplay,
                 onRefresh: refresh,
                 onAddAfter: function(anchorNode) {
                     appendEditorField(createDefaultPatternFieldInfo(), anchorNode);
@@ -2009,6 +2033,7 @@
         const fieldTitle = options.fieldTitle || '字段配置';
         const countText = options.countText || '';
         const showAddButton = Boolean(options.showAddButton);
+        const hideRoleColumn = Boolean(options.hideRoleColumn);
         const addButtonText = options.addButtonText || '新增字段';
         const fieldValueLabel = options.fieldValueLabel || '字段值';
 
@@ -2030,7 +2055,7 @@
                     <span>名称</span>
                     <span>Byte长度</span>
                     <span>类型</span>
-                    <span>角色</span>
+                    ${hideRoleColumn ? '' : '<span>角色</span>'}
                     ${isProjectMode ? '' : `<span>${escapeHTML(fieldValueLabel)}</span>`}
                     <span>操作</span>
                 </div>

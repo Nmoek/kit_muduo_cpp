@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>交互记录卡片布局故障示意</title>
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="demo.css">
+</head>
+<body>
+    <main class="demo-page">
+        <header class="demo-header">
+            <div>
+                <p class="eyebrow">DEBUG DEMO / 可删除</p>
+                <h1>为什么前 10 张卡片会被压扁？</h1>
+                <p class="lead">这个示意只模拟列表布局，不连接真实项目。按顺序加入 10 条项目 Notice，再加入 10 条协议记录，即可看到现场的 14px 卡片是怎样产生的。</p>
+            </div>
+            <div class="header-badge"><span class="pulse-dot"></span>布局机制演示</div>
+        </header>
+
+        <section class="controls" aria-label="动画控制">
+            <div class="control-main">
+                <button type="button" class="primary" id="play"><span aria-hidden="true">▶</span> 播放到 20 条</button>
+                <button type="button" id="pause"><span aria-hidden="true">Ⅱ</span> 暂停</button>
+                <button type="button" id="reset"><span aria-hidden="true">↺</span> 重置</button>
+            </div>
+            <label class="range-control" for="record-count">
+                <span>当前到达记录</span>
+                <input id="record-count" type="range" min="0" max="20" value="0">
+                <output id="record-count-value">0 / 20</output>
+            </label>
+            <label class="check-control"><input id="show-guides" type="checkbox" checked> 显示旧版 10 行轨道</label>
+        </section>
+
+        <section class="story" aria-live="polite">
+            <div class="story-step" id="step-1"><span class="step-number">1</span><strong>先到达 10 条 project Notice</strong><span>旧版 Grid 的 10 个显式行暂时还能容纳它们。</span></div>
+            <div class="story-step" id="step-2"><span class="step-number">2</span><strong>继续到达 10 条 protocol</strong><span>协议记录进入隐式行，固定高度被重新分配。</span></div>
+            <div class="story-step" id="step-3"><span class="step-number">3</span><strong>修复后的布局</strong><span>Flex 不再按 10 个 Grid 行分配，卡片保持最小高度并滚动。</span></div>
+        </section>
+
+        <section class="comparison" aria-label="旧版与修复版对比">
+            <article class="case old-case" id="old-case">
+                <div class="case-heading">
+                    <div>
+                        <p class="case-kicker">旧版布局</p>
+                        <h2>固定 10 行 Grid</h2>
+                    </div>
+                    <span class="case-status bad" id="old-status">等待记录</span>
+                </div>
+                <p class="formula"><code>repeat(10, minmax(0, 1fr))</code> + 20 个子项</p>
+                <div class="viewport-label"><span>固定列表高度：330px</span><span id="old-height-label">卡片尚未进入</span></div>
+                <div class="list-viewport old-viewport">
+                    <div class="grid-guides" id="grid-guides" aria-hidden="true"></div>
+                    <div class="track-label explicit-label">显式行 1 - 10</div>
+                    <div class="track-label implicit-label" id="implicit-label">隐式行 11 - 20</div>
+                    <div class="record-list old-list" id="old-list"></div>
+                </div>
+                <div class="case-metrics"><span>第一张卡片：<b id="old-card-height">-</b></span><span>列表内容：<b id="old-overflow">-</b></span></div>
+                <p class="case-explanation" id="old-explanation">点击播放，观察第 11 条记录进入后显式行开始让位。</p>
+            </article>
+
+            <article class="case new-case" id="new-case">
+                <div class="case-heading">
+                    <div>
+                        <p class="case-kicker">修复版布局</p>
+                        <h2>纵向 Flex + 滚动</h2>
+                    </div>
+                    <span class="case-status good" id="new-status">等待记录</span>
+                </div>
+                <p class="formula"><code>flex-direction: column</code> + <code>min-block-size: 54px</code></p>
+                <div class="viewport-label"><span>固定列表高度：330px</span><span id="new-height-label">卡片尚未进入</span></div>
+                <div class="list-viewport new-viewport">
+                    <div class="record-list new-list" id="new-list"></div>
+                </div>
+                <div class="case-metrics"><span>第一张卡片：<b id="new-card-height">-</b></span><span>列表内容：<b id="new-overflow">-</b></span></div>
+                <p class="case-explanation">每张卡片先按自身内容和最小高度排布，超出可视区后由列表滚动承载。</p>
+            </article>
+        </section>
+
+        <section class="takeaway">
+            <div class="takeaway-icon" aria-hidden="true">!</div>
+            <div>
+                <h2>把现场数据翻译成一句话</h2>
+                <p><strong>不是 20 条数据互相覆盖了。</strong> 是旧版 Grid 只有 10 个显式行，后 10 条被放入隐式行，浏览器为了塞下两组轨道而压缩了前 10 行；卡片的边框和文字因此叠在了相邻记录上。</p>
+            </div>
+        </section>
+    </main>
+    <script src="demo.js"></script>
+</body>
+</html>

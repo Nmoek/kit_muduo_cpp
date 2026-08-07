@@ -15,8 +15,10 @@ async function loginAndOpenDrawer(page, context) {
     const drawer = page.getByTestId('protocol-interaction-drawer');
     await drawer.getByTestId('protocol-interaction-connect').click();
     await expect(drawer.getByTestId('protocol-interaction-state')).toHaveText('实时');
-    await expect.poll(() => drawer.getByTestId('protocol-interaction-record-item').count())
-        .toBeGreaterThanOrEqual(4);
+    await expect.poll(() => page.evaluate(() => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        return Boolean(client?.getState().visibleRecords.some(record => record.scope === 'protocol'));
+    })).toBe(true);
     return drawer;
 }
 

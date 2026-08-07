@@ -233,6 +233,10 @@
      * @returns {string}
      */
     function normalizeBodyContent(text, bodyType) {
+        if (String(bodyType || '').toLowerCase() === 'binary') {
+            const fields = tryParseBinaryFields(text);
+            return fields ? serializeBinaryFields(fields) : '';
+        }
         return CONTENT_NORMALIZATION_EMPTY_BODY_TYPES.includes(String(bodyType || '').toLowerCase())
             ? ''
             : String(text == null ? '' : text);
@@ -459,6 +463,41 @@
             : '';
     }
 
+    /**
+     * 将 Binary Body 的字段行转换为 TCP 字段格式。
+     * Body 不区分特殊角色，字段值既作为匹配值也作为实际写入值保存。
+     * @param {Array<any>} fields Binary Body 字段。
+     * @returns {string} 可持久化的 JSON 字符串；没有完整字段时返回空内容。
+     */
+    function serializeBinaryFields(fields) {
+        const serializedFields = normalizeBinaryFields(fields)
+            .filter(field => {
+                return String(field.name || '').trim()
+                    && Number.isInteger(Number(field.byte_pos))
+                    && Number(field.byte_pos) >= 0
+                    && Number.isInteger(Number(field.byte_len))
+                    && Number(field.byte_len) > 0
+                    && String(field.type || '').trim()
+                    && String(field.value || '').trim();
+            })
+            .map(field => {
+                const wireValue = String(field.value || '').trim();
+                return {
+                    spec: {
+                        byte_len: Number(field.byte_len),
+                        byte_pos: Number(field.byte_pos),
+                        match: wireValue,
+                        name: String(field.name || '').trim(),
+                        role: 'common',
+                        type: String(field.type || '').trim(),
+                    },
+                    value: wireValue,
+                };
+            });
+
+        return serializedFields.length ? JSON.stringify({ fields: serializedFields }) : '';
+    }
+
     function lineNumbersHTML(lineCount) {
         const count = Math.max(1, Number(lineCount) || 1);
         const lines = [];
@@ -507,17 +546,18 @@
      */
     function normalizeBinaryField(field, index) {
         const source = field && typeof field === 'object' ? field : {};
-        const type = String(source.type || '').trim();
-        const rawByteLen = source.byte_len ?? source.byteLen ?? '';
+        const spec = source.spec && typeof source.spec === 'object' ? source.spec : source;
+        const type = String(spec.type || '').trim();
+        const rawByteLen = spec.byte_len ?? spec.byteLen ?? '';
 
         return {
             id: String(source.id || `binary-field-${Date.now()}-${index}`),
-            name: String(source.name || ''),
-            byte_pos: source.byte_pos ?? source.bytePos ?? '',
+            name: String(spec.name || ''),
+            byte_pos: spec.byte_pos ?? spec.bytePos ?? '',
             byte_len: rawByteLen,
             type,
             role: 'common',
-            value: String(source.value ?? source.match ?? ''),
+            value: String(source.value ?? spec.match ?? source.match ?? ''),
         };
     }
 
@@ -845,6 +885,7 @@
                 fieldTitle: '二进制普通字段',
                 countText: '0 个普通字段',
                 showAddButton: false,
+                hideRoleColumn: true,
             });
             binarySectionMounted = true;
             return true;
@@ -871,6 +912,10 @@
                 editableStructure: true,
                 editableValues: true,
                 autoRecalculateBytePositions: true,
+                allowStringLengthEdit: true,
+                defaultStringByteLen: 1,
+                defaultStringDisplay: true,
+                hideRoleColumn: true,
                 showMoveActions: true,
                 fieldNamePlaceholder: '普通字段',
                 listSelector: '.body-editor-binary-field-list',
@@ -1158,6 +1203,10 @@
         return {
             getValue: function() {
                 if (HIDDEN_BODY_TYPES.includes(currentBodyType)) return preservedUnsupportedValue;
+                if (isBinaryMode()) {
+                    syncBinaryFieldsFromDOM();
+                    return serializeBinaryFields(binaryFields);
+                }
                 return isMultiformMode()
                     ? serializeMultiformFields(multiformFields)
                     : normalizeBodyContent(textarea.value, currentBodyType);
@@ -1165,6 +1214,10 @@
             getValueAsync: async function() {
                 if (multiformFileReads.size) await Promise.all(Array.from(multiformFileReads));
                 if (HIDDEN_BODY_TYPES.includes(currentBodyType)) return preservedUnsupportedValue;
+                if (isBinaryMode()) {
+                    syncBinaryFieldsFromDOM();
+                    return serializeBinaryFields(binaryFields);
+                }
                 return isMultiformMode()
                     ? serializeMultiformFields(multiformFields)
                     : normalizeBodyContent(textarea.value, currentBodyType);

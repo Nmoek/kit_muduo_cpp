@@ -341,6 +341,7 @@
                 readRecordKeys: [],
             }, options.uiState || {}),
             socket: null,
+            socketSessionId: 0,
             reconnectTimer: null,
             mergeTimer: null,
             mergeGeneration: 0,
@@ -356,6 +357,7 @@
         };
 
         const listeners = createEventMap();
+        const socketSessionIds = new WeakMap();
         let intentionalClose = false;
         let destroyed = false;
         let queryInFlight = false;
@@ -545,7 +547,6 @@
                 stored.record = existing;
                 stored.updatedAt = now();
                 registerRecordAttachments(existing);
-                if (delivery === 'catch_up') state.catchUpReceived += 1;
                 queuePersistence('putRecordBundle', { snapshot: persistenceSnapshot(), record: stored, attachments: [] });
             }
             return true;
@@ -1418,6 +1419,16 @@
             return '';
         }
 
+        function completeCatchUpIfReady() {
+            if (state.connectionState === STATES.CATCHING_UP
+                && state.catchUpExpected > 0
+                && state.catchUpReceived >= state.catchUpExpected
+                && !state.pendingCommand) {
+                setConnectionState(STATES.ACTIVE, { reason: 'open_catch_up_complete' });
+                restorePausedConnectionIfReady();
+            }
+        }
+
         function receiveInteraction(message) {
             const record = message && message.record;
             const delivery = message && message.delivery;
@@ -1428,7 +1439,14 @@
             }
 
             const key = buildRecordKey(record.scope, record.cache_instance_id, record.seq);
-            if (state.recordKeys.has(key)) return mergeDuplicateInteraction(record, key, delivery);
+            if (state.recordKeys.has(key)) {
+                const merged = mergeDuplicateInteraction(record, key, delivery);
+                // catch_up_count 表示服务端实际发送的消息数，重复记录也必须计入，
+                // 否则从持久化快照恢复后重连会永久停留在“补发中”。
+                if (delivery === 'catch_up') state.catchUpReceived += 1;
+                completeCatchUpIfReady();
+                return merged;
+            }
 
             const normalizedRecord = Object.assign({}, record, {
                 _key: key,
@@ -1457,13 +1475,7 @@
             emit('recordsChanged', { reason: 'receive', pendingCount: pendingCount() });
             scheduleMerge();
 
-            if (state.connectionState === STATES.CATCHING_UP
-                && state.catchUpExpected > 0
-                && state.catchUpReceived >= state.catchUpExpected
-                && !state.pendingCommand) {
-                setConnectionState(STATES.ACTIVE, { reason: 'open_catch_up_complete' });
-                restorePausedConnectionIfReady();
-            }
+            completeCatchUpIfReady();
             return true;
         }
 
@@ -1585,19 +1597,34 @@
             }
         }
 
-        function handleLiveReady(message) {
+        function handleLiveReady(message, socket) {
+            if (socket && state.socket !== socket) return;
             if (!message || numberId(message.project_id) !== projectId
                 || numberId(message.protocol_id) !== protocolId
                 || numberId(message.session_id) <= 0) {
                 addWarning('live_ready 的项目、协议项或 session_id 不匹配', { kind: 'invalid_live_ready' });
-                terminateSocket('invalid live_ready');
+                terminateSocket('invalid live_ready', socket);
                 return;
             }
+
+            const sessionId = numberId(message.session_id);
+            const boundSessionId = socket ? socketSessionIds.get(socket) : 0;
+            if (boundSessionId && boundSessionId !== sessionId) {
+                addWarning('同一 WebSocket 的 session_id 发生变化', {
+                    kind: 'session_changed',
+                    previousSessionId: boundSessionId,
+                    sessionId,
+                });
+                terminateSocket('session changed', socket);
+                return;
+            }
+            if (socket) socketSessionIds.set(socket, sessionId);
 
             const trigger = message.trigger === 'resume' ? 'resume' : 'open';
             const hadProtocolCursor = Boolean(state.protocolCursor);
             const hadProjectCursor = Boolean(state.projectCursor);
-            state.sessionId = numberId(message.session_id);
+            state.sessionId = sessionId;
+            state.socketSessionId = sessionId;
             if (trigger === 'open') {
                 state.acceptedClientSeq = 0;
                 state.nextClientSeq = 1;
@@ -1673,21 +1700,26 @@
                 && (reason.includes('shutdown') || reason.includes('normal'));
         }
 
-        function terminateSocket(reason) {
+        function terminateSocket(reason, expectedSocket) {
             const socket = state.socket;
-            if (!socket) return;
+            if (!socket || (expectedSocket && socket !== expectedSocket)) return;
             try {
                 if (typeof socket.close === 'function') socket.close(1011, String(reason || 'connection error'));
             } catch (error) {
-                handleSocketClose({ code: 1011, reason: String(reason || '') });
+                handleSocketClose({ code: 1011, reason: String(reason || '') }, socket);
             }
         }
 
-        function handleSocketClose(event = {}) {
+        function handleSocketClose(event = {}, socket) {
+            // 重连期间旧 WebSocket 可能晚于新连接触发 close；旧连接不能
+            // 清空新连接的 state，也不能覆盖新的补发状态。
+            if (socket && state.socket !== socket) return;
             clearCommandTimer();
+            socketSessionIds.delete(socket);
             const wasIntentional = intentionalClose || !state.desiredConnected;
             state.socket = null;
             state.sessionId = 0;
+            state.socketSessionId = 0;
             state.pendingCommand = null;
             queryInFlight = false;
             emit('closed', event);
@@ -1700,27 +1732,43 @@
             scheduleReconnect(event.reason || 'socket_closed');
         }
 
-        function handleSocketError(event) {
+        function handleSocketError(event, socket) {
+            if (state.socket !== socket) return;
             emit('socketError', event);
             if (state.socket && state.connectionState === STATES.CONNECTING) {
-                terminateSocket('socket error');
+                terminateSocket('socket error', socket);
             }
         }
 
-        function handleSocketOpen() {
+        function handleSocketOpen(socket) {
+            if (state.socket !== socket) return;
             emit('socketOpen', { url: state.socket && state.socket.url });
             setConnectionState(STATES.CONNECTING, { reason: 'socket_open' });
         }
 
-        function handleTextMessage(text) {
+        function handleTextMessage(text, socket) {
+            if (socket && state.socket !== socket) return;
             const message = typeof text === 'string' ? safeJsonParse(text) : null;
             if (!message || typeof message.type !== 'string') {
                 addWarning('实时消息不是有效 JSON', { kind: 'invalid_message' });
                 return;
             }
+            if (message.type !== 'live_ready' && socket) {
+                const boundSessionId = socketSessionIds.get(socket);
+                if (!boundSessionId || state.sessionId !== boundSessionId) return;
+                if (message.session_id != null && numberId(message.session_id) !== boundSessionId) {
+                    addWarning('实时消息 session_id 与当前连接不匹配', {
+                        kind: 'stale_session_message',
+                        expectedSessionId: boundSessionId,
+                        sessionId: message.session_id,
+                    });
+                    terminateSocket('stale session message', socket);
+                    return;
+                }
+            }
             switch (message.type) {
                 case 'live_ready':
-                    handleLiveReady(message);
+                    handleLiveReady(message, socket);
                     break;
                 case 'interaction':
                     receiveInteraction(message);
@@ -1736,12 +1784,13 @@
             }
         }
 
-        function handleMessage(data) {
+        function handleMessage(data, socket) {
             if (typeof data === 'string') {
-                handleTextMessage(data);
+                handleTextMessage(data, socket);
                 return;
             }
             binaryChain = binaryChain.then(async () => {
+                if (socket && (state.socket !== socket || state.sessionId !== socketSessionIds.get(socket))) return;
                 if (data instanceof Blob) {
                     receiveAttachment(await data.arrayBuffer());
                 } else {
@@ -1752,10 +1801,13 @@
 
         function assignSocketHandlers(socket) {
             socket.binaryType = 'arraybuffer';
-            socket.onopen = handleSocketOpen;
-            socket.onmessage = event => handleMessage(event && event.data);
-            socket.onerror = handleSocketError;
-            socket.onclose = handleSocketClose;
+            socket.onopen = () => handleSocketOpen(socket);
+            socket.onmessage = event => {
+                if (state.socket !== socket) return;
+                handleMessage(event && event.data, socket);
+            };
+            socket.onerror = event => handleSocketError(event, socket);
+            socket.onclose = event => handleSocketClose(event, socket);
         }
 
         function connect(manual = true) {
@@ -1786,6 +1838,7 @@
             setConnectionState(STATES.CONNECTING, { url, reason: 'connect' });
             // client_seq 属于单条 WebSocket session；异常重连后必须从 1 重新开始。
             state.sessionId = 0;
+            state.socketSessionId = 0;
             state.acceptedClientSeq = 0;
             state.nextClientSeq = 1;
             state.pendingCommand = null;
@@ -1804,10 +1857,13 @@
                     })
                     : new global.WebSocket(url);
                 if (!state.socket) throw new Error('WebSocket transport 创建失败');
+                socketSessionIds.delete(state.socket);
                 assignSocketHandlers(state.socket);
                 return true;
             } catch (error) {
+                socketSessionIds.delete(state.socket);
                 state.socket = null;
+                state.socketSessionId = 0;
                 addWarning(error.message || 'WebSocket 创建失败', { kind: 'socket_create_error' });
                 scheduleReconnect('socket_create_error');
                 return false;
@@ -1827,7 +1883,7 @@
             try {
                 state.socket.close(1000, 'client disconnect');
             } catch (error) {
-                handleSocketClose({ code: 1000, reason: 'client disconnect' });
+                handleSocketClose({ code: 1000, reason: 'client disconnect' }, state.socket);
             }
         }
 
@@ -2026,8 +2082,10 @@
             clearBufferOverflowTimer();
             if (state.socket) {
                 try { state.socket.close(1000, 'page cleanup'); } catch (error) { /* socket already closed */ }
+                socketSessionIds.delete(state.socket);
             }
             state.socket = null;
+            state.socketSessionId = 0;
             releaseAllResources();
             if (global.removeEventListener) {
                 global.removeEventListener('online', handleOnline);
@@ -2129,6 +2187,7 @@
                             ? state.uiState.readRecordKeys.slice()
                             : [],
                     }),
+                    socketSessionId: state.socketSessionId,
                 });
             },
             receiveText: handleTextMessage,
@@ -2290,10 +2349,14 @@
             protocolSeq: 0,
             projectSeq: 0,
             pausedRecords: [],
+            liveIntervalMs: 2500,
             resetNextResume: false,
             gapNextReady: false,
             failNextConnection: false,
         };
+        if (!Number.isFinite(Number(runtime.liveIntervalMs)) || Number(runtime.liveIntervalMs) <= 0) {
+            runtime.liveIntervalMs = 2500;
+        }
         mockRuntime.set(runtimeKey, runtime);
         const buildRecord = (scope, seq, overrides = {}) => useTcpRecords
             ? mockTcpRecord(projectId, protocolId, scope, seq, overrides)
@@ -2461,6 +2524,38 @@
                     'live',
                 ), 40);
             },
+            _scheduleLiveRecord(delay = runtime.liveIntervalMs) {
+                if (runtime.liveEnabled === false) return;
+                const interval = Math.max(1, Number(delay) || 2500);
+                socket._schedule(() => {
+                    if (socket._closed) return;
+                    runtime.protocolSeq += 1;
+                    const record = useTcpRecords
+                        ? buildRecord('protocol', runtime.protocolSeq)
+                        : buildRecord('protocol', runtime.protocolSeq, {
+                            request: {
+                                meta: { method: 'GET', path: `/api/live/${runtime.protocolSeq}` },
+                                head_text: `GET /api/live/${runtime.protocolSeq} HTTP/1.1`,
+                                body: {
+                                    kind: 'empty', expect_kind: 'empty', size: 0, captured_size: 0,
+                                    truncated: false, sha1: '', text: '', error_message: '', attachments: [],
+                                },
+                            },
+                            response: {
+                                meta: { status_code: 200 },
+                                head_text: 'HTTP/1.1 200 OK',
+                                body: {
+                                    kind: 'json', expect_kind: 'json', size: 20, captured_size: 20,
+                                    truncated: false, sha1: '', text: JSON.stringify({ ok: true, seq: runtime.protocolSeq }),
+                                    error_message: '', attachments: [],
+                                },
+                            },
+                        });
+                    if (socket._paused) runtime.pausedRecords.push(record);
+                    else socket._emitRecord(record, 'live');
+                    socket._scheduleLiveRecord(interval);
+                }, interval);
+            },
             send(payload) {
                 const command = safeJsonParse(payload);
                 socket.sent.push(command);
@@ -2521,7 +2616,10 @@
             socket.readyState = 1;
             if (socket.onopen) socket.onopen();
             socket._ready('open', 0);
-            socket._schedule(() => socket._sendInitialRecords(), 20);
+            socket._schedule(() => {
+                socket._sendInitialRecords();
+                socket._scheduleLiveRecord();
+            }, 20);
             if (failThisConnection) socket._schedule(() => socket.fail('mock network error'), 80);
         }, 0);
         return socket;
@@ -2539,6 +2637,7 @@
             protocolSeq: 0,
             projectSeq: 0,
             pausedRecords: [],
+            liveIntervalMs: 2500,
             resetNextResume: false,
             gapNextReady: false,
             failNextConnection: false,

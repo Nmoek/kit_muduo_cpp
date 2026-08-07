@@ -196,10 +196,10 @@
                 ? global.tcpLengthPolicyText(project.length_policy)
                 : 'TCP格式';
             return `
-                <span class="service-meta-item service-detail-chip project-pattern" id="pattern-info-${escape(project.id)}" title="该信息点击可编辑">
-                    <span class="meta-label">格式</span>
-                    <span class="meta-value field-value" data-target="pattern-info-${escape(project.id)}">${escape(patternText)}</span>
-                </span>
+                <button type="button" class="service-field project-pattern editable-service-field" id="pattern-info-${escape(project.id)}" title="点击编辑 TCP 格式">
+                    <span class="field-label">TCP格式</span>
+                    <span class="field-value" data-target="pattern-info-${escape(project.id)}">${escape(patternText)}</span>
+                </button>
             `;
         },
         bindServiceExtraActions: function(serviceCard, project) {
