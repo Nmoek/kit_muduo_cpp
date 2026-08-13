@@ -16,6 +16,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <string_view>
 
 #include "base/log_config.h"
 #include "base/log_level.h"
@@ -24,7 +25,6 @@
 #include "base/log_attr.h"
 #include "base/time_stamp.h"
 #include "base/util.h"
-#include "base/singleton.h"
 
 /********1、流式输出 ********/
 #define LOG_LEVEL_OUT(logger, level, module) \
@@ -49,13 +49,26 @@ for(auto _logger = (logger); _logger && _logger->shouldLog(level); _logger.reset
 #define KIT_FMT_ERROR(logger, module, fmt, ...) LOG_LEVEL_FMT_OUT(logger, kit_muduo::LogLevel::ERROR, module, fmt, ##__VA_ARGS__)
 #define KIT_FMT_FATAL(logger, module, fmt, ...) LOG_LEVEL_FMT_OUT(logger, kit_muduo::LogLevel::FATAL, module, fmt, ##__VA_ARGS__)
 
+//TODO 性能调优宏定义
+#ifndef MUDUO_LOG_CACHE_MODULE_LOGGER
+#define MUDUO_LOG_CACHE_MODULE_LOGGER 1
+#endif
+
+#ifndef MUDUO_LOG_SHOULDLOG_OPTIMIZE
+#define MUDUO_LOG_SHOULDLOG_OPTIMIZE 0
+#endif
 
 /********3、全局日志器操作********/
 #define KIT_ROOT_LOGGER() \
     kit_muduo::LogManager::GetInstance().getRootLogger()
 
-#define KIT_LOGGER(name) \
-    kit_muduo::LogManager::GetInstance().getLogger(name)
+#if MUDUO_LOG_CACHE_MODULE_LOGGER
+#define KIT_LOGGER(NAME) \
+    kit_muduo::log_detail::GetLoggerHelper(NAME)
+#else
+#define KIT_LOGGER(NAME) \
+    kit_muduo::LogManager::GetInstance().getLogger(NAME)
+#endif
 
 
 namespace kit_muduo {
@@ -75,7 +88,6 @@ public:
 
     /**
      * @brief  委托关系 logger委托logAppender 进行实际的日志打印
-     * @param[in] level  当前日志级别
      * @param[in] pattr  当前日志属性
      */
     void log(LogAttr::Ptr pattr);
@@ -119,6 +131,7 @@ public:
 
 private:
     friend class LogManager;
+    friend class LogAttrWrap;
 
     enum class OutputRoute
     {
@@ -128,12 +141,22 @@ private:
     };
 
     /**
+     * @brief  委托关系 logger委托logAppender 进行实际的日志打印
+     * @param[in] pattr  当前日志属性
+     */
+    void logUnchecked(LogAttr::Ptr attr);
+
+    /**
      * @brief 批量替换输出器(事务性质)
      * @param appenders 
      */
-    void ReplaceAppenders(std::list<LogAppender::Ptr> appenders);
-    void UseRootFallback(const Logger::Ptr& root);
-    Logger::Ptr GetRootFallback() const;
+    void replaceAppenders(std::list<LogAppender::Ptr> appenders);
+
+    void useRootFallback(const Logger::Ptr& root);
+    Logger::Ptr getRootFallback() const;
+
+    bool shouldLogWithRootFallback(LogLevel::Level level) const;
+
 
 private:
     /// @brief 日志器名字 默认=“root”
@@ -147,7 +170,7 @@ private:
     /// @brief 默认日志器弱引用
     std::weak_ptr<Logger> root_fallback_;
     /// @brief 当前日志器配置情况
-    OutputRoute output_route_{OutputRoute::kRootFallback};
+    std::atomic<OutputRoute> output_route_{OutputRoute::kRootFallback};
 };
 
 
@@ -217,7 +240,7 @@ public:
     Logger::Ptr addLogger(const std::string &name);
 
     /**
-     * @brief 获取日志器
+     * @brief 获取日志器(带锁)
      * @param[in] name
      * @return Logger::Ptr
      */
@@ -235,6 +258,10 @@ public:
      */
     void applyConfig(const LogConfig &config);
 
+public:
+    /// @brief 静态日志器获取动作集合
+    // static const std::unordered_map<std::string_view, std::pair<std::function<Logger::Ptr()>, LoggerConfig> > kGetLoggerFuncs;
+
 private:
     /**
      * @brief 默认构造
@@ -245,16 +272,39 @@ private:
 
 
 private:
+    /// @brief 默认日志器
+    const Logger::Ptr root_logger_;
     /// @brief 日志器集合
     std::unordered_map<std::string, Logger::Ptr> loggers_;
-    /// @brief 默认日志器
-    Logger::Ptr root_logger_;
     /// @brief 日志器集合锁
     mutable std::mutex loggers_mtx_;
 };
 /// @brief 日志管理单例
 #define LOGMANAGER_INSTANCE() (LogManager::GetInstance())
 
+namespace log_detail {
+
+Logger::Ptr GetBaseLogger();
+Logger::Ptr GetNetLogger();
+Logger::Ptr GetWebLogger();
+Logger::Ptr GetDomainLogger();
+
+inline Logger::Ptr GetLoggerHelper(std::string_view name)
+{
+    // TODO 读写分离思想
+#define XX(NAME, FUNC) \
+    if(#NAME == name) { return FUNC(); }
+
+    XX(base, GetBaseLogger)
+    XX(net, GetNetLogger)
+    XX(web, GetWebLogger)
+    XX(domain, GetDomainLogger)
+#undef XX
+    // 退化为慢路径
+    return kit_muduo::LogManager::GetInstance().getLogger(std::string{std::move(name)});
+}
+
+} // namespce log_detail
 
 
 } // namespace kit_muduo

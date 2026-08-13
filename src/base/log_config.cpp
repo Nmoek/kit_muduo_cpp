@@ -25,6 +25,7 @@ void ValidateFormatter(const std::string& pattern)
 
 } // namespace
 
+// TODO 日志器默认配置应该放在 日志管理构造的开头 
 LogConfig DefaultLogConfig()
 {
     // TODO 忽然发现日志器太零散了需要整理一下
@@ -97,6 +98,7 @@ LogConfig DefaultLogConfig()
         .file_path = "log/domain.log",
         .flush_threshold = 1024
     });
+
     return LogConfig{{
         std::move(root),
         std::move(base),
@@ -108,7 +110,7 @@ LogConfig DefaultLogConfig()
 
 void ValidateLogConfig(const LogConfig& config)
 {
-    std::set<std::string> names;
+    std::unordered_set<std::string> names;
     bool has_root = false;
 
     for(const auto& logger : config.loggers)

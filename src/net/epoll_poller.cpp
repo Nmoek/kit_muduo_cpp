@@ -133,8 +133,7 @@ void EpollPoller::removeChannel(Channel *channel)
         return;
     }
 
-    size_t n = _channels.erase(fd);
-    assert(n == 1);
+    assert(_channels.erase(fd) == 1);
 
     if(kAdded == status) // epoll中还存在 同时从epoll中删除
     {

@@ -15,7 +15,6 @@ set(CMAKE_CXX_FLAGS  "$ENV{CXXFLAGS} \
     -rdynamic \
     -std=c++17 \
     -fPIC \
-    -g \
     -Wall \
     -Wno-deprecated \
     -Werror \
@@ -100,7 +99,11 @@ option(WORK_TEST.CUSTOM_TCP_PATTERN_SPEC "build test_custom_tcp_pattern_spec" OF
 option(WORK_TEST.CUSTOM_TCP_PATTERN "build test_custom_tcp_pattern" OFF)
 option(WORK_TEST.USER "build test_user_auth" OFF)
 
+# SQLite3数据库基准测试
 option(WORK_BENCH.SQLITE_INTERACTION "build SQLite interaction history storage benchmark" OFF)
+
+# 日志系统基准测试
+option(MUDUO_BENCH.LOG "build log benchmark" OFF)
 
 option(EXAMPLE "build all example" OFF)
 option(EXAMPLE.HTTP "build example http_serverv" OFF)
@@ -112,16 +115,31 @@ option(COVERAGE_TEST "make coverage file" OFF)
 # ASan环境变量 首个错误打断+检测泄漏+详细输出+快速退出+日志路径
 # export ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:verbosity=1:log_path=/mnt/nfs/proxy_log/kit_asan.log:hard_rss_limit_mb=4096
 
+
+
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+
+if(CMAKE_BUILD_TYPE MATCHES "Debug"
+    OR CMAKE_BUILD_TYPE MATCHES "RelWithDebInfo")
+    message("Debug/RelWithDebInfo mode")
+
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
+
+elseif(CMAKE_BUILD_TYPE MATCHES "Release")
+    message("Release mode")
+endif()
+
+
 if(COVERAGE_TEST)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 --coverage")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
-elseif(MEM_CHECK)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -fsanitize=alignment,address -fno-omit-frame-pointer")
-elseif(CMAKE_BUILD_TYPE MATCHES "^[Dd]ebug$"
-    OR (CMAKE_BUILD_TYPE STREQUAL "" AND (MUDUO_TEST OR WORK_TEST)))
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
-else()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+endif()
+
+if(MEM_CHECK)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=alignment,address -fno-omit-frame-pointer")
 endif()
 
 # 添加第三方包搜索路径
@@ -129,7 +147,14 @@ list(APPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/pkg")
 # gtest包添加
 find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+
+if(MUDUO_BENCH.LOG)
+    find_package(benchmark CONFIG REQUIRED)
+endif()
+
 enable_testing()
+
+
 
 # 添加第三方库链接路径
 set(PKG_LIB_PATH
@@ -341,8 +366,17 @@ set(WORK_SRC
     ${WORK_DOMAIN_SRC}
 )
 
+# defines options
+option(MUDUO_LOG_CACHE_MODULE_LOGGER
+       "cache frequently used module loggers" OFF)
+
+option(MUDUO_LOG_SHOULDLOG_OPTIMIZE
+       "use atomic fast path in Logger::shouldLog" OFF)
+
 # defines
 set(DEF
+    MUDUO_LOG_CACHE_MODULE_LOGGER=$<BOOL:${MUDUO_LOG_CACHE_MODULE_LOGGER}>
+    MUDUO_LOG_SHOULDLOG_OPTIMIZE=$<BOOL:${MUDUO_LOG_SHOULDLOG_OPTIMIZE}>
 )
 
 add_library(kit_muduo SHARED ${MUDUO_SRC})
@@ -388,7 +422,7 @@ set(LIB_LIB
 if(WORK_BENCH.SQLITE_INTERACTION)
     find_package(OpenSSL REQUIRED COMPONENTS Crypto)
     add_executable(interaction_history_storage_bench
-        tests/benchmarks/interaction_history_storage_bench.cpp)
+        tests/benchmarks/interaction_history_storage_bench/interaction_history_storage_bench.cpp)
     redefine_file_macro(interaction_history_storage_bench)
     target_compile_definitions(interaction_history_storage_bench PRIVATE ${DEF})
     target_link_libraries(interaction_history_storage_bench PRIVATE
@@ -396,6 +430,18 @@ if(WORK_BENCH.SQLITE_INTERACTION)
         OpenSSL::Crypto
     )
 endif()
+
+if(MUDUO_BENCH.LOG)
+    add_executable(log_benchmark
+        tests/benchmarks/log/log_benchmark.cpp)
+    redefine_file_macro(log_benchmark)
+    target_compile_definitions(log_benchmark PRIVATE ${DEF})
+    target_link_libraries(log_benchmark PRIVATE
+        ${KIT_RUNTIME_LIBS}
+        benchmark::benchmark
+    )
+endif()
+
 
 function(add_kit_test module_option test_option target_name)
     set(_module_enabled OFF)

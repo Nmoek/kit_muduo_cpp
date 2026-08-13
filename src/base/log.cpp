@@ -11,8 +11,13 @@
 #include "base/log_appender.h"
 #include "base/log_config.h"
 #include "base/log_formatter.h"
-#include <iostream>
+
+#include <atomic>
+#include <cassert>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <vector>
 
 namespace kit_muduo {
 
@@ -97,14 +102,30 @@ void Logger::log(LogAttr::Ptr attr)
         return;
     }
 
-    if(auto root = GetRootFallback())
+    logUnchecked(attr);
+}
+
+
+void Logger::logUnchecked(LogAttr::Ptr attr)
+{
+    if(!attr)
     {
-        root->log(std::move(attr));
         return;
     }
 
+    if(auto root = getRootFallback())
+    {
+        root->logUnchecked(std::move(attr));
+        return;
+    }
+    std::vector<LogAppender::Ptr> appender_snapshot;
+
     std::unique_lock<std::mutex> lock(appenders_mtx_);
-    for(auto &a : appenders_)
+    appender_snapshot.assign(appenders_.begin(), appenders_.end());
+    lock.unlock();
+
+    // 快照持有 shared_ptr，保证本轮派发完成前 Appender 保持有效。
+    for(auto &a : appender_snapshot)
     {
         if(a)
         {
@@ -115,12 +136,13 @@ void Logger::log(LogAttr::Ptr attr)
 }
 
 
+
 void Logger::addAppender(LogAppender::Ptr pappender)
 {
     std::unique_lock<std::mutex> lock(appenders_mtx_);
     root_fallback_.reset();
-    output_route_ = OutputRoute::kOwnAppenders;
     appenders_.push_back(std::move(pappender));
+    output_route_.store(OutputRoute::kOwnAppenders, std::memory_order_release);
 }
 
 void Logger::delAppender(LogAppender::Ptr pappender)
@@ -133,42 +155,71 @@ void Logger::delAppender(LogAppender::Ptr pappender)
         if(*it == pappender)
         {
             appenders_.erase(it);
+            if(appenders_.empty())
+            {
+                output_route_.store(OutputRoute::kMuted, std::memory_order_release);
+            }
             return;
         }
     }
     return;
 }
 
+#if MUDUO_LOG_SHOULDLOG_OPTIMIZE
 bool Logger::shouldLog(LogLevel::Level level) const
 {
-    std::lock_guard<std::mutex> lock(appenders_mtx_);
+    auto route = output_route_.load(std::memory_order_acquire);
 
     // 静音状态不输出
-    if(OutputRoute::kMuted == output_route_)
+    if(OutputRoute::kMuted == route)
     {
         return false;
     }
-
-    if(OutputRoute::kRootFallback == output_route_)
+    // 慢路径单独拆分
+    if(OutputRoute::kRootFallback == route)
     {
-        auto root = root_fallback_.lock();
-        return root && root->shouldLog(level);
+        return shouldLogWithRootFallback(level);
     }
+
     return level >= getLevel();
 }
-
-void Logger::ReplaceAppenders(std::list<LogAppender::Ptr> appenders)
+#else
+bool Logger::shouldLog(LogLevel::Level level) const
 {
-    std::lock_guard<std::mutex> lock(appenders_mtx_);
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    const auto route = output_route_.load();
 
-    root_fallback_.reset();
-    output_route_ = appenders.empty()
+    // 静音状态不输出
+    if(OutputRoute::kMuted == route)
+    {
+        return false;
+    }
+    // 慢路径单独拆分
+    if(OutputRoute::kRootFallback == route)
+    {
+        auto root = root_fallback_.lock();
+        assert(root.get() != this);  // 不能自己指向自己fallback
+        return root && root->shouldLog(level);
+    }
+
+    return level >= getLevel();
+}
+#endif 
+
+void Logger::replaceAppenders(std::list<LogAppender::Ptr> appenders)
+{
+    const auto route = appenders.empty()
         ? OutputRoute::kMuted
         : OutputRoute::kOwnAppenders;
+
+    std::lock_guard<std::mutex> lock(appenders_mtx_);
+    root_fallback_.reset();
     appenders_ = std::move(appenders);
+
+    output_route_.store(route, std::memory_order_release);
 }
 
-void Logger::UseRootFallback(const Logger::Ptr& root)
+void Logger::useRootFallback(const Logger::Ptr& root)
 {
     if(!root || root.get() == this)
     {
@@ -176,24 +227,55 @@ void Logger::UseRootFallback(const Logger::Ptr& root)
     }
 
     std::lock_guard<std::mutex> lock(appenders_mtx_);
-
     appenders_.clear();
-    
     root_fallback_ = root;
-    output_route_ = OutputRoute::kRootFallback;
+
+    output_route_.store(OutputRoute::kRootFallback, std::memory_order_release);
 }
 
-Logger::Ptr Logger::GetRootFallback() const
+Logger::Ptr Logger::getRootFallback() const
 {
-    std::lock_guard<std::mutex> lock(appenders_mtx_);
-
-    if(OutputRoute::kRootFallback != output_route_)
+    if(OutputRoute::kRootFallback != output_route_.load())
     {
         return nullptr;
     }
+
+    // double check
+    std::lock_guard<std::mutex> lock(appenders_mtx_);
+
+    if(OutputRoute::kRootFallback != output_route_.load())
+    {
+        return nullptr;
+    }
+
     return root_fallback_.lock();
 }
 
+bool Logger::shouldLogWithRootFallback(LogLevel::Level level) const
+{
+
+    // double check
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    const auto route = output_route_.load(std::memory_order_acquire);
+    
+    if(OutputRoute::kMuted == route)
+    {
+        return false;
+    }
+
+    if(OutputRoute::kOwnAppenders == route)
+    {
+        return level >= getLevel();
+    }
+
+    auto root = root_fallback_.lock();
+    
+    assert(root.get() != this);  // 不能自己指向自己fallback
+    lock.unlock(); // 一定要解锁
+
+    return root && root->shouldLog(level);
+    
+}
 
 /**************LogAttrWrap****************/
 
@@ -203,10 +285,7 @@ LogAttrWrap::LogAttrWrap(LogAttr::Ptr attr)
 
 LogAttrWrap::~LogAttrWrap()
 {
-    if(attr_->getLogger()->getLevel() <= attr_->getLevel())
-    {
-        attr_->getLogger()->log(attr_);
-    }
+    attr_->getLogger()->logUnchecked(attr_);
 }
 
 
@@ -244,10 +323,12 @@ Logger::Ptr LogManager::addLogger(const std::string &name)
 {
     std::unique_lock<std::mutex> lock(loggers_mtx_);
     auto logger = std::make_shared<Logger>(name);
-    logger->UseRootFallback(root_logger_);
+    logger->useRootFallback(root_logger_);
     loggers_[name] = logger;
     return logger;
 }
+
+
 
 Logger::Ptr LogManager::getLogger(const std::string& name)
 {
@@ -270,11 +351,13 @@ Logger::Ptr LogManager::findOrCreateLoggerUnLocked(const std::string& name)
     }
 
     auto logger = std::make_shared<Logger>(name);
-    logger->UseRootFallback(root_logger_);
+    logger->useRootFallback(root_logger_);
     loggers_.emplace(name, logger);
     return logger;
 }
 
+
+// TODO 增加inotify监听文件变化 热更新时配置文件发生变化才需要加载  
 void LogManager::applyConfig(const LogConfig &config)
 {
     ValidateLogConfig(config);
@@ -282,9 +365,15 @@ void LogManager::applyConfig(const LogConfig &config)
     std::unordered_map<std::string, PreparedLogger> prepared;
     size_t i = 0;
 
-    // 统一创建输出器
+    // 读取配置 统一创建输出器
+    bool has_root = false;
     for(auto &config : config.loggers)
     {
+        if("root" == config.name)
+        {
+            has_root = true;
+        }
+
         PreparedLogger item;
         item.config = config;
         item.formatter = MakeFormatter(config.formatter);
@@ -294,12 +383,19 @@ void LogManager::applyConfig(const LogConfig &config)
         }
         prepared.emplace(config.name, std::move(item));
     }
+    // 默认root的配置必须存在
+    if(!has_root)
+    {
+        throw std::invalid_argument("logger config default 'root' not found");
+    }
+    
 
     std::lock_guard<std::mutex> lock(loggers_mtx_);
 
+    // root单独配置
     auto &root_item = prepared.at("root");
     root_logger_->setLevel(root_item.config.level);
-    root_logger_->ReplaceAppenders(std::move(root_item.appenders));
+    root_logger_->replaceAppenders(std::move(root_item.appenders));
 
     // 输出器创建成功后批量替换
     for(auto &[name, item] : prepared)
@@ -311,21 +407,47 @@ void LogManager::applyConfig(const LogConfig &config)
 
         auto logger = findOrCreateLoggerUnLocked(name);
         logger->setLevel(item.config.level);
-        logger->ReplaceAppenders(std::move(item.appenders));
+        logger->replaceAppenders(std::move(item.appenders));
     }
 
     // 注意 日志器管理不存在删除语义
     // 被移除的专属配置改为 root fallback，同名 logger 保持对象身份。
     for(auto &[name, logger] : loggers_)
     {
-        if(name != "root" && prepared.find(name) == prepared.end())
+        if("root" != name && prepared.find(name) == prepared.end() && nullptr != logger)
         {
-            std::cerr << "============ not define: " << name << "==================\n";
-            logger->UseRootFallback(root_logger_);
+            logger->useRootFallback(root_logger_);
         }
     }
 
 }
+
+namespace log_detail {
+
+Logger::Ptr GetBaseLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("base");
+    return logger;
+}
+
+Logger::Ptr GetNetLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("net");
+    return logger;
+}
+
+Logger::Ptr GetWebLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("web");
+    return logger;
+}
+
+Logger::Ptr GetDomainLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("domain");
+    return logger;
+}
+} // namespace log_detail
 
 
 } // namespace kit
