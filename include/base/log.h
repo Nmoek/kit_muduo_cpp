@@ -49,14 +49,6 @@ for(auto _logger = (logger); _logger && _logger->shouldLog(level); _logger.reset
 #define KIT_FMT_ERROR(logger, module, fmt, ...) LOG_LEVEL_FMT_OUT(logger, kit_muduo::LogLevel::ERROR, module, fmt, ##__VA_ARGS__)
 #define KIT_FMT_FATAL(logger, module, fmt, ...) LOG_LEVEL_FMT_OUT(logger, kit_muduo::LogLevel::FATAL, module, fmt, ##__VA_ARGS__)
 
-//TODO 性能调优宏定义
-#ifndef MUDUO_LOG_CACHE_MODULE_LOGGER
-#define MUDUO_LOG_CACHE_MODULE_LOGGER 1
-#endif
-
-#ifndef MUDUO_LOG_SHOULDLOG_OPTIMIZE
-#define MUDUO_LOG_SHOULDLOG_OPTIMIZE 0
-#endif
 
 /********3、全局日志器操作********/
 #define KIT_ROOT_LOGGER() \
@@ -103,6 +95,11 @@ public:
      * @param[in] pappender
      */
     void delAppender(LogAppender::Ptr pappender);
+
+    /**
+     * @brief 清空日志输出器
+     */
+    void clearAppender();
 
     /**
      * @brief 获取日志器名称
@@ -284,6 +281,7 @@ private:
 
 namespace log_detail {
 
+// TODO 需要改造
 Logger::Ptr GetBaseLogger();
 Logger::Ptr GetNetLogger();
 Logger::Ptr GetWebLogger();

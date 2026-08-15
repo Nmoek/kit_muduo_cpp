@@ -165,6 +165,13 @@ void Logger::delAppender(LogAppender::Ptr pappender)
     return;
 }
 
+void Logger::clearAppender()
+{
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    appenders_.clear();
+    output_route_.store(OutputRoute::kMuted, std::memory_order_release);
+}
+
 #if MUDUO_LOG_SHOULDLOG_OPTIMIZE
 bool Logger::shouldLog(LogLevel::Level level) const
 {

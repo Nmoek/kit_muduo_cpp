@@ -132,8 +132,7 @@ void EpollPoller::removeChannel(Channel *channel)
         POLLER_F_WARN("poller will delete fd[%d] not match! old_channel[%p][%s] -- -> new_channel[%p][%s]\n", fd, it->second, it->second->peerAddr().toIpPort().c_str(), channel, ip_port.c_str());
         return;
     }
-
-    assert(_channels.erase(fd) == 1);
+    _channels.erase(fd);
 
     if(kAdded == status) // epoll中还存在 同时从epoll中删除
     {

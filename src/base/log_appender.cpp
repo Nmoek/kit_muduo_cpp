@@ -13,8 +13,8 @@
 #include <errno.h>
 
 #include "base/log_appender.h"
-namespace kit_muduo
-{
+namespace kit_muduo {
+
 
 /***********LogAppender************/
 
@@ -32,11 +32,39 @@ LogAppender::LogAppender(LogLevel::Level level, LogFormatter::Ptr formatter)
 
 }
 
-void LogAppender::append(LogAttr::Ptr pattr)
+#if MUDUO_LOG_APPENDER_OPTIMIZE
+void LogAppender::append(LogAttr::Ptr attr)
+{
+    
+    if(!attr || attr->getLevel() < level_.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(mtx_);
+    auto formatter = formatter_;
+    lock.unlock();
+
+    if(!formatter)
+    {
+        return;
+    }
+
+    const std::string &log_data = formatter->format(attr);
+    if(log_data.empty())
+    {
+        return;
+    }
+
+    log(log_data);
+}
+
+#else 
+void LogAppender::append(LogAttr::Ptr attr)
 {
     std::unique_lock<std::mutex> lock(mtx_);
-    log(pattr);
+    log(attr);
 }
+#endif
 
 void LogAppender::setFormatter(LogFormatter::Ptr pfarmatter)
 {
@@ -61,14 +89,29 @@ LogFormatter::Ptr LogAppender::getFormatter() const
 
 /*********ConsoleAppender***********/
 
-void ConsoleAppender::log(LogAttr::Ptr pattr)
+void ConsoleAppender::log(LogAttr::Ptr attr)
 {
 
-    if(pattr->getLevel() < level_)
+    if(attr->getLevel() < level_)
         return;
 
     if(formatter_)
-        std::cout << formatter_->format(pattr);
+    {
+        std::cout << formatter_->format(attr);
+    }
+}
+
+
+void ConsoleAppender::log(const std::string& log_data)
+{
+    std::lock_guard<std::mutex> lock(GetConsoleMtx());
+    std::cout << log_data;
+}
+
+std::mutex& ConsoleAppender::GetConsoleMtx()
+{
+    static std::mutex mtx;
+    return mtx;
 }
 
 /*********FileAppender***********/
@@ -94,12 +137,11 @@ bool FileAppender::openForAppend(std::string* error_message)
     }
     if(file_.is_open())
     {
-        file_.close();
+        return true;
     }
+
     file_.clear();
-
     file_.open(file_name_, std::ios::out | std::ios::app | std::ios::binary);
-
     if(!file_.is_open())
     {
         if(error_message)
@@ -116,6 +158,33 @@ bool FileAppender::openForAppend(std::string* error_message)
 }
 
 
+#if MUDUO_LOG_APPENDER_OPTIMIZE
+
+void FileAppender::log(LogAttr::Ptr attr)
+{
+    std::unique_lock<std::mutex> lock(mtx_);
+    // 保留重打开机制
+    if(!file_.is_open() && !openForAppend())
+    {
+        return;
+    }
+
+    if(formatter_)
+    {
+        const std::string& log_data = formatter_->format(attr);
+        cur_size_ += log_data.size();
+        file_ << log_data;
+        if(cur_size_ >= flush_threshold_)
+        {
+            file_.flush();
+            cur_size_ = 0;
+        }
+    }
+}
+
+
+
+#else
 void FileAppender::log(LogAttr::Ptr attr)
 {
     
@@ -141,6 +210,26 @@ void FileAppender::log(LogAttr::Ptr attr)
             cur_size_ = 0;
         }
     }
+}
+#endif 
+
+void FileAppender::log(const std::string& log_data)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    // 保留重打开机制
+    if(!file_.is_open() && !openForAppend())
+    {
+        return;
+    }
+
+    cur_size_ += log_data.size();
+    file_ << log_data;
+    if(cur_size_ >= flush_threshold_)
+    {
+        file_.flush();
+        cur_size_ = 0;
+    }
+    
 }
 
 } //namespace kit

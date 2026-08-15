@@ -7,6 +7,8 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "base/log.h"
+#include "base/log_appender.h"
+#include "base/util.h"
 
 #include <benchmark/benchmark.h>
 #include <cstdint>
@@ -28,6 +30,17 @@ constexpr char kModuleLoggerName[] = "base";
 constexpr int kPerfStatThreads = 8;
 constexpr int64_t kPerfStatIterationsPerThread =
     kPerfStatIterations / kPerfStatThreads / kPerfStatThreads;
+
+/// 完整日志路径包含 LogAttr 和 stringstream 构造，固定较小总工作量。
+constexpr std::int64_t kFullPathPerfStatIterations = 1'250'000;
+constexpr int64_t kFullPathPerfStatIterationsPerThread =
+    kFullPathPerfStatIterations / kPerfStatThreads;
+
+constexpr char kConsoleMessage[] =
+    "discarded stdout message\n";
+
+constexpr int64_t kConsoleMessageBytes =
+    sizeof(kConsoleMessage) - 1;
 
 Logger::Ptr PrepareFilteredModuleLogger()
 {
@@ -91,9 +104,39 @@ class DiscardAppender final : public LogAppender
 public:
     void log(LogAttr::Ptr) override
     {
+        // donothing
+    }
+    void log(const std::string &) override
+    {
+        // donothing
+    }
+};
+
+class SimulatConsoleAppender final : public LogAppender
+{
+public:
+    void log(LogAttr::Ptr attr) override
+    {
+        if(attr->getLevel() < level_)
+            return;
+
+        if(formatter_)
+        {
+            auto log_data = formatter_->format(attr);
+            benchmark::DoNotOptimize(log_data);
+            // 最终不输出
+        }
     }
 
+    void log(const std::string &log_data) override
+    {
+        benchmark::DoNotOptimize(log_data);
+        std::lock_guard<std::mutex> lock(ConsoleAppender::GetConsoleMtx());
+        // 最终不输出
+    }
 };
+
+
 
 Logger::Ptr GetFilteredLogger()
 {
@@ -115,6 +158,75 @@ Logger::Ptr GetFilteredLongNameLogger()
 
         logger->setLevel(LogLevel::ERROR);
         logger->addAppender(std::make_shared<DiscardAppender>());
+        return logger;
+    }();
+
+    return logger;
+}
+
+Logger::Ptr GetDiscardLogger()
+{
+    static auto logger = [] {
+        auto logger = KIT_LOGGER(kModuleLoggerName);
+        // 清空原来模块的输出器
+        logger->clearAppender();
+
+        logger->setLevel(LogLevel::DEBUG);
+        logger->addAppender(std::make_shared<DiscardAppender>());
+        return logger;
+    }();
+
+    return logger;
+}
+
+
+// 完全模拟ConsoleAppender 但不真的输出
+Logger::Ptr GetSimulatConsoleLogger()
+{
+    static auto logger = [] {
+        auto logger = KIT_LOGGER(kModuleLoggerName);
+        // 清空原来模块的输出器
+        logger->clearAppender();
+
+        logger->setLevel(LogLevel::DEBUG);
+        auto appender = std::make_shared<SimulatConsoleAppender>();
+        appender->setLevel(LogLevel::DEBUG);
+        logger->addAppender(std::move(appender));
+        return logger;
+    }();
+
+    return logger;
+}
+
+Logger::Ptr GetConsoleLogger()
+{
+    static auto logger = [] {
+        auto logger = KIT_LOGGER(kModuleLoggerName);
+        // 清空原来模块的输出器
+        logger->clearAppender();
+
+        logger->setLevel(LogLevel::DEBUG);
+        auto appender = std::make_shared<ConsoleAppender>();
+        appender->setLevel(LogLevel::DEBUG);
+        logger->addAppender(std::move(appender));
+        return logger;
+    }();
+
+    return logger;
+}
+
+Logger::Ptr GetFileLogger()
+{
+    static auto logger = [] {
+        auto logger = KIT_LOGGER(kModuleLoggerName);
+        // 清空原来模块的输出器
+        logger->clearAppender();
+
+        logger->setLevel(LogLevel::DEBUG);
+        auto appender = std::make_shared<FileAppender>(std::string("/tmp/kit-log-bench/module-log-file-") + std::to_string(GetThreadPid()) + ".log");
+
+        appender->setLevel(LogLevel::DEBUG);
+        logger->addAppender(std::move(appender));
         return logger;
     }();
 
@@ -298,7 +410,7 @@ void BM_ModuleLoggerAccessLegacy(benchmark::State& state)
         benchmark::DoNotOptimize(logger);
     }
 
-    state.SetItemsProcessed(state.iterations() * state.threads());
+    state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_ModuleLoggerAccessLegacy)
     ->Threads(1)
@@ -341,7 +453,7 @@ void BM_ModuleLoggerAccessCached(
         benchmark::DoNotOptimize(logger);
     }
 
-    state.SetItemsProcessed(state.iterations() * state.threads());
+    state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_ModuleLoggerAccessCached)
     ->Threads(1)
@@ -384,7 +496,7 @@ void BM_ModuleLevelFilteredLegacy(
             << "this message must be filtered";
     }
 
-    state.SetItemsProcessed(state.iterations() * state.threads());
+    state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_ModuleLevelFilteredLegacy)
     ->Threads(1)
@@ -399,7 +511,7 @@ BENCHMARK(BM_ModuleLevelFilteredLegacy)
     ->Iterations(kPerfStatIterationsPerThread)
     ->UseRealTime();
 
-    
+
 /*
 测试思路：
 1. 走新设计旧 cached lookup + shouldLog() 使用 DEBUG 级别调用，而 logger 的有效级别设置为 ERROR；
@@ -429,7 +541,7 @@ void BM_ModuleLevelFilteredCached(
             << "this message must be filtered";
     }
 
-    state.SetItemsProcessed(state.iterations() * state.threads());
+    state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_ModuleLevelFilteredCached)
     ->Threads(1)
@@ -443,6 +555,141 @@ BENCHMARK(BM_ModuleLevelFilteredCached)
     ->Threads(kPerfStatThreads)
     ->Iterations(kPerfStatIterationsPerThread)
     ->UseRealTime();
+
+/*
+完整 CPU 日志路径(单个appdder 不输出)：
+1. Logger 和 DiscardAppender 都允许 DEBUG 日志，确保日志不会在 shouldLog()
+   阶段结束；
+2. 每轮通过 KIT_DEBUG 构造 LogAttr，经过 LogAttrWrap、logUnchecked、Appender
+   快照和 LogAppender::append()；
+3. DiscardAppender 不做 formatter 或 I/O，只保留日志 CPU 路径和锁成本。
+
+MUDUO_LOG_CACHE_MODULE_LOGGER=0/1 会同时覆盖每轮 Logger 获取路径；
+MUDUO_LOG_SHOULDLOG_OPTIMIZE=0/1 会覆盖 shouldLog() 的旧锁/原子实现。
+*/
+void BM_ModuleLogDiscard(benchmark::State& state)
+{
+    (void)GetDiscardLogger();
+
+    for(auto _ : state)
+    {
+        (void)_;
+
+        KIT_DEBUG(
+            KIT_LOGGER(kModuleLoggerName),
+            "benchmark")
+            << "discarded full-path message";
+    }
+
+    state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_ModuleLogDiscard)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_ModuleLogDiscard)
+    ->Name("BM_ModuleLogDiscardPerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+
+void BM_ModuleLogConsoleE2E(benchmark::State& state)
+{
+    (void)GetSimulatConsoleLogger();
+
+    for(auto _ : state)
+    {
+        (void)_;
+
+        KIT_DEBUG(
+            KIT_LOGGER(kModuleLoggerName),
+            "benchmark")
+            << kConsoleMessage;
+    }
+
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * kConsoleMessageBytes);
+}
+BENCHMARK(BM_ModuleLogConsoleE2E)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_ModuleLogConsoleE2E)
+    ->Name("BM_ModuleLogConsoleE2EPerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+void BM_ModuleLogConsole(benchmark::State& state)
+{
+    (void)GetConsoleLogger();
+
+    for(auto _ : state)
+    {
+        (void)_;
+
+        KIT_DEBUG(
+            KIT_LOGGER(kModuleLoggerName),
+            "benchmark")
+            << kConsoleMessage;
+    }
+
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * kConsoleMessageBytes);
+}
+BENCHMARK(BM_ModuleLogConsole)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_ModuleLogConsole)
+    ->Name("BM_ModuleLogConsolePerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+void BM_ModuleLogFile(benchmark::State& state)
+{
+    (void)GetFileLogger();
+
+    for(auto _ : state)
+    {
+        (void)_;
+
+        KIT_DEBUG(
+            KIT_LOGGER(kModuleLoggerName),
+            "benchmark")
+            << kConsoleMessage;
+    }
+
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * kConsoleMessageBytes);
+}
+BENCHMARK(BM_ModuleLogFile)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_ModuleLogFile)
+    ->Name("BM_ModuleLogFilePerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
 
 // main
 int main(int argc, char** argv)

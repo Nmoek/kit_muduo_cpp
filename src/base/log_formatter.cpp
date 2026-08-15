@@ -11,6 +11,7 @@
 
 #include <cctype>
 #include <iostream>
+#include <sstream>
 
 namespace kit_muduo {
 
@@ -272,7 +273,6 @@ void LogFormatter::init()
 
 }
 #endif
-
 
 
 std::string LogFormatter::format(LogAttr::Ptr pattr)

@@ -33,12 +33,6 @@ public:
     virtual ~LogAppender() = default;
 
     /**
-     * @brief 日志输出
-     * @param[in] pattr 当前日志属性
-     */
-    virtual void log(LogAttr::Ptr pattr) = 0;
-
-    /**
      * @brief 日志输出(带锁)
      * @param[in] pattr 当前日志属性
      */
@@ -75,6 +69,16 @@ public:
     LogLevel::Level getLevel() const noexcept { return static_cast<LogLevel::Level>(level_.load()); }
 
 protected:
+    /**
+     * @brief 日志输出
+     * @param[in] pattr 当前日志属性
+     */
+    virtual void log(LogAttr::Ptr pattr) = 0;
+    virtual void log(const std::string& log_data) = 0;
+
+
+
+protected:
     /// @brief 日志输出器级别
     std::atomic_int32_t level_;
     /// @brief 日志格式器
@@ -94,6 +98,11 @@ public:
     ~ConsoleAppender() = default;
 
     void log(LogAttr::Ptr pattr) override;
+    void log(const std::string& log_data) override;
+
+public:
+    static std::mutex& GetConsoleMtx();
+
 };
 
 /**
@@ -115,6 +124,7 @@ public:
     bool openForAppend(std::string* error_message = nullptr);
 
     void log(LogAttr::Ptr pattr) override;
+    void log(const std::string& log_data) override;
 
     void setFlushThreshold(uint64_t max_size) { flush_threshold_ = max_size; }
     uint64_t flushThreshold() const noexcept { return flush_threshold_; }

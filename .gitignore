@@ -21,8 +21,9 @@ tests/benchmarks/*/results/
 
 # 忽略所有 .md 文件，但保留 README.md
 *.md
-!README.md
+!./README.md
 !tests/benchmarks/interaction_history_storage_bench/SQLite历史存储基准测试汇总报告.md
+!tests/benchmarks/log/日志系统benchmark分析步骤.md
 
 *env
 !.env.example

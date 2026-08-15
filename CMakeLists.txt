@@ -122,6 +122,17 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 
+if(COVERAGE_TEST)
+    set(CMAKE_BUILD_TYPE Debug)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+endif()
+
+if(MEM_CHECK)
+    set(CMAKE_BUILD_TYPE Debug)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}  -fsanitize=alignment,address  -fno-omit-frame-pointer")
+endif()
+
 if(CMAKE_BUILD_TYPE MATCHES "Debug"
     OR CMAKE_BUILD_TYPE MATCHES "RelWithDebInfo")
     message("Debug/RelWithDebInfo mode")
@@ -130,16 +141,6 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug"
 
 elseif(CMAKE_BUILD_TYPE MATCHES "Release")
     message("Release mode")
-endif()
-
-
-if(COVERAGE_TEST)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 --coverage")
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
-endif()
-
-if(MEM_CHECK)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=alignment,address -fno-omit-frame-pointer")
 endif()
 
 # 添加第三方包搜索路径
@@ -368,15 +369,20 @@ set(WORK_SRC
 
 # defines options
 option(MUDUO_LOG_CACHE_MODULE_LOGGER
-       "cache frequently used module loggers" OFF)
+       "cache frequently used module loggers" ON)
 
 option(MUDUO_LOG_SHOULDLOG_OPTIMIZE
-       "use atomic fast path in Logger::shouldLog" OFF)
+       "use atomic fast path in Logger::shouldLog" ON)
+
+option(MUDUO_LOG_APPENDER_OPTIMIZE
+       "use optimize LogAppender::append" ON)
+
 
 # defines
 set(DEF
     MUDUO_LOG_CACHE_MODULE_LOGGER=$<BOOL:${MUDUO_LOG_CACHE_MODULE_LOGGER}>
     MUDUO_LOG_SHOULDLOG_OPTIMIZE=$<BOOL:${MUDUO_LOG_SHOULDLOG_OPTIMIZE}>
+    MUDUO_LOG_APPENDER_OPTIMIZE=$<BOOL:${MUDUO_LOG_APPENDER_OPTIMIZE}>
 )
 
 add_library(kit_muduo SHARED ${MUDUO_SRC})
@@ -437,6 +443,15 @@ if(MUDUO_BENCH.LOG)
     redefine_file_macro(log_benchmark)
     target_compile_definitions(log_benchmark PRIVATE ${DEF})
     target_link_libraries(log_benchmark PRIVATE
+        ${KIT_RUNTIME_LIBS}
+        benchmark::benchmark
+    )
+
+    add_executable(log_benchmark_optimize
+        tests/benchmarks/log/log_benchmark.cpp)
+    redefine_file_macro(log_benchmark_optimize)
+    target_compile_definitions(log_benchmark_optimize PRIVATE ${DEF})
+    target_link_libraries(log_benchmark_optimize PRIVATE
         ${KIT_RUNTIME_LIBS}
         benchmark::benchmark
     )

@@ -326,7 +326,7 @@ std::vector<WorkThread::UPtr> ThreadPool::cleanupExitedThreadsUnLock()
         assert(it != pool_.end());
         has_exited_threads.push_back(std::move(it->second));
         
-        assert(pool_.erase(id) == 1);
+        pool_.erase(id);
     }
     exited_ids_.clear();
     return has_exited_threads;
