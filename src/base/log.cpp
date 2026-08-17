@@ -172,7 +172,6 @@ void Logger::clearAppender()
     output_route_.store(OutputRoute::kMuted, std::memory_order_release);
 }
 
-#if MUDUO_LOG_SHOULDLOG_OPTIMIZE
 bool Logger::shouldLog(LogLevel::Level level) const
 {
     auto route = output_route_.load(std::memory_order_acquire);
@@ -190,28 +189,6 @@ bool Logger::shouldLog(LogLevel::Level level) const
 
     return level >= getLevel();
 }
-#else
-bool Logger::shouldLog(LogLevel::Level level) const
-{
-    std::unique_lock<std::mutex> lock(appenders_mtx_);
-    const auto route = output_route_.load();
-
-    // 静音状态不输出
-    if(OutputRoute::kMuted == route)
-    {
-        return false;
-    }
-    // 慢路径单独拆分
-    if(OutputRoute::kRootFallback == route)
-    {
-        auto root = root_fallback_.lock();
-        assert(root.get() != this);  // 不能自己指向自己fallback
-        return root && root->shouldLog(level);
-    }
-
-    return level >= getLevel();
-}
-#endif 
 
 void Logger::replaceAppenders(std::list<LogAppender::Ptr> appenders)
 {
@@ -469,4 +446,3 @@ Logger::Ptr GetDomainLogger()
 
 
 } // namespace kit
-

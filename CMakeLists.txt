@@ -369,21 +369,11 @@ set(WORK_SRC
 )
 
 # defines options
-option(MUDUO_LOG_CACHE_MODULE_LOGGER
-       "cache frequently used module loggers" ON)
-
-option(MUDUO_LOG_SHOULDLOG_OPTIMIZE
-       "use atomic fast path in Logger::shouldLog" ON)
-
-option(MUDUO_LOG_APPENDER_OPTIMIZE
-       "use optimize LogAppender::append" ON)
 
 
 # defines
 set(DEF
-    MUDUO_LOG_CACHE_MODULE_LOGGER=$<BOOL:${MUDUO_LOG_CACHE_MODULE_LOGGER}>
-    MUDUO_LOG_SHOULDLOG_OPTIMIZE=$<BOOL:${MUDUO_LOG_SHOULDLOG_OPTIMIZE}>
-    MUDUO_LOG_APPENDER_OPTIMIZE=$<BOOL:${MUDUO_LOG_APPENDER_OPTIMIZE}>
+
 )
 
 add_library(kit_muduo SHARED ${MUDUO_SRC})

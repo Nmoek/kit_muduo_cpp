@@ -847,8 +847,8 @@ BENCHMARK(BM_ModuleLevelFilteredCached)
    快照和 LogAppender::append()；
 3. DiscardAppender 不做 formatter 或 I/O，只保留日志 CPU 路径和锁成本。
 
-MUDUO_LOG_CACHE_MODULE_LOGGER=0/1 会同时覆盖每轮 Logger 获取路径；
-MUDUO_LOG_SHOULDLOG_OPTIMIZE=0/1 会覆盖 shouldLog() 的旧锁/原子实现。
+当前基线固定使用缓存 Logger 获取路径和 shouldLog() 的原子快速路径；
+旧 lookup 与旧锁路径由上面的独立 benchmark 用例保留作历史对照。
 */
 void BM_ModuleLogDiscard(benchmark::State& state)
 {

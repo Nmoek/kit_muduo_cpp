@@ -55,13 +55,8 @@ for(auto _logger = (logger); _logger && _logger->shouldLog(level); _logger.reset
 #define KIT_ROOT_LOGGER() \
     kit_muduo::LogManager::GetInstance().getRootLogger()
 
-#if MUDUO_LOG_CACHE_MODULE_LOGGER
 #define KIT_LOGGER(NAME) \
     kit_muduo::log_detail::GetLoggerHelper(NAME)
-#else
-#define KIT_LOGGER(NAME) \
-    kit_muduo::LogManager::GetInstance().getLogger(NAME)
-#endif
 
 
 namespace kit_muduo {

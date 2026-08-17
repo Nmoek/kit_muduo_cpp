@@ -45,7 +45,6 @@ LogAppender::LogAppender(LogLevel::Level level, LogFormatter::Ptr formatter)
 
 }
 
-#if MUDUO_LOG_APPENDER_OPTIMIZE
 void LogAppender::append(LogAttr::Ptr attr)
 {
     
@@ -70,14 +69,6 @@ void LogAppender::append(LogAttr::Ptr attr)
 
     log(log_data);
 }
-
-#else 
-void LogAppender::append(LogAttr::Ptr attr)
-{
-    std::unique_lock<std::mutex> lock(mtx_);
-    log(attr);
-}
-#endif
 
 void LogAppender::setFormatter(LogFormatter::Ptr pfarmatter)
 {
