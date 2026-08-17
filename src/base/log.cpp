@@ -35,7 +35,8 @@ LogFormatter::Ptr MakeFormatter(const std::string &pattern)
 }
 
 
-LogAppender::Ptr MakeAppender(const LogAppenderConfig &config, const LogFormatter::Ptr &formatter, const std::string& logger_name, size_t appender_index)
+LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
+    const LogAppenderConfig &config, const LogFormatter::Ptr &formatter, const std::string& logger_name, size_t appender_index)
 {
     LogAppender::Ptr appender;
     if(LogAppenderType::kStdout == config.type)
@@ -47,10 +48,9 @@ LogAppender::Ptr MakeAppender(const LogAppenderConfig &config, const LogFormatte
     }
     else
     {
-        auto f = std::make_shared<FileAppender>(config.file_path);
+        auto f = std::make_shared<FileAppender>(file_register.acquire(config.file_path));
         f->setLevel(config.level);
         f->setFormatter(config.formatter.empty() ? formatter : MakeFormatter(config.formatter));
-        f->setFlushThreshold(config.flush_threshold);
 
         // File类型输出器需要确保路径能够打开
         std::string open_error;
@@ -58,10 +58,10 @@ LogAppender::Ptr MakeAppender(const LogAppenderConfig &config, const LogFormatte
         {
             throw ConfigError(ConfigContext{
                 .source = "runtime",
-                .node_path = "system.logs[" + logger_name
+                .node_path = "system.log.loggers[" + logger_name
                     + "].appenders["
                     + std::to_string(appender_index)
-                    + "].file",
+                    + "].file_path",
             }
             ,open_error);
         }
@@ -369,26 +369,32 @@ void LogManager::applyConfig(const LogConfig &config)
 {
     ValidateLogConfig(config);
 
+    file_register_.setFileConfig(config.file);
+
     std::unordered_map<std::string, PreparedLogger> prepared;
-    size_t i = 0;
 
     // 读取配置 统一创建输出器
     bool has_root = false;
-    for(auto &config : config.loggers)
+    for(auto &logger_config : config.loggers)
     {
-        if("root" == config.name)
+        if("root" == logger_config.name)
         {
             has_root = true;
         }
 
         PreparedLogger item;
-        item.config = config;
-        item.formatter = MakeFormatter(config.formatter);
-        for(auto &appender_config : config.appenders)
+        item.config = logger_config;
+        item.formatter = MakeFormatter(logger_config.formatter);
+
+        size_t i = 0;
+        for(auto &appender_config : logger_config.appenders)
         {
-            item.appenders.push_back(MakeAppender(appender_config, item.formatter, config.name, i++));
+            item.appenders.push_back(MakeAppender(file_register_,
+                appender_config,
+                item.formatter, logger_config.name,
+                i++));
         }
-        prepared.emplace(config.name, std::move(item));
+        prepared.emplace(logger_config.name, std::move(item));
     }
     // 默认root的配置必须存在
     if(!has_root)
@@ -427,6 +433,11 @@ void LogManager::applyConfig(const LogConfig &config)
         }
     }
 
+}
+
+LogFileSink::Ptr LogManager::acquireFileSink(const std::string &file_path)
+{
+    return file_register_.acquire(file_path);
 }
 
 namespace log_detail {

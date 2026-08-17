@@ -97,10 +97,11 @@ AppConfigVars& RegisteredGlobalAppConfigVars()
 } //namespace 
 
 void WriteDefaultAppConfigFileIfMissing(
-    const std::string& file_path,
+    const std::filesystem::path &path,
     const std::string& yaml_text)
 {
-    const std::filesystem::path path(file_path);
+    const std::string &file_path{path.string()};
+
     std::error_code error;
 
     const std::filesystem::path parent = path.parent_path();
@@ -197,7 +198,7 @@ void ValidateAppConfigVars(const AppConfigVars& vars)
     ValidateStaticRoot(root);
 
     // 日志项校验
-    ValidateLogConfig(*vars.system.logs->value());
+    ValidateLogConfig(*vars.system.log->value());
 }
 
 

@@ -10,12 +10,12 @@
 #define __KIT_LOG_CONFIG_H__
 
 #include "base/config_context.h"
-#include "base/log_appender.h"
 #include "base/log_level.h"
 #include "base/config_codec.h"
 
 #include <initializer_list>
 #include <vector>
+#include <algorithm>
 
 namespace kit_muduo {
 
@@ -30,7 +30,6 @@ struct LogAppenderConfig
 
     // 只有输出对象是 file 才需要这些字段
     std::string file_path;
-    uint64_t flush_threshold{FileAppender::kDefaultFlushThreshold};
 };
 
 struct LoggerConfig
@@ -41,8 +40,21 @@ struct LoggerConfig
     std::vector<LogAppenderConfig> appenders;
 };
 
+struct LogFileConfig
+{
+    /// @brief 日志写入刷新阈值 1MB
+    uint64_t flush_threshold{1 * 1024 * 1024};
+    /// @brief TODO 文件大小轮转阈值
+    uint64_t rotate_max_bytes{300 * 1024 * 1024};
+    /// @brief TODO 文件轮转数量
+    int32_t max_backup_files{5};
+    /// @brief TODO 文件是否进行压缩处理
+    bool compress_rotated{true};
+};
+
 struct LogConfig
 {
+    LogFileConfig file;
     std::vector<LoggerConfig> loggers;
 };
 
@@ -155,7 +167,7 @@ struct ConfigCodec<LogAppenderConfig, Policy>
         LogAppenderConfig result;
         bool has_type = false;
         log_config_detail::DecodeObject<Policy>(node,
-            {"type", "level", "formatter", "file_path", "flush_threshold"},
+            {"type", "level", "formatter", "file_path"},
             [&](const std::string &key, const Node &child) {
                 
             if(key == "type")
@@ -174,10 +186,6 @@ struct ConfigCodec<LogAppenderConfig, Policy>
             else if(key == "file_path")
             {
                 result.file_path = ConfigCodec<std::string, Policy>::Decode(child);
-            }
-            else if(key == "flush_threshold")
-            {
-                result.flush_threshold = ConfigCodec<uint64_t, Policy>::Decode(child);
             }
         });
 
@@ -209,9 +217,6 @@ struct ConfigCodec<LogAppenderConfig, Policy>
                 Policy::Put(node, "file_path",
                     ConfigCodec<std::string, Policy>::Encode(value.file_path));
             }
-    
-            Policy::Put(node, "flush_threshold",
-                ConfigCodec<uint64_t, Policy>::Encode(value.flush_threshold));
         }
 
         return node;
@@ -281,19 +286,93 @@ struct ConfigCodec<LoggerConfig, Policy>
 };
 
 template<typename Policy>
+struct ConfigCodec<LogFileConfig, Policy>
+{
+    using Node = typename Policy::Node;
+
+    static LogFileConfig Decode(const Node &node)
+    {
+        LogFileConfig result;
+
+        log_config_detail::DecodeObject<Policy>(node,
+        {"flush_threshold", "rotate_max_bytes", "max_backup_files", "compress_rotated"},
+        [&](const std::string& field, const Node& child) {
+
+            if(field == "flush_threshold")
+            {
+                result.flush_threshold = ConfigCodec<uint64_t, Policy>::Decode(child);
+            }
+            else if(field == "rotate_max_bytes")
+            {
+                result.rotate_max_bytes = ConfigCodec<uint64_t, Policy>::Decode(child);
+            }
+            else if(field == "max_backup_files")
+            {
+                result.max_backup_files = ConfigCodec<int32_t, Policy>::Decode(child);
+            }
+            else if(field == "compress_rotated")
+            {
+                result.compress_rotated = ConfigCodec<bool, Policy>::Decode(child);
+            }
+        });
+
+        return result;
+    }
+
+    static Node Encode(const LogFileConfig &value)
+    {
+        auto node = Policy::MakeMap();
+
+        Policy::Put(node, "flush_threshold",
+            ConfigCodec<uint64_t, Policy>::Encode(value.flush_threshold));
+        Policy::Put(node, "rotate_max_bytes",
+            ConfigCodec<uint64_t, Policy>::Encode(value.rotate_max_bytes));
+        Policy::Put(node, "max_backup_files",
+            ConfigCodec<int32_t, Policy>::Encode(value.max_backup_files));
+        Policy::Put(node, "compress_rotated",
+            ConfigCodec<bool, Policy>::Encode(value.compress_rotated));
+        
+        return node;
+    }
+};
+
+template<typename Policy>
 struct ConfigCodec<LogConfig, Policy>
 {
     using Node = typename Policy::Node;
 
     static LogConfig Decode(const Node &node)
     {
-        return LogConfig{ConfigCodec<std::vector<LoggerConfig>, Policy>::Decode(node)};
+        LogConfig result;
+
+        log_config_detail::DecodeObject<Policy>(node,
+        {"file", "loggers"},
+        [&](const std::string& field, const Node& child) {
+
+            if(field == "file")
+            {
+                result.file =  ConfigCodec<LogFileConfig, Policy>::Decode(child);
+            }
+            else if(field == "loggers")
+            {
+                result.loggers = ConfigCodec<std::vector<LoggerConfig>, Policy>::Decode(child);
+            }
+
+        });
+
+        return result;
     }
 
     static Node Encode(const LogConfig& value)
     {
         ValidateLogConfig(value);
-        return ConfigCodec<std::vector<LoggerConfig>, Policy>::Encode(value.loggers);
+        auto node = Policy::MakeMap();
+
+        Policy::Put(node, "file",
+            ConfigCodec<LogFileConfig, Policy>::Encode(value.file));
+        Policy::Put(node, "loggers",
+            ConfigCodec<std::vector<LoggerConfig>, Policy>::Encode(value.loggers));
+        return node;
     }
 };
 

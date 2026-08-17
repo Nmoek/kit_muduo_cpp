@@ -19,6 +19,7 @@
 #include <string_view>
 
 #include "base/log_config.h"
+#include "base/log_file_sink.h"
 #include "base/log_level.h"
 #include "base/log_appender.h"
 #include "base/log_formatter.h"
@@ -255,6 +256,12 @@ public:
      */
     void applyConfig(const LogConfig &config);
 
+    /**
+     * @brief 获取日志文件管理对象
+     * @param path 
+     * @return LogFileSink::Ptr 
+     */
+    LogFileSink::Ptr acquireFileSink(const std::string &file_path);
 public:
     /// @brief 静态日志器获取动作集合
     // static const std::unordered_map<std::string_view, std::pair<std::function<Logger::Ptr()>, LoggerConfig> > kGetLoggerFuncs;
@@ -275,6 +282,8 @@ private:
     std::unordered_map<std::string, Logger::Ptr> loggers_;
     /// @brief 日志器集合锁
     mutable std::mutex loggers_mtx_;
+    /// @brief 日志文件管理
+    LogFileSinkRegister file_register_;
 };
 /// @brief 日志管理单例
 #define LOGMANAGER_INSTANCE() (LogManager::GetInstance())

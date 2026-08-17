@@ -8,6 +8,7 @@
  */
 #include "base/log_config.h"
 #include "base/log_formatter.h"
+#include <limits>
 
 namespace kit_muduo {
 
@@ -51,7 +52,6 @@ LogConfig DefaultLogConfig()
         .type = LogAppenderType::kFile,
         .level = LogLevel::INFO,
         .file_path = "log/base.log",
-        .flush_threshold = 1024
     });
     // net
     LoggerConfig net;
@@ -66,7 +66,6 @@ LogConfig DefaultLogConfig()
         .type = LogAppenderType::kFile,
         .level = LogLevel::INFO,
         .file_path = "log/net.log",
-        .flush_threshold = 1024
     });
     // web
     LoggerConfig web;
@@ -81,7 +80,6 @@ LogConfig DefaultLogConfig()
         .type = LogAppenderType::kFile,
         .level = LogLevel::DEBUG,
         .file_path = "log/web.log",
-        .flush_threshold = 1024
     });
     // domain
     LoggerConfig domain;
@@ -96,10 +94,14 @@ LogConfig DefaultLogConfig()
         .type = LogAppenderType::kFile,
         .level = LogLevel::INFO,
         .file_path = "log/domain.log",
-        .flush_threshold = 1024
     });
 
-    return LogConfig{{
+    return LogConfig{
+        // TODO 日志文件配置
+        .file{
+
+        },
+        .loggers{
         std::move(root),
         std::move(base),
         std::move(net),
@@ -113,6 +115,25 @@ void ValidateLogConfig(const LogConfig& config)
     std::unordered_set<std::string> names;
     bool has_root = false;
 
+    // TODO file配置限制
+    // file校验
+    constexpr uint64_t kMinFlushThreshold = 1 * 1024;
+    constexpr uint64_t kMaxFlushThreshold = 10 * 1024 * 1024;
+    if(config.file.flush_threshold < kMinFlushThreshold
+        || config.file.flush_threshold > kMaxFlushThreshold)
+    {
+        throw ConfigError({},
+            "log file flush threshold invalid [1 KiB, 10 MiB]");
+    }
+
+    // 注意 0的意义是不轮转
+    if(config.file.max_backup_files < 0
+        || config.file.max_backup_files > 10)
+    {
+        throw ConfigError({}, "log file max backup files invalid [1, 10]");
+    }
+
+    // loggers校验
     for(const auto& logger : config.loggers)
     {
         // 日志器名字不能为空

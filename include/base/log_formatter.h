@@ -45,7 +45,7 @@ public:
      * @param[in out] ss  字符串流
      * @param[in] pattr 日志属性
      */
-    virtual void format(std::stringstream &ss, LogAttr::Ptr pattr) = 0;
+    virtual void format(std::stringstream &ss, const LogAttr::Ptr& pattr) = 0;
 
     /**
      * @brief 判断是否存在子模版
@@ -66,7 +66,7 @@ class NewLineFormatItem: public FormatItem
 public:
     NewLineFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << "\n"; }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << "\n"; }
 };
 
 /**
@@ -77,7 +77,7 @@ class ContentFormatItem: public FormatItem
 public:
     ContentFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getContent(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getContent(); }
 };
 
 /**
@@ -88,7 +88,7 @@ class LevelFormatItem: public FormatItem
 public:
     LevelFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << LogLevel::ToString(pattr->getLevel()); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << LogLevel::ToString(pattr->getLevel()); }
 };
 
 /**
@@ -99,7 +99,7 @@ class ElapseFormatItem: public FormatItem
 public:
     ElapseFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getElapse(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getElapse(); }
 };
 
 /**
@@ -110,7 +110,7 @@ class ThreadTidFormatItem: public FormatItem
 public:
     ThreadTidFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getTid(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getTid(); }
 };
 
 /**
@@ -121,7 +121,7 @@ class ThreadPidFormatItem: public FormatItem
 public:
     ThreadPidFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getPid(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getPid(); }
 };
 
 /**
@@ -132,7 +132,7 @@ class ThreadNameFormatItem: public FormatItem
 public:
     ThreadNameFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getThreadName(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getThreadName(); }
 };
 
 
@@ -144,7 +144,7 @@ class TabFormatItem: public FormatItem
 public:
     TabFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << "\t"; }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << "\t"; }
 };
 
 /**
@@ -162,7 +162,7 @@ public:
         }
     }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override
     {
         ss << TimeStamp(pattr->getTimeStamp()).toLogString(datetime_format_);
     }
@@ -179,7 +179,7 @@ class FileFormatItem: public FormatItem
 public:
     FileFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getFileBaseName(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getFileBaseName(); }
 };
 
 /**
@@ -190,7 +190,7 @@ class LineFormatItem: public FormatItem
 public:
     LineFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getLine(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getLine(); }
 };
 
 /**
@@ -201,7 +201,7 @@ class LogNameFormatItem: public FormatItem
 public:
     LogNameFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getLoggerName(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getLoggerName(); }
 };
 
 /**
@@ -212,7 +212,7 @@ class ModuleNameFormatItem: public FormatItem
 public:
     ModuleNameFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override
     {
         auto str = pattr->getModule().size() ? pattr->getModule() : "null";
         ss << str;
@@ -230,7 +230,7 @@ public:
         :str_(str)
     { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << str_; }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << str_; }
 private:
     std::string str_;
 };
@@ -255,7 +255,7 @@ public:
      * @param[in] pattr
      * @return std::string
      */
-    std::string format(LogAttr::Ptr pattr);
+    std::string format(const LogAttr::Ptr& pattr);
 
     const std::string &pattern() const noexcept { return pattern_; }
 

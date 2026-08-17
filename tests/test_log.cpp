@@ -12,6 +12,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <filesystem>
 #include <future>
 #include <gtest/gtest.h>
 
@@ -22,6 +23,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <unistd.h>
 #include <vector>
 
@@ -50,6 +52,34 @@ public:
 
 private:
     std::string path_;
+};
+
+class TempLogDirectory
+{
+public:
+    explicit TempLogDirectory(const std::string& case_name)
+        :path_(std::filesystem::temp_directory_path()
+            / ("kit_muduo_test_log_" + std::to_string(::getpid())
+                + "_" + case_name + "_dir"))
+    {
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+        std::filesystem::create_directories(path_);
+    }
+
+    ~TempLogDirectory()
+    {
+        std::error_code error;
+        std::filesystem::remove_all(path_, error);
+    }
+
+    const std::filesystem::path& path() const noexcept
+    {
+        return path_;
+    }
+
+private:
+    std::filesystem::path path_;
 };
 
 class ScopedTimezone
@@ -143,6 +173,11 @@ public:
         }
     }
 
+    void log(const std::string&) override
+    {
+        count_.fetch_add(1, std::memory_order_relaxed);
+    }
+
     int count() const noexcept
     {
         return count_.load(std::memory_order_relaxed);
@@ -157,11 +192,12 @@ class BlockingAppender final : public LogAppender
 public:
     void log(LogAttr::Ptr) override
     {
-        std::unique_lock<std::mutex> lock(gate_mtx_);
-        entered_ = true;
-        entered_cv_.notify_all();
-        release_cv_.wait(lock, [this] { return released_; });
-        count_.fetch_add(1, std::memory_order_relaxed);
+        blockUntilReleased();
+    }
+
+    void log(const std::string&) override
+    {
+        blockUntilReleased();
     }
 
     bool waitUntilEntered(std::chrono::milliseconds timeout)
@@ -186,6 +222,14 @@ public:
     }
 
 private:
+    void blockUntilReleased()
+    {
+        std::unique_lock<std::mutex> lock(gate_mtx_);
+        entered_ = true;
+        entered_cv_.notify_all();
+        release_cv_.wait(lock, [this] { return released_; });
+        count_.fetch_add(1, std::memory_order_relaxed);
+    }
     std::mutex gate_mtx_;
     std::condition_variable entered_cv_;
     std::condition_variable release_cv_;
@@ -209,25 +253,22 @@ public:
     }
 };
 
-static void ClearTestLogFile()
-{
-    ASSERT_GE(system("rm -f /tmp/*_test.log"), 0);
-}
-
 } // namespace
 
 /*
-测试思路：使用默认阈值写入一条小日志，第一次写入不应立即 flush，析构时
-才保证缓冲区落盘。
+测试思路：通过默认 LogFileSinkRegister 获取 sink，再交给 FileAppender，验证
+新接口下小日志不会主动触发阈值 flush，最后一个 sink 引用析构时文件流正常关闭。
 
-示例：append("first") -> 文件仍为空 -> appender 析构 -> 文件为 "first"。
+路径图：FileAppender -> shared LogFileSink -> ofstream。
+示例：append("first") -> appender 析构 -> 文件最终为 "first"。
 */
 TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
 {
     TempLogFile file("default_threshold");
+    LogFileSinkRegister registry;
 
     {
-        FileAppender appender(file.path());
+        FileAppender appender(registry.acquire(file.path()));
         appender.setFormatter("%m");
 
         appender.append(MakeLogAttr("first"));
@@ -236,24 +277,26 @@ TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
     }
 
     ASSERT_EQ(ReadFile(file.path()), "first");
-
-    ClearTestLogFile();
 }
 
 /*
-测试思路：配置 8 字节阈值，验证阈值按累计格式化结果计算，而不是按单次
-append 的长度计算。
+测试思路：把 flush_threshold 配置到 registry，而不是单个 Appender，验证共享
+sink 按累计格式化结果触发 flush。
 
-示例："abc" + "defgh" 达到 8 字节并 flush，之后的 "z" 留在缓冲区。
+状态图：0 --"abc"--> 3 --"defgh"--> 8/flush -> 0 --"z"--> 1。
+示例：前两条累计 8 字节后文件可读为 "abcdefgh"。
 */
 TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
 {
     TempLogFile file("cumulative_threshold");
+    LogFileSinkRegister registry;
+    LogFileConfig config;
+    config.flush_threshold = 8;
+    registry.setFileConfig(config);
 
     {
-        FileAppender appender(file.path());
+        FileAppender appender(registry.acquire(file.path()));
         appender.setFormatter("%m");
-        appender.setFlushThreshold(8);
 
         appender.append(MakeLogAttr("abc"));
         ASSERT_EQ(ReadFile(file.path()), "");
@@ -266,30 +309,253 @@ TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
     }
 
     ASSERT_EQ(ReadFile(file.path()), "abcdefghz");
-
-    ClearTestLogFile();
 }
 
 /*
-测试思路：配置 0 字节阈值，验证每次 append 都立即可读，覆盖 flush 边界。
+测试思路：配置 0 字节阈值，验证物理策略来自 registry，并覆盖每次 append
+都立即 flush 的边界行为。
 
-示例：连续 append("a"), append("b") 后文件内容应立即为 "ab"。
+状态图：append -> bytes >= 0 -> flush。
+示例：连续 append("a"), append("b") 后分别立即读到 "a"、"ab"。
 */
 TEST(TestLog, FileAppenderZeroWriteMaxSizeFlushesEveryWrite)
 {
     TempLogFile file("zero_threshold");
+    LogFileSinkRegister registry;
+    LogFileConfig config;
+    config.flush_threshold = 0;
+    registry.setFileConfig(config);
 
-    FileAppender appender(file.path());
+    FileAppender appender(registry.acquire(file.path()));
     appender.setFormatter("%m");
-    appender.setFlushThreshold(0);
 
     appender.append(MakeLogAttr("a"));
     ASSERT_EQ(ReadFile(file.path()), "a");
 
     appender.append(MakeLogAttr("b"));
     ASSERT_EQ(ReadFile(file.path()), "ab");
+}
 
-    ClearTestLogFile();
+/*
+测试思路：同一个规范化绝对路径必须只对应一个 LogFileSink；不同路径必须获得
+不同 sink，从对象身份上验证 registry 的资源划分边界。
+
+资源图：path A -> sink A <- acquire(path A)，path B -> sink B。
+示例：两次 acquire(file_a) 指针相同，acquire(file_b) 指针不同。
+*/
+TEST(TestLog, FileSinkRegisterSharesOnlyTheSamePath)
+{
+    TempLogFile file_a("registry_same_a");
+    TempLogFile file_b("registry_same_b");
+    LogFileSinkRegister registry;
+
+    auto first = registry.acquire(file_a.path());
+    auto second = registry.acquire(file_a.path());
+    auto other = registry.acquire(file_b.path());
+
+    EXPECT_EQ(first, second);
+    EXPECT_NE(first, other);
+    EXPECT_EQ(first->normalizedPath(),
+        std::filesystem::weakly_canonical(file_a.path()).string());
+}
+
+/*
+测试思路：相对路径、`.` 和 `..` 只是同一文件的不同 pathname，归一化后必须
+命中同一个 registry key，避免创建多个 ofstream。
+
+路径图：target.log == ./target.log == nested/../target.log == relative(target.log)。
+示例：四种路径 acquire 后得到完全相同的 shared_ptr。
+*/
+TEST(TestLog, FileSinkRegisterNormalizesEquivalentPaths)
+{
+    TempLogDirectory directory("normalize");
+    const auto nested = directory.path() / "nested";
+    std::filesystem::create_directories(nested);
+
+    const auto target = directory.path() / "target.log";
+    const auto dotted = directory.path() / "." / "target.log";
+    const auto parent = nested / ".." / "target.log";
+    const auto relative = std::filesystem::relative(
+        target,
+        std::filesystem::current_path());
+
+    LogFileSinkRegister registry;
+    auto canonical_sink = registry.acquire(target.string());
+
+    EXPECT_EQ(registry.acquire(dotted.string()), canonical_sink);
+    EXPECT_EQ(registry.acquire(parent.string()), canonical_sink);
+    EXPECT_EQ(registry.acquire(relative.string()), canonical_sink);
+}
+
+/*
+测试思路：registry 只持有 weak_ptr。最后一个使用者释放后 sink 应被回收；再次
+acquire 创建新 sink，并从原文件尾部继续追加。
+
+生命周期图：sink#1 --last shared_ptr reset--> expired --acquire--> sink#2。
+示例：sink#1 写 "first"，sink#2 写 "second"，最终文件为 "firstsecond"。
+*/
+TEST(TestLog, FileSinkRegisterRecreatesExpiredSinkAndKeepsAppending)
+{
+    TempLogFile file("registry_recycle");
+    LogFileSinkRegister registry;
+    std::weak_ptr<LogFileSink> previous;
+
+    {
+        auto sink = registry.acquire(file.path());
+        previous = sink;
+        sink->append("first");
+        sink->flush();
+    }
+
+    EXPECT_TRUE(previous.expired());
+
+    auto replacement = registry.acquire(file.path());
+    replacement->append("second");
+    replacement->flush();
+
+    EXPECT_EQ(ReadFile(file.path()), "firstsecond");
+}
+
+/*
+测试思路：两个 FileAppender 共享同一个 sink。销毁其中一个只能释放自身引用，
+不能关闭另一个 Appender 正在使用的物理文件状态。
+
+生命周期图：Appender A --destroy--> sink <- Appender B --append--> file。
+示例：A 写 "first\n" 后析构，B 继续写 "second\n"，两条记录都存在。
+*/
+TEST(TestLog, SharedFileSinkSurvivesOneAppenderDestruction)
+{
+    TempLogFile file("shared_appender_lifetime");
+    LogFileSinkRegister registry;
+    auto sink = registry.acquire(file.path());
+    auto first = std::make_unique<FileAppender>(sink);
+    FileAppender second(sink);
+    first->setFormatter("%m%n");
+    second.setFormatter("%m%n");
+
+    first->append(MakeLogAttr("first"));
+    first.reset();
+    second.append(MakeLogAttr("second"));
+    second.flush();
+
+    EXPECT_EQ(ReadFile(file.path()), "first\nsecond\n");
+}
+
+/*
+测试思路：多个线程各自持有 FileAppender，但都通过 registry 获取同一路径 sink。
+sink 锁必须覆盖整条最终字符串写入，使记录数量正确且内容不交错。
+
+并发图：thread 0..3 -> private FileAppender -> shared LogFileSink::mtx -> file。
+示例：4 线程各写 200 条 `t<id>-<seq>`，最终得到 800 条唯一完整记录。
+*/
+TEST(TestLog, SharedFileSinkPreservesConcurrentRecordBoundaries)
+{
+    constexpr int kThreads = 4;
+    constexpr int kRecordsPerThread = 200;
+
+    TempLogFile file("shared_concurrent");
+    LogFileSinkRegister registry;
+    auto sink = registry.acquire(file.path());
+    std::vector<std::thread> threads;
+
+    for(int thread_id = 0; thread_id < kThreads; ++thread_id)
+    {
+        threads.emplace_back([&registry, &file, thread_id] {
+            FileAppender appender(registry.acquire(file.path()));
+            appender.setFormatter("%m%n");
+
+            for(int sequence = 0;
+                sequence < kRecordsPerThread;
+                ++sequence)
+            {
+                appender.append(MakeLogAttr(
+                    "t" + std::to_string(thread_id)
+                    + "-" + std::to_string(sequence)));
+            }
+        });
+    }
+
+    for(auto& thread : threads)
+    {
+        thread.join();
+    }
+    sink->flush();
+
+    std::ifstream input(file.path());
+    std::unordered_set<std::string> records;
+    std::string record;
+    size_t record_count = 0;
+    while(std::getline(input, record))
+    {
+        ++record_count;
+        records.emplace(record);
+    }
+
+    EXPECT_EQ(record_count,
+        static_cast<size_t>(kThreads * kRecordsPerThread));
+    EXPECT_EQ(records.size(), record_count);
+    for(int thread_id = 0; thread_id < kThreads; ++thread_id)
+    {
+        for(int sequence = 0;
+            sequence < kRecordsPerThread;
+            ++sequence)
+        {
+            EXPECT_EQ(records.count(
+                "t" + std::to_string(thread_id)
+                + "-" + std::to_string(sequence)), 1U);
+        }
+    }
+}
+
+/*
+测试思路：acquire 已有文件时必须恢复 current size；reopen 关闭并重新打开同一
+文件后也必须重新计算大小，并继续使用 append 语义。
+
+状态图：existing(4 B) -> append(4 B) -> reopen/current=8 B -> append(4 B)。
+示例："seed" + "-one" + "-two"，最终大小和内容都为 12 字节。
+*/
+TEST(TestLog, FileSinkRestoresSizeAndAppendsAcrossReopen)
+{
+    TempLogFile file("restore_size");
+    {
+        std::ofstream output(file.path(), std::ios::binary);
+        output << "seed";
+    }
+
+    LogFileSinkRegister registry;
+    auto sink = registry.acquire(file.path());
+    ASSERT_EQ(sink->currentFileSize(), 4U);
+
+    sink->append("-one");
+    sink->flush();
+    EXPECT_EQ(sink->currentFileSize(), 8U);
+
+    std::string error;
+    ASSERT_TRUE(sink->reopen(&error)) << error;
+    EXPECT_EQ(sink->currentFileSize(), 8U);
+
+    sink->append("-two");
+    sink->flush();
+    EXPECT_EQ(sink->currentFileSize(), 12U);
+    EXPECT_EQ(ReadFile(file.path()), "seed-one-two");
+}
+
+/*
+测试思路：registry 必须在创建 sink 前拒绝空路径和目录路径，确保不会把目录
+误当作普通日志文件。
+
+示例：acquire("") 抛 invalid_argument；acquire(existing_directory) 抛
+runtime_error。
+*/
+TEST(TestLog, FileSinkRegisterRejectsInvalidFilePaths)
+{
+    TempLogDirectory directory("invalid_path");
+    LogFileSinkRegister registry;
+
+    EXPECT_THROW(registry.acquire(""), std::invalid_argument);
+    EXPECT_THROW(
+        registry.acquire(directory.path().string()),
+        std::runtime_error);
 }
 
 /*
@@ -417,12 +683,16 @@ TEST(TestLog, ApplyConfigTransitionsMutedLoggerBackToRootFallback)
     muted_config.name = kLoggerName;
     muted_config.level = LogLevel::DEBUG;
 
-    manager.applyConfig(LogConfig{{root_config, muted_config}});
+    LogConfig muted_log_config;
+    muted_log_config.loggers = {root_config, muted_config};
+    manager.applyConfig(muted_log_config);
     auto logger = manager.getLogger(kLoggerName);
     ASSERT_NE(logger, nullptr);
     EXPECT_FALSE(logger->shouldLog(LogLevel::FATAL));
 
-    manager.applyConfig(LogConfig{{root_config}});
+    LogConfig root_only_config;
+    root_only_config.loggers = {root_config};
+    manager.applyConfig(root_only_config);
     EXPECT_EQ(manager.getLogger(kLoggerName), logger);
     EXPECT_FALSE(logger->shouldLog(LogLevel::INFO));
     EXPECT_TRUE(logger->shouldLog(LogLevel::WARN));

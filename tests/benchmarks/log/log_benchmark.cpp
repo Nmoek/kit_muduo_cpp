@@ -11,8 +11,17 @@
 #include "base/util.h"
 
 #include <benchmark/benchmark.h>
+#include <array>
+#include <condition_variable>
+#include <cstdlib>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
 #include <thread>
+#include <vector>
+
+#include <unistd.h>
 
 using namespace kit_muduo;
 
@@ -223,7 +232,11 @@ Logger::Ptr GetFileLogger()
         logger->clearAppender();
 
         logger->setLevel(LogLevel::DEBUG);
-        auto appender = std::make_shared<FileAppender>(std::string("/tmp/kit-log-bench/module-log-file-") + std::to_string(GetThreadPid()) + ".log");
+        const std::string file_path =
+            std::string("/tmp/kit-log-bench/module-log-file-")
+            + std::to_string(GetThreadPid()) + ".log";
+        auto appender = std::make_shared<FileAppender>(
+            LogManager::GetInstance().acquireFileSink(file_path));
 
         appender->setLevel(LogLevel::DEBUG);
         logger->addAppender(std::move(appender));
@@ -231,6 +244,276 @@ Logger::Ptr GetFileLogger()
     }();
 
     return logger;
+}
+
+LogFileSinkRegister& GetDirectFileSinkRegister()
+{
+    static LogFileSinkRegister registry;
+    return registry;
+}
+
+LogFileSink::Ptr GetSharedDirectFileSink()
+{
+    static auto sink = GetDirectFileSinkRegister().acquire(
+        std::string("/tmp/kit-log-bench/direct-file-sink-shared-")
+        + std::to_string(GetThreadPid()) + ".log");
+    return sink;
+}
+
+LogFileSink::Ptr GetIndependentDirectFileSink(int thread_index)
+{
+    static const auto sinks = [] {
+        std::array<LogFileSink::Ptr, kPerfStatThreads> result;
+        const auto owner_thread_id = GetThreadPid();
+
+        for(size_t index = 0; index < result.size(); ++index)
+        {
+            result[index] = GetDirectFileSinkRegister().acquire(
+                std::string("/tmp/kit-log-bench/direct-file-sink-independent-")
+                + std::to_string(owner_thread_id) + "-"
+                + std::to_string(index) + ".log");
+        }
+        return result;
+    }();
+
+    return sinks.at(static_cast<size_t>(thread_index));
+}
+
+class FileAppenderBenchmarkRun
+{
+public:
+    std::string begin(int thread_count, const std::string& variant)
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        if(!run_active_)
+        {
+            run_active_ = true;
+            thread_count_ = thread_count;
+            arrived_ = 0;
+            ready_ = 0;
+            writes_finished_ = 0;
+            flushed_ = false;
+            finished_ = 0;
+            records_per_thread_.assign(static_cast<size_t>(thread_count), 0);
+            setup_error_.clear();
+            shared_sink_ = nullptr;
+            shared_appender_.reset();
+            variant_ = variant;
+
+            const char* configured_dir =
+                std::getenv("KIT_LOG_BENCH_VALIDATION_DIR");
+            const std::filesystem::path validation_dir = configured_dir
+                ? std::filesystem::path(configured_dir)
+                : std::filesystem::path("/tmp/kit-log-bench/validation");
+            const std::string file_stem = variant_ + "-pid-"
+                + std::to_string(::getpid()) + "-run-"
+                + std::to_string(run_number_++);
+            path_ = (validation_dir / (file_stem + ".log")).string();
+            manifest_path_ =
+                (validation_dir / (file_stem + ".manifest")).string();
+
+            std::error_code error;
+            std::filesystem::create_directories(
+                std::filesystem::path(path_).parent_path(), error);
+            if(error)
+            {
+                setup_error_ = "cannot create benchmark directory: "
+                    + error.message();
+            }
+            else
+            {
+                std::filesystem::remove(path_, error);
+                if(error)
+                {
+                    setup_error_ = "cannot reset validation file: "
+                        + error.message();
+                }
+                error.clear();
+                std::filesystem::remove(manifest_path_, error);
+                if(error && setup_error_.empty())
+                {
+                    setup_error_ = "cannot reset validation manifest: "
+                        + error.message();
+                }
+            }
+        }
+
+        if(thread_count_ != thread_count || variant_ != variant)
+        {
+            setup_error_ = "file-appender benchmark participant mismatch";
+        }
+
+        ++arrived_;
+        if(arrived_ == thread_count_)
+        {
+            cv_.notify_all();
+        }
+        cv_.wait(lock, [this] { return arrived_ == thread_count_; });
+        return path_;
+    }
+
+    void waitReady()
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        ++ready_;
+        if(ready_ == thread_count_)
+        {
+            cv_.notify_all();
+            return;
+        }
+        cv_.wait(lock, [this] { return ready_ == thread_count_; });
+    }
+
+    void registerSink(const LogFileSink::Ptr& sink)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if(!shared_sink_)
+        {
+            shared_sink_ = sink.get();
+            return;
+        }
+        if(shared_sink_ != sink.get())
+        {
+            setup_error_ = "same path returned different LogFileSink instances";
+        }
+    }
+
+    void recordSetupError(const std::string& error)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if(setup_error_.empty())
+        {
+            setup_error_ = error;
+        }
+    }
+
+    FileAppender::Ptr sharedAppender(const LogFileSink::Ptr& sink)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        if(shared_appender_)
+        {
+            return shared_appender_;
+        }
+
+        shared_appender_ = std::make_shared<FileAppender>(sink);
+        shared_appender_->setLevel(LogLevel::DEBUG);
+        shared_appender_->setFormatter(
+            std::make_shared<LogFormatter>("%m%n"));
+
+        std::string open_error;
+        if(!shared_appender_->openForAppend(&open_error))
+        {
+            setup_error_ = "cannot open shared FileAppender sink: "
+                + open_error;
+        }
+        return shared_appender_;
+    }
+
+    void flushAfterAllWrites(int thread_index,
+        const FileAppender::Ptr& appender)
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        ++writes_finished_;
+        if(writes_finished_ == thread_count_)
+        {
+            cv_.notify_all();
+        }
+        cv_.wait(lock, [this] {
+            return writes_finished_ == thread_count_;
+        });
+        lock.unlock();
+
+        if(0 == thread_index)
+        {
+            appender->flush();
+        }
+
+        lock.lock();
+        if(0 == thread_index)
+        {
+            flushed_ = true;
+            cv_.notify_all();
+            return;
+        }
+        cv_.wait(lock, [this] { return flushed_; });
+    }
+
+    void finish(int thread_index, size_t records)
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        records_per_thread_.at(static_cast<size_t>(thread_index)) = records;
+        ++finished_;
+        if(finished_ == thread_count_)
+        {
+            writeManifestUnlocked();
+            run_active_ = false;
+            cv_.notify_all();
+            return;
+        }
+        cv_.wait(lock, [this] { return !run_active_; });
+    }
+
+    std::string setupError() const
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return setup_error_;
+    }
+
+private:
+    void writeManifestUnlocked()
+    {
+        std::ofstream manifest(
+            manifest_path_, std::ios::out | std::ios::trunc);
+        if(!manifest.is_open())
+        {
+            setup_error_ = "cannot create validation manifest: "
+                + manifest_path_;
+            return;
+        }
+
+        manifest << "version=1\n"
+                 << "variant=" << variant_ << '\n'
+                 << "log_file=" << path_ << '\n'
+                 << "thread_count=" << thread_count_ << '\n'
+                 << "sink_shared=" << (shared_sink_ ? 1 : 0) << '\n'
+                 << "setup_error=" << setup_error_ << '\n';
+        for(size_t index = 0; index < records_per_thread_.size(); ++index)
+        {
+            manifest << "records_" << index << '='
+                     << records_per_thread_[index] << '\n';
+        }
+        manifest.flush();
+        if(!manifest.good())
+        {
+            setup_error_ = "cannot write validation manifest: "
+                + manifest_path_;
+        }
+    }
+
+private:
+    mutable std::mutex mtx_;
+    std::condition_variable cv_;
+    bool run_active_{false};
+    int thread_count_{0};
+    int arrived_{0};
+    int ready_{0};
+    int writes_finished_{0};
+    bool flushed_{false};
+    int finished_{0};
+    uint64_t run_number_{0};
+    std::string variant_;
+    std::string path_;
+    std::string manifest_path_;
+    std::vector<size_t> records_per_thread_;
+    std::string setup_error_;
+    LogFileSink* shared_sink_{nullptr};
+    FileAppender::Ptr shared_appender_;
+};
+
+FileAppenderBenchmarkRun& GetFileAppenderBenchmarkRun()
+{
+    static FileAppenderBenchmarkRun run;
+    return run;
 }
 
 /*
@@ -686,6 +969,222 @@ BENCHMARK(BM_ModuleLogFile)
 
 BENCHMARK(BM_ModuleLogFile)
     ->Name("BM_ModuleLogFilePerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+enum class FileAppenderTopology
+{
+kSingleSharedAppender,
+kMultipleAppenders,
+};
+
+void RunFileAppenderSamePath(benchmark::State& state,
+    FileAppenderTopology topology)
+{
+    const bool multiple =
+        FileAppenderTopology::kMultipleAppenders == topology;
+    const std::string variant = multiple
+        ? "multiple-file-appenders-same-path"
+        : "single-file-appender-same-path";
+    auto& run = GetFileAppenderBenchmarkRun();
+
+    const std::string path = run.begin(state.threads(), variant);
+    auto sink = LogManager::GetInstance().acquireFileSink(path);
+    run.registerSink(sink);
+
+    FileAppender::Ptr appender;
+    if(multiple)
+    {
+        appender = std::make_shared<FileAppender>(sink);
+        appender->setLevel(LogLevel::DEBUG);
+        appender->setFormatter(std::make_shared<LogFormatter>("%m%n"));
+
+        std::string open_error;
+        if(!appender->openForAppend(&open_error))
+        {
+            run.recordSetupError(
+                "cannot open multiple FileAppender sink: " + open_error);
+        }
+    }
+    else
+    {
+        appender = run.sharedAppender(sink);
+    }
+
+    auto logger = std::make_shared<Logger>(
+        std::string("benchmark.file-appender.")
+        + std::to_string(state.thread_index()));
+    logger->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+    run.waitReady();
+
+    const std::string setup_error = run.setupError();
+    if(!setup_error.empty())
+    {
+        run.finish(state.thread_index(), 0);
+        state.SkipWithError(setup_error.c_str());
+        return;
+    }
+    size_t sequence = 0;
+    for(auto _ : state)
+    {
+        (void)_;
+
+        KIT_DEBUG(logger, "benchmark")
+            << "mfa thread=" << state.thread_index()
+            << " seq=" << sequence++;
+    }
+
+    run.flushAfterAllWrites(state.thread_index(), appender);
+    run.finish(state.thread_index(), sequence);
+
+    const std::string final_error = run.setupError();
+    if(!final_error.empty())
+    {
+        state.SkipWithError(final_error.c_str());
+    }
+    state.SetItemsProcessed(sequence);
+}
+
+/*
+测试思路：
+1. 每个线程使用独立 Logger 和独立 FileAppender；
+2. 所有 FileAppender 经 registry 获取同一路径的同一个 LogFileSink；
+3. 每轮写入带 thread/sequence 的完整记录；
+4. benchmark 进程只生成日志和预期记录 manifest，文件解析由外部脚本完成。
+
+并发图：
+thread 0 -> Logger 0 -> FileAppender 0 -+
+thread 1 -> Logger 1 -> FileAppender 1 -+-> shared LogFileSink -> one file
+thread N -> Logger N -> FileAppender N -+
+
+示例：线程 3 的第 17 条记录为 `mfa thread=3 seq=17`。
+*/
+void BM_MultipleFileAppendersSamePath(benchmark::State& state)
+{
+    RunFileAppenderSamePath(
+        state, FileAppenderTopology::kMultipleAppenders);
+}
+BENCHMARK(BM_MultipleFileAppendersSamePath)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_MultipleFileAppendersSamePath)
+    ->Name("BM_MultipleFileAppendersSamePathPerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+/*
+测试思路：
+1. 每个线程仍使用独立 Logger，保持 Logger 查找和派发方式与多 Appender 用例一致；
+2. 所有 Logger 持有同一个 FileAppender；
+3. formatter、记录内容、LogFileSink、线程数和固定工作量与多 Appender 用例一致；
+4. 与 BM_MultipleFileAppendersSamePath 配对，隔离一个共享 FileAppender 和多个
+   独立 FileAppender 的成本差异。
+
+并发图：
+thread 0 -> Logger 0 -+
+thread 1 -> Logger 1 -+-> one shared FileAppender -> shared LogFileSink -> one file
+thread N -> Logger N -+
+
+示例：线程 3 的第 17 条记录同样为 `mfa thread=3 seq=17`。
+*/
+void BM_SingleFileAppenderSamePath(benchmark::State& state)
+{
+    RunFileAppenderSamePath(
+        state, FileAppenderTopology::kSingleSharedAppender);
+}
+BENCHMARK(BM_SingleFileAppenderSamePath)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_SingleFileAppenderSamePath)
+    ->Name("BM_SingleFileAppenderSamePathPerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+/*
+测试思路：
+1. 所有 benchmark 线程直接调用同一个 LogFileSink::append()；
+2. 排除 Logger、LogAttr、formatter 和 Appender，只保留共享 sink 锁、ofstream
+   写入、current size 维护以及阈值 flush；
+3. 与 BM_LogFileSinkAppendIndependent 对比，量化同一路径串行写入的竞争成本。
+
+并发图：thread 0..N -> shared LogFileSink::mtx -> one ofstream。
+示例：每轮向同一个 /tmp 文件追加固定 25 字节 payload。
+*/
+void BM_LogFileSinkAppendShared(benchmark::State& state)
+{
+    auto sink = GetSharedDirectFileSink();
+
+    for(auto _ : state)
+    {
+        (void)_;
+        sink->append(kConsoleMessage);
+    }
+
+    sink->flush();
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * kConsoleMessageBytes);
+}
+BENCHMARK(BM_LogFileSinkAppendShared)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_LogFileSinkAppendShared)
+    ->Name("BM_LogFileSinkAppendSharedPerfStat8")
+    ->Threads(kPerfStatThreads)
+    ->Iterations(kFullPathPerfStatIterationsPerThread)
+    ->UseRealTime();
+
+
+/*
+测试思路：
+1. 每个 benchmark 线程直接写入自己的 LogFileSink 和文件路径；
+2. 每个 sink 仍执行与 Shared 用例相同的 append、大小维护和阈值 flush；
+3. 不同路径不共享 sink mutex，因此结果表示无关文件之间的并行写入基线。
+
+并发图：thread i -> sink[i]::mtx -> ofstream[i]。
+示例：8 个线程分别写 direct-file-sink-independent-<id>-0..7.log。
+*/
+void BM_LogFileSinkAppendIndependent(benchmark::State& state)
+{
+    auto sink = GetIndependentDirectFileSink(state.thread_index());
+
+    for(auto _ : state)
+    {
+        (void)_;
+        sink->append(kConsoleMessage);
+    }
+
+    sink->flush();
+    state.SetItemsProcessed(state.iterations());
+    state.SetBytesProcessed(state.iterations() * kConsoleMessageBytes);
+}
+BENCHMARK(BM_LogFileSinkAppendIndependent)
+    ->Threads(1)
+    ->Threads(2)
+    ->Threads(4)
+    ->Threads(8)
+    ->UseRealTime();
+
+BENCHMARK(BM_LogFileSinkAppendIndependent)
+    ->Name("BM_LogFileSinkAppendIndependentPerfStat8")
     ->Threads(kPerfStatThreads)
     ->Iterations(kFullPathPerfStatIterationsPerThread)
     ->UseRealTime();

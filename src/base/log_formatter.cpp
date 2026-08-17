@@ -17,6 +17,9 @@ namespace kit_muduo {
 
 namespace {
 
+thread_local std::stringstream t_formatter_ss;
+
+
 /**
  * @brief 从预处理过的模版map中反向匹配当前模版此时位置上的 字符串 是否合法
  * @param cur_pattern 
@@ -275,18 +278,19 @@ void LogFormatter::init()
 #endif
 
 
-std::string LogFormatter::format(LogAttr::Ptr pattr)
+std::string LogFormatter::format(const LogAttr::Ptr& pattr)
 {
-    std::stringstream ss;
-
+    t_formatter_ss.str("");
+    t_formatter_ss.clear();
+    
     for(auto &fi : format_items_)
     {
         if(fi)
         {
-            fi->format(ss, pattr);
+            fi->format(t_formatter_ss, pattr);
         }
     }
 
-    return ss.str();
+    return t_formatter_ss.str();
 }
 } // namespace kit

@@ -14,6 +14,7 @@
 #include <fstream>
 #include <mutex>
 
+#include "base/log_file_sink.h"
 #include "base/log_level.h"
 #include "base/log_attr.h"
 #include "base/log_formatter.h"
@@ -107,18 +108,13 @@ public:
 
 /**
  * @brief 文件输出
-    TODO 重点改造:
-    1. 分级落盘策略
-    2. 文件限制大小 + 压缩 + 轮转
-    3. 异步日志刷盘
  */
 class FileAppender: public LogAppender
 {
 public:
     using Ptr = std::shared_ptr<FileAppender>;
 
-    FileAppender(const std::string &fileName);
-
+    FileAppender(LogFileSink::Ptr file_sink);
     ~FileAppender() = default;
 
     bool openForAppend(std::string* error_message = nullptr);
@@ -126,20 +122,10 @@ public:
     void log(LogAttr::Ptr pattr) override;
     void log(const std::string& log_data) override;
 
-    void setFlushThreshold(uint64_t max_size) { flush_threshold_ = max_size; }
-    uint64_t flushThreshold() const noexcept { return flush_threshold_; }
-
-public:
-    static constexpr uint64_t kDefaultFlushThreshold = 1*1024*1024;
+    void flush() { file_sink_->flush(); }
 
 private:
-    /// @brief 输出文件路径
-    std::string file_name_;
-    /// @brief  文件流句柄
-    std::ofstream file_;
-    /// @brief 当前一次性写入的大小
-    uint64_t cur_size_{0};
-    uint64_t flush_threshold_{kDefaultFlushThreshold};
+    std::shared_ptr<LogFileSink> file_sink_;
 };
 
 //TODO: 网络传输(分布式)

@@ -306,7 +306,7 @@ int main(int argc, char* argv[])
         const auto web_server_config = MakeWebServerStartupConfig();
         const size_t runtime_loop_capacity = *(
             APP_CONFIG_VARS_WORK_RUNTIME(loop_capacity)->value());
-        const auto log_config = *APP_CONFIG_VARS_SYSTEM_LOGS()->value();
+        const auto log_config = *APP_CONFIG_VARS_SYSTEM_LOG()->value();
 
         InitLog(log_config);
         app = InitApp(

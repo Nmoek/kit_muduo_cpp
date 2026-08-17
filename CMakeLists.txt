@@ -195,7 +195,8 @@ set(BASE_SRC
     src/base/log_attr.cpp
     src/base/log_appender.cpp
     src/base/log_config.cpp
-    
+    src/base/log_file_sink.cpp
+
     src/base/util.cpp
     src/base/time_stamp.cpp
     src/base/bytes_codec.cpp

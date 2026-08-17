@@ -14,6 +14,7 @@
 #include "base/lexical_cast.h"
 #include "base/log_config.h"
 #include "base/thread_pool.h"
+#include "base/util.h"
 
 #include <optional>
 #include <unordered_map>
@@ -47,8 +48,8 @@ struct AppConfigVars
             AppConfigVar<int32_t>::Ptr submit_timeout_ms;
         }business;
 
-        // logs
-        AppConfigVar<kit_muduo::LogConfig>::Ptr logs;
+        // log
+        AppConfigVar<kit_muduo::LogConfig>::Ptr log;
 
         struct //sqlite_db
         {
@@ -92,7 +93,6 @@ struct AppConfigLoadInput
 template<class ConfigType>
 AppConfigVars RegisterAppConfigVars(ConfigType& config)
 {
-    // 闭包提交
     AppConfigVars vars;
 #define XX(NODE_NAME, NODE_DEFAULT, NODE_DESC) \
     vars.NODE_NAME = config.lookAndCreate(#NODE_NAME, NODE_DEFAULT, NODE_DESC)
@@ -107,7 +107,7 @@ AppConfigVars RegisterAppConfigVars(ConfigType& config)
     XX(system.business.thread_idle_seconds, kit_muduo::ThreadPool::kDefaultMaxIdleInterval, "bussiness worker thread idle seconds");
     XX(system.business.submit_timeout_ms, 300, "bussiness thread pool submit timeout");
 
-    XX(system.logs, kit_muduo::DefaultLogConfig(), "loggers config");
+    XX(system.log, kit_muduo::DefaultLogConfig(), "loggers config");
 
 
     XX(system.sqlite_db.path, std::string("kit.sqlite"), "SQLite DB path");
@@ -232,7 +232,7 @@ void ValidateAppConfigVars(const AppConfigVars& vars);
  * @brief 缺失时将默认应用配置写入指定 YAML 文件
  */
 void WriteDefaultAppConfigFileIfMissing(
-    const std::string& file_path,
+    const std::filesystem::path &path,
     const std::string& yaml_text);
 
 
@@ -273,10 +273,12 @@ void InitAppConfig(
     // 配置文件加载
     if(input.yaml_file.has_value())
     {
+        const std::filesystem::path path(*input.yaml_file);
+
         // 指向文件不存在 创建并写入
-        if(!app_config_detail::IsExistsConfigPath(*input.yaml_file))
+        if(!app_config_detail::IsExistsConfigPath(path))
         {
-            WriteDefaultAppConfigFileIfMissing(*input.yaml_file,
+            WriteDefaultAppConfigFileIfMissing(path,
                 ConfigType::ToString(config.buildNodeTree()));
         }
         else // 存在则从文件加载
@@ -311,8 +313,8 @@ const AppConfigVars& GetAppConfigVars();
     GetAppConfigVars().system.http.VAR
 #define APP_CONFIG_VARS_SYSTEM_BUSINESS(VAR) \
     GetAppConfigVars().system.business.VAR
-#define APP_CONFIG_VARS_SYSTEM_LOGS() \
-    GetAppConfigVars().system.logs
+#define APP_CONFIG_VARS_SYSTEM_LOG() \
+    GetAppConfigVars().system.log
 #define APP_CONFIG_VARS_SYSTEM_SQLITE_DB(VAR) \
     GetAppConfigVars().system.sqlite_db.VAR
 
