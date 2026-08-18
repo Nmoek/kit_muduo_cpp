@@ -64,6 +64,7 @@ option(MUDUO_TEST.WS_FRAME "build test_websocket_frame" OFF)
 option(MUDUO_TEST.WS_CONTEXT "build test_websocket_context" OFF)
 option(MUDUO_TEST.WS_SESSION "build test_websocket_session" OFF)
 option(MUDUO_TEST.WS_SERVER "build test_websocket_server" OFF)
+option(MUDUO_BENCH.LOG "build log benchmark" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -84,6 +85,9 @@ list(APPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/pkg")
 # gtest包添加
 find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+if(MUDUO_BENCH.LOG)
+    find_package(benchmark CONFIG REQUIRED)
+endif()
 enable_testing()
 
 # 添加第三方库链接路径
@@ -235,6 +239,13 @@ set(DEPENDS
 )
 
 # **********************************tests**********************************#
+
+if(MUDUO_BENCH.LOG)
+    add_executable(log_benchmark tests/benchmarks/log/log_benchmark.cpp)
+    redefine_file_macro(log_benchmark)
+    target_compile_definitions(log_benchmark PRIVATE ${DEF})
+    target_link_libraries(log_benchmark PRIVATE ${LIB_LIB} benchmark::benchmark)
+endif()
 
 function(add_kit_test module_option test_option target_name)
     set(_module_enabled OFF)
