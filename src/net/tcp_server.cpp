@@ -13,22 +13,55 @@
 #include "base/event_loop_thread.h"
 #include "base/event_loop_thread_pool.h"
 
+#include <algorithm>
+#include <cassert>
+#include <future>
+#include <stdexcept>
+#include <unistd.h>
+
 
 namespace kit_muduo {
+
+namespace {
+
+struct StopState
+{
+    std::atomic_size_t pending{0};
+    kit_muduo::TcpServer::StopCb done;
+
+    explicit StopState(kit_muduo::TcpServer::StopCb done)
+        :done(std::move(done))
+    {
+
+    }
+
+    void finishOne()
+    {
+        if(pending.fetch_sub(1) == 1)
+        {
+            if(done)
+            {
+                done();
+            }
+        }
+    }
+
+};
+
+}
 
 static inline EventLoop* CheckNullLoop(EventLoop *p)
 {
     if(!p)
     {
         TCP_F_FATAL("loop is null!\n");
-        abort();
+        throw std::invalid_argument("loop* is null");
     }
     return p;
 }
 
 TcpServer::TcpServer(EventLoop *loop, const InetAddress &addr, const std::string &name, Option option)
     :_baseLoop(CheckNullLoop(loop))
-    ,_ipPort(addr.toIpPort())
     ,_name(name)
     ,_acceptor(std::make_unique<Acceptor>(loop, addr, option == KReusePort))
     ,_threadPool(std::make_shared<EventLoopThreadPool>(loop, name))
@@ -49,24 +82,9 @@ TcpServer::TcpServer(EventLoop *loop, const InetAddress &addr, const std::string
 
 TcpServer::~TcpServer()
 {
-    ConnectMap tmpMap;
-    {
-    std::lock_guard<std::mutex> lock(_connectMapMtx);
-    tmpMap.swap(_connections);
-    }
-
-    for(auto &it : tmpMap)
-    {
-        // 把容器中的智能指针 ===转移==> 局部智能指针，保证一定能释放
-        TcpConnectionPtr conn = it.second;
-        it.second.reset();
-        TCP_F_DEBUG("~TcpServer::connectDestroyed fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
-        // 析构时再关闭一下 防止套接字泄漏
-        conn->getLoop()->runInLoop(std::bind(&TcpConnection::connectDestroyed, conn));
-    }
-
-    
-
+    // (暂时不能这么写)强断言 倒逼上层调stop
+    // assert(_started.load() == false);
+    stop();
     TCP_DEBUG() << "TcpServer::~TcpServer()" << std::endl;
 }
 
@@ -79,16 +97,102 @@ void TcpServer::setThreadNum(int32_t nums)
 
 void TcpServer::start()
 {
-    // 乐观锁机制
-    if(_started > 0)
+    // CAS
+    bool expected = false;
+    if(!_started.compare_exchange_strong(expected, true))
+    {
         return;
-    ++_started;
+    }
+
 
     _threadPool->start(_threadInitCallback);
 
     _baseLoop->runInLoop([this](){
         _acceptor->listen();
     });
+}
+
+void TcpServer::stop()
+{
+    auto done = std::make_shared<std::promise<void>>();
+    auto future = done->get_future();
+
+    stopAsync([done](){
+        done->set_value();
+    });
+
+    future.get();
+}
+
+void TcpServer::stopAsync(StopCb done)
+{
+    //CAS
+    bool expected = true;
+    if(!_started.compare_exchange_strong(expected, false))
+    {
+        // 多次stop也需要触发回调
+        if(done)
+        {
+            done();
+        }
+        return;
+    }
+
+    ConnectMap tmpMap;
+    {
+        std::lock_guard<std::mutex> lock(_connectMapMtx);
+        for(auto &it : _connections)
+        {
+            if(it.second)
+            {
+                it.second->setCloseCallback(CloseCb());
+            }
+        }
+        tmpMap.swap(_connections);
+    }
+
+    auto stop_state = std::make_shared<StopState>(std::move(done));
+    // 1个Acceptor + N个TcpConnection
+    stop_state->pending.store(tmpMap.size() + 1);
+
+    _baseLoop->runInLoop([this, stop_state](){
+        _acceptor->stop();
+        stop_state->finishOne();
+    });
+
+    for(auto &it : tmpMap)
+    {
+        // 把容器中的智能指针 ===转移==> 局部智能指针，保证一定能释放
+        TcpConnectionPtr conn = it.second;
+        it.second.reset();
+
+        if(!conn)
+        {
+            stop_state->finishOne();
+            continue;
+        }
+
+        EventLoop *sub_loop = conn->getLoop();
+        if(!sub_loop)
+        {
+            TCP_F_ERROR("TcpServer::stopAsync conn loop is null, name[%s]\n", conn->name().c_str());
+            stop_state->finishOne();
+            continue;
+        }
+
+        sub_loop->runInLoop([conn, stop_state](){
+            TCP_F_DEBUG("~TcpServer::connectDestroyed fd[%d][%s] \n", conn->fd(), conn->peerAddr().toIpPort().c_str());
+
+            conn->connectDestroyed();
+            stop_state->finishOne();
+        });
+    }
+
+}
+
+const InetAddress& TcpServer::getBindAddr() const 
+{ 
+    return _acceptor->getBindAddr(); 
 }
 
 void TcpServer::addConnection(const std::string &name, TcpConnectionPtr conn)
@@ -118,6 +222,12 @@ void TcpServer::delConnection(const std::string &name)
 
 void TcpServer::newConnection(int32_t sockfd, const InetAddress& peerAddr)
 {
+    if(_started <= 0)
+    {
+        ::close(sockfd);
+        TCP_F_INFO("tcp server is stopping.. fd[%d][%s] refuse\n", sockfd, peerAddr.toIpPort().c_str());
+        return;
+    }
     std::string conn_name = _name;
     conn_name += "-";
     conn_name += peerAddr.toIpPort();
@@ -161,7 +271,17 @@ void TcpServer::removeConnectionInLoop(const TcpConnectionPtr &conn)
 
     EventLoop *_subLoop = conn->getLoop();
 
-    delConnection(conn->name());
+    {
+        std::lock_guard<std::mutex> lock(_connectMapMtx);
+        auto it = _connections.find(conn->name());
+        if(it == _connections.end() || it->second != conn)
+        {
+            TCP_F_INFO("TcpServer::removeConnectionInLoop skip stale conn: fd[%d][%s] \n",
+                       conn->fd(), conn->name().c_str());
+            return;
+        }
+        _connections.erase(it);
+    }
 
     _subLoop->queueInLoop(std::bind(&TcpConnection::connectDestroyed, conn));
 

@@ -21,6 +21,17 @@
 
 namespace kit_muduo {
 
+namespace {
+inline int64_t CalcMonotonicMsFromTimeStamp(TimeStamp when)
+{
+    const int64_t wall_now = TimeStamp::NowMs();
+    const int64_t target = when.millSeconds();
+    const int64_t delay = target <= wall_now ? 0 : target - wall_now;
+    const int64_t mono = TimeStamp::MonotonicNowMs() + delay;
+    return mono >= 0 ? mono : 0;
+}
+}
+
 SampleTimerQueue::SampleTimerQueue(EventLoop *loop)
     :_loop(loop)
     ,_timerFd(CreateTimerFd())
@@ -46,7 +57,13 @@ SampleTimerQueue::~SampleTimerQueue()
 
 std::shared_ptr<Timer> SampleTimerQueue::addTimer(TimerCb cb, TimeStamp when, int64_t interval)
 {
-    std::shared_ptr<Timer> timer(new Timer(std::move(cb), when.toMonotonic(), interval));
+    // HACK: 暂时由墙上时间戳-->开机递增时间 存在时钟回拨风险
+    return addTimer(std::move(cb), CalcMonotonicMsFromTimeStamp(when), interval);
+}
+
+std::shared_ptr<Timer> SampleTimerQueue::addTimer(TimerCb cb, int64_t monotonic_ms, int64_t interval)
+{
+    std::shared_ptr<Timer> timer(new Timer(std::move(cb), monotonic_ms, interval));
 
 
     _loop->runInLoop(std::bind(&SampleTimerQueue::addTimerInLoop, this, timer));
@@ -133,9 +150,7 @@ std::vector<SampleTimerQueue::WillExpiredTimer> SampleTimerQueue::getExpired(int
         TIMER_F_WARN("timerfd triggered early, now[%lld] < earliest[%lld]\n", now, _timers.begin()->first);
         return expired;
     }
-    TimeStamp now_read_time = TimeStamp::FromMonotonic(now);
-    TimeStamp earliest_read_time = TimeStamp::FromMonotonic(_timers.begin()->first);
-    
+
     // 注意: 构造一个比较成员, 必须都是有值的
     /*
         pair对象 默认先比较first, TimeStamp需重载运算符operator<
@@ -152,14 +167,14 @@ std::vector<SampleTimerQueue::WillExpiredTimer> SampleTimerQueue::getExpired(int
     // tmp <= end
     auto end = _timers.lower_bound(tmp);
 
-    TIMER_F_DEBUG("now[%s][%lld] VS begin[%s][%lld] \n", now_read_time.toString().c_str(), now, earliest_read_time.toString().c_str(), _timers.begin()->first);
+    TIMER_F_DEBUG("now[%lld] VS begin[%lld] \n", now, _timers.begin()->first);
 
 
     // 取出所有到时的定时器
     std::copy(_timers.begin(), end, std::back_inserter(expired));
     _timers.erase(_timers.begin(), end);
 
-    TIMER_F_DEBUG("find max timer, now[%s][%lld], expired.size[%d] \n",  now_read_time.toString().c_str(), now, expired.size());
+    TIMER_F_DEBUG("find max timer, now[%lld], expired.size[%d] \n", now, expired.size());
 
 
     // 将已到期的定时器 从正在计时状态集合中删除
@@ -182,7 +197,7 @@ std::vector<SampleTimerQueue::WillExpiredTimer> SampleTimerQueue::getExpired(int
 void SampleTimerQueue::handleRead()
 {
     readTimerFd();
-    int64_t now = GetMonotonicMS();
+    int64_t now = TimeStamp::MonotonicNowMs();
 
     // 获取所有到时定时器
     std::vector<WillExpiredTimer> expired_timers = getExpired(now);
@@ -229,7 +244,7 @@ void SampleTimerQueue::reset(const std::vector<WillExpiredTimer>& expired, int64
     // 重置timer_fd
     if(next_expired > 0)
     {
-        TIMER_F_DEBUG("nextExpired[%s][%lld] \n", TimeStamp::FromMonotonic(next_expired).toString().c_str(), next_expired);
+        TIMER_F_DEBUG("nextExpired[%lld] \n", next_expired);
 
         resetTimerFd(next_expired);
     }
@@ -250,7 +265,7 @@ bool SampleTimerQueue::insert(std::shared_ptr<Timer> timer)
     _activeTimers.insert({timer->sequence(), timer});
     _timers.insert({expired_time, timer});
 
-    TIMER_F_INFO("insert timer sucess! id[%d], expiredTime[%s][%lld], earliest[%d]\n", timer->sequence(), TimeStamp::FromMonotonic(expired_time).toString().c_str(), expired_time, earliest);
+    TIMER_F_INFO("insert timer sucess! id[%d], expiredTime[%lld], earliest[%d]\n", timer->sequence(), expired_time, earliest);
 
 
     return earliest;
@@ -263,8 +278,8 @@ void SampleTimerQueue::readTimerFd()
     int64_t howmay = 1;
     ssize_t n = ::read(_timerFd, &howmay, sizeof(howmay));
 
-    int64_t now = GetMonotonicMS();
-    TIMER_F_INFO("timer event trigger![%s][%lld] \n", TimeStamp::FromMonotonic(now).toString().c_str(), now);
+    int64_t now = TimeStamp::MonotonicNowMs();
+    TIMER_F_INFO("timer event trigger!  [%lld] \n", now);
 
     if(n != sizeof(howmay))
     {
@@ -279,7 +294,7 @@ void SampleTimerQueue::readTimerFd()
  */
 static struct timespec HowManyFromNow(int64_t next_expired)
 {
-    int64_t interval = next_expired - GetMonotonicMS();
+    int64_t interval = next_expired - TimeStamp::MonotonicNowMs();
 
     // 取决于硬件 一般现在都能达到微妙级
     // if(interval <= 100)

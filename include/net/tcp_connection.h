@@ -19,7 +19,9 @@
 #include <memory>
 #include <string>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <vector>
 
 namespace kit_muduo {
 
@@ -58,13 +60,14 @@ public:
     void send(const std::string& buf);
 
     void send(const std::vector<char>& buf);
+    void send(const std::vector<uint8_t>& buf);
 
     void shutdown();
 
     void connectEstablished();
     void connectDestroyed();
 
-    InetAddress peerAddr() const { return _peerAddr; }
+    const InetAddress& peerAddr() const { return _peerAddr; }
     int32_t fd() const { return _socket->fd(); }
 
     void setContext(std::shared_ptr<void> data) { _context = data; }
@@ -81,6 +84,7 @@ private:
     void sendInLoop(const std::string message);
     
     void sendInLoop(const std::vector<char> message);
+    void sendInLoop(const std::vector<uint8_t> message);
 
     void shutdownInLoop();
 

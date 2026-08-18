@@ -23,6 +23,7 @@ class Buffer;
 class TimeStamp;
 class TcpServer;
 class InetAddress;
+class EventLoop;
 
 class Timer;
 
@@ -31,6 +32,15 @@ class HttpRequest;
 class HttpResponse;
 class HttpContext;
 class HttpServer;
+struct HttpExchangeObservation;
+
+};
+
+namespace ws{
+enum class CloseCode: uint16_t;
+class WebSocketServer;
+class WebSocketContext;
+class WebSocketSession;
 };
 
 
@@ -47,7 +57,13 @@ using HttpRequestPtr = std::shared_ptr<http::HttpRequest>;
 using HttpResponsePtr = std::shared_ptr<http::HttpResponse>;
 /**********HTTP************/
 
+/**********WEBSOCKET************/
+using WebSocketServerPtr = std::shared_ptr<ws::WebSocketServer>;
+using WebSocketContextPtr = std::shared_ptr<ws::WebSocketContext>;
+using WebSocketSessionPtr = std::shared_ptr<ws::WebSocketSession>;
 
+
+/**********WEBSOCKET************/
 
 /**********Timer***********/
 using TimerPtr = std::shared_ptr<Timer>;
@@ -67,6 +83,15 @@ using MessageCb = std::function<void(const TcpConnectionPtr&, Buffer*, TimeStamp
 using UdpMessageCb = std::function<void(const std::vector<uint8_t>&, const InetAddress&, TimeStamp)>;
 using UdpWriteCompleteCb = std::function<void()>;
 using UdpErrorCb = std::function<void(int32_t, const InetAddress&)>;
+
+using WsPrepareCb = std::function<bool(WebSocketSessionPtr, HttpContextPtr)>;
+using WsOnOpenCb = std::function<void(WebSocketSessionPtr)>;
+using WSTextMessageCb = std::function<void(WebSocketSessionPtr,const std::string&)>;
+using WSClosedCb = std::function<void(WebSocketSessionPtr)>;
+using WSErrorCb = std::function<void(WebSocketSessionPtr, ws::CloseCode, const std::string&)>;
+using WSWriteCompleteCb = std::function<void(WebSocketSessionPtr)>;
+using WSClearCb = std::function<void(uint64_t)>;
+
 
 }   //kit_muduo
 #endif

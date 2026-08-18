@@ -79,6 +79,31 @@ void TcpConnection::send(const std::vector<char>& buf)
     }
 }
 
+void TcpConnection::send(const std::vector<uint8_t>& buf)
+{
+    if(kConnected == _state)
+    {
+        if(_subLoop->isInLoopThread())
+        {
+            sendInLoop(buf.data(), buf.size());
+        }
+        else
+        {
+
+            TCP_F_DEBUG("TcpConnection::send queue fd[%d][%s] \n", fd(), _peerAddr.toIpPort().c_str());
+
+            _subLoop->queueInLoop([msg = std::move(buf), this_ptr = shared_from_this()](){
+                this_ptr->sendInLoop(msg);
+            });
+
+        }
+    }
+    else
+    {
+        TCP_F_INFO("fd[%d][%s] has closed! \n", fd(), _peerAddr.toIpPort().c_str());
+    }
+}
+
 void TcpConnection::shutdown()
 {
     if(kConnected == _state)
@@ -234,7 +259,6 @@ void TcpConnection::sendInLoop(const void* message, size_t len)
     }
 
 
-    // TODO: 一旦这里涉及多线程就是需要加锁
     // 最外层用户调的send 此时不应该在监听写事件，否则说明上一次都没发送完成
     if(!_channel->isWriting() && 0 == _outputBuffer.readableBytes())
     {
@@ -286,6 +310,11 @@ void TcpConnection::sendInLoop(const std::string message)
 }
 
 void TcpConnection::sendInLoop(const std::vector<char> message)
+{
+    sendInLoop(message.data(), message.size());
+}
+
+void TcpConnection::sendInLoop(const std::vector<uint8_t> message)
 {
     sendInLoop(message.data(), message.size());
 }

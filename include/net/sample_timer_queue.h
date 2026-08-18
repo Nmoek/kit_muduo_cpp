@@ -40,6 +40,8 @@ public:
 
     std::shared_ptr<Timer> addTimer(TimerCb cb, TimeStamp when, int64_t interval = 0);
 
+    std::shared_ptr<Timer> addTimer(TimerCb cb, int64_t monotonic_ms, int64_t interval = 0);
+
     void cancel(std::shared_ptr<Timer> timer);
 
 private:

@@ -30,6 +30,8 @@ class TcpServer: Noncopyable
 {
 public:
     using ThreadInitCb = std::function<void(EventLoop*)>;
+    using StopCb = std::function<void()>;
+
     enum Option
     {
         kNoRusePort,
@@ -60,6 +62,30 @@ public:
     void start();
 
     /**
+     * @brief 断开服务器上所有连接
+     */
+    void stop();
+
+    /**
+     * @brief 发起异步停止。
+     * 语义：
+     * 1. 不阻塞调用线程。
+     * 2. 停止 acceptor，拒绝新连接。
+     * 3. 对当前连接快照逐个投递 connectDestroyed 到所属 loop。
+     * 4. acceptor stop 与所有连接清理完成后调用 done。
+     *
+     * 注意：
+     * 调用方必须保证 TcpServer 对象生命周期覆盖 done 被调用之前。
+     */
+    void stopAsync(StopCb done = StopCb());
+
+    /**
+     * @brief 获取随机绑定的监听地址
+     * @return const InetAddress& 
+     */
+    const InetAddress& getBindAddr() const;
+
+    /**
      * @brief 获取事件循环句柄
      * @return EventLoop*
      */
@@ -71,7 +97,6 @@ public:
 
     void delConnection(const std::string &name);
 
-
 private:
     void newConnection(int32_t sockfd, const InetAddress& peerAddr);
     void removeConnection(const TcpConnectionPtr& conn);
@@ -81,11 +106,10 @@ private:
     using ConnectMap = std::unordered_map<std::string, TcpConnectionPtr>;
 
     EventLoop *_baseLoop;
-    std::string _ipPort;
     std::string _name;
     std::unique_ptr<Acceptor> _acceptor;
     std::shared_ptr<EventLoopThreadPool> _threadPool;
-    std::atomic_int _started;
+    std::atomic_bool _started;
 
     ConnectionCb _connectionCallback;
     MessageCb _messageCallback;

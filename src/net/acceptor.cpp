@@ -11,6 +11,7 @@
 #include "net/inet_address.h"
 #include "net/net_log.h"
 
+#include <cassert>
 #include <cstdlib>
 #include <unistd.h>
 
@@ -21,37 +22,57 @@ Acceptor::Acceptor(EventLoop *loop, const InetAddress &addr, bool reuseport)
     ,_acceptSocket(Socket::CreateTcpIpv4(true))
     ,_acceptChannel(loop, _acceptSocket.fd())
     ,_newConnectionCallback(nullptr)
-    ,_listening(false)
+    ,_listening(0)
 {
     _acceptSocket.setReuseAddr(reuseport);
     _acceptSocket.setReusePort(reuseport);
     _acceptSocket.setTcpNoDelay(true);
 
+    // 先绑定指定的端口 后自由绑定 都失败抛出异常
     if(!_acceptSocket.bindAddress(addr))
     {
-        abort();
+        CHANNEL_F_WARN("acceptor bind address failed! %s \n", addr.toIpPort().c_str());
+        if(!_acceptSocket.bindAddress(InetAddress(0, "0.0.0.0")))
+        {
+            throw std::runtime_error("bind address failed");
+        }
     }
+  
+    _bind_addr = InetAddress::GetLocalAddr(_acceptSocket.fd());
 
     _acceptChannel.setReadCallback(std::bind(&Acceptor::handleRead, this));
 
-    CHANNEL_F_DEBUG("Acceptor::fd[%d] \n", _acceptSocket.fd());
+    CHANNEL_F_DEBUG("Acceptor::fd[%d][%s] \n", _acceptSocket.fd(), _bind_addr.toIpPort().c_str());
 
 }
 
 Acceptor::~Acceptor()
 {
-    CHANNEL_F_DEBUG("~Acceptor::fd[%d] \n", _acceptSocket.fd());
-    _acceptChannel.disableAll();
-    _acceptChannel.remove();
-
+    stop();
 }
 
 void Acceptor::listen()
 {
-    _listening = true;
+    if(_listening > 0)
+    {
+        return;
+    }
+    ++_listening;
     _acceptSocket.listen();
     _acceptChannel.enableReading();
+}
 
+void Acceptor::stop()
+{
+    if(_listening <= 0)
+    {
+        return;
+    }
+    --_listening;
+    CHANNEL_F_DEBUG("~Acceptor::fd[%d] \n", _acceptSocket.fd());
+
+    _acceptChannel.disableAll();
+    _acceptChannel.remove();
 }
 
 void Acceptor::handleRead()
