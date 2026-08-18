@@ -40,7 +40,7 @@ public:
         auto resp = ctx->response();
         resp->setVersion(Version::kHttp11);
         resp->setStateCode(StateCode::k200Ok);
-        resp->body().appendData(body_);
+        resp->appendBodyData(body_);
     }
 
 private:
@@ -126,11 +126,48 @@ TEST(TestRouter, ExactRoutesCanBindDifferentMethods)
 
     auto get_resp = f.Request("/items", HttpRequest::Method::kGet);
     ASSERT_EQ(get_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(get_resp->body().toString(), "get");
+    ASSERT_EQ(get_resp->bodyString(), "get");
 
     auto post_resp = f.Request("/items", HttpRequest::Method::kPost);
     ASSERT_EQ(post_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(post_resp->body().toString(), "post");
+    ASSERT_EQ(post_resp->bodyString(), "post");
+}
+
+TEST(TestRouter, ExactRouteNormalizesRepeatedSlash)
+{
+    DispatchFixture f;
+
+    // 测试思路：
+    // 1. Postman 中 base_url 末尾 / 和接口 path 开头 / 容易拼出双斜杠。
+    // 2. exact 路由注册和请求匹配需要使用同一套 path 归一化逻辑。
+    // 3. 例：注册 /securitycheck/v1/sctap/register，请求 //securitycheck/v1/sctap/register 也应命中。
+    ASSERT_TRUE(f.dispatch.addRoute(ExpectHttpMethods::Post, "/securitycheck/v1/sctap/register", Servlet("ok")).ok());
+
+    auto resp = f.Request("//securitycheck/v1/sctap/register", HttpRequest::Method::kPost);
+    ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(resp->bodyString(), "ok");
+}
+
+TEST(TestRouter, AddRouteNormalizesRepeatedSlashPattern)
+{
+    DispatchFixture f;
+
+    // 测试思路：
+    // 1. 配置侧也可能录入带重复 / 的 path，注册时要规整为标准 pattern。
+    // 2. 规整后 list/get/remove 都应使用统一 pattern，避免同一路由出现两个 key。
+    // 3. 例：注册 //api///items，实际保存和访问都按 /api/items 处理。
+    auto result = f.dispatch.addRoute(ExpectHttpMethods::Get, "//api///items", Servlet("items"));
+    ASSERT_TRUE(result.ok());
+
+    auto info = f.dispatch.getRoute(result.route_id);
+    ASSERT_EQ(info.pattern, "/api/items");
+
+    auto resp = f.Request("/api/items", HttpRequest::Method::kGet);
+    ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
+    ASSERT_EQ(resp->bodyString(), "items");
+
+    ASSERT_EQ(f.dispatch.removeRoute("//api/items"), 1u);
+    ASSERT_EQ(f.Request("/api/items", HttpRequest::Method::kGet)->stateCode().toInt(), StateCode::k404NotFound);
 }
 
 TEST(TestRouter, ExactRouteCanBindMethodMask)
@@ -141,11 +178,11 @@ TEST(TestRouter, ExactRouteCanBindMethodMask)
 
     auto get_resp = f.Request("/items", HttpRequest::Method::kGet);
     ASSERT_EQ(get_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(get_resp->body().toString(), "both");
+    ASSERT_EQ(get_resp->bodyString(), "both");
 
     auto post_resp = f.Request("/items", HttpRequest::Method::kPost);
     ASSERT_EQ(post_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(post_resp->body().toString(), "both");
+    ASSERT_EQ(post_resp->bodyString(), "both");
 }
 
 TEST(TestRouter, ExactRouteRejectsOverlappingMethodMasks)
@@ -183,12 +220,12 @@ TEST(TestRouter, DynamicRouteExtractsParams)
         auto resp = ctx->response();
         resp->setVersion(Version::kHttp11);
         resp->setStateCode(StateCode::k200Ok);
-        resp->body().appendData(ctx->routeParam("id"));
+        resp->appendBodyData(ctx->routeParam("id"));
     }).ok());
 
     auto resp = f.Request("/test/123", HttpRequest::Method::kGet);
     ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(resp->body().toString(), "123");
+    ASSERT_EQ(resp->bodyString(), "123");
 }
 
 TEST(TestRouter, DynamicRouteParamsDoNotOverwriteQueryParams)
@@ -199,9 +236,9 @@ TEST(TestRouter, DynamicRouteParamsDoNotOverwriteQueryParams)
         auto resp = ctx->response();
         resp->setVersion(Version::kHttp11);
         resp->setStateCode(StateCode::k200Ok);
-        resp->body().appendData(ctx->routeParam("id"));
-        resp->body().appendData("|");
-        resp->body().appendData(ctx->request()->getQureyParam("id"));
+        resp->appendBodyData(ctx->routeParam("id"));
+        resp->appendBodyData("|");
+        resp->appendBodyData(ctx->request()->getQureyParam("id"));
     }).ok());
 
     auto ctx = std::make_shared<HttpContext>();
@@ -212,7 +249,7 @@ TEST(TestRouter, DynamicRouteParamsDoNotOverwriteQueryParams)
 
     auto resp = ctx->response();
     ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(resp->body().toString(), "123|456");
+    ASSERT_EQ(resp->bodyString(), "123|456");
 }
 
 TEST(TestRouter, DynamicRouteEscapesStaticRegexChars)
@@ -226,7 +263,7 @@ TEST(TestRouter, DynamicRouteEscapesStaticRegexChars)
 
     auto hit_resp = f.Request("/api/v1.0/123", HttpRequest::Method::kGet);
     ASSERT_EQ(hit_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(hit_resp->body().toString(), "match");
+    ASSERT_EQ(hit_resp->bodyString(), "match");
 }
 
 TEST(TestRouter, ColonInsideStaticSegmentIsExactRoute)
@@ -237,7 +274,7 @@ TEST(TestRouter, ColonInsideStaticSegmentIsExactRoute)
 
     auto exact_resp = f.Request("/v1:batchGet", HttpRequest::Method::kGet);
     ASSERT_EQ(exact_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(exact_resp->body().toString(), "exact");
+    ASSERT_EQ(exact_resp->bodyString(), "exact");
 
     auto miss_resp = f.Request("/v1anything", HttpRequest::Method::kGet);
     ASSERT_EQ(miss_resp->stateCode().toInt(), StateCode::k404NotFound);
@@ -251,7 +288,7 @@ TEST(TestRouter, GlobWildcardInsideStaticSegmentIsExactRoute)
 
     auto exact_resp = f.Request("/files/v1*beta", HttpRequest::Method::kGet);
     ASSERT_EQ(exact_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(exact_resp->body().toString(), "exact");
+    ASSERT_EQ(exact_resp->bodyString(), "exact");
 
     auto miss_resp = f.Request("/files/v1ZZbeta", HttpRequest::Method::kGet);
     ASSERT_EQ(miss_resp->stateCode().toInt(), StateCode::k404NotFound);
@@ -265,11 +302,11 @@ TEST(TestRouter, DynamicRouteCanBindMethodMask)
 
     auto get_resp = f.Request("/test/1", HttpRequest::Method::kGet);
     ASSERT_EQ(get_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(get_resp->body().toString(), "both");
+    ASSERT_EQ(get_resp->bodyString(), "both");
 
     auto post_resp = f.Request("/test/2", HttpRequest::Method::kPost);
     ASSERT_EQ(post_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(post_resp->body().toString(), "both");
+    ASSERT_EQ(post_resp->bodyString(), "both");
 }
 
 TEST(TestRouter, DynamicRouteRejectsSamePatternMethodOverlap)
@@ -303,7 +340,7 @@ TEST(TestRouter, ExactRouteHasPriorityOverDynamicRoute)
 
     auto resp = f.Request("/test/list", HttpRequest::Method::kGet);
     ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(resp->body().toString(), "exact");
+    ASSERT_EQ(resp->bodyString(), "exact");
 }
 
 TEST(TestRouter, GlobRouteCanMatchStaticFiles)
@@ -314,7 +351,7 @@ TEST(TestRouter, GlobRouteCanMatchStaticFiles)
 
     auto resp = f.Request("/html/index.html", HttpRequest::Method::kGet);
     ASSERT_EQ(resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(resp->body().toString(), "glob");
+    ASSERT_EQ(resp->bodyString(), "glob");
 
     auto nested_resp = f.Request("/html/nested/index.html", HttpRequest::Method::kGet);
     ASSERT_EQ(nested_resp->stateCode().toInt(), StateCode::k404NotFound);
@@ -384,7 +421,7 @@ TEST(TestRouter, RemoveRouteByPatternAndMethod)
 
     auto post_resp = f.Request("/api/data", HttpRequest::Method::kPost);
     ASSERT_EQ(post_resp->stateCode().toInt(), StateCode::k200Ok);
-    ASSERT_EQ(post_resp->body().toString(), "post");
+    ASSERT_EQ(post_resp->bodyString(), "post");
 }
 
 TEST(TestRouter, RemoveRouteByPatternAndMethod_NoMatch)

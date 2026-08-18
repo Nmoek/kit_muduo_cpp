@@ -40,6 +40,7 @@ option(MUDUO_TEST.SOCKET "build test_socket" OFF)
 option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
 option(MUDUO_TEST.LOG "build test_log" OFF)
+option(MUDUO_TEST.CONFIG "build test_config" OFF)
 option(MUDUO_TEST.TCP_SERVER "build test_tcp_server" OFF)
 option(MUDUO_TEST.HTTP "build test_http" OFF)
 option(MUDUO_TEST.LLHTTP "build test_llhttp" OFF)
@@ -50,7 +51,19 @@ option(MUDUO_TEST.VARIANT "build test_variant" OFF)
 option(MUDUO_TEST.ASAN "build test_asan" OFF)
 option(MUDUO_TEST.UDP "build test_udp" OFF)
 option(MUDUO_TEST.LRU_CACHE "build test_lru_cache" OFF)
-option(MUDUO_TEST.CONTENT_PARSER "build test_content_parser" OFF)
+option(MUDUO_TEST.BYTES_CODEC "build test_bytes_codec" OFF)
+option(MUDUO_TEST.BOUNDED_LOCK_FREE_QUEUE "build test_bounded_lock_free_queue" OFF)
+option(MUDUO_TEST.HTTP_MESSAGE "build test_http_message" OFF)
+option(MUDUO_TEST.HTTP_CONTEXT "build test_http_context" OFF)
+option(MUDUO_TEST.HTTP_SERVER "build test_http_server" OFF)
+option(MUDUO_TEST.HTTP_CONTENT "build test_http_content" OFF)
+option(MUDUO_TEST.HTTP_CONTENT_CODEC "build test_http_content_codec" OFF)
+option(MUDUO_TEST.MULTIFORM "build test_multiform" OFF)
+option(MUDUO_TEST.WS_UTIL "build test_websocket_util" OFF)
+option(MUDUO_TEST.WS_FRAME "build test_websocket_frame" OFF)
+option(MUDUO_TEST.WS_CONTEXT "build test_websocket_context" OFF)
+option(MUDUO_TEST.WS_SESSION "build test_websocket_session" OFF)
+option(MUDUO_TEST.WS_SERVER "build test_websocket_server" OFF)
 option(MEM_CHECK "make memory check flag" OFF)
 option(COVERAGE_TEST "make coverage file" OFF)
 
@@ -70,11 +83,16 @@ endif()
 list(APPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/pkg")
 # gtest包添加
 find_package(GTest REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 enable_testing()
 
 # 添加第三方库链接路径
 set(PKG_LIB_PATH
     "pkg/llhttp/lib"
+    "pkg/pugixml/lib"
+    "pkg/simdutf/lib"
+    "pkg/HowardHinnant_date/lib"
+    "pkg/yaml-cpp/lib"
 )
 
 link_directories(${PKG_LIB_PATH})
@@ -94,6 +112,10 @@ include_directories(
     ${PROJECT_SOURCE_DIR}/include/db/sqlite3/
     ${PROJECT_SOURCE_DIR}/include/db/sqlite3/
     ${PROJECT_SOURCE_DIR}/pkg/nanoid_cpp/include/
+    ${PROJECT_SOURCE_DIR}/pkg/pugixml/include
+    ${PROJECT_SOURCE_DIR}/pkg/simdutf/include
+    ${PROJECT_SOURCE_DIR}/pkg/HowardHinnant_date/include
+    ${PROJECT_SOURCE_DIR}/pkg/yaml-cpp/include
 )
 
 set(BASE_SRC
@@ -102,16 +124,20 @@ set(BASE_SRC
     src/base/log_formatter.cpp
     src/base/log_attr.cpp
     src/base/log_appender.cpp
+    src/base/log_config.cpp
+    src/base/log_file_sink.cpp
 
     src/base/util.cpp
     src/base/time_stamp.cpp
-    src/base/content_parser.cpp
-    # src/base/multi_form_data_parser.cpp
+    src/base/bytes_codec.cpp
 
     src/base/thread.cpp
     src/base/thread_pool.cpp
     src/base/event_loop_thread.cpp
     src/base/event_loop_thread_pool.cpp
+    src/base/lexical_cast.cpp
+    src/base/config_context.cpp
+    src/base/config.cpp
 
 )
 
@@ -125,6 +151,17 @@ set(NET_HTTP_SRC
     src/net/http/http_router.cpp
     src/net/http/http_servlet.cpp
     src/net/http/http_util.cpp
+    src/net/http/http_content.cpp
+    src/net/http/http_content_codec.cpp
+    src/net/http/multiform.cpp
+)
+
+set(NET_WEBSOCKET_SRC
+    src/net/websocket/websocket_util.cpp
+    src/net/websocket/websocket_frame.cpp
+    src/net/websocket/websocket_context.cpp
+    src/net/websocket/websocket_session.cpp
+    src/net/websocket/websocket_server.cpp
 )
 
 
@@ -149,6 +186,7 @@ set(NET_SRC
     src/net/udp_server.cpp
     
     ${NET_HTTP_SRC}
+    ${NET_WEBSOCKET_SRC}
 )
 
 
@@ -181,6 +219,10 @@ set(LIB_LIB
     GTest::gmock 
     GTest::gmock_main
     llhttp
+    OpenSSL::Crypto
+    pugixml
+    simdutf
+    yaml-cpp
 )
 
 set(DEPENDS
@@ -250,11 +292,31 @@ if(MUDUO_TEST OR MUDUO_TEST.LOG)
     add_test(NAME test_log COMMAND test_log)
 endif()
 
+# Config测试 test_config
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config tests/test_config.cpp)
+
+# 基础编码与队列测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.BYTES_CODEC test_bytes_codec tests/test_bytes_codec.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.BOUNDED_LOCK_FREE_QUEUE test_bounded_lock_free_queue tests/test_bounded_lock_free_queue.cpp)
+
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
 
 # http测试 test_http
 add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP test_http tests/http/test_http.cpp)
+
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_MESSAGE test_http_message tests/http/test_http_message.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTEXT test_http_context tests/http/test_http_context.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_SERVER test_http_server tests/http/test_http_server.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTENT test_http_content tests/http/test_http_content.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTENT_CODEC test_http_content_codec tests/http/test_http_content_codec.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.MULTIFORM test_multiform tests/http/test_multiform.cpp)
+
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_UTIL test_websocket_util tests/websocket/test_websocket_util.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_FRAME test_websocket_frame tests/websocket/test_websocket_frame.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_CONTEXT test_websocket_context tests/websocket/test_websocket_context.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_SESSION test_websocket_session tests/websocket/test_websocket_session.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.WS_SERVER test_websocket_server tests/websocket/test_websocket_server.cpp)
 
 # llhttp测试 test_llhttp
 add_kit_test(MUDUO_TEST MUDUO_TEST.LLHTTP test_llhttp tests/http/test_llhttp.cpp)
@@ -288,13 +350,6 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.LRU_CACHE test_lru_cache tests/test_lru_cache
 if(MUDUO_TEST OR MUDUO_TEST.LRU_CACHE)
     add_test(NAME test_lru_cache COMMAND test_lru_cache)
 endif()
-
-# test_content_parser multipart解析器测试
-add_kit_test(MUDUO_TEST MUDUO_TEST.CONTENT_PARSER test_content_parser tests/test_content_parser.cpp ${WORK_SRC})
-if(MUDUO_TEST OR MUDUO_TEST.CONTENT_PARSER)
-    add_test(NAME test_content_parser COMMAND test_content_parser)
-endif()
-
 
 # **********************************example**********************************#
 # http服务器实例

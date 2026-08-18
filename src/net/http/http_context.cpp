@@ -7,7 +7,9 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "net/http/http_context.h"
+
 #include "net/buffer.h"
+#include "net/http/http_content.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
@@ -17,30 +19,31 @@
 #include <algorithm>
 #include "net/http/http_context.h"
 
+
+using namespace kit_muduo;
+
 namespace kit_muduo {
 namespace http {
 
 HttpContext::HttpContext()
-    :_state(kExpectRequestLine)
-    ,_request(std::make_shared<HttpRequest>())
-    ,_response(std::make_shared<HttpResponse>())
-    ,_parser(std::make_shared<LLhttpParser>(this)) 
+    :state_(kExpectRequestLine)
+    ,request_(std::make_shared<HttpRequest>())
+    ,response_(std::make_shared<HttpResponse>())
+    ,parser_(std::make_shared<LLhttpParser>(this))
+    ,maybeUpgrade_(false)
 {
-    HTTP_DEBUG() << "HttpContext constructor " << this << std::endl;
+
 }
-HttpContext::~HttpContext()
-{
-    HTTP_DEBUG()  << "~HttpContext " << this << std::endl;
-}
+
 
 // 有限状态机 解析
 bool HttpContext::parseRequest(Buffer &buf, TimeStamp receiveTime)
 {
-    _parser->setType(HttpParser::ReqType);
-    bool ok = _parser->parse(buf);
+    parser_->setType(HttpParser::ReqType);
+    bool ok = parser_->parse(buf);
     if(ok)
     {
-        _request->setReceiveTime(receiveTime);
+        request_->setReceiveTime(receiveTime);
     }
 
     return ok;
@@ -48,11 +51,11 @@ bool HttpContext::parseRequest(Buffer &buf, TimeStamp receiveTime)
 
 bool HttpContext::parseRequest(const std::string &data, TimeStamp receiveTime)
 {
-    _parser->setType(HttpParser::ReqType);
-    bool ok = _parser->parse(data);
+    parser_->setType(HttpParser::ReqType);
+    bool ok = parser_->parse(data);
     if(ok)
     {
-        _request->setReceiveTime(receiveTime);
+        request_->setReceiveTime(receiveTime);
     }
 
     return ok;
@@ -61,26 +64,35 @@ bool HttpContext::parseRequest(const std::string &data, TimeStamp receiveTime)
 
 bool HttpContext::parseResponse(Buffer &buf, TimeStamp receiveTime)
 {
-    _parser->setType(HttpParser::RespType);
-    bool ok = _parser->parse(buf);
+    parser_->setType(HttpParser::RespType);
+    bool ok = parser_->parse(buf);
     if(ok)
     {
-        _response->setReceiveTime(receiveTime);
+        response_->setReceiveTime(receiveTime);
     }
     return ok;
 }
 
 bool HttpContext::parseResponse(const std::string &data, TimeStamp receiveTime)
 {
-    _parser->setType(HttpParser::RespType);
-    bool ok = _parser->parse(data);
+    parser_->setType(HttpParser::RespType);
+    bool ok = parser_->parse(data);
     if(ok)
     {
-        _response->setReceiveTime(receiveTime);
+        response_->setReceiveTime(receiveTime);
     }
     return ok;
 }
-
+ContentView HttpContext::makeContentView() const
+{
+    const auto &body_data = request_->bodyData();
+    
+    return {
+        .data = body_data.data(),
+        .size = body_data.size(),
+        .meta = request_->contentMeta(),
+    };
+}
 
 }
 }

@@ -1,29 +1,31 @@
 /**
- * @file test_http.cpp
- * @brief
+ * @file test_http_server.cpp
+ * @brief HTTP server 行为测试
  * @author Kewin Li
  * @version 1.0
- * @date 2025-05-29 20:31:28
- * @copyright Copyright (c) 2025 Kewin Li
+ * @date 2026-06-21
+ * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "../test_log.h"
-#include "net/http/http_request.h"
+#include "base/event_loop_thread.h"
+#include "net/event_loop.h"
 #include "net/http/http_context.h"
-#include "base/time_stamp.h"
-#include "net/buffer.h"
+#include "net/http/http_request.h"
 #include "net/http/http_response.h"
 #include "net/http/http_server.h"
-#include "net/event_loop.h"
 #include "net/http/http_util.h"
-#include "base/event_loop_thread.h"
+#include "net/inet_address.h"
+#include "net/tcp_server.h"
 
 #include <gtest/gtest.h>
 
 #include <arpa/inet.h>
+#include <atomic>
 #include <chrono>
 #include <cerrno>
 #include <cstring>
 #include <future>
+#include <memory>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
@@ -204,15 +206,31 @@ public:
             return;
         }
 
-        std::promise<void> done;
-        auto done_future = done.get_future();
-        loop_->runInLoop([this, &done](){
+        auto stopped = std::make_shared<std::promise<void>>();
+        auto stopped_future = stopped->get_future();
+        loop_->runInLoop([this, stopped](){
+            if(server_ && *server_)
+            {
+                (*server_)->stopAsync([stopped](){
+                    stopped->set_value();
+                });
+            }
+            else
+            {
+                stopped->set_value();
+            }
+        });
+        stopped_future.wait_for(std::chrono::seconds(2));
+
+        auto done = std::make_shared<std::promise<void>>();
+        auto done_future = done->get_future();
+        loop_->runInLoop([this, done](){
             if(server_)
             {
                 server_->reset();
             }
             loop_->quit();
-            done.set_value();
+            done->set_value();
         });
 
         done_future.wait_for(std::chrono::seconds(2));
@@ -225,315 +243,39 @@ private:
     bool cleaned_;
 };
 
-} // namespace
 
-static const char g_test_req[] = \
-"GET /index.html HTTP/1.1\r\n" \
-"Host: www.chenshuo.com\r\n" \
-"User-Agent: kit_muduo\r\n" \
-"Content-Length: 15\r\n" \
-"Content-Type: text/plain\r\n" \
-"Accept-Encoding: UTF-8\r\n" \
-"\r\n561wefwe65f1ewf";
-
-static const char g_test_resp[] = \
-"HTTP/1.1 200 OK\r\n" \
-"Host: www.chenshuo.com\r\n" \
-"Content-Length: 6\r\n" \
-"Accept-Encoding: UTF-8\r\n" \
-"\r\n123456";
-
-
-TEST(TestHttpReq, raw_data)
-{
-    HttpContext context;
-    Buffer buf;
-    buf.append(g_test_req, strlen(g_test_req));
-    EXPECT_EQ(buf.readableBytes(), strlen(g_test_req));
-
-    auto now = TimeStamp::Now();
-    bool ok = context.parseRequest(buf, now);
-
-    EXPECT_EQ(ok, true);
-    auto req = context.request();
-    EXPECT_STREQ(req->method().toString(), "GET");
-    EXPECT_STREQ(req->path().c_str(), "/index.html");
-    EXPECT_STREQ(req->version().toString(), "HTTP/1.1");
-    auto it = req->headers().find("Host");
-    EXPECT_TRUE(it != req->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "Host");
-    EXPECT_STREQ(it->second.c_str(), "www.chenshuo.com");
-
-    it = req->headers().find("User-Agent");
-    EXPECT_TRUE(it != req->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "User-Agent");
-    EXPECT_STREQ(it->second.c_str(), "kit_muduo");
-
-    it = req->headers().find("Accept-Encoding");
-    EXPECT_TRUE(it != req->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "Accept-Encoding");
-    EXPECT_STREQ(it->second.c_str(), "UTF-8");
-
-    it = req->headers().find("Content-Length");
-    EXPECT_TRUE(it != req->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "Content-Length");
-    EXPECT_STREQ(it->second.c_str(), "15");
-
-    EXPECT_EQ(now.millSeconds(), req->receiveTime().millSeconds());
-
-    TEST_INFO() << "Body: "<< "|" << req->body().toString() << "|" << std::endl;
-}
-
-TEST(TestHttpReq, query_params)
-{
-    static const char test_req[] = \
-    "GET /projects?project_id=42&name=kit+muduo&empty=&encoded=a%2Bb%20c&flag HTTP/1.1\r\n" \
-    "Host: localhost\r\n" \
-    "\r\n";
-
-    HttpContext context;
-    Buffer buf;
-    buf.append(test_req, strlen(test_req));
-
-    auto now = TimeStamp::Now();
-    bool ok = context.parseRequest(buf, now);
-
-    EXPECT_EQ(ok, true);
-    auto req = context.request();
-    EXPECT_STREQ(req->path().c_str(), "/projects");
-    EXPECT_STREQ(req->getQureyParam("project_id").c_str(), "42");
-    EXPECT_STREQ(req->getQureyParam("name").c_str(), "kit muduo");
-    EXPECT_STREQ(req->getQureyParam("empty").c_str(), "");
-    EXPECT_STREQ(req->getQureyParam("encoded").c_str(), "a+b c");
-    EXPECT_STREQ(req->getQureyParam("flag").c_str(), "");
-}
-
-TEST(TestHttpReq, query_params_segmented_url)
-{
-    HttpContext context;
-    auto now = TimeStamp::Now();
-
-    EXPECT_EQ(context.parseRequest("GET /pro", now), true);
-    EXPECT_EQ(context.gotAll(), false);
-
-    bool ok = context.parseRequest("jects?project_id=42&name=kit+muduo HTTP/1.1\r\n"
-                                   "Host: localhost\r\n"
-                                   "\r\n", now);
-
-    EXPECT_EQ(ok, true);
-    EXPECT_EQ(context.gotAll(), true);
-    auto req = context.request();
-    EXPECT_STREQ(req->path().c_str(), "/projects");
-    EXPECT_STREQ(req->getQureyParam("project_id").c_str(), "42");
-    EXPECT_STREQ(req->getQureyParam("name").c_str(), "kit muduo");
-}
-
-TEST(TestHttpReq, buffer_partial_body_keeps_parser_state)
-{
-    static const char first_part[] =
-    "POST /partial HTTP/1.1\r\n"
-    "Host: localhost\r\n"
-    "Content-Length: 5\r\n"
-    "Content-Type: text/plain\r\n"
-    "\r\nhe";
-    static const char second_part[] = "llo";
-
-    HttpContext context;
-    Buffer buf;
-    auto now = TimeStamp::Now();
-
-    buf.append(first_part, strlen(first_part));
-    EXPECT_EQ(context.parseRequest(buf, now), true);
-    EXPECT_EQ(context.gotAll(), false);
-    EXPECT_EQ(buf.readableBytes(), 0);
-    EXPECT_STREQ(context.request()->body().toString().c_str(), "he");
-
-    buf.append(second_part, strlen(second_part));
-    EXPECT_EQ(context.parseRequest(buf, now), true);
-    EXPECT_EQ(context.gotAll(), true);
-    EXPECT_EQ(buf.readableBytes(), 0);
-
-    auto req = context.request();
-    EXPECT_STREQ(req->method().toString(), "POST");
-    EXPECT_STREQ(req->path().c_str(), "/partial");
-    EXPECT_STREQ(req->body().toString().c_str(), "hello");
-}
-
-TEST(TestHttpReq, buffer_pipelining_leaves_next_request_readable)
-{
-    const std::string first_req =
-    "GET /one HTTP/1.1\r\n"
-    "Host: localhost\r\n"
-    "\r\n";
-    const std::string second_req =
-    "GET /two HTTP/1.1\r\n"
-    "Host: localhost\r\n"
-    "\r\n";
-
-    Buffer buf;
-    buf.append(first_req.data(), first_req.size());
-    buf.append(second_req.data(), second_req.size());
-
-    auto now = TimeStamp::Now();
-    HttpContext first_context;
-    EXPECT_EQ(first_context.parseRequest(buf, now), true);
-    EXPECT_EQ(first_context.gotAll(), true);
-    EXPECT_STREQ(first_context.request()->path().c_str(), "/one");
-    EXPECT_EQ(buf.readableBytes(), second_req.size());
-    EXPECT_EQ(buf.lookAllAsString(), second_req);
-
-    HttpContext second_context;
-    EXPECT_EQ(second_context.parseRequest(buf, now), true);
-    EXPECT_EQ(second_context.gotAll(), true);
-    EXPECT_STREQ(second_context.request()->path().c_str(), "/two");
-    EXPECT_EQ(buf.readableBytes(), 0);
-}
-
-
-TEST(TestHttpReq, create_data)
-{
-    HttpRequest orireq;
-
-    orireq.setMethod(HttpRequest::Method::kGet);
-    orireq.setPath("/main.html");
-    orireq.setVersion(Version::kHttp11);
-    orireq.addHeader("Host", "www.kit.com");
-    orireq.addHeader("XData", "666");
-    std::string body = "12345678";
-    orireq.body().appendData(body);
-    orireq.body().setContentType(ContentType::kPlainType);
-    orireq.addHeader("Content-Length", std::to_string(body.size()));
-
-
-    std::cout << orireq.toString() << std::endl;
-    std::cout << "---------------------\n";
-
-    Buffer buf;
-    buf.append(orireq.toString().c_str(), orireq.toString().size());
-    EXPECT_EQ(buf.readableBytes(), orireq.toString().size());
-
-    HttpContext context;
-
-    auto now = TimeStamp::Now();
-    bool ok = context.parseRequest(buf, now);
-
-    EXPECT_EQ(ok, true);
-    auto req = context.request();
-    EXPECT_STREQ(req->method().toString(), "GET");
-    EXPECT_STREQ(req->path().c_str(), "/main.html");
-    EXPECT_STREQ(req->version().toString(), "HTTP/1.1");
-    auto it = req->headers().find("Host");
-    EXPECT_TRUE(it != req->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "Host");
-    EXPECT_STREQ(it->second.c_str(), "www.kit.com");
-
-    it = req->headers().find("XData");
-    EXPECT_TRUE(it != req->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "XData");
-    EXPECT_STREQ(it->second.c_str(), "666");
-
-    EXPECT_EQ(now.millSeconds(), req->receiveTime().millSeconds());
-    EXPECT_STREQ(req->body().toString().c_str(), "12345678");
-
-    TEST_INFO() << "Body: "<< "|" << req->body().toString() << "|" << std::endl;
-}
-
-
-void testHttpCb(TcpConnectionPtr conn, HttpContextPtr ctx)
+HttpDispatchResult testHttpCb(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
     auto req = ctx->request();
     auto resp = ctx->response();
-    TEST_INFO() << "req body= " << req->body().toString() << std::endl;
+    TEST_INFO() << "req body= " << req->bodyString() << std::endl;
     resp->setStateCode(StateCode::k200Ok);
     resp->setVersion(Version::kHttp11);
     resp->setConnectionClosed(true);
 
-    resp->body().appendData(req->body().data());
-    resp->body().appendData("\n");
-    conn->send(resp->toString());
+    resp->appendBodyData(req->bodyData());
+    resp->appendBodyData("\n");
+    conn->send(resp->toBytes());
 
+    return HttpDispatchResult::kClose;
 }
 
-TEST(TestHttpResp, create_data)
-{
-    HttpResponse oriresp;
-    oriresp.setVersion(Version::kHttp11);
-    oriresp.setStateCode(StateCode::k200Ok);
-    oriresp.addHeader("XData", "999");
-    oriresp.body().appendData("123456", strlen("123456"));
-    oriresp.body().setContentType(ContentType::kPlainType);
-    std::cout << oriresp.toString() << std::endl;
-    std::cout << "----------------\n";
-
-    HttpContext context;
-
-    auto now = TimeStamp::Now();
-    bool ok = context.parseResponse(oriresp.toString(), now);
-
-    EXPECT_EQ(ok, true);
-    auto resp = context.response();
-    EXPECT_STREQ(resp->stateCode().toString().c_str(), "200");
-    EXPECT_STREQ(resp->version().toString(), "HTTP/1.1");
-    auto it = resp->headers().find("XData");
-    EXPECT_TRUE(it != resp->headers().end());
-    EXPECT_STREQ(it->first.c_str(), "XData");
-    EXPECT_STREQ(it->second.c_str(), "999");
-
-    EXPECT_STREQ(resp->body().toString().c_str(), "123456");
-
-    TEST_INFO() << "Body: "<< "|" << resp->body().toString() << "|" << std::endl;
 
 
-}
+} // namespace
 
-TEST(TestHttpResp, body_without_content_type_defaults_to_octet_stream)
-{
-    static const char test_resp[] =
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Length: 6\r\n"
-    "Connection: close\r\n"
-    "\r\n"
-    "abcdef";
+/*
+测试思路：
+1. 启动本地 HttpServer，并在一个 TCP 连接中连续发送两条 HTTP request。
+2. server 应分别派发 /one 和 /two，不能把第二条请求吞掉或合并进第一条。
+3. 第二条请求带 Connection: close，响应后连接应正常关闭。
 
-    HttpContext context;
-    Buffer buf;
-    buf.append(test_resp, strlen(test_resp));
-
-    auto now = TimeStamp::Now();
-    EXPECT_EQ(context.parseResponse(buf, now), true);
-    EXPECT_EQ(context.gotAll(), true);
-    EXPECT_EQ(buf.readableBytes(), 0);
-
-    auto resp = context.response();
-    EXPECT_STREQ(resp->stateCode().toString().c_str(), "200");
-    EXPECT_STREQ(resp->body().toString().c_str(), "abcdef");
-    EXPECT_EQ(resp->body().contentType()(), ContentType::kOctetStream);
-}
-
-TEST(TestHttpResp, binary_body_without_content_type_preserves_bytes)
-{
-    static const char header[] =
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Length: 5\r\n"
-    "\r\n";
-    const std::string body("a\0b\0c", 5);
-
-    Buffer buf;
-    buf.append(header, strlen(header));
-    buf.append(body.data(), body.size());
-
-    HttpContext context;
-    auto now = TimeStamp::Now();
-    EXPECT_EQ(context.parseResponse(buf, now), true);
-    EXPECT_EQ(context.gotAll(), true);
-    EXPECT_EQ(buf.readableBytes(), 0);
-
-    auto resp = context.response();
-    EXPECT_EQ(resp->body().toString(), body);
-    EXPECT_EQ(resp->body().data().size(), body.size());
-    EXPECT_EQ(resp->body().contentType()(), ContentType::kOctetStream);
-}
-
+示例：
+  GET /one\r\n\r\nGET /two\r\nConnection: close\r\n\r\n
+        |
+        v
+  response body 依次包含 /one 和 /two
+*/
 TEST(TestHttpServer, pipelined_requests_are_dispatched_separately)
 {
     auto port_result = PickUnusedLoopbackPort();
@@ -561,16 +303,18 @@ TEST(TestHttpServer, pipelined_requests_are_dispatched_separately)
             auto resp = ctx->response();
             resp->setVersion(Version::kHttp11);
             resp->setStateCode(StateCode::k200Ok);
-            resp->body().appendData(req->path());
+            resp->appendBodyData(req->path());
             if(req->path() == "/two")
             {
                 resp->setConnectionClosed(true);
             }
-            conn->send(resp->toString());
+            conn->send(resp->toBytes());
             if(resp->connectionClosed())
             {
                 conn->shutdown();
+                return HttpDispatchResult::kClose;
             }
+            return HttpDispatchResult::kContinueHttp;
         });
         server->start();
         started.set_value();
@@ -607,6 +351,18 @@ TEST(TestHttpServer, pipelined_requests_are_dispatched_separately)
     guard.cleanup();
 }
 
+/*
+测试思路：
+1. 启用 HTTP business thread pool，并把队列容量设置得很小。
+2. handler 主动 sleep，使提交任务路径进入队列满/提交失败分支。
+3. server 应返回 503，而不是挂住连接或静默断开。
+
+示例：
+  GET /slow + business queue unavailable
+        |
+        v
+  HTTP/1.1 503 Service Unavailable, Connection: close
+*/
 TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
 {
     auto port_result = PickUnusedLoopbackPort();
@@ -629,7 +385,7 @@ TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
         InetAddress addr(port, "127.0.0.1");
         server = std::make_shared<HttpServer>(loop, addr, "http-submit-failure-test", true, TcpServer::KReusePort);
         server->setThreadNum(0);
-        server->setBusinessThreadPoolConfig(HttpServer::BusinessThreadPoolConfig{
+        server->setBusinessThreadPoolConfig(BusinessThreadPoolConfig{
             1,
             0,
             2,
@@ -641,7 +397,7 @@ TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
             resp->setVersion(Version::kHttp11);
             resp->setStateCode(StateCode::k200Ok);
             resp->setConnectionClosed(true);
-            resp->body().appendData("ok");
+            resp->appendBodyData("ok");
         });
         server->start();
         started.set_value();
@@ -668,6 +424,108 @@ TEST(TestHttpServer, BusinessThreadPoolSubmitFailureReturns503)
     guard.cleanup();
 }
 
+/*
+测试思路：
+1. 启动启用 business thread pool 的 HttpServer，并注册一个 WebSocket upgrade 路由。
+2. 配置 auth callback 模拟未登录 Cookie，返回 401。
+3. 发送标准 WebSocket upgrade 请求时，应先在 HttpServer::handleRequest 的 work_func 中被鉴权拦截，
+   不进入 WebSocket prepare，不返回 101。
+
+示例：
+  GET /ws/auth-check + Upgrade: websocket + 未登录
+        |
+        v
+  HTTP/1.1 401 Unauthorized，且 Ws prepare 未被调用
+*/
+TEST(TestHttpServer, WebSocketUpgradeAuthFailureReturns401BeforePrepare)
+{
+    auto port_result = PickUnusedLoopbackPort();
+    if(!port_result.ok)
+    {
+        GTEST_SKIP() << "loopback TCP socket unavailable: " << port_result.error;
+    }
+    const uint16_t port = port_result.port;
+
+    EventLoopThread loop_thread(nullptr, "http_ws_auth_test");
+    EventLoop *loop = loop_thread.startLoop();
+    ASSERT_NE(loop, nullptr);
+
+    std::shared_ptr<HttpServer> server;
+    HttpServerTestGuard guard(loop, &server);
+    std::promise<void> started;
+    auto started_future = started.get_future();
+    std::atomic_bool auth_called{false};
+    std::atomic_bool prepare_called{false};
+
+    loop->runInLoop([&](){
+        InetAddress addr(port, "127.0.0.1");
+        server = std::make_shared<HttpServer>(loop, addr, "http-ws-auth-test", true, TcpServer::KReusePort);
+        server->setThreadNum(0);
+        server->setBusinessThreadPoolConfig(BusinessThreadPoolConfig{
+            1,
+            8,
+            2,
+            1000
+        });
+        server->setAuthCallback([&auth_called](HttpContextPtr) {
+            auth_called.store(true, std::memory_order_release);
+            return HttpServer::AuthCheckResult{
+                .ok = false,
+                .http_status = StateCode::k401Unauthorized,
+                .message = R"({"code":401,"message":"unauthorized"})",
+                .redirect_to_login = false,
+            };
+        });
+        server->Ws("/ws/auth-check", [&prepare_called](auto, auto) {
+            prepare_called.store(true, std::memory_order_release);
+            return true;
+        });
+        server->start();
+        started.set_value();
+    });
+
+    ASSERT_EQ(started_future.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+
+    FdGuard client_fd(ConnectLoopback(port));
+    ASSERT_GE(client_fd.fd, 0);
+
+    const std::string request =
+        "GET /ws/auth-check HTTP/1.1\r\n"
+        "Host: 127.0.0.1\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade, close\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "\r\n";
+    ASSERT_TRUE(SendAll(client_fd.fd, request));
+
+    const std::string response = ReadAll(client_fd.fd);
+    ASSERT_NE(response.find("HTTP/1.1 401 Unauthorized\r\n"), std::string::npos)
+        << response;
+    EXPECT_NE(response.find(R"({"code":401,"message":"unauthorized"})"), std::string::npos)
+        << response;
+    EXPECT_EQ(response.find("HTTP/1.1 101 Switching Protocols\r\n"), std::string::npos)
+        << response;
+    EXPECT_EQ(response.find("Sec-WebSocket-Accept:"), std::string::npos)
+        << response;
+    EXPECT_TRUE(auth_called.load(std::memory_order_acquire));
+    EXPECT_FALSE(prepare_called.load(std::memory_order_acquire));
+
+    guard.cleanup();
+}
+
+/*
+测试思路：
+1. 手动启动固定地址上的 HTTP server，便于人工联调监听行为。
+2. 该用例会长期进入 loop.loop()，默认禁用。
+3. 需要人工运行时再去掉 DISABLED_ 前缀。
+
+示例：
+  listen 192.168.77.136:5555
+        |
+        v
+  外部客户端手动访问
+*/
 TEST(TestHttpServer, DISABLED_listen)
 {
     EventLoop loop;
@@ -681,6 +539,18 @@ TEST(TestHttpServer, DISABLED_listen)
 }
 
 
+/*
+测试思路：
+1. 手动启动带 ServletDispatch 的 HTTP server。
+2. 注册固定 servlet 和 lambda servlet，便于人工验证路由分发。
+3. 该用例会长期运行，默认禁用。
+
+示例：
+  GET /hello 或 GET /custom
+        |
+        v
+  servlet dispatch 返回对应响应
+*/
 TEST(TestHttpServer, DISABLED_servlet)
 {
     EventLoop loop;
@@ -702,7 +572,7 @@ TEST(TestHttpServer, DISABLED_servlet)
         resp->addHeader("Content-Type", "text/plain");
 
         std::string body = "this is a custom servlet!!";
-        resp->body().appendData(body);
+        resp->appendBodyData(body);
     });
 
     server.setHttpCallback([dispatch = sd](TcpConnectionPtr conn, HttpContextPtr ctx){
@@ -723,7 +593,9 @@ TEST(TestHttpServer, DISABLED_servlet)
         if(resp->connectionClosed())
         {
             conn->shutdown();
+            return HttpDispatchResult::kClose;
         }
+        return HttpDispatchResult::kContinueHttp;
         ////////////这部分可以异步//////////////
     });
 

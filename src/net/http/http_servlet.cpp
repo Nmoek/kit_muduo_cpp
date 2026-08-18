@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <system_error>
 
 namespace kit_muduo::http {
 
@@ -77,6 +78,67 @@ bool ContainsGlobSegment(const std::string &pattern)
         start = slash + 1;
     }
     return false;
+}
+
+bool IsPathWithinRoot(const std::filesystem::path& candidate, const std::filesystem::path& root)
+{
+    auto candidate_it = candidate.begin();
+    auto root_it = root.begin();
+
+    for(; root_it != root.end(); ++root_it, ++candidate_it)
+    {
+        if(candidate_it == candidate.end() || *candidate_it != *root_it)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::optional<std::filesystem::path> ResolveStaticFile(
+    const std::filesystem::path& root,
+    const std::string& raw_http_path)
+{
+    // 校验 path 路径本身是否含有非法转义字符
+    const auto decoded = PercentDecodeHttpPathOnce(raw_http_path);
+    if(!decoded || decoded->empty()
+        || decoded->front() != '/'
+        || decoded->find('\0') != std::string::npos)
+    {
+        HTTP_F_ERROR("http raw path percent decode error: %s\n", raw_http_path.c_str());
+        return std::nullopt;
+    }
+
+    // HTTP path 必须以 / 开头；去掉它后才是可拼接的相对路径。
+    std::filesystem::path relative = decoded->substr(1);
+
+    if(relative.empty() || relative.is_absolute())
+    {
+        return std::nullopt;
+    }
+
+    // root 自身也不能包含 '.'/ '..'
+    for(const auto& part : relative)
+    {
+        if(part == "." || part == "..")
+        {
+            HTTP_F_WARN("http path disallowed .. . \n");
+            return std::nullopt;
+        }
+    }
+
+    // root / relative 拼接后不能包含 '.'/ '..'
+    std::error_code ec;
+    const auto candidate = std::filesystem::weakly_canonical(root / relative, ec);
+    if(ec || !IsPathWithinRoot(candidate, root)
+        || !std::filesystem::is_regular_file(candidate, ec)
+        || ec)
+    {
+        return std::nullopt;
+    }
+
+    return candidate;
 }
 
 } // namespace
@@ -182,7 +244,8 @@ void HelloServlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 void HelloServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -220,7 +283,8 @@ void NotFound404Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 void NotFound404Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -242,7 +306,7 @@ void BadRequest400Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k400BadRequest);
     resp->setConnectionClosed(true);
-    resp->body().reset();
+    resp->resetBodyData();
 }
 
 void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -250,6 +314,70 @@ void BadRequest400Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     Handle(conn, ctx);
 }
 
+PayloadTooLarge413Servlet::PayloadTooLarge413Servlet()
+    :HttpServlet("PayloadTooLarge413Servlet", "kit_server")
+{
+
+}
+
+void PayloadTooLarge413Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
+
+void PayloadTooLarge413Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k413PayloadTooLarge);
+    resp->setConnectionClosed(true);
+    resp->resetBodyData();
+}
+
+URITooLong414Servlet::URITooLong414Servlet()
+    :HttpServlet("URITooLong414Servlet", "kit_server") 
+{ }
+
+
+
+void URITooLong414Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    Handle(conn, ctx);
+}
+
+void URITooLong414Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k414URITooLong);
+    resp->setConnectionClosed(true);
+    resp->resetBodyData();
+}
+
+RequestHeaderFieldsTooLarge431Servlet::RequestHeaderFieldsTooLarge431Servlet()
+    :HttpServlet("RequestHeaderFieldsTooLarge431Servlet", "kit_server") 
+{
+
+}
+
+
+void RequestHeaderFieldsTooLarge431Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx) 
+{
+    Handle(conn, ctx);
+}
+
+void RequestHeaderFieldsTooLarge431Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
+{
+    auto resp = ctx->response();
+
+    resp->setVersion(Version::kHttp11);
+    resp->setStateCode(StateCode::k431RequestHeaderFieldsTooLarge);
+    resp->setConnectionClosed(true);
+    resp->resetBodyData();
+}
 
 ServerErr500Servlet::ServerErr500Servlet()
     :HttpServlet("ServerErr500Servlet", "kit_server")
@@ -277,7 +405,8 @@ void ServerErr500Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
 void ServerErr500Servlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -317,24 +446,22 @@ void ServiceUnavailable503Servlet::Handle(TcpConnectionPtr conn, HttpContextPtr 
 "</body>"
 "</html>";
 
-    resp->body().appendData(body);
+    resp->setContentMeta(MakeContentMeta(KnownMediaType::kTextHtml));
+    resp->appendBodyData(body);
 }
 
-StaticFileServlet::StaticFileServlet()
+StaticFileServlet::StaticFileServlet(std::filesystem::path static_root_path)
     :HttpServlet("FileServlet", "kit_server")
-{}
-
-static int32_t GetStaticType(const std::string &suffix_type)
+    ,static_root_(std::move(static_root_path))
 {
-    if(suffix_type == "html")
-        return ContentType::kHtml;
-    else if(suffix_type == "jpg" || suffix_type == "jpeg")
-        return ContentType::kImageJpgType;
-    else if(suffix_type == "css")
-        return ContentType::kCss;
-    else if(suffix_type == "js")
-        return ContentType::kJavaScript;
-    return ContentType::kJsonType;
+    std::error_code ec;
+
+    static_root_ = std::filesystem::weakly_canonical(std::filesystem::absolute(static_root_, ec), ec);
+
+    if(ec || !std::filesystem::is_directory(static_root_, ec) || ec)
+    {
+        throw std::invalid_argument("static root must be an accessible directory");
+    }
 }
 
 void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
@@ -345,24 +472,33 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     resp->setVersion(Version::kHttp11);
     resp->setStateCode(StateCode::k200Ok);
 
-    const std::string &path = req->path();
-    // 文件名全称
-    auto pos = path.find_last_of("/");
-    std::string file_name = path.substr(pos + 1);
-    // 文件类型
-    pos = file_name.find_last_of(".");
-    const std::string& suffix_type = file_name.substr(pos + 1);
+    // 将路径进行拼接 并验证合法性
+    // 禁止路径穿越 
+    // 类似： /a/b/../c   /a/./../c
+    const auto candidate = ResolveStaticFile(static_root_, ctx->request()->path());
+    if(!candidate)
+    {
+        resp->setStateCode(StateCode::k404NotFound);
+        resp->resetBodyData();
+        return;
+    }
+    const std::string &target_path = candidate->string();
 
-    resp->body().setContentType(GetStaticType(suffix_type));
 
-    const std::string target_path = "web/" + suffix_type + "/" + file_name;
+    auto meta = MakeContentMetaFromMediaType(GuessMediaTypeFromExtension(target_path));
+    if(IsTextLikeContent(meta))
+    {
+        SetContentTypeParam(meta, "charset", "utf-8");
+    }
+    resp->setContentMeta(std::move(meta));
 
     /// TODO: 可使用sendfile优化 减少拷贝
     std::fstream tmp_f(target_path, std::ios::in | std::ios::binary);
     if(!tmp_f.is_open())
     {
         HTTP_F_ERROR("file %s open error! %d:%s \n", target_path.c_str(), errno, strerror(errno));
-        resp->setStateCode(StateCode::k500InternalServerError);
+        resp->setStateCode(StateCode::k404NotFound);
+        resp->resetBodyData();
         return;
     }
     std::string data;
@@ -373,7 +509,15 @@ void StaticFileServlet::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
     data.resize(file_size);
 
     tmp_f.read((char*)data.data(), file_size);
-    resp->body().appendData(data);
+    if(tmp_f.bad())
+    {
+        HTTP_F_ERROR("file %s read error! %d:%s \n", target_path.c_str(), errno, strerror(errno));
+        resp->setStateCode(StateCode::k500InternalServerError);
+        resp->resetBodyData();
+        return;
+    }
+
+    resp->appendBodyData(data);
 
 }
 
@@ -388,19 +532,35 @@ HttpServletDispatch::HttpServletDispatch()
 
 void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
+    (void)handleWithOutcome(conn, ctx);
+}
+
+HttpDispatchOutcome HttpServletDispatch::handleWithOutcome(TcpConnectionPtr conn, HttpContextPtr ctx, bool is_auto)
+{
     auto req = ctx->request();
     MatchResult result = match(ctx);
 
-    if(result.status == MatchStatus::Found && result.servlet)
+    if(result.status == MatchStatus::kFound && result.servlet)
     {
         HTTP_F_DEBUG("conn[%s], path[%s] HttpServlet[%s] handling...... \n", conn->name().c_str(), req->path().c_str(), result.servlet->name().c_str());
         
-        result.servlet->handle(conn, ctx);
-        return;
+        if(is_auto)
+        {
+            result.servlet->handle(conn, ctx);
+        }
+        
+        return HttpDispatchOutcome{
+            .status = result.status,
+            .route_id = result.id,
+            .route_pattern = result.servlet->pattern(),
+            .allowed_methods = result.allowed_methods,
+            .servlet = is_auto ? nullptr : result.servlet,
+            .servlet_name = result.servlet->name(),
+        };
     }
 
 
-    if(result.status == MatchStatus::PathFoundMethodNotAllowed)
+    if(result.status == MatchStatus::kPathFoundMethodNotAllowed)
     {
         auto resp = ctx->response();
         resp->setVersion(Version::kHttp11);
@@ -409,19 +569,26 @@ void HttpServletDispatch::handle(TcpConnectionPtr conn, HttpContextPtr ctx)
         resp->addHeader("Allow", BuildAllowHeader(result.allowed_methods));
         resp->addHeader("Content-Length", "0");
 
-        HTTP_F_WARN("http method not allowed! path[%s], method[%s], allow[%s]\n", req->path().c_str(), req->method().toString(), BuildAllowHeader(result.allowed_methods).c_str());
+        HTTP_F_WARN("http method not allowed! path[%s], method[%s], allow[%s]\n", req->path().c_str(), req->method().toStr(), BuildAllowHeader(result.allowed_methods).c_str());
         
-        return;
+        return HttpDispatchOutcome{
+            .status = result.status,
+            .allowed_methods = result.allowed_methods,
+        };
     }
 
-    HTTP_DEBUG() << req->path() << " default svl handle!" << std::endl;
-    _defaultSvl->handle(conn, ctx);
+    NotFound404Servlet::Handle(conn, ctx);
+
+    return HttpDispatchOutcome{
+        .status = MatchStatus::kNotFound,
+    };
 }
 
 RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string &pattern, HttpServlet::Ptr servlet)
 {
     RouteResult result;
-    if(pattern.empty())
+    const std::string route_pattern = NormalizeHttpPath(pattern);
+    if(route_pattern.empty())
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "route pattern is empty";
@@ -432,24 +599,24 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "route servlet is null";
-        HTTP_F_ERROR("addRoute failed: servlet is null, pattern[%s]\n", pattern.c_str());
+        HTTP_F_ERROR("addRoute failed: servlet is null, pattern[%s]\n", route_pattern.c_str());
         return result;
     }
     if((methods & ExpectHttpMethods::All) == ExpectHttpMethods::None || (methods & ~ExpectHttpMethods::All) != 0)
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "route method mask is invalid";
-        HTTP_F_ERROR("addRoute failed: invalid method mask[0x%x], pattern[%s]\n", methods, pattern.c_str());
+        HTTP_F_ERROR("addRoute failed: invalid method mask[0x%x], pattern[%s]\n", methods, route_pattern.c_str());
         return result;
     }
 
-    RouteKind kind = routeKind(pattern);
-    RouterMatcher::Ptr matcher = createMatcher(kind, pattern);
+    RouteKind kind = routeKind(route_pattern);
+    RouterMatcher::Ptr matcher = createMatcher(kind, route_pattern);
     if(kind != RouteKind::Exact && !matcher)
     {
         result.status = RouteStatus::InvalidArgument;
         result.message = "create route matcher failed";
-        HTTP_F_ERROR("addRoute failed: create matcher failed, pattern[%s]\n", pattern.c_str());
+        HTTP_F_ERROR("addRoute failed: create matcher failed, pattern[%s]\n", route_pattern.c_str());
         return result;
     }
 
@@ -458,20 +625,20 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
 
     if(kind == RouteKind::Exact)
     {
-        auto &routes = exact_routes_[pattern];
+        auto &routes = exact_routes_[route_pattern];
         if(hasMethodConflict(routes, methods, &conflict_methods))
         {
             result.status = RouteStatus::Conflict;
             result.message = "route method conflict";
             HTTP_F_ERROR("addRoute conflict: kind[%s], pattern[%s], new_methods[%s], conflict_methods[%s]\n",
-                         RouteKindName(kind).c_str(), pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
+                         RouteKindName(kind).c_str(), route_pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
             return result;
         }
 
         RouteEntry entry;
         entry.id = next_route_id_++;
         entry.kind = kind;
-        entry.pattern = pattern;
+        entry.pattern = route_pattern;
         entry.methods = methods;
         entry.servlet = std::move(servlet);
         entry.priority = next_priority_++;
@@ -483,7 +650,7 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
         std::vector<RouteEntry> same_pattern_routes;
         for(const auto &route : dynamic_routes_)
         {
-            if(route.pattern == pattern)
+            if(route.pattern == route_pattern)
             {
                 same_pattern_routes.emplace_back(route);
             }
@@ -493,14 +660,14 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
             result.status = RouteStatus::Conflict;
             result.message = "route method conflict";
             HTTP_F_ERROR("addRoute conflict: kind[%s], pattern[%s], new_methods[%s], conflict_methods[%s]\n",
-                         RouteKindName(kind).c_str(), pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
+                         RouteKindName(kind).c_str(), route_pattern.c_str(), BuildAllowHeader(methods).c_str(), BuildAllowHeader(conflict_methods).c_str());
             return result;
         }
 
         RouteEntry entry;
         entry.id = next_route_id_++;
         entry.kind = kind;
-        entry.pattern = pattern;
+        entry.pattern = route_pattern;
         entry.methods = methods;
         entry.matcher = std::move(matcher);
         entry.servlet = std::move(servlet);
@@ -512,7 +679,7 @@ RouteResult HttpServletDispatch::addRoute(MethodMask methods, const std::string 
     HTTP_F_INFO("addRoute success: id[%llu], kind[%s], pattern[%s], methods[%s]\n",
                 static_cast<unsigned long long>(result.route_id),
                 RouteKindName(kind).c_str(),
-                pattern.c_str(),
+                route_pattern.c_str(),
                 BuildAllowHeader(methods).c_str());
     return result;
 }
@@ -562,7 +729,7 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
 {
     MatchResult result;
     auto req = ctx->request();
-    const std::string url = req->path();
+    const std::string url = NormalizeHttpPath(req->path());
 
     std::unique_lock<std::mutex> lock(route_mtx_);
 
@@ -574,14 +741,15 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
             result.allowed_methods |= route.methods;
             if(MethodAllowed(route.methods, req->method()))
             {
-                result.status = MatchStatus::Found;
+                result.id = route.id;
+                result.status = MatchStatus::kFound;
                 result.servlet = route.servlet;
                 result.allowed_methods = route.methods;
                 return result;
             }
         }
 
-        result.status = MatchStatus::PathFoundMethodNotAllowed;
+        result.status = MatchStatus::kPathFoundMethodNotAllowed;
         return result;
     }
 
@@ -601,7 +769,8 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
         if(MethodAllowed(route.methods, req->method()))
         {
             route.matcher->Match(ctx);
-            result.status = MatchStatus::Found;
+            result.id = route.id;
+            result.status = MatchStatus::kFound;
             result.servlet = route.servlet;
             result.allowed_methods = route.methods;
             return result;
@@ -610,7 +779,7 @@ HttpServletDispatch::MatchResult HttpServletDispatch::match(HttpContextPtr ctx)
 
     if(result.allowed_methods != ExpectHttpMethods::None)
     {
-        result.status = MatchStatus::PathFoundMethodNotAllowed;
+        result.status = MatchStatus::kPathFoundMethodNotAllowed;
     }
 
     return result;
@@ -676,9 +845,10 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern, MethodMask m
 {
     std::unique_lock<std::mutex> lock(route_mtx_);
     size_t removed = 0;
+    const std::string route_pattern = NormalizeHttpPath(pattern);
 
     // exact_routes_
-    auto exact_it = exact_routes_.find(pattern);
+    auto exact_it = exact_routes_.find(route_pattern);
     if (exact_it != exact_routes_.end())
     {
         auto &vec = exact_it->second;
@@ -703,7 +873,7 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern, MethodMask m
     // dynamic_routes_
     for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); )
     {
-        if (it->pattern == pattern && it->methods == methods)
+        if (it->pattern == route_pattern && it->methods == methods)
         {
             it = dynamic_routes_.erase(it);
             ++removed;
@@ -721,9 +891,10 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern)
 {
     std::unique_lock<std::mutex> lock(route_mtx_);
     size_t removed = 0;
+    const std::string route_pattern = NormalizeHttpPath(pattern);
 
     // exact_routes_
-    auto exact_it = exact_routes_.find(pattern);
+    auto exact_it = exact_routes_.find(route_pattern);
     if (exact_it != exact_routes_.end())
     {
         removed += exact_it->second.size();
@@ -733,7 +904,7 @@ size_t HttpServletDispatch::removeRoute(const std::string &pattern)
     // dynamic_routes_
     for (auto it = dynamic_routes_.begin(); it != dynamic_routes_.end(); )
     {
-        if (it->pattern == pattern)
+        if (it->pattern == route_pattern)
         {
             it = dynamic_routes_.erase(it);
             ++removed;
@@ -822,8 +993,9 @@ std::vector<RouteInfo> HttpServletDispatch::listRoutes(const std::string &patter
 {
     std::unique_lock<std::mutex> lock(route_mtx_);
     std::vector<RouteInfo> result;
+    const std::string route_pattern = NormalizeHttpPath(pattern);
 
-    auto exact_it = exact_routes_.find(pattern);
+    auto exact_it = exact_routes_.find(route_pattern);
     if (exact_it != exact_routes_.end())
     {
         for (const auto &route : exact_it->second)
@@ -840,7 +1012,7 @@ std::vector<RouteInfo> HttpServletDispatch::listRoutes(const std::string &patter
 
     for (const auto &route : dynamic_routes_)
     {
-        if (route.pattern == pattern)
+        if (route.pattern == route_pattern)
         {
             RouteInfo info;
             info.id = route.id;

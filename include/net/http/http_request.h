@@ -9,13 +9,13 @@
 #ifndef __KIT_HTTP_REQUEST_H__
 #define __KIT_HTTP_REQUEST_H__
 #include "base/time_stamp.h"
+#include "net/http/http_content.h"
 #include "net/http/http_util.h"
-#include "net/buffer.h"
 
 #include <string>
 #include <unordered_map>
 #include <assert.h>
-#include <memory>
+#include <vector>
 
 
 
@@ -35,7 +35,10 @@ public:
         void set(int32_t val) { method = val; }
 
         int32_t toInt() const { return method; }
-        const char* toString() const
+
+        std::string toString() const { return toStr(); }
+        
+        const char* toStr() const
         {
             switch (method)
             {
@@ -74,15 +77,22 @@ public:
     void setMethod(int32_t methodVal) { method_.set(methodVal); }
     void setMethod(Method method) { method_ = std::move(method); }
 
+    std::string url() const { return url_; }
+    void setUrl(const std::string &url) { url_ = NormalizeHttpPath(url); }
 
     std::string path() const { return path_; }
-    void setPath(const std::string &path) { path_ = path; }
+    void setPath(const std::string &path) { path_ = NormalizeHttpPath(path); }
 
     std::string getQureyParam(const std::string &key) const
     { 
         auto it = query_params_.find(key);
         return it ==  query_params_.end() ? "" : it->second;
     } 
+
+    bool hasQureyParam(const std::string &key) const
+    {
+        return query_params_.find(key) != query_params_.end();
+    }
 
     void addQureyParam(const std::string &key, const std::string &val) { query_params_[key] = val; }
 
@@ -100,26 +110,46 @@ public:
     void setVersion(Version version) { version_ = std::move(version); }
 
     void addHeader(const std::string& head, const std::string &val);
-    bool addHeader(const char *start, const char *colon, const char *end);
     std::string getHeader(const std::string &key) const;
 
     const std::unordered_map<std::string, std::string>& headers() const { return headers_; }
     std::unordered_map<std::string, std::string>& headers() { return headers_; }
-    void setHeaders(const std::unordered_map<std::string, std::string> &headers) { headers_ = std::move(headers); }
+    void setHeaders(const std::unordered_map<std::string, std::string> &headers);
 
 
     void setReceiveTime(TimeStamp receiveTime) { receive_time_ = receiveTime; }
     TimeStamp receiveTime() const { return receive_time_; }
     TimeStamp receiveTime() { return receive_time_; }
 
-    Body& body() { return body_; }
-    const Body& body() const { return body_; }
-    void setBody(const Body &body) { body_ = body; }
+    const ContentMeta& contentMeta() const { return content_meta_; }
+    ContentMeta& contentMeta() { return content_meta_; }
+    void setContentMeta(const ContentMeta& meta);
+    void setContentMeta(ContentMeta&& meta);
+
+    const std::vector<uint8_t>& bodyData() const { return body_data_; }
+    std::vector<uint8_t>& bodyData() { return body_data_; }
+    void setBodyData(const std::vector<uint8_t>& data) { body_data_ = data; }
+    void setBodyData(std::vector<uint8_t>&& data) { body_data_ = std::move(data); }
+    void setBodyData(const std::vector<char>& data);
+    void setBodyData(const std::string& data);
+    void appendBodyData(const char* start, size_t len);
+    void appendBodyData(const std::string& data);
+    void appendBodyData(const std::vector<char>& data);
+    void appendBodyData(const std::vector<uint8_t>& data);
+    void resetBodyData() { body_data_.clear(); }
+    std::string bodyString() const;
+
+    /**
+     * @brief 仅请求头序列化
+     * @return std::string 
+     */
+    std::string toHeaderString();
 
     /**
      * @brief 报文序列化
      * @return std::string
      */
+    std::vector<uint8_t> toBytes();
     std::string toString();
 
 private:
@@ -129,9 +159,11 @@ private:
     
 protected:
     using ParamMap = std::unordered_map<std::string, std::string>;
+    /// @brief 完整Url
+    std::string url_;
     /// @brief 请求路径
     std::string path_;
-    /// @brief 请求参数
+    /// @brief 路径上的请求参数
     ParamMap query_params_;
     /// @brief 动态路由参数
     ParamMap route_params_;
@@ -139,8 +171,10 @@ protected:
     Version version_;
     /// @brief 头部字段
     std::unordered_map<std::string, std::string> headers_;
-    /// @brief Body结构
-    Body body_;
+    /// @brief Content-Type 元数据
+    ContentMeta content_meta_;
+    /// @brief Body原始字节
+    std::vector<uint8_t> body_data_;
     /// @brief 接收请求时间点
     TimeStamp receive_time_;
 

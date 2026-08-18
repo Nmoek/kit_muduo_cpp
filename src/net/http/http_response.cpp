@@ -8,7 +8,6 @@
  */
 #include "net/http/http_response.h"
 #include "base/util.h"
-#include "net/http/http_util.h"
 #include "net/net_log.h"
 
 #include <sstream>
@@ -26,6 +25,7 @@ HttpResponse::HttpResponse()
     :state_code_(StateCode::kUnknow)
     ,version_(Version::kUnknow)
     ,connection_closed_(false)
+    ,is_upgrade_(false)
 {
     HTTP_DEBUG() << "HttpResponse::construct() " << this << std::endl;
 }
@@ -38,82 +38,150 @@ HttpResponse::~HttpResponse()
 
 void HttpResponse::addHeader(const std::string& head, const std::string &val)
 {
-    headers_[head] = val;
-}
-
-bool HttpResponse::addHeader(const char *start, const char *colon, const char *end)
-{
-    assert(start != end);
-    std::string head(start, colon);
-    DelSpaceHelper(head);
-    // assert(head.size() != 0);
-    if(head.size() <= 0)
+    SetOrReplaceHeader(headers_, head, val);
+    if(IsHeaderName(head, "Content-Type"))
     {
-        return false;
+        content_meta_ = ParseHttpContentType(val);
     }
-    ++colon;
-    std::string val(colon, end);
-    DelSpaceHelper(val);
-    // assert(val.size() != 0);
-    HTTP_F_DEBUG("Header: |%s|-|%s|\n", head.c_str(), val.c_str());
-    if(val.size() <= 0)
-    {
-        return false;
-    }
-    headers_[head] = val;
-    return true;
 }
 
 std::string HttpResponse::getHeader(const std::string &key) const
 {
-    auto it = headers_.find(key);
-    return it == headers_.end() ? "" : it->second;
+    return GetHeaderIgnoreCase(headers_, key);
 }
 
-std::string HttpResponse::toString()
+void HttpResponse::setHeaders(const std::unordered_map<std::string, std::string> &headers)
+{
+    headers_ = headers;
+    content_meta_ = ParseHttpContentType(getHeader("Content-Type"));
+}
+
+void HttpResponse::setContentMeta(const ContentMeta& meta)
+{
+    setContentMeta(ContentMeta(meta));
+}
+
+void HttpResponse::setContentMeta(ContentMeta&& meta)
+{
+    content_meta_ = std::move(meta);
+    const std::string content_type = ToContentTypeHeaderValue(content_meta_);
+    if(content_type.empty())
+    {
+        EraseHeader(headers_, "Content-Type");
+    }
+    else
+    {
+        SetOrReplaceHeader(headers_, "Content-Type", content_type);
+    }
+}
+
+void HttpResponse::setBodyData(const std::vector<char>& data)
+{
+    body_data_.assign(data.begin(), data.end());
+}
+
+void HttpResponse::setBodyData(const std::string& data)
+{
+    body_data_.assign(data.begin(), data.end());
+}
+
+void HttpResponse::appendBodyData(const char* start, size_t len)
+{
+    if(start == nullptr || len == 0)
+    {
+        return;
+    }
+    body_data_.insert(body_data_.end(),
+        reinterpret_cast<const uint8_t*>(start),
+        reinterpret_cast<const uint8_t*>(start + len));
+}
+
+void HttpResponse::appendBodyData(const std::string& data)
+{
+    appendBodyData(data.data(), data.size());
+}
+
+void HttpResponse::appendBodyData(const std::vector<char>& data)
+{
+    body_data_.insert(body_data_.end(), data.begin(), data.end());
+}
+
+void HttpResponse::appendBodyData(const std::vector<uint8_t>& data)
+{
+    body_data_.insert(body_data_.end(), data.begin(), data.end());
+}
+
+std::string HttpResponse::bodyString() const
+{
+    return std::string(body_data_.begin(), body_data_.end());
+}
+
+void HttpResponse::setJson(const nlohmann::json& root)
+{
+    setBodyData(root.dump());
+    setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+}
+
+void HttpResponse::setText(const std::string& text)
+{
+    setBodyData(text);
+    setContentMeta(MakeContentMeta(KnownMediaType::kTextPlain));
+}
+
+void HttpResponse::setOctetStream(std::vector<uint8_t> data)
+{
+    setBodyData(std::move(data));
+    setContentMeta(MakeContentMeta(KnownMediaType::kApplicationOctetStream));
+}
+
+std::string HttpResponse::toHeaderString() const
 {
     std::stringstream ss{""};
-    ss << version_.toString();
+    ss << version_.toStr();
     ss << kSpace;
     ss << state_code_.toString();
     ss << kSpace;
     ss << state_code_.message();
     ss << kCRLF;
 
-    if(Version::kHttp11 == version_() && !connection_closed_)
+    auto headers = headers_;
+    if(Version::kHttp11 == version_.toInt())
     {
-        headers_["Connection"] = "keep-alive";
-        //对keep-alive模式参数配置
-        headers_["Keep-Alive"] = "timeout=5, max=100";  // 连接保持5秒，最多100次请求
-
-    }
-    else
-    {
-        headers_["Connection"] = "close";
-    }
-
-    ContentType content_type = body_.contentType();
-    if(ContentType::kUnknowType != content_type.toInt())
-    {
-        // 默认字符集 utf-8
-        std::string content_type_str = content_type.toString();
-        content_type_str += "; ";
-        content_type_str += "charset=utf-8";
-        if(ContentType::kMultiForm == content_type.toInt())
+        // 注意: Upgrade/close是互斥的
+        if(!connection_closed_ && !is_upgrade_)
         {
-            content_type_str += "; ";
-            content_type_str += "boundary=----WebKitFormBoundaryNQJ0YrO2NeaUfM7n";
+            //对keep-alive模式参数配置 连接保持5秒，最多100次请求
+            SetOrReplaceHeader(headers, "Connection", "Keep-Alive; timeout=5, max=100");
         }
-        headers_["Content-Type"] = content_type_str;
+        else if(!connection_closed_ && is_upgrade_)
+        {
+            SetOrReplaceHeader(headers, "Upgrade", "websocket");
+            SetOrReplaceHeader(headers, "Connection", "Upgrade");
+        }
+        else
+        {
+            SetOrReplaceHeader(headers, "Connection", "close");
+        }
+        
     }
 
-
-    if(body_.data().size())
+    ContentMeta content_meta = content_meta_;
+    if(!content_meta.media_type.empty()
+        && IsTextLikeContent(content_meta)
+        && !GetContentTypeParam(content_meta, "charset"))
     {
-        headers_["Content-Length"] = std::to_string(body_.data().size());
+        SetContentTypeParam(content_meta, "charset", "utf-8");
     }
 
-    for(auto &it : headers_)
+    const std::string content_type = ToContentTypeHeaderValue(content_meta);
+    if(!content_type.empty())
+    {
+        SetOrReplaceHeader(headers, "Content-Type", content_type);
+    }
+
+    SetOrReplaceHeader(headers, "Content-Length", std::to_string(body_data_.size()));
+
+    for(const auto &it : headers)
     {
         ss << it.first;
         ss << kColon << kSpace;
@@ -121,8 +189,25 @@ std::string HttpResponse::toString()
         ss << kCRLF;
     }
     ss << kCRLF;
-    ss << body_.toString(); // TODO 这里是有问题的 不能认为Body一直是string类型
     return ss.str();
+}
+
+std::vector<uint8_t> HttpResponse::toBytes() const
+{
+    const std::string& header = toHeaderString();
+
+    std::vector<uint8_t> out;
+    out.reserve(header.size() + body_data_.size());
+
+    out.insert(out.end(), header.begin(), header.end());
+    out.insert(out.end(), body_data_.begin(), body_data_.end());
+    return out;
+}
+
+std::string HttpResponse::toString() const
+{
+    const auto bytes = toBytes();
+    return std::string(bytes.begin(), bytes.end());
 }
 
 }

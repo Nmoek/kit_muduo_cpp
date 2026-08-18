@@ -7,13 +7,19 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "net/http/http_server.h"
+#include "net/call_backs.h"
 #include "net/http/http_context.h"
+#include "net/http/http_parser.h"
 #include "net/http/http_servlet.h"
 #include "net/http/http_util.h"
 #include "net/net_log.h"
 #include "net/http/http_request.h"
 #include "net/http/http_response.h"
-#include "base/content_parser.h"
+#include "net/websocket/websocket_server.h"
+#include <exception>
+#include <memory>
+#include <sstream>
+
 
 namespace kit_muduo {
 namespace http {
@@ -21,7 +27,9 @@ namespace http {
 
 HttpServer::HttpServer(EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool, TcpServer::Option option)
     :_server(loop, addr, name, option)
+    ,_ws_server(std::make_shared<ws::WebSocketServer>())
     ,_httpCallBack(nullptr)
+    ,_authCallBack(nullptr)
     ,_dispatch(std::make_shared<HttpServletDispatch>())
     ,_isPool(isPool)
     ,_businessThreadPoolConfig{
@@ -43,13 +51,27 @@ void HttpServer::start()
     if(_isPool)
     {
         _businessThreadPool.setMode(ThreadPool::CACHE_MOD);
-        _businessThreadPool.setThreadMaxThreshHold(_businessThreadPoolConfig.threadMaxThreshold);
-        _businessThreadPool.setTaskQueMaxThreshHold(_businessThreadPoolConfig.taskQueueMaxThreshold);
-        _businessThreadPool.setThreadMaxIdleInterval(_businessThreadPoolConfig.threadMaxIdleInterval);
+        _businessThreadPool.setThreadMaxThreshHold(_businessThreadPoolConfig.max_threads);
+        _businessThreadPool.setTaskQueMaxThreshHold(_businessThreadPoolConfig.max_task_queue);
+        _businessThreadPool.setThreadMaxIdleInterval(_businessThreadPoolConfig.thread_idle_seconds);
         _businessThreadPool.start();
     }
 
     _server.start();
+}
+
+void HttpServer::stop()
+{
+    stopAsync();
+}
+
+void HttpServer::stopAsync(StopCallBack done)
+{
+    if(_isPool)
+    {
+        _businessThreadPool.stop();
+    }
+    _server.stopAsync(std::move(done));
 }
 
 void HttpServer::setBusinessThreadPoolConfig(const BusinessThreadPoolConfig &config)
@@ -164,7 +186,20 @@ bool HttpServer::Delete(const std::string &url, const FunctionServlet::CallBack 
         return false;
     }
 
-    return true;}
+    return true;
+}
+
+bool HttpServer::Ws(const std::string &url, WsPrepareCb cb)
+{
+    // 路由路径
+    return Get(url, [this, cb](auto &&arg1, auto &&arg2){
+        _ws_server->handleUpgrade(
+            std::forward<decltype(arg1)>(arg1), 
+            std::forward<decltype(arg2)>(arg2),
+            cb
+        );
+    });
+}
 
 bool HttpServer::removeRoute(uint64_t route_id)
 {
@@ -210,27 +245,50 @@ void HttpServer::onConnect(TcpConnectionPtr conn)
     }
 }
 
+inline void CheckHttpParseError(HttpContextPtr ctx)
+{
+    switch (ctx->parseError()) 
+    {
+        // 414 URI Too Long
+        case HttpParseError::kStartLineTooLarge:
+            URITooLong414Servlet::Handle(nullptr, ctx);
+            break;
+        // 431 Request Header Fields Too Large
+        case HttpParseError::kHeadersTooLarge:
+        case HttpParseError::kHeadersTooMany:
+            RequestHeaderFieldsTooLarge431Servlet::Handle(nullptr, ctx);
+            break;
+        // 413 Payload Too Large
+        case HttpParseError::kBodyTooLarge:
+            PayloadTooLarge413Servlet::Handle(nullptr, ctx);
+            break;
+        default:
+            BadRequest400Servlet::Handle(nullptr, ctx);
+    }
+}
+
 void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receiveTime)
 {
+    bool is_exception = false;
     std::shared_ptr<HttpContext> context = std::static_pointer_cast<HttpContext>(conn->getContext());
     if(nullptr == context)
     {
         HTTP_ERROR() << "http context is null!" << std::endl;
         return;
     }
-
+ 
     while(buf->readableBytes() > 0)
     {
         size_t before_len = buf->readableBytes();
+        auto req = context->request();
+        auto resp = context->response();
 
         if(!context->parseRequest(*buf, receiveTime))
         {
-            HTTP_ERROR() << "http request parse error! " << std::endl;
-       
-            BadRequest400Servlet::Handle(conn, context);
-            conn->send(context->response()->toString());
-            conn->shutdown();
+            HTTP_F_ERROR("http request parse error!\n");
+            CheckHttpParseError(context);
 
+            (void)sendResponse(conn, context, true);
             return;
         }
 
@@ -240,62 +298,134 @@ void HttpServer::onMessage(TcpConnectionPtr conn, Buffer *buf, TimeStamp receive
             HTTP_F_DEBUG("http data not complete! %lu --> %lu \n", before_len, buf->readableBytes());
             break;
         }
+        // TODO 未来middlewire责任链处理都放在这里
+        // 权限校验
+        if(_authCallBack)
+        {
+            AuthCheckResult auth_result = _authCallBack(context);
+            if(!auth_result.ok)
+            {
+                resp->setVersion(Version::kHttp11);
+                resp->setStateCode(auth_result.redirect_to_login ? StateCode::k302MoveTemporarily : auth_result.http_status);
+                if(auth_result.redirect_to_login)
+                {
+                    resp->addHeader("Location", "/html/login.html");
+                    resp->setConnectionClosed(true);
+                }
+                else
+                {
+                    resp->setContentMeta(MakeContentMeta(KnownMediaType::kApplicationJson));
+                    resp->appendBodyData(auth_result.message);
+                }
 
-        _httpCallBack(conn, context);
+                HTTP_F_INFO("authentication fail [%d][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req->path().c_str());
+
+                sendResponse(conn, context, resp->connectionClosed());
+
+                // 重置conn中的上下文
+                context = std::make_shared<HttpContext>();
+                conn->setContext(context);
+                continue;
+            }
+        }
+
+        try {
+            // 判断是否满足升级要素
+            if(context->maybeUpgrade())
+            {
+                auto outcome = _dispatch->handleWithOutcome(conn, context, false);
+                if(MatchStatus::kFound != outcome.status || nullptr == outcome.servlet)
+                {
+                    NotFound404Servlet::Handle(conn, context);
+                    resp->resetBodyData();
+
+                    sendResponse(conn, context, true);
+                    return;
+                }
+
+                outcome.servlet->handle(conn, context);
+
+                sendResponse(conn, context, resp->connectionClosed());
+                
+                // 链路升级成功
+                if(StateCode::k101SwitchingProtocols == resp->stateCode().toInt())
+                {
+                    HTTP_F_DEBUG("http upgrade succes\n");
+                    // 执行websocket session打开成功的回调
+                    _ws_server->onOpen(conn);
+                    // 兜底处理剩余字节
+                    _ws_server->drainRemainingWebSocketBytes(conn, buf, receiveTime);
+                    // 注意必须返回, websocket session 接管生命周期
+                    return;
+                }
+            }
+            else
+            {
+                _httpCallBack(conn, context);
+            }
+
+
+        } catch(const std::exception &e) {
+
+            HTTP_F_ERROR("http callback exception: %s \n", e.what());
+
+            is_exception = true;
+        } catch(...) {
+
+            HTTP_F_ERROR("http callback unknown exception\n");
+
+            is_exception = true;
+        }
+
+        if(is_exception)
+        {
+            ServerErr500Servlet::Handle(conn, context);
+            context->response()->setConnectionClosed(true);
+            context->response()->resetBodyData();
+
+            sendResponse(conn, context, true);
+            return;
+        }
         // 重置conn中的上下文
         context = std::make_shared<HttpContext>();
         conn->setContext(context);
+
     }
 
 
 }
 
-
-#if 1
 void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 {
-    auto work_func = [](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) {
+    auto work_func = [this](TcpConnectionPtr conn, HttpContextPtr ctx, std::shared_ptr<HttpServletDispatch> dispatch) {
 
-        auto req_ptr = ctx->request();
-        auto resp_ptr = ctx->response();
+        auto req = ctx->request();
+        auto resp = ctx->response();
 
-        HTTP_F_INFO("woker thread [%d]][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req_ptr->path().c_str());
+        HTTP_F_INFO("woker thread [%d][%s] ===> %s \n", conn->fd(), conn->name().c_str(), req->path().c_str());
 
-        const std::string &connection = req_ptr->getHeader("Connection");
-        bool closed = (connection == "close")
-                || (Version::kHttp10 == req_ptr->version()() && connection != "keep-alive");
-        resp_ptr->setConnectionClosed(closed);
+        const std::string &connection = req->getHeader("Connection");
 
-        // TODO 中间层检验
-        // 1. 身份鉴权
-        // if(身份鉴权 == 1)
-        // {
-            // 实际业务分发
-            dispatch->handle(conn, ctx);
+        bool closed = HeaderContainsToken(connection, "close")
+                || (Version::kHttp10 == req->version().toInt() && !HeaderContainsToken(connection, "keep-alive"));
+        resp->setConnectionClosed(closed);
 
-        // }
-
-        // TODO 这里都要改 send 接口不应该是string
-        conn->send(resp_ptr->toString());
-        if(resp_ptr->connectionClosed())
-        {
-            conn->shutdown();
-        }
-
+        dispatch->handle(conn, ctx);
+    
+        sendResponse(conn, ctx, resp->connectionClosed());
+        return;
     };
 
     if(_isPool)
     {
-        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submitTimeoutMs, work_func, conn, ctx, _dispatch);
+        auto submit_result = _businessThreadPool.trySubmitTask(_businessThreadPoolConfig.submit_timeout_ms, work_func, conn, ctx, _dispatch);
 
         if(!submit_result.ok())
         {
             HTTP_F_WARN("submit task error! fd[%d][%s], path[%s] \n", conn->fd(), conn->name().c_str(), ctx->request()->path().c_str());
 
             ServiceUnavailable503Servlet::Handle(conn, ctx);
-            conn->send(ctx->response()->toString());
-            conn->shutdown();
-            return;
+            return sendResponse(conn, ctx, true);
         }
 
     }
@@ -306,29 +436,20 @@ void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
 
 }
 
-#else
-void HttpServer::handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx)
+void HttpServer::sendResponse(TcpConnectionPtr conn, HttpContextPtr ctx, bool close_after_send)
 {
-    auto req = ctx->request();
     auto resp = ctx->response();
-    const std::string &connection = req->getHeader("Connection");
-    bool closed = (connection == "close")
-            || (Version::kHttp10 == req->version()() && connection != "keep-alive");
+    auto response_bytes = std::make_shared<std::vector<uint8_t>>(resp->toBytes());
 
-    HelloServlet svl;
-
-    resp->setConnectionClosed(closed);
-
-    svl.handle(conn, ctx);
-
-    conn->send(resp->toString());
-    if(resp->connectionClosed())
+    conn->send(*response_bytes);
+    if(close_after_send)
     {
         conn->shutdown();
+        return;
     }
-}
-#endif
 
+    return;
+}
 
 }
 }

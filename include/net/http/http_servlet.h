@@ -13,12 +13,14 @@
 #include "net/http/http_request.h"
 #include "net/http/http_router.h"
 
+#include <optional>
 #include <string>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 #include <mutex>
 #include <cstdint>
+#include <filesystem>
 
 namespace kit_muduo {
 namespace http {
@@ -69,9 +71,9 @@ struct RouteInfo {
 };
 
 enum class MatchStatus {
-    Found,
-    PathFoundMethodNotAllowed,
-    NotFound,
+    kFound,
+    kPathFoundMethodNotAllowed,
+    kNotFound,
 };
 
 
@@ -171,6 +173,40 @@ public:
     static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
 };
 
+class PayloadTooLarge413Servlet: public HttpServlet
+{
+public:
+    PayloadTooLarge413Servlet();
+    ~PayloadTooLarge413Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+};
+
+class URITooLong414Servlet: public HttpServlet
+{
+public:
+    URITooLong414Servlet();
+    ~URITooLong414Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+};
+
+class RequestHeaderFieldsTooLarge431Servlet: public HttpServlet
+{
+public:
+    RequestHeaderFieldsTooLarge431Servlet();
+    ~RequestHeaderFieldsTooLarge431Servlet() = default;
+
+    void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+
+    static void Handle(TcpConnectionPtr conn, HttpContextPtr ctx);
+};
+
+
 
 class ServerErr500Servlet: public HttpServlet
 {
@@ -204,12 +240,24 @@ public:
 class StaticFileServlet: public HttpServlet
 {
 public:
-    StaticFileServlet();
+    explicit StaticFileServlet(std::filesystem::path static_root_path);
 
     ~StaticFileServlet() = default;
 
     void handle(TcpConnectionPtr conn, HttpContextPtr ctx) override;
+private:
+    std::filesystem::path static_root_;
+};
 
+
+struct HttpDispatchOutcome
+{
+    MatchStatus status{MatchStatus::kNotFound};
+    uint64_t route_id{0};
+    std::string route_pattern;
+    MethodMask allowed_methods{ExpectHttpMethods::None};
+    HttpServlet::Ptr servlet;
+    std::string servlet_name;
 };
 
 
@@ -221,6 +269,8 @@ class HttpServletDispatch
 public:
     HttpServletDispatch();
     ~HttpServletDispatch() = default;
+
+    HttpDispatchOutcome handleWithOutcome(TcpConnectionPtr conn, HttpContextPtr ctx, bool is_auto = true);
 
     void handle(TcpConnectionPtr conn, HttpContextPtr ctx);
 
@@ -264,7 +314,8 @@ private:
     };
 
     struct MatchResult {
-        MatchStatus status{MatchStatus::NotFound};
+        uint64_t id{0};
+        MatchStatus status{MatchStatus::kNotFound};
         HttpServlet::Ptr servlet;
         MethodMask allowed_methods{ExpectHttpMethods::None};
     };

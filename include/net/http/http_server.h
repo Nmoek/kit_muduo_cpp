@@ -11,6 +11,9 @@
 
 
 #include "base/noncopyable.h"
+#include "base/time_stamp.h"
+#include "net/buffer.h"
+#include "net/inet_address.h"
 #include "net/tcp_server.h"
 #include "net/http/http_servlet.h"
 #include "net/http/http_request.h"
@@ -23,18 +26,36 @@
 
 namespace kit_muduo::http {
 
+enum class HttpDispatchResult
+{
+    kContinueHttp,      // 普通 HTTP，请重置 HttpContext，继续处理后续 HTTP 请求
+    kProtocolUpgraded,  // 已切换协议，不要重置 HttpContext，不要继续 HTTP parse
+    kClose             // 已发送响应并准备关闭
+};
+
+struct BusinessThreadPoolConfig
+{
+    /// @brief 最大线程数
+    int32_t max_threads{0};
+    int32_t max_task_queue{0};
+    int32_t thread_idle_seconds{0};
+    int32_t submit_timeout_ms{0};
+};
+
 class HttpServer: Noncopyable
 {
 public:
     using HttpCallBack = std::function<void(TcpConnectionPtr, HttpContextPtr)>;
+    using StopCallBack = TcpServer::StopCb;
 
-    struct BusinessThreadPoolConfig
+    struct AuthCheckResult
     {
-        int32_t threadMaxThreshold{0};
-        int32_t taskQueueMaxThreshold{0};
-        int32_t threadMaxIdleInterval{0};
-        int32_t submitTimeoutMs{0};
+        bool ok{true};
+        int32_t http_status{200};
+        std::string message;
+        bool redirect_to_login{false};
     };
+    using AuthCallback = std::function<AuthCheckResult(HttpContextPtr)>;
 
     HttpServer(kit_muduo::EventLoop *loop, const InetAddress &addr, const std::string &name, bool isPool = true, TcpServer::Option option = TcpServer::Option::kNoRusePort);
 
@@ -42,9 +63,17 @@ public:
 
     void start();
 
+    void stop();
+    
+    void stopAsync(StopCallBack done = StopCallBack());
+
+    const InetAddress& getBindAddr() const { return _server.getBindAddr(); }
+
     kit_muduo::EventLoop *getLoop() const { return _server.getLoop(); }
 
     void setHttpCallback(const HttpCallBack &cb) { _httpCallBack = std::move(cb); }
+
+    void setAuthCallback(AuthCallback cb) { _authCallBack = std::move(cb); }
 
     void setThreadNum(int32_t nums) { _server.setThreadNum(nums); }
 
@@ -72,6 +101,8 @@ public:
     bool Delete(const std::string &url, HttpServlet::Ptr svl);
     bool Delete(const std::string &url, const FunctionServlet::CallBack &cb);
 
+    bool Ws(const std::string &url, WsPrepareCb cb);
+
     // ---- 删 ----
     bool removeRoute(uint64_t route_id);
     size_t removeRoute(const std::string &pattern, MethodMask methods);
@@ -90,9 +121,13 @@ private:
     // http服务器默认处理函数
     void handleRequest(TcpConnectionPtr conn, HttpContextPtr ctx);
 
+    void sendResponse(TcpConnectionPtr conn, HttpContextPtr ctx, bool close_after_send);
+
 private:
     TcpServer _server;
+    WebSocketServerPtr _ws_server;
     HttpCallBack _httpCallBack;
+    AuthCallback _authCallBack;
     ThreadPool _businessThreadPool;// 注意: 这个是http业务额外的线程池，和处理网络连接evnet_loop的线程池侧重点不一样
     std::shared_ptr<HttpServletDispatch> _dispatch;
     bool _isPool;   // 是否使用线程池
