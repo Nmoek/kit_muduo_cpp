@@ -293,7 +293,9 @@ if(MUDUO_TEST OR MUDUO_TEST.LOG)
 endif()
 
 # Config测试 test_config
-add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config tests/test_config.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config
+    tests/test_config.cpp
+    src/app_config.cpp)
 
 # 基础编码与队列测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.BYTES_CODEC test_bytes_codec tests/test_bytes_codec.cpp)
