@@ -8,16 +8,84 @@
  */
 
 #include "base/log.h"
-#include <iostream>
+#include "base/log_appender.h"
+#include "base/log_config.h"
+#include "base/log_formatter.h"
 
-namespace kit_muduo
+#include <atomic>
+#include <cassert>
+#include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <vector>
+
+namespace kit_muduo {
+
+namespace {
+
+LogFormatter::Ptr MakeFormatter(const std::string &pattern)
 {
+    auto formatter = std::make_shared<LogFormatter>(pattern.empty() ? kLogFormatDefaultPattern : pattern);
+    if(!formatter->valid())
+    {
+        throw std::invalid_argument(
+            "invalid log formatter: " + formatter->error());
+    }
+    return formatter;
+}
+
+
+LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
+    const LogAppenderConfig &config, const LogFormatter::Ptr &formatter, const std::string& logger_name, size_t appender_index)
+{
+    LogAppender::Ptr appender;
+    if(LogAppenderType::kStdout == config.type)
+    {
+        auto c = std::make_shared<ConsoleAppender>();
+        c->setLevel(config.level);
+        c->setFormatter(config.formatter.empty() ? formatter : MakeFormatter(config.formatter));
+        appender = std::move(c);
+    }
+    else
+    {
+        auto f = std::make_shared<FileAppender>(file_register.acquire(config.file_path));
+        f->setLevel(config.level);
+        f->setFormatter(config.formatter.empty() ? formatter : MakeFormatter(config.formatter));
+
+        // File类型输出器需要确保路径能够打开
+        std::string open_error;
+        if(!f->openForAppend(&open_error))
+        {
+            throw ConfigError(ConfigContext{
+                .source = "runtime",
+                .node_path = "system.log.loggers[" + logger_name
+                    + "].appenders["
+                    + std::to_string(appender_index)
+                    + "].file_path",
+            }
+            ,open_error);
+        }
+
+        appender = std::move(f);
+
+    }
+
+    return appender;
+}
+
+struct PreparedLogger
+{
+    LoggerConfig config;
+    LogFormatter::Ptr formatter;
+    std::list<LogAppender::Ptr> appenders;
+};
+
+}
 
 Logger::Logger(const std::string &name)
-    :_name(name)
-    ,_level(LogLevel::DEBUG)
+    :name_(name)
+    ,level_(LogLevel::DEBUG)
 {
-    addAppender(std::make_shared<ConsoleAppender>());
 
 }
 
@@ -27,53 +95,181 @@ Logger::Logger(const std::string &name)
     DEBUG   INFO   WARN  ERROR   FATAL
             INFO
 */
-void Logger::log(LogAttr::Ptr pattr)
+void Logger::log(LogAttr::Ptr attr)
 {
-    if(pattr->getLevel() < _level)
+    if(!attr || !shouldLog(attr->getLevel()))
+    {
         return;
+    }
 
-    std::unique_lock<std::mutex> lock(_appendersMtx);
-    for(auto &a : _appenders)
+    logUnchecked(attr);
+}
+
+
+void Logger::logUnchecked(LogAttr::Ptr attr)
+{
+    if(!attr)
+    {
+        return;
+    }
+
+    if(auto root = getRootFallback())
+    {
+        root->logUnchecked(std::move(attr));
+        return;
+    }
+    std::vector<LogAppender::Ptr> appender_snapshot;
+
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    appender_snapshot.assign(appenders_.begin(), appenders_.end());
+    lock.unlock();
+
+    // 快照持有 shared_ptr，保证本轮派发完成前 Appender 保持有效。
+    for(auto &a : appender_snapshot)
     {
         if(a)
-            a->append(pattr);
+        {
+            a->append(attr);
+        }
     }
 
 }
 
 
+
 void Logger::addAppender(LogAppender::Ptr pappender)
 {
-    std::unique_lock<std::mutex> lock(_appendersMtx);
-    _appenders.push_back(pappender);
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    root_fallback_.reset();
+    appenders_.push_back(std::move(pappender));
+    output_route_.store(OutputRoute::kOwnAppenders, std::memory_order_release);
 }
 
 void Logger::delAppender(LogAppender::Ptr pappender)
 {
-    std::unique_lock<std::mutex> lock(_appendersMtx);
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
 
-    for(auto it = _appenders.begin();it != _appenders
+    for(auto it = appenders_.begin();it != appenders_
     .end();++it)
     {
         if(*it == pappender)
         {
-            _appenders.erase(it);
+            appenders_.erase(it);
+            if(appenders_.empty())
+            {
+                output_route_.store(OutputRoute::kMuted, std::memory_order_release);
+            }
             return;
         }
     }
     return;
 }
 
+void Logger::clearAppender()
+{
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    appenders_.clear();
+    output_route_.store(OutputRoute::kMuted, std::memory_order_release);
+}
+
+bool Logger::shouldLog(LogLevel::Level level) const
+{
+    auto route = output_route_.load(std::memory_order_acquire);
+
+    // 静音状态不输出
+    if(OutputRoute::kMuted == route)
+    {
+        return false;
+    }
+    // 慢路径单独拆分
+    if(OutputRoute::kRootFallback == route)
+    {
+        return shouldLogWithRootFallback(level);
+    }
+
+    return level >= getLevel();
+}
+
+void Logger::replaceAppenders(std::list<LogAppender::Ptr> appenders)
+{
+    const auto route = appenders.empty()
+        ? OutputRoute::kMuted
+        : OutputRoute::kOwnAppenders;
+
+    std::lock_guard<std::mutex> lock(appenders_mtx_);
+    root_fallback_.reset();
+    appenders_ = std::move(appenders);
+
+    output_route_.store(route, std::memory_order_release);
+}
+
+void Logger::useRootFallback(const Logger::Ptr& root)
+{
+    if(!root || root.get() == this)
+    {
+        throw std::logic_error("root fallback requires another logger");
+    }
+
+    std::lock_guard<std::mutex> lock(appenders_mtx_);
+    appenders_.clear();
+    root_fallback_ = root;
+
+    output_route_.store(OutputRoute::kRootFallback, std::memory_order_release);
+}
+
+Logger::Ptr Logger::getRootFallback() const
+{
+    if(OutputRoute::kRootFallback != output_route_.load())
+    {
+        return nullptr;
+    }
+
+    // double check
+    std::lock_guard<std::mutex> lock(appenders_mtx_);
+
+    if(OutputRoute::kRootFallback != output_route_.load())
+    {
+        return nullptr;
+    }
+
+    return root_fallback_.lock();
+}
+
+bool Logger::shouldLogWithRootFallback(LogLevel::Level level) const
+{
+
+    // double check
+    std::unique_lock<std::mutex> lock(appenders_mtx_);
+    const auto route = output_route_.load(std::memory_order_acquire);
+    
+    if(OutputRoute::kMuted == route)
+    {
+        return false;
+    }
+
+    if(OutputRoute::kOwnAppenders == route)
+    {
+        return level >= getLevel();
+    }
+
+    auto root = root_fallback_.lock();
+    
+    assert(root.get() != this);  // 不能自己指向自己fallback
+    lock.unlock(); // 一定要解锁
+
+    return root && root->shouldLog(level);
+    
+}
+
 /**************LogAttrWrap****************/
 
 LogAttrWrap::LogAttrWrap(LogAttr::Ptr attr)
-    :_attr(attr)
+    :attr_(attr)
 { }
 
 LogAttrWrap::~LogAttrWrap()
 {
-    if(_attr->getLogger()->getLevel() <= _attr->getLevel())
-        _attr->getLogger()->log(_attr);
+    attr_->getLogger()->logUnchecked(attr_);
 }
 
 
@@ -88,52 +284,165 @@ LogManager& LogManager::GetInstance()
 }
 
 LogManager::LogManager()
-    :_defaultLogger(std::make_shared<Logger>("root"))
+    :root_logger_(std::make_shared<Logger>("root"))
 {
-    _defaultLogger->addAppender(std::make_shared<ConsoleAppender>());
+    loggers_.emplace("root", root_logger_);
+
+    applyConfig(DefaultLogConfig());
 }
 
 
-Logger::Ptr LogManager::getDefLogger() const
+Logger::Ptr LogManager::getRootLogger() const
 {
-    return _defaultLogger;
+    return root_logger_;
 }
 
 void LogManager::addLogger(const std::string &name, Logger::Ptr logger)
 {
-    std::unique_lock<std::mutex> lock(_loggersMtx);
-    _loggers[name] = logger;
+    std::unique_lock<std::mutex> lock(loggers_mtx_);
+    loggers_[name] = logger;
 }
 
 Logger::Ptr LogManager::addLogger(const std::string &name)
 {
-    std::unique_lock<std::mutex> lock(_loggersMtx);
+    std::unique_lock<std::mutex> lock(loggers_mtx_);
     auto logger = std::make_shared<Logger>(name);
-    _loggers[name] = logger;
+    logger->useRootFallback(root_logger_);
+    loggers_[name] = logger;
     return logger;
 }
+
+
 
 Logger::Ptr LogManager::getLogger(const std::string& name)
 {
-    std::unique_lock<std::mutex> lock(_loggersMtx);
-    auto it = _loggers.find(name);
-    if(it != _loggers.end())
+    std::lock_guard<std::mutex> lock(loggers_mtx_);
+    return findOrCreateLoggerUnLocked(name);
+}
+
+
+Logger::Ptr LogManager::findOrCreateLoggerUnLocked(const std::string& name)
+{
+    if("root" == name)
+    {
+        return root_logger_;
+    }
+
+    auto it = loggers_.find(name);
+    if(it != loggers_.end())
     {
         return it->second;
     }
+
     auto logger = std::make_shared<Logger>(name);
-    _loggers[name] = logger;
+    logger->useRootFallback(root_logger_);
+    loggers_.emplace(name, logger);
     return logger;
 }
 
-void LogManager::delLogger(const std::string& name)
+
+// TODO 增加inotify监听文件变化 热更新时配置文件发生变化才需要加载  
+void LogManager::applyConfig(const LogConfig &config)
 {
-    std::unique_lock<std::mutex> lock(_loggersMtx);
-    auto it = _loggers.find(name);
-    if(it != _loggers.end())
-        _loggers.erase(it);
+    ValidateLogConfig(config);
+
+    file_register_.setFileConfig(config.file);
+
+    std::unordered_map<std::string, PreparedLogger> prepared;
+
+    // 读取配置 统一创建输出器
+    bool has_root = false;
+    for(auto &logger_config : config.loggers)
+    {
+        if("root" == logger_config.name)
+        {
+            has_root = true;
+        }
+
+        PreparedLogger item;
+        item.config = logger_config;
+        item.formatter = MakeFormatter(logger_config.formatter);
+
+        size_t i = 0;
+        for(auto &appender_config : logger_config.appenders)
+        {
+            item.appenders.push_back(MakeAppender(file_register_,
+                appender_config,
+                item.formatter, logger_config.name,
+                i++));
+        }
+        prepared.emplace(logger_config.name, std::move(item));
+    }
+    // 默认root的配置必须存在
+    if(!has_root)
+    {
+        throw std::invalid_argument("logger config default 'root' not found");
+    }
+    
+
+    std::lock_guard<std::mutex> lock(loggers_mtx_);
+
+    // root单独配置
+    auto &root_item = prepared.at("root");
+    root_logger_->setLevel(root_item.config.level);
+    root_logger_->replaceAppenders(std::move(root_item.appenders));
+
+    // 输出器创建成功后批量替换
+    for(auto &[name, item] : prepared)
+    {
+        if("root" == name)
+        {
+            continue;
+        }
+
+        auto logger = findOrCreateLoggerUnLocked(name);
+        logger->setLevel(item.config.level);
+        logger->replaceAppenders(std::move(item.appenders));
+    }
+
+    // 注意 日志器管理不存在删除语义
+    // 被移除的专属配置改为 root fallback，同名 logger 保持对象身份。
+    for(auto &[name, logger] : loggers_)
+    {
+        if("root" != name && prepared.find(name) == prepared.end() && nullptr != logger)
+        {
+            logger->useRootFallback(root_logger_);
+        }
+    }
+
 }
+
+LogFileSink::Ptr LogManager::acquireFileSink(const std::string &file_path)
+{
+    return file_register_.acquire(file_path);
+}
+
+namespace log_detail {
+
+Logger::Ptr GetBaseLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("base");
+    return logger;
+}
+
+Logger::Ptr GetNetLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("net");
+    return logger;
+}
+
+Logger::Ptr GetWebLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("web");
+    return logger;
+}
+
+Logger::Ptr GetDomainLogger()
+{
+    static const auto logger = LogManager::GetInstance().getLogger("domain");
+    return logger;
+}
+} // namespace log_detail
 
 
 } // namespace kit
-

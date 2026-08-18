@@ -9,10 +9,12 @@
 #ifndef __LOG_APPENDER_H__
 #define __LOG_APPENDER_H__
 
+#include <atomic>
 #include <memory>
 #include <fstream>
 #include <mutex>
 
+#include "base/log_file_sink.h"
 #include "base/log_level.h"
 #include "base/log_attr.h"
 #include "base/log_formatter.h"
@@ -32,12 +34,6 @@ public:
     virtual ~LogAppender() = default;
 
     /**
-     * @brief 日志输出
-     * @param[in] pattr 当前日志属性
-     */
-    virtual void log(LogAttr::Ptr pattr) = 0;
-
-    /**
      * @brief 日志输出(带锁)
      * @param[in] pattr 当前日志属性
      */
@@ -47,13 +43,13 @@ public:
      * @brief 设置日志格式器
      * @param[in] pfarmatter
      */
-    void setFomatter(LogFormatter::Ptr pfarmatter);
+    void setFormatter(LogFormatter::Ptr pfarmatter);
 
     /**
      * @brief 设置日志格式器
      * @param[in] pattern 模版字符串
      */
-    void setFomatter(const std::string & pattern);
+    void setFormatter(const std::string & pattern);
 
     /**
      * @brief 获取日志格式器
@@ -61,13 +57,35 @@ public:
      */
     LogFormatter::Ptr getFormatter() const;
 
+    /**
+     * @brief 设置日志输出器级别
+     * @param level
+     */
+    void setLevel(const LogLevel::Level level) noexcept { level_.store(level); }
+
+    /**
+     * @brief 获取日志输出器级别
+     * @return LogLevel::Level
+     */
+    LogLevel::Level getLevel() const noexcept { return static_cast<LogLevel::Level>(level_.load()); }
+
+protected:
+    /**
+     * @brief 日志输出
+     * @param[in] pattr 当前日志属性
+     */
+    virtual void log(LogAttr::Ptr pattr) = 0;
+    virtual void log(const std::string& log_data) = 0;
+
+
+
 protected:
     /// @brief 日志输出器级别
-    LogLevel::Level _level;
+    std::atomic_int32_t level_;
     /// @brief 日志格式器
-    LogFormatter::Ptr _formatter;
+    LogFormatter::Ptr formatter_;
     /// @brief 日志格式器锁(LogFormatter 内部不支持增删改查,因此内部不用锁,锁最外层即可)
-    mutable std::mutex _formatterMtx;
+    mutable std::mutex mtx_;
 };
 
 /**
@@ -81,6 +99,11 @@ public:
     ~ConsoleAppender() = default;
 
     void log(LogAttr::Ptr pattr) override;
+    void log(const std::string& log_data) override;
+
+public:
+    static std::mutex& GetConsoleMtx();
+
 };
 
 /**
@@ -91,27 +114,18 @@ class FileAppender: public LogAppender
 public:
     using Ptr = std::shared_ptr<FileAppender>;
 
-    FileAppender(const std::string &fileName);
-
+    FileAppender(LogFileSink::Ptr file_sink);
     ~FileAppender() = default;
 
-    bool reopen();
+    bool openForAppend(std::string* error_message = nullptr);
 
     void log(LogAttr::Ptr pattr) override;
+    void log(const std::string& log_data) override;
 
-    void setWriteMaxSize(uint64_t max_size) { _writeMaxSize = max_size; }
-
-public:
-    static constexpr uint64_t kWriteMaxSize = 1*1024*1024;
+    void flush() { file_sink_->flush(); }
 
 private:
-    /// @brief 输出文件路径
-    std::string _fileName;
-    /// @brief  文件流句柄
-    std::fstream _f;
-    /// @brief 当前一次性写入的大小
-    uint64_t _curSize;
-    uint64_t _writeMaxSize;
+    std::shared_ptr<LogFileSink> file_sink_;
 };
 
 //TODO: 网络传输(分布式)

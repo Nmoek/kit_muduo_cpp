@@ -26,11 +26,11 @@ ThreadPool::ThreadPool(int32_t initThreadCount)
     :init_thread_count_(initThreadCount)
     ,cur_thread_count_(0)
     ,busy_count_(0)
-    ,thread_max_threshhold_(THREAD_MAX_THRESHHOLD)
+    ,thread_max_threshhold_(kDefaultMaxThread)
     ,is_running_(false)
-    ,thread_max_idle_interval_(THREAD_MAX_IDLE_INTERVAL)
+    ,thread_max_idle_interval_(kDefaultMaxIdleInterval)
     ,cur_task_count_(0)
-    ,task_que_max_threshhold_(TASK_MAX_THRESHHOLD)
+    ,task_que_max_threshhold_(kDefaultMaxTaskQueue)
     ,mode_(FIXED_MOD)
 {
 }
@@ -133,8 +133,6 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
                         // 先解队列锁
                         lock.unlock();
 
-                        TPOOL_DEBUG() << "notEmpty_ wait timeout, not get task!" << std::endl;
-
                         if(markThreadExited(generateId))
                         {
                             need_exit = true;
@@ -170,7 +168,7 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
         }
 
         
-        TPOOL_F_INFO("wait task size=%d, isRun=%d \n", task_que_.size(), is_running_.load());
+        TPOOL_F_DEBUG("wait task size=%d, isRun=%d \n", task_que_.size(), is_running_.load());
 
         auto task = task_que_.front();
         task_que_.pop();
@@ -328,8 +326,7 @@ std::vector<WorkThread::UPtr> ThreadPool::cleanupExitedThreadsUnLock()
         assert(it != pool_.end());
         has_exited_threads.push_back(std::move(it->second));
         
-        auto n = pool_.erase(id);
-        assert(n == 1);
+        pool_.erase(id);
     }
     exited_ids_.clear();
     return has_exited_threads;

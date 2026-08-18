@@ -50,11 +50,11 @@ public:
 
     pthread_t getTid() const { return _tid; }
 
-    std::string getThreadName() const { return _threadName; }
+    const std::string& getThreadName() const { return _threadName; }
 
     pid_t getPid() const  { return _pid; }
 
-    std::string getFileName() const { return _fileName; }
+    const std::string& getFileName() const { return _fileName; }
 
     /**
      * @brief 获取日志文件的纯文件名
@@ -67,9 +67,9 @@ public:
 
     std::shared_ptr<Logger> getLogger() const { return _logger; };
 
-    std::string getLoggerName() const { return _loggerName; }
+    const std::string& getLoggerName() const { return _loggerName; }
 
-    std::string getModule() const { return _module; }
+    const std::string& getModule() const { return _module; }
 
     std::stringstream& getSS() { return _content; }
 

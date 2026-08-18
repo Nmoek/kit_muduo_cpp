@@ -9,111 +9,144 @@
 
 
 #include <iostream>
+#include <stdexcept>
 #include <string.h>
 #include <errno.h>
 
 #include "base/log_appender.h"
-namespace kit_muduo
+#include "base/log_file_sink.h"
+namespace kit_muduo {
+
+namespace {
+
+inline LogFileSink::Ptr CheckSink(LogFileSink::Ptr sink)
 {
+    if(!sink)
+    {
+        throw std::invalid_argument("log file sink null");
+    }
+    return sink;
+}
+}
 
 /***********LogAppender************/
 
 LogAppender::LogAppender()
-    :_level(LogLevel::DEBUG)
-    ,_formatter(std::make_shared<LogFormatter>())
+    :level_(LogLevel::DEBUG)
+    ,formatter_(std::make_shared<LogFormatter>())
 {
 
 }
 
 LogAppender::LogAppender(LogLevel::Level level, LogFormatter::Ptr formatter)
-    :_level(level)
-    ,_formatter(formatter)
+    :level_(level)
+    ,formatter_(formatter)
 {
 
 }
 
-void LogAppender::append(LogAttr::Ptr pattr)
+void LogAppender::append(LogAttr::Ptr attr)
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    log(pattr);
+    
+    if(!attr || attr->getLevel() < level_.load(std::memory_order_acquire))
+    {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(mtx_);
+    auto formatter = formatter_;
+    lock.unlock();
+
+    if(!formatter)
+    {
+        return;
+    }
+
+    const std::string &log_data = formatter->format(attr);
+    if(log_data.empty())
+    {
+        return;
+    }
+
+    log(log_data);
 }
 
-void LogAppender::setFomatter(LogFormatter::Ptr pfarmatter)
+void LogAppender::setFormatter(LogFormatter::Ptr pfarmatter)
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    _formatter = pfarmatter;
+    std::unique_lock<std::mutex> lock(mtx_);
+    formatter_ = pfarmatter;
 }
 
-void LogAppender::setFomatter(const std::string & pattern)
+void LogAppender::setFormatter(const std::string & pattern)
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    _formatter = std::make_shared<LogFormatter>(pattern);
+    std::unique_lock<std::mutex> lock(mtx_);
+    formatter_ = std::make_shared<LogFormatter>(pattern);
 }
 
 
 LogFormatter::Ptr LogAppender::getFormatter() const
 {
-    std::unique_lock<std::mutex> lock(_formatterMtx);
-    return _formatter;
+    std::unique_lock<std::mutex> lock(mtx_);
+    return formatter_;
 }
+
+
 
 /*********ConsoleAppender***********/
 
-void ConsoleAppender::log(LogAttr::Ptr pattr)
+void ConsoleAppender::log(LogAttr::Ptr attr)
 {
-
-    if(pattr->getLevel() < _level)
+    if(!attr || attr->getLevel() < level_)
         return;
 
-    if(_formatter)
-        std::cout << _formatter->format(pattr);
+    if(formatter_)
+    {
+        std::cout << formatter_->format(attr);
+    }
+}
+
+
+void ConsoleAppender::log(const std::string& log_data)
+{
+    std::lock_guard<std::mutex> lock(GetConsoleMtx());
+    std::cout << log_data;
+}
+
+std::mutex& ConsoleAppender::GetConsoleMtx()
+{
+    static std::mutex mtx;
+    return mtx;
 }
 
 /*********FileAppender***********/
-FileAppender::FileAppender(const std::string &fileName)
-    :_fileName(fileName)
-    ,_curSize(0)
-    ,_writeMaxSize(kWriteMaxSize)
+FileAppender::FileAppender(LogFileSink::Ptr file_sink)
+    :file_sink_(CheckSink(file_sink))
 {
 
 }
 
-bool FileAppender::reopen()
+bool FileAppender::openForAppend(std::string* error_message)
 {
-    if(_f.is_open())
-        _f.close();
-
-    _f.open(_fileName, std::ios::app | std::ios::binary);
-    if(!_f.is_open())
-    {
-        std::cerr << _fileName
-            << ", open error: "
-            << errno << ": " << ::strerror(errno) << std::endl;
-        return false;
-    }
-    return true;
+    return file_sink_->ensureOpen(error_message);
 }
 
 
-void FileAppender::log(LogAttr::Ptr pattr)
+void FileAppender::log(LogAttr::Ptr attr)
 {
-    if(pattr->getLevel() < _level)
+    if(!attr || attr->getLevel() < level_)
         return;
+    
 
-    if(_f.is_open() || reopen())
+    if(formatter_)
     {
-        if(_formatter)
-        {
-            const std::string& log_data = _formatter->format(pattr);
-            _curSize += log_data.size();
-            _f << log_data;
-            if(_curSize >= _writeMaxSize)
-            {
-                _f.flush();
-                _curSize = 0;
-            }
-        }
+        file_sink_->append(formatter_->format(attr));
     }
-
 }
+
+
+void FileAppender::log(const std::string& log_data)
+{
+    // TODO 返回值暂时没用
+   (void)file_sink_->append(log_data);
+}
+
 } //namespace kit

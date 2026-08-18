@@ -7,8 +7,11 @@
  * @copyright Copyright (c) 2025 Kewin Li
  */
 #include "base/log_level.h"
+#include <algorithm>
+#include <cctype>
 
-using namespace kit_muduo;
+
+namespace kit_muduo {
 
 std::string LogLevel::ToString(Level level)
 {
@@ -27,4 +30,22 @@ std::string LogLevel::ToString(Level level)
             return "UNKNOW";
     }
     return "UNKNOW";
+}
+
+LogLevel::Level LogLevel::FromString(const std::string &value)
+{
+    std::string temp{value};
+    std::for_each(temp.begin(), temp.end(), [](auto &c){ c = std::toupper(c); });
+
+#define XX(level) \
+    if(#level == temp) return LogLevel::Level::level;
+
+    XX(DEBUG);
+    XX(INFO);
+    XX(WARN);
+    XX(ERROR);
+    XX(FATAL);
+#undef XX
+    return LogLevel::Level::UNKNOW;
+}
 }

@@ -28,12 +28,19 @@ public:
         FATAL    ,
     };
 
+    static inline bool IsValid(LogLevel::Level level)
+    {
+        return level >= DEBUG && level <= FATAL;
+    }
+
     /**
      * @brief 枚举---->字符串
      * @param[in] level  日志级别
      * @return std::string
      */
     static std::string ToString(Level level);
+
+    static LogLevel::Level FromString(const std::string &value);
 };
 
 

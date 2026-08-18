@@ -1,0 +1,47 @@
+tracepoint:syscalls:sys_enter_futex
+/comm == "log_benchmark"/
+{
+    $cmd = args->op & 0x7f;
+    @futex_commands[$cmd] = count();
+
+    if($cmd == 0 || $cmd == 9)
+    {
+        @wait_enter = count();
+        @wait_start_ns[tid] = nsecs;
+    }
+
+    if($cmd == 1 || $cmd == 10)
+    {
+        @wake_enter = count();
+        @wake_start[tid] = 1;
+        @wake_requested = sum(args->val);
+    }
+}
+
+tracepoint:syscalls:sys_exit_futex
+/@wait_start_ns[tid]/
+{
+    $duration_ns = nsecs - @wait_start_ns[tid];
+
+    @wait_return[args->ret] = count();
+    @wait_all_total_ns = sum($duration_ns);
+    @wait_all_max_ns = max($duration_ns);
+    @wait_all_us = hist($duration_ns / 1000);
+
+    if(args->ret == 0)
+    {
+        @wait_woken = count();
+        @wait_woken_total_ns = sum($duration_ns);
+        @wait_woken_max_ns = max($duration_ns);
+        @wait_woken_us = hist($duration_ns / 1000);
+    }
+
+    delete(@wait_start_ns[tid]);
+}
+
+tracepoint:syscalls:sys_exit_futex
+/@wake_start[tid]/
+{
+    @wake_return[args->ret] = count();
+    delete(@wake_start[tid]);
+}

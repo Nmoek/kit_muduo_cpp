@@ -9,6 +9,7 @@
 #ifndef __LOG_FORMATTER_H__
 #define __LOG_FORMATTER_H__
 
+#include <array>
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -19,14 +20,13 @@
 
 #include "base/log_level.h"
 #include "base/log_attr.h"
+#include "base/time_stamp.h"
 
 
 namespace kit_muduo {
 
-#define LOG_FORMAT_DEFAULT_PATTERN  "[%d][%p][%f #%l][%g.%mo]<%t:%tn> %m"
-
-#define DATETIME_DEFAULT_FORMAT_PATTERN  "%Y-%m-%d %H:%M:%S"
-
+constexpr const char* kLogFormatDefaultPattern = "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m";
+constexpr const char* kDatetimeFormatDefaultPattern = "%Y-%m-%d %H:%M:%S";
 
 /**
  * @brief 格式项基类
@@ -45,8 +45,17 @@ public:
      * @param[in out] ss  字符串流
      * @param[in] pattr 日志属性
      */
-    virtual void format(std::stringstream &ss, LogAttr::Ptr pattr) = 0;
+    virtual void format(std::stringstream &ss, const LogAttr::Ptr& pattr) = 0;
 
+    /**
+     * @brief 判断是否存在子模版
+     * @return true 
+     * @return false 
+     */
+    bool hasSub() const noexcept { return !sub_pattern_.empty(); }
+
+protected:
+    std::string sub_pattern_;
 };
 
 /**
@@ -57,7 +66,7 @@ class NewLineFormatItem: public FormatItem
 public:
     NewLineFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << "\n"; }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << "\n"; }
 };
 
 /**
@@ -68,7 +77,7 @@ class ContentFormatItem: public FormatItem
 public:
     ContentFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getContent(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getContent(); }
 };
 
 /**
@@ -79,7 +88,7 @@ class LevelFormatItem: public FormatItem
 public:
     LevelFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << LogLevel::ToString(pattr->getLevel()); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << LogLevel::ToString(pattr->getLevel()); }
 };
 
 /**
@@ -90,18 +99,29 @@ class ElapseFormatItem: public FormatItem
 public:
     ElapseFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getElapse(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getElapse(); }
 };
 
 /**
- * @brief %t-------当前线程ID
+ * @brief %tid-------用户进程线程TID
  */
-class ThreadIdFormatItem: public FormatItem
+class ThreadTidFormatItem: public FormatItem
 {
 public:
-    ThreadIdFormatItem(const std::string &str = "") { }
+    ThreadTidFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getPid(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getTid(); }
+};
+
+/**
+ * @brief %pid-------内核线程PID
+ */
+class ThreadPidFormatItem: public FormatItem
+{
+public:
+    ThreadPidFormatItem(const std::string &str = "") { }
+
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getPid(); }
 };
 
 /**
@@ -112,7 +132,7 @@ class ThreadNameFormatItem: public FormatItem
 public:
     ThreadNameFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getThreadName(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getThreadName(); }
 };
 
 
@@ -124,7 +144,7 @@ class TabFormatItem: public FormatItem
 public:
     TabFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << "\t"; }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << "\t"; }
 };
 
 /**
@@ -134,29 +154,21 @@ class DateTimeFormatItem: public FormatItem
 {
 public:
     DateTimeFormatItem(const std::string &str)
-        :_timeFormat(str)
+        :datetime_format_(str)
     {
-        if(_timeFormat.empty())
-            _timeFormat = DATETIME_DEFAULT_FORMAT_PATTERN;
+        if(datetime_format_.empty())
+        {
+            datetime_format_ = kDatetimeFormatDefaultPattern;
+        }
     }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override
     {
-        time_t t = (time_t)(pattr->getTimeStamp() / 1000);
-        struct tm tm = {0};
-        char timeStr[32] = {0};
-        char buf[96] = {0};
-
-        tm = *localtime_r(&t, &tm);
-        strftime(timeStr, sizeof(timeStr), _timeFormat.c_str(), &tm);
-
-        snprintf(buf, sizeof(buf), "%s.%03d", timeStr, (int)(pattr->getTimeStamp() % 1000));
-
-        ss << buf;
+        ss << TimeStamp(pattr->getTimeStamp()).toLogString(datetime_format_);
     }
 private:
     /// @brief 时间日期格式化字符串
-    std::string _timeFormat{""};
+    std::string datetime_format_{""};
 };
 
 /**
@@ -167,7 +179,7 @@ class FileFormatItem: public FormatItem
 public:
     FileFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getFileBaseName(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getFileBaseName(); }
 };
 
 /**
@@ -178,7 +190,7 @@ class LineFormatItem: public FormatItem
 public:
     LineFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getLine(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getLine(); }
 };
 
 /**
@@ -189,7 +201,7 @@ class LogNameFormatItem: public FormatItem
 public:
     LogNameFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << pattr->getLoggerName(); }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << pattr->getLoggerName(); }
 };
 
 /**
@@ -200,7 +212,7 @@ class ModuleNameFormatItem: public FormatItem
 public:
     ModuleNameFormatItem(const std::string &str = "") { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override
     {
         auto str = pattr->getModule().size() ? pattr->getModule() : "null";
         ss << str;
@@ -215,12 +227,12 @@ class StringFormatItem: public FormatItem
 public:
     using Ptr = std::shared_ptr<StringFormatItem>;
     StringFormatItem(const std::string &str = "")
-        :_str(str)
+        :str_(str)
     { }
 
-    void format(std::stringstream &ss, LogAttr::Ptr pattr) override { ss << _str; }
+    void format(std::stringstream &ss, const LogAttr::Ptr& pattr) override { ss << str_; }
 private:
-    std::string _str;
+    std::string str_;
 };
 
 /**
@@ -235,33 +247,50 @@ public:
 
     using ItemMap = std::unordered_map<std::string, ItemFuncWrap>;
 
-    LogFormatter(const std::string& pattern = LOG_FORMAT_DEFAULT_PATTERN);
+
+    explicit LogFormatter(const std::string& pattern = kLogFormatDefaultPattern);
 
     /**
      * @brief 日志内容格式化
      * @param[in] pattr
      * @return std::string
      */
-    std::string format(LogAttr::Ptr pattr);
+    std::string format(const LogAttr::Ptr& pattr);
+
+    const std::string &pattern() const noexcept { return pattern_; }
+
+    bool valid() const noexcept { return valid_; }
+
+    const std::string &error() const noexcept { return error_; }
 
 public:
     /**
      * @brief 静态初始化, 调用时加载, 防止启动加载时顺序问题
      * @return ItemMap&
      */
-    static ItemMap& GetMap();
+    static const ItemMap& GetMap();
 private:
     /**
      * @brief 格式器初始化: 模版解析 格式对象生成
      */
     void init();
 
+    inline void fail(std::string reason)
+    {
+        valid_ = false;
+        error_ = std::move(reason);
+        format_items_.clear();
+    }
+
 private:
     /// @brief 格式模版字符串
-    std::string _pattern{""};
+    std::string pattern_{""};
     /// @brief 格式模版子项
-    std::vector<FormatItem::Ptr> _formatItems;
-
+    std::vector<FormatItem::Ptr> format_items_;
+    /// @brief 当前格式是否合法
+    bool valid_{true};
+    /// @brief 格式错误原因
+    std::string error_;
 };
 
 

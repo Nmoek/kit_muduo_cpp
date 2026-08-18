@@ -9,30 +9,70 @@
 
 #include "base/log_formatter.h"
 
+#include <cctype>
 #include <iostream>
+#include <sstream>
 
-namespace kit_muduo
+namespace kit_muduo {
+
+namespace {
+
+thread_local std::stringstream t_formatter_ss;
+
+
+/**
+ * @brief 从预处理过的模版map中反向匹配当前模版此时位置上的 字符串 是否合法
+ * @param cur_pattern 
+ * @param begin 
+ * @return LogFormatter::ItemMap::const_iterator 
+ */
+LogFormatter::ItemMap::const_iterator FindLongestItem(const std::string &cur_pattern, size_t begin_pos)
 {
+    const auto& item_map = LogFormatter::GetMap();
+    auto selected = item_map.end();
+    size_t selected_size = 0;
 
-/****************FormatItem******************/
 
+    for(auto it = item_map.begin();it != item_map.end();++it)
+    {
+        const std::string& main_pattern = it->first;
+        if(main_pattern.size() <= selected_size
+            || begin_pos + main_pattern.size() > cur_pattern.size()
+            || cur_pattern.compare(begin_pos, main_pattern.size(), main_pattern) != 0)
+        {
+            continue;
+        }
+        selected = it;
+        selected_size = main_pattern.size();
+    }
+
+    return selected;
+}
+
+inline bool HasSubPattern(const std::string& main_pattern)
+{
+    return "d" == main_pattern;
+}
+
+
+} //namespace
 
 
 /*
     %n-------换行符 '\n'
     %m-------日志内容
-    %p-------level日志级别
+    %le-------level日志级别
     %r-------程序启动到现在的耗时
     %%-------输出一个'%'
-    %t-------当前线程ID
+    %tid-----用户进程线程TID
+    %pid-----内核线程PID
     %T-------Tab键
     %tn------当前线程名称
     %d-------日期和时间
     %f-------文件名
     %l-------行号
-    %g-------日志器名字
-    %mo------模块名字
-    %c-------当前协程ID
+    %gn-------日志器名字
+    %mn------模块名字
 
 一般情况：%n [%l] <%T> ....
 特殊情况1:  %d{%Y-%M-%d %H:%m:%s.%ms}  {...}表示子模版
@@ -42,171 +82,139 @@ namespace kit_muduo
 */
 
 // 预处理模版对应的子类
-// BUG【FIX】: 预处理有问题
-LogFormatter::ItemMap& LogFormatter::GetMap()
+const LogFormatter::ItemMap& LogFormatter::GetMap()
 {
-    static ItemMap m = {
-        #define XX(P, ITEM) \
-            {#P, [](const std::string &sub_pattern){ return std::make_shared<ITEM>(sub_pattern); }}
+    static const ItemMap m = {
+#define XX(P, ITEM) \
+        {#P, [](const std::string &sub_pattern){ return std::make_shared<ITEM>(sub_pattern); }}
 
-            XX(n, NewLineFormatItem),
-            XX(m, ContentFormatItem),
-            XX(p, LevelFormatItem),
-            XX(r, ElapseFormatItem),
-            XX(t, ThreadIdFormatItem),
-            XX(T, TabFormatItem),
-            XX(tn, ThreadNameFormatItem),
-            XX(d, DateTimeFormatItem),
-            XX(f, FileFormatItem),
-            XX(l, LineFormatItem),
-            XX(g, LogNameFormatItem),
-            XX(mo, ModuleNameFormatItem),
-        #undef XX
+        XX(n, NewLineFormatItem),
+        XX(m, ContentFormatItem),
+        XX(le, LevelFormatItem),
+        XX(r, ElapseFormatItem),
+        XX(tid, ThreadTidFormatItem),
+        XX(pid, ThreadPidFormatItem),
+        XX(T, TabFormatItem),
+        XX(tn, ThreadNameFormatItem),
+        XX(d, DateTimeFormatItem),
+        XX(f, FileFormatItem),
+        XX(l, LineFormatItem),
+        XX(gn, LogNameFormatItem),
+        XX(mn, ModuleNameFormatItem),
+#undef XX
         };
     return m;
 }
 
 
 FormatItem::FormatItem(const std::string& sub_pattern)
+    :sub_pattern_(sub_pattern)
 {
 
 }
 
 
-
-
-/****************LogFormatter******************/
-
 LogFormatter::LogFormatter(const std::string& pattern)
-    :_pattern(pattern)
+    :pattern_(pattern)
 {
     init();
 }
 
 // std::regex LogFormatter::_patternReg(R"((%%) | (%([a-zA-Z]\{(.*?)\})) | (%([a-zA-Z]+)) | ([^%]+))");
 
-/**
- * @brief  判断当前字符是否是合法的模版字符范围(a~z A~Z) 不支持数字以及其他符号
- * @param[in] c
- * @return true
- * @return false
- */
-static inline bool isPatternChar(char c)
-{
-    return (c >= 'a' &&  c <= 'z') || (c >= 'A' && c <= 'Z');
-}
 
-#if 0
-// 有限状态机版本
+#if 1
+// 手写有限状态机版本 
+// HACK放弃正则匹配的原因是: 1. 存在匹配漏洞 静默忽略 2.错误原因难以表达 3. 手写性能和正则匹配差不多
 void LogFormatter::init()
 {
-    if(_pattern.empty())
-        return;
+    valid_ = true;
+    error_.clear();
+    format_items_.clear();
 
-    // 主模版标识符 + 子模版串 + 主模版是否有效
-    using PatternTmp = std::tuple<std::string, std::string, bool>;
-    std::vector<PatternTmp> tmpv;
+    std::string text;
+    std::string main_pattern;
 
-    std::string tmpStr{""};
-    std::string patternStr{""};
-    std::string subPatternStr{""};
-    bool isVaild = false;
-
-    for(int i = 0;i < _pattern.size();)
+    for(size_t i = 0;i < pattern_.size();)
     {
         // 1. 普通字符串缓存处理
-        if(_pattern[i] != '%')
+        if(pattern_[i] != '%')
         {
-            tmpStr += _pattern[i];
+            const size_t text_be_pos = i;
+            while(i < pattern_.size() && pattern_[i] != '%')
+            {
+                ++i;
+            }
+            text = pattern_.substr(text_be_pos, i - text_be_pos);
+            // 普通字符串加入缓存 空串不存
+            if(!text.empty())
+            {
+                format_items_.push_back(std::make_shared<StringFormatItem>(text));
+            }
+
+            continue;
+        }
+
+        // 2. 已经碰到 %
+        text.clear();
+        ++i; // 跳过 '%'
+        if(i >= pattern_.size())
+        {
+            fail("formatter ends with an incomplete '%' item");
+            return;
+        }
+
+        // 单独判断 %% 的转义情况
+        if('%' == pattern_[i])
+        {
+            format_items_.push_back(std::make_shared<StringFormatItem>("%"));
             ++i;
             continue;
         }
 
-        // 普通字符串加入缓存
-        if(!tmpStr.empty())
-            tmpv.push_back({tmpStr, "", false});
 
-        // 2. 已经碰到 %
-        tmpStr.clear();
+        main_pattern.clear();
 
-        ++i; // 跳过 '%'
-        patternStr = "";
-
-        // 只记录最长的合法模版串  %tn --> %t or %tn 只记录tn
+        // 找到最长的合法模版串  %tn --> %t or %tn 只记录tn
         // 否则将 %xxx 当成一个普通字符串处理
-        while(i < _pattern.size() && isPatternChar(_pattern[i]))
+        const auto it = FindLongestItem(pattern_, i);
+        if(GetMap().end() == it || !it->second)
         {
-            tmpStr += _pattern[i];
-
-            // 出现第一个不合法模版就退出
-            if(FormatItem::_s_pattern2Item.find(tmpStr) != FormatItem::_s_pattern2Item.end() || "%" == tmpStr)
-            {
-                patternStr = tmpStr.size() > patternStr.size() ? tmpStr : patternStr;
-            }
-            else
-            {
-                break;
-            }
-            ++i;
+            fail("unknown formatter item: '%"
+                + pattern_.substr(i) + "'");
+            return;
         }
-        if(i >= _pattern.size())
-            break;
+        main_pattern = it->first;
+        i += main_pattern.size();
 
         //3. 处理{...} 子模版情况
-        isVaild = false;
-        if(!patternStr.empty())  // 存在主模版
+        std::string sub_pattern;
+        if(i < pattern_.size() && '{' == pattern_[i])
         {
-            subPatternStr = "";
-            if('{' == _pattern[i])
+            if(!HasSubPattern(main_pattern))
             {
-                int npos = _pattern.find('}', i);
-                if(npos >= 0)  //说明没有合法{...}
-                {
-                    subPatternStr = _pattern.substr(i + 1, npos - i - 1);
-                    i = npos + 1;
-                }
+                fail("formatter item '%" + main_pattern
+                    + "' does not accept a sub-pattern");
+                return;
             }
-            isVaild = true;
-        }
-        else
-        {
-            patternStr += "%";
-            isVaild = false;
-        }
 
-        tmpv.push_back({patternStr, subPatternStr, isVaild});
-        tmpStr.clear();
-    }
-    if(!tmpStr.empty())
-        tmpv.push_back({tmpStr, "", false});
-
-    // 构建模版对象
-    for(auto &v : tmpv)
-    {
-        std::cout << "'"<< std::get<0>(v) << "'" << ", "
-            << "'"<< std::get<1>(v) << "'" << ", "
-            << std::get<2>(v) << std::endl;
-        if(!std::get<2>(v))
-        {
-            // 创建普通字符串构建对象
-            _formatItems.push_back(nullptr);
-        }
-        else
-        {
-            auto it = FormatItem::_s_pattern2Item.find(std::get<0>(v));
-            if(it == FormatItem::_s_pattern2Item.end())
+            const size_t sub_begin_pos = i + 1;
+            auto pos = pattern_.find('}', sub_begin_pos);
+            if(std::string::npos == pos)
             {
-                std::cerr << "parse format pattern error! "
-                    << "'" << std::get<0>(v) << "'" << std::endl;
+                fail("formatter item subpattern not found '}': " + pattern_.substr(i));
+                return;
             }
-            else
+            if(sub_begin_pos == pos)
             {
-                // 根据模版参数构建指定的对象类型
-                _formatItems.push_back(nullptr);
+                fail("formatter item subpattern empty: " + pattern_.substr(i));
+                return;
             }
+            sub_pattern = pattern_.substr(sub_begin_pos, pos - sub_begin_pos);
+            i = pos + 1;
         }
 
-
+        format_items_.push_back(it->second(sub_pattern));
     }
 }
 #else
@@ -214,51 +222,52 @@ void LogFormatter::init()
 // 使用到 regex的 字符串分割 技巧
 void LogFormatter::init()
 {
-    if(_pattern.empty())
+    if(pattern_.empty())
+    {
         return;
+    }
 
     std::regex _patternReg(R"((%%)|(%([a-zA-Z]\{(.*?)\}))|(%([a-zA-Z]+))|([^%]+))");
 
     // 正则处理
-    std::sregex_iterator result_it(_pattern.begin(), _pattern.end(), _patternReg);
+    std::sregex_iterator result_it(pattern_.begin(), pattern_.end(), _patternReg);
     std::sregex_iterator end_it;
-    std::smatch match;
-
 
     while(result_it != end_it)
     {
-        match = *result_it;
-
-        /*
-            这里的下标表示的含义：
-              0  1     2    3          4        5     6            7
-             (%  %) | (%( [a-zA-Z] \{(.*?)\} )|(%([a-zA-Z]+))) | ([^%]+))
-        */
-        if (match[1].matched) { // 处理转义%%
+        const std::smatch &match = *result_it;
+/*
+    这里的下标表示的含义：
+         0  1     2     3         4        5    6              7
+        (%  %) | (%( [a-zA-Z] \{(.*?)\} )|(%([a-zA-Z]+))) | ([^%]+))
+*/
+        if (match[1].matched) // 处理转义%%
+        { 
             // 直接构造 字符串对象
-            _formatItems.push_back(std::make_shared<StringFormatItem>("%"));
+            format_items_.push_back(std::make_shared<StringFormatItem>("%"));
         }
-        else if (match[2].matched) { // 处理带格式的变量
-            std::cout << match[3] << " ";
-            std::cout << match[4] << " ";
+        else if (match[2].matched) // %__{ __ }处理带子格式的变量
+        { 
             auto it = GetMap().find(match[3]);
             if(it != GetMap().end())
             {
-                _formatItems.push_back(it->second(match[4]));
+                format_items_.push_back(it->second(match[4]));
             }
         }
-        else if (match[5].matched) { // 处理普通变量
+        else if (match[5].matched) // %__ 处理普通变量
+        { 
             auto it = GetMap().find(match[6]);
             if(it != GetMap().end())
             {
-                _formatItems.push_back(it->second(""));
+                format_items_.push_back(it->second(""));
             }
         }
-        else if (match[7].matched) { // 处理普通文本
+        else if (match[7].matched) // 处理普通文本(前缀不带%)
+        { 
             std::string text = match[7];
             if (!text.empty())
             {
-                _formatItems.push_back(std::make_shared<StringFormatItem>(text));
+                format_items_.push_back(std::make_shared<StringFormatItem>(text));
             }
         }
 
@@ -269,17 +278,19 @@ void LogFormatter::init()
 #endif
 
 
-
-std::string LogFormatter::format(LogAttr::Ptr pattr)
+std::string LogFormatter::format(const LogAttr::Ptr& pattr)
 {
-    std::stringstream ss;
-
-    for(auto &i : _formatItems)
+    t_formatter_ss.str("");
+    t_formatter_ss.clear();
+    
+    for(auto &fi : format_items_)
     {
-        if(i)
-            i->format(ss, pattr);
+        if(fi)
+        {
+            fi->format(t_formatter_ss, pattr);
+        }
     }
 
-    return ss.str();
+    return t_formatter_ss.str();
 }
 } // namespace kit

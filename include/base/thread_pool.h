@@ -27,9 +27,7 @@
 
 namespace kit_muduo {
 
-static const int32_t THREAD_MAX_THRESHHOLD = 100;
-static const int32_t TASK_MAX_THRESHHOLD = INT32_MAX;
-static const int32_t THREAD_MAX_IDLE_INTERVAL = 30;  //单位s
+
 
 
 class ThreadPool;
@@ -83,6 +81,13 @@ public:
         kStopping,
         kTimeout,
     };
+
+    /// @brief 默认最大线程数 100
+    static constexpr int32_t kDefaultMaxThread = 100;
+    /// @brief 默认最大任务队列容量 INT32_MAX
+    static constexpr int32_t kDefaultMaxTaskQueue = INT32_MAX;
+    /// @brief 默认线程空闲间隔 30s
+    static constexpr int32_t kDefaultMaxIdleInterval = 30;  //单位s
 
     template<class T>
     struct SubmitResult
