@@ -97,8 +97,8 @@ void PollPoller::removeChannel(Channel *channel)
     int32_t exchange_real_fd = getRealFd(exchange_poll_fd);
 
     channel->setIndex(-1);
-    size_t n = _channels.erase(fd);
-    assert(n == 1);
+    _channels.erase(fd);
+
     assert(idx >= 0 && idx < _eventList.size());
     // 不能直接删  会引起大量数据拷贝和移动
     // _eventList.erase(_eventList.begin() + idx);
