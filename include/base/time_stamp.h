@@ -9,9 +9,9 @@
 #ifndef __KIT_TIME_STAMP_H__
 #define __KIT_TIME_STAMP_H__
 
-#include "base/util.h"
-#include <bits/stdint-uintn.h>
+#include <cstdint>
 #include <string>
+#include <optional>
 
 namespace kit_muduo {
 
@@ -19,29 +19,26 @@ namespace kit_muduo {
 class TimeStamp
 {
 public:
-    /**
-     * @brief 默认构造
-     */
-    explicit TimeStamp() = default;
+
 
     /**
      * @brief 普通构造
      * @param[in] millSeconds
      */
-    explicit TimeStamp(uint64_t millSeconds);
+    explicit TimeStamp(int64_t epoch_ms = 0);
 
     /**
-     * @brief 转为时间字符串, 如2025-05-20 22:14:17
-     * @return std::string
+     * @brief 转为UTC RFC3339标准时间字符串 
+     * @return std::string 
      */
-    std::string toString() const;
-
+    std::string toUtcRfc3339() const;
     /**
-     * @brief 时间字符串转为时间戳(仅支持格式%Y-%m-%d %H:%M:%S)
-     * @param dataStr 
-     * @return uint64_t 
+     * @brief 日志使用本地机器时间字符串(后续会统一为utc)
+     * @param format 
+     * @return std::string 
      */
-    void fromString(const std::string &dataStr);
+    std::string toLogString(const std::string &format = "%Y-%m-%d %H:%M:%S") const;
+
 
     /**
      * @brief 获取时间 单位ms
@@ -54,12 +51,6 @@ public:
      * @return uint64_t 
      */
     int64_t seconds() const { return real_time_ms_ / 1000; }
-
-    /**
-     * @brief 获取已存时间戳对应的单调递增时间值
-     * @return uint64_t 
-     */
-    int64_t toMonotonic() const;
 
     TimeStamp& addTime(int64_t millseconds);
     TimeStamp& subTime(int64_t millseconds);
@@ -93,33 +84,19 @@ public:
     }
 
 public:
-    /**
-     * @brief  生成时间戳对象
-     * @return TimeStamp
-     */
     static TimeStamp Now();
-    /**
-     * @brief 获取当前时间戳ms
-     * @return uint64_t
-     */
+
     static int64_t NowMs();
 
-    /**
-     * @brief 时间字符串 --> 时间戳
-     * @param timeStr 
-     * @return std::string 
-     */
-    static time_t Str2TimeStamp(const std::string &timeStr);
+    static int64_t NowUs();
 
-    /**
-     * @brief 时间戳 --> 时间字符串
-     * @param timeStamp 
-     * @return std::string 
-     */
-    static std::string TimeStamp2Str(time_t timeStamp);
+    static int64_t MonotonicNowMs();
 
+    static int64_t MonotonicNowS();
 
-    static TimeStamp FromMonotonic(int64_t ms);
+    static std::string FormatLogTimeStamp(int64_t epoch_ms, const std::string &format);
+
+    static std::optional<TimeStamp> ParseRfc3339(std::string value);
 
 private:
     /// @brief 时间戳ms

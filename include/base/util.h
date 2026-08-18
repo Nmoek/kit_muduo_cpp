@@ -9,43 +9,17 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
+#include <charconv>
 #include <cstdint>
+#include <filesystem>
 #include <sys/time.h>
 #include <string>
+#include <vector>
 
 namespace kit_muduo
 {
 
 extern thread_local pid_t t_thread_id;
-
-/**
- * @brief 获取ms级系统时间
- * @return uint64_t
- */
-uint64_t GetTimeStampMs();
-
-/**
- * @brief 获取us级系统时间
- * @return uint64_t
- */
-uint64_t GetCurrentUs();
-
-/**
- * @brief 时间秒数转字符串
- * @param[in] ts
- * @param[in] format
- * @return std::string
- */
-std::string Timer2Str(time_t ts, const std::string& format);
-
-/**
- * @brief 获取开机时间, 单位 秒s
- * @return uint32_t 
- */
-int32_t GetMonotonicS();
-
-
-int64_t GetMonotonicMS();
 
 
 /**
@@ -89,6 +63,73 @@ void DelSpaceHelper(std::string &str);
  * @return std::string 
  */
 std::string GenerateUuid();
+
+
+/**
+ * @brief 生成sha1算法加密数据后base64字符串
+ * @param data 
+ * @return std::string 
+ */
+std::string Sha1BytesBase64Helper(const std::vector<uint8_t> &data);
+
+std::string Sha1BytesBase64Helper(const std::vector<char> &data);
+
+std::string Sha1BytesBase64Helper(const std::string &data);
+
+/**
+ * @brief 检查文本utf-8安全
+ * @param data 
+ * @param size 
+ * @param utf8_error 
+ * @return true 
+ * @return false 
+ */
+bool IsUtf8Safe(const void *data, size_t size, std::string& utf8_error);
+
+/**
+ * @brief 按UTF-8字符边界截取前缀
+ * @param data 已确认或预期为UTF-8文本的数据
+ * @param size 数据字节数
+ * @param max_bytes 最大截取字节数
+ * @return std::string 不会截断在UTF-8多字节字符中间
+ */
+std::string Utf8SafePrefix(const void *data, size_t size, size_t max_bytes);
+
+template<typename T, typename = std::enable_if_t< std::is_arithmetic_v<T>, bool>>
+bool ParsePositiveArithmetic(const std::string& value, T& out)
+{
+    if(value.empty())
+    {
+        return false;
+    } 
+
+    try {
+        const char *begin = value.data();
+        const char *end = begin + value.size();
+        const auto& parsed = std::from_chars(begin, begin + value.size(), out);
+        
+        return parsed.ec == std::errc{} && parsed.ptr == end;
+    } catch(const std::exception&) {
+        return false;
+    }
+}
+
+template<typename T, typename = std::enable_if_t< std::is_arithmetic_v<T>, bool>>
+bool ToPositiveArithmetic(const T value, std::string& out)
+{
+    try {
+        out.resize(sizeof(T));
+        const char *begin = out.data();
+        const char *end = begin + out.size();
+        const auto& parsed = std::to_chars(begin, end, value);
+        
+        return parsed.ec == std::errc{} && parsed.ptr == end;
+    } catch(const std::exception&) {
+        return false;
+    }
+}
+
+
 
 } // namespace kit
 #endif
