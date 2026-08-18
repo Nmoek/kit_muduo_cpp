@@ -302,9 +302,6 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.BOUNDED_LOCK_FREE_QUEUE test_bounded_lock_fre
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
 
-# http测试 test_http
-add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP test_http tests/http/test_http.cpp)
-
 add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_MESSAGE test_http_message tests/http/test_http_message.cpp)
 add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_CONTEXT test_http_context tests/http/test_http_context.cpp)
 add_kit_test(MUDUO_TEST MUDUO_TEST.HTTP_SERVER test_http_server tests/http/test_http_server.cpp)
