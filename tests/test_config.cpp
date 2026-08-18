@@ -651,33 +651,35 @@ TEST(TestConfig, PolicyAndFileErrorsCarrySourceAndLocation)
 TEST(TestConfig, LogConfigCodecAndValidationCoverNestedSchema)
 {
     const LogConfig defaults = DefaultLogConfig();
-    ASSERT_EQ(defaults.loggers.size(), 1U);
+    ASSERT_EQ(defaults.loggers.size(), 5U);
     EXPECT_EQ(defaults.loggers.front().name, "root");
     ASSERT_NO_THROW(ValidateLogConfig(defaults));
 
     using YamlLogConfigCodec = ConfigCodec<LogConfig, YamlPolicy>;
     const YAML::Node encoded = YamlLogConfigCodec::Encode(defaults);
     const LogConfig decoded = YamlLogConfigCodec::Decode(encoded);
-    ASSERT_EQ(decoded.loggers.size(), 1U);
+    ASSERT_EQ(decoded.loggers.size(), defaults.loggers.size());
     EXPECT_EQ(decoded.loggers.front().name, "root");
     ASSERT_EQ(decoded.loggers.front().appenders.size(), 1U);
     EXPECT_EQ(decoded.loggers.front().appenders.front().type,
         LogAppenderType::kStdout);
 
     const YAML::Node custom = YAML::Load(R"(
-- name: root
-  level: INFO
-  formatter: "%m"
-  appenders:
-    - type: stdout
-      level: DEBUG
-      formatter: "%m"
-      flush_threshold: 0
+file:
+  flush_threshold: 1024
+loggers:
+  - name: root
+    level: INFO
+    formatter: "%m"
+    appenders:
+      - type: stdout
+        level: DEBUG
+        formatter: "%m"
 )");
     const LogConfig custom_config = YamlLogConfigCodec::Decode(custom);
     ASSERT_EQ(custom_config.loggers.size(), 1U);
     EXPECT_EQ(custom_config.loggers.front().level, LogLevel::INFO);
-    EXPECT_EQ(custom_config.loggers.front().appenders.front().flush_threshold, 0U);
+    EXPECT_EQ(custom_config.file.flush_threshold, 1024U);
     ASSERT_NO_THROW(ValidateLogConfig(custom_config));
 
     EXPECT_THROW(YamlLogConfigCodec::Decode(YAML::Load(R"(
@@ -699,59 +701,67 @@ TEST(TestConfig, LogConfigCodecAndValidationCoverNestedSchema)
   name: duplicate
 )")), ConfigError);
 
-    LogConfig no_root{{LoggerConfig{
+    LogConfig no_root;
+    no_root.loggers = {LoggerConfig{
         .name = "worker",
-    }}};
+    }};
     EXPECT_THROW(ValidateLogConfig(no_root), ConfigError);
 
-    LogConfig duplicate{{LoggerConfig{.name = "root"}, LoggerConfig{.name = "root"}}};
+    LogConfig duplicate;
+    duplicate.loggers = {LoggerConfig{.name = "root"}, LoggerConfig{.name = "root"}};
     EXPECT_THROW(ValidateLogConfig(duplicate), ConfigError);
 
-    LogConfig bad_formatter{{LoggerConfig{
+    LogConfig bad_formatter;
+    bad_formatter.loggers = {LoggerConfig{
         .name = "root",
         .formatter = "%unknown",
-    }}};
+    }};
     EXPECT_THROW(ValidateLogConfig(bad_formatter), ConfigError);
 
-    LogConfig bad_level{{LoggerConfig{
+    LogConfig bad_level;
+    bad_level.loggers = {LoggerConfig{
         .name = "root",
         .level = LogLevel::UNKNOW,
-    }}};
+    }};
     EXPECT_THROW(ValidateLogConfig(bad_level), ConfigError);
 
-    LogConfig bad_file{{LoggerConfig{
+    LogConfig bad_file;
+    bad_file.loggers = {LoggerConfig{
         .name = "root",
         .appenders = {LogAppenderConfig{
             .type = LogAppenderType::kFile,
         }},
-    }}};
+    }};
     EXPECT_THROW(ValidateLogConfig(bad_file), ConfigError);
 
-    LogConfig bad_stdout{{LoggerConfig{
+    LogConfig bad_stdout;
+    bad_stdout.loggers = {LoggerConfig{
         .name = "root",
         .appenders = {LogAppenderConfig{
             .type = LogAppenderType::kStdout,
             .file_path = "not-allowed.log",
         }},
-    }}};
+    }};
     EXPECT_THROW(ValidateLogConfig(bad_stdout), ConfigError);
 
-    LogConfig bad_appender_level{{LoggerConfig{
+    LogConfig bad_appender_level;
+    bad_appender_level.loggers = {LoggerConfig{
         .name = "root",
         .appenders = {LogAppenderConfig{
             .type = LogAppenderType::kStdout,
             .level = LogLevel::UNKNOW,
         }},
-    }}};
+    }};
     EXPECT_THROW(ValidateLogConfig(bad_appender_level), ConfigError);
 
-    LogConfig valid_file{{LoggerConfig{
+    LogConfig valid_file;
+    valid_file.loggers = {LoggerConfig{
         .name = "root",
         .appenders = {LogAppenderConfig{
             .type = LogAppenderType::kFile,
             .file_path = "/tmp/config-test.log",
         }},
-    }}};
+    }};
     ASSERT_NO_THROW(ValidateLogConfig(valid_file));
 }
 
@@ -866,8 +876,8 @@ TEST(TestConfig, AppConfigWritesDefaultTreeWhenYamlFileIsMissing)
     EXPECT_EQ(YamlPolicy::Decode<uint16_t>(root["system"]["http"]["port"]), 5555);
     EXPECT_EQ(YamlPolicy::Decode<std::string>(
         root["system"]["http"]["static_root_path"]), static_root.path().string());
-    EXPECT_TRUE(YamlPolicy::IsSequence(root["system"]["logs"]));
-    EXPECT_GT(YamlPolicy::Size(root["system"]["logs"]), 0U);
+    EXPECT_TRUE(YamlPolicy::IsSequence(root["system"]["log"]["loggers"]));
+    EXPECT_GT(YamlPolicy::Size(root["system"]["log"]["loggers"]), 0U);
     EXPECT_EQ(YamlPolicy::Decode<size_t>(root["work"]["interaction"]["queue_capacity"]),
         4096U);
     EXPECT_EQ(yaml_text,
