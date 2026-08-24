@@ -46,7 +46,6 @@ struct WebServerStartupConfig
 };
 
 std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
-    const WebServerStartupConfig& startup_config,
     kit_domain::ProjectHandler *projHdl,
     kit_domain::ProtocolHandler *protocHdl,
     kit_domain::AuthHandler *authHdl,

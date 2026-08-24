@@ -61,31 +61,38 @@ public:
      * @brief 设置日志输出器级别
      * @param level
      */
-    void setLevel(const LogLevel::Level level) noexcept { level_.store(level); }
+    void setLevel(const LogLevel::Level level) noexcept { level_.store(level, std::memory_order_release); }
 
     /**
      * @brief 获取日志输出器级别
      * @return LogLevel::Level
      */
-    LogLevel::Level getLevel() const noexcept { return static_cast<LogLevel::Level>(level_.load()); }
+    LogLevel::Level getLevel() const noexcept { return level_.load(std::memory_order_acquire); }
+
+    void setMaxRecordBytes(uint32_t val) { max_record_bytes_ = val;}
+    uint32_t maxRecordBytes() const { return max_record_bytes_; }
 
 protected:
     /**
      * @brief 日志输出
      * @param[in] pattr 当前日志属性
      */
-    virtual void log(LogAttr::Ptr pattr) = 0;
-    virtual void log(const std::string& log_data) = 0;
-
-
+    virtual void append(const std::string& log_data,
+        LogLevel::Level level,
+        bool truncated = false,
+        size_t original_bytes = 0) = 0;
 
 protected:
     /// @brief 日志输出器级别
-    std::atomic_int32_t level_;
+    std::atomic<LogLevel::Level> level_;
     /// @brief 日志格式器
     LogFormatter::Ptr formatter_;
     /// @brief 日志格式器锁(LogFormatter 内部不支持增删改查,因此内部不用锁,锁最外层即可)
     mutable std::mutex mtx_;
+
+    /******CONFIG*******/
+    /// @brief 单条日志记录上限 256KB
+    uint32_t max_record_bytes_{256 * 1024};
 };
 
 /**
@@ -98,8 +105,10 @@ public:
 
     ~ConsoleAppender() = default;
 
-    void log(LogAttr::Ptr pattr) override;
-    void log(const std::string& log_data) override;
+    void append(const std::string& log_data,
+        LogLevel::Level level,
+        bool truncated = false,
+        size_t original_bytes = 0) override;
 
 public:
     static std::mutex& GetConsoleMtx();
@@ -119,9 +128,10 @@ public:
 
     bool openForAppend(std::string* error_message = nullptr);
 
-    void log(LogAttr::Ptr pattr) override;
-    void log(const std::string& log_data) override;
-
+    void append(const std::string& log_data,
+        LogLevel::Level level,
+        bool truncated = false,
+        size_t original_bytes = 0) override;
     void flush() { file_sink_->flush(); }
 
 private:

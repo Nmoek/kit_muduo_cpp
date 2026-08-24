@@ -23,6 +23,18 @@ extern thread_local pid_t t_thread_id;
 
 
 /**
+ * @brief 获取当前进程pid
+ * @return pid_t 
+ */
+pid_t GetPid();
+
+/**
+ * @brief 获取当前进程父进程pid
+ * @return pid_t 
+ */
+pid_t GetPPid();
+
+/**
  * @brief 获取内核线程pid
  * @return pid_t
  */
@@ -129,6 +141,19 @@ bool ToPositiveArithmetic(const T value, std::string& out)
     }
 }
 
+/**
+ * @brief 归一化输入的文件系统路径
+ * @param file_path 
+ * @return std::string 
+ */
+std::string NormalizeFilePath(const std::string& file_path);
+
+/**
+ * @brief 去除字符串左右两边空格
+ * @param str 
+ * @return std::string 
+ */
+std::string Trim(const std::string &str);
 
 
 } // namespace kit

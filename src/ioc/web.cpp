@@ -16,35 +16,65 @@
 #include "web/web_protocol.h"
 #include "web/web_user.h"
 #include "web/web_protocol_interaction.h"
+#include "app_config.h"
 
 using namespace kit_muduo;
 using namespace kit_muduo::http;
 using namespace kit_domain;
 
+
 namespace kit_app {
 
+namespace {
+WebServerStartupConfig MakeWebServerStartupConfig()
+{
+    WebServerStartupConfig config;
+#define XX(VAR) \
+    config.VAR = *(APP_CONFIG_VARS_SYSTEM_HTTP(VAR)->value())
+
+    XX(host);
+    XX(port);
+    XX(io_threads);
+#undef XX
+
+    config.static_root = *(
+        APP_CONFIG_VARS_SYSTEM_HTTP(static_root_path)->value());
+
+#define XX(VAR) \
+    config.business_thread_pool.VAR = *(APP_CONFIG_VARS_SYSTEM_BUSINESS(VAR)->value())
+
+    XX(max_threads);
+    XX(max_task_queue);
+    XX(thread_idle_seconds);
+    XX(submit_timeout_ms);
+#undef XX
+    return config;
+}
+
+} // namespace
+
 std::shared_ptr<kit_muduo::http::HttpServer> InitWebServer(kit_muduo::EventLoop *loop,
-    const WebServerStartupConfig& startup_config,
     ProjectHandler *projHdl,
     ProtocolHandler *protocHdl,
     AuthHandler *authHdl,
     UserHandler *userHdl,
     ProtocolInteractionHandler *interHdl)
 {
+    const auto& web_server_config = MakeWebServerStartupConfig();
 
     auto server = std::make_shared<HttpServer>(loop,
-        InetAddress(startup_config.port, startup_config.host),
+        InetAddress(web_server_config.port, web_server_config.host),
         "http_server",
         true,
         TcpServer::Option::KReusePort);
 
     // IO线程组配置
-    server->setThreadNum(startup_config.io_threads);
+    server->setThreadNum(web_server_config.io_threads);
 
     // 业务线程池配置
-    server->setBusinessThreadPoolConfig(startup_config.business_thread_pool);
+    server->setBusinessThreadPoolConfig(web_server_config.business_thread_pool);
 
-    auto static_file_svl = std::make_shared<StaticFileServlet>(startup_config.static_root);
+    auto static_file_svl = std::make_shared<StaticFileServlet>(web_server_config.static_root);
     //静态资源处理
     server->Get("/html/*.html", static_file_svl);
     server->Get("/css/*.css", static_file_svl);

@@ -11,6 +11,9 @@
 #define __LOG_H__
 
 #include <atomic>
+#include <condition_variable>
+#include <cstdarg>
+#include <cstdio>
 #include <string>
 #include <pthread.h>
 #include <list>
@@ -26,6 +29,8 @@
 #include "base/log_attr.h"
 #include "base/time_stamp.h"
 #include "base/util.h"
+#include "base/log_inner.h"
+
 
 /********1、流式输出 ********/
 #define LOG_LEVEL_OUT(logger, level, module) \
@@ -59,7 +64,10 @@ for(auto _logger = (logger); _logger && _logger->shouldLog(level); _logger.reset
     kit_muduo::log_detail::GetLoggerHelper(NAME)
 
 
+
 namespace kit_muduo {
+
+class LogManager;
 
 /**
  * @brief 日志器
@@ -70,7 +78,7 @@ class Logger
 public:
     using Ptr = std::shared_ptr<Logger>;
 
-    Logger(const std::string &name = "root");
+    Logger(LogManager* manager, const std::string &name = "root");
 
     ~Logger() = default;
 
@@ -139,6 +147,8 @@ private:
      */
     void logUnchecked(LogAttr::Ptr attr);
 
+    void dispatchUnlocked(LogAttr::Ptr attr);
+
     /**
      * @brief 批量替换输出器(事务性质)
      * @param appenders 
@@ -152,6 +162,8 @@ private:
 
 
 private:
+    /// @brief 日志管理器
+    LogManager *manager_;
     /// @brief 日志器名字 默认=“root”
     std::string name_;
     /// @brief 日志器级别
@@ -175,9 +187,9 @@ class LogAttrWrap
 public:
     using Ptr = std::shared_ptr<LogAttrWrap>;
 
-    LogAttrWrap(LogAttr::Ptr attr);
+    explicit LogAttrWrap(LogAttr::Ptr attr);
 
-    ~LogAttrWrap();
+    ~LogAttrWrap() noexcept;
 
     /**
      * @brief 获取日志字符流
@@ -196,6 +208,102 @@ private:
     LogAttr::Ptr attr_;
 };
 
+enum class LogManagerState
+{
+    kInit,
+    kPreparing,
+    kRunning,
+    kStopAccepting,
+    kStopped,
+};
+
+enum class LogManagerResultStatus
+{
+    kOk,
+    kAlreadyInitialized,
+    kInvalidState,
+    kConfigRejected,
+    kPrepareFailed,
+    kOperationFailed,
+};
+
+struct LogManagerResult
+{
+    LogManagerResultStatus status{LogManagerResultStatus::kOk};
+    std::string message;
+
+    bool ok() const noexcept
+    {
+        return status == LogManagerResultStatus::kOk;
+    }
+
+    static LogManagerResult Ok()
+    {
+        return {};
+    }
+
+    static LogManagerResult Failure(LogManagerResultStatus status, std::string message)
+    {
+        return LogManagerResult{
+            .status = status,
+            .message = std::move(message),
+        };
+    }
+};
+
+
+struct PreparedLogger;
+struct PreparedLogConfig;
+
+
+/**
+ * @brief 日志系统健康监测
+ */
+struct LogManagerHealthSnapshot
+{
+    struct SinkEntry
+    {
+        std::string path;
+        LogFileSinkHealth health;
+    };
+
+    // 采集快照时的 LogManager 状态。
+    LogManagerState manager_state{LogManagerState::kInit};
+
+    // 当前仍然存活的 sink 快照。
+    std::vector<SinkEntry> sinks;
+
+    // 所有 sink 的聚合统计。
+    uint64_t written_records{0};
+    uint64_t written_bytes{0};
+
+    uint64_t write_failures{0};
+    uint64_t flush_failures{0};
+    uint64_t reopen_failures{0};
+    uint64_t rotate_failures{0};
+
+    uint64_t fallback_records{0};
+    uint64_t truncated_records{0};
+
+    bool healthy() const noexcept
+    {
+        if (manager_state != LogManagerState::kRunning)
+        {
+            return false;
+        }
+
+        for (const auto& entry : sinks)
+        {
+            if (entry.health.state!= LogFileSinkHealthState::kHealthy)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+};
+
 /**
  * @brief 日志器管理
  */
@@ -207,6 +315,14 @@ public:
      * @return LogManager& 
      */
     static LogManager& GetInstance();
+
+    /**
+     * @brief 初始化日志物理资源和 logger 路由
+     * @note 本步骤只建立 API，具体事务发布在下一步实现
+     */
+    LogManagerResult initialize(const LogConfig& config);
+
+    LogManagerState state() const noexcept { return state_.load(std::memory_order_acquire); }
 
     /**
      * @brief 默认析构
@@ -257,6 +373,24 @@ public:
      * @return LogFileSink::Ptr 
      */
     LogFileSink::Ptr acquireFileSink(const std::string &file_path);
+
+    LogManagerResult flushAll();
+    LogManagerResult flush(const std::string& file_path);
+    LogManagerResult durableFlushAll();
+    LogManagerResult durableFlush(const std::string& file_path);
+    LogManagerResult reopenAll();
+    LogManagerResult reopen(const std::string& file_path);
+
+    /// 注意: 该接口不能在日志系统任何回调处理中调用
+    LogManagerResult shutdown();
+
+    // BUG
+    /** 
+     * @brief 统计所有文件写入侧健康情况
+     * @return LogManagerHealthSnapshot 
+     */
+    LogManagerHealthSnapshot healthSnapshot() const;
+
 public:
     /// @brief 静态日志器获取动作集合
     // static const std::unordered_map<std::string_view, std::pair<std::function<Logger::Ptr()>, LoggerConfig> > kGetLoggerFuncs;
@@ -267,18 +401,37 @@ private:
      */
     LogManager();
 
-    Logger::Ptr findOrCreateLoggerUnLocked(const std::string& name);
+    Logger::Ptr findOrCreateUnLocked(const std::string& name);
 
+    PreparedLogConfig prepareLogConfig(const LogConfig& config);
 
+    void publishPreparedConfig(PreparedLogConfig&& prepared);
+
+    bool tryEnterLogSubmission() noexcept;
+
+    void leaveLogSubmission() noexcept;
 private:
+    friend class Logger;
+    friend class LogSubmissionGuard;
+
+    /// 日志系统状态机
+    std::atomic<LogManagerState> state_;
     /// @brief 默认日志器
-    const Logger::Ptr root_logger_;
+    Logger::Ptr root_logger_;
     /// @brief 日志器集合
     std::unordered_map<std::string, Logger::Ptr> loggers_;
     /// @brief 日志器集合锁
     mutable std::mutex loggers_mtx_;
     /// @brief 日志文件管理
     LogFileSinkRegister file_register_;
+    /// @brief 退出使用 活跃日志器监控锁
+    std::mutex lifecycle_mtx_;
+    /// @brief 退出使用 活跃日志器监控 条件变量
+    std::condition_variable lifecycle_cv_;
+    /// @brief 还未提交完成的日志器数量
+    size_t active_log_submissions_{0};
+    /// @brief 是否接收日志数据
+    bool accepting_logs_{true};
 };
 /// @brief 日志管理单例
 #define LOGMANAGER_INSTANCE() (LogManager::GetInstance())

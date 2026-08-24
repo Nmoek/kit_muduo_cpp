@@ -122,9 +122,15 @@ std::string ReadFile(const std::string &path)
     return ss.str();
 }
 
+void AppendAttr(LogAppender& appender, LogAttr::Ptr attr)
+{
+    appender.LogAppender::append(std::move(attr));
+}
+
 LogAttr::Ptr MakeLogAttr(const std::string &content, uint64_t timestamp = 0)
 {
-    auto logger = std::make_shared<Logger>("test_log");
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_log");
     auto attr = std::make_shared<LogAttr>(
         logger,
         LogLevel::INFO,
@@ -165,17 +171,15 @@ LogAttr::Ptr MakeLoggerAttr(
 class CountingAppender final : public LogAppender
 {
 public:
-    void log(LogAttr::Ptr attr) override
+    void append(const std::string&,
+        LogLevel::Level level,
+        bool,
+        size_t) override
     {
-        if(attr && attr->getLevel() >= getLevel())
+        if(level >= getLevel())
         {
             count_.fetch_add(1, std::memory_order_relaxed);
         }
-    }
-
-    void log(const std::string&) override
-    {
-        count_.fetch_add(1, std::memory_order_relaxed);
     }
 
     int count() const noexcept
@@ -190,12 +194,10 @@ private:
 class BlockingAppender final : public LogAppender
 {
 public:
-    void log(LogAttr::Ptr) override
-    {
-        blockUntilReleased();
-    }
-
-    void log(const std::string&) override
+    void append(const std::string&,
+        LogLevel::Level,
+        bool,
+        size_t) override
     {
         blockUntilReleased();
     }
@@ -238,6 +240,20 @@ private:
     std::atomic_int count_{0};
 };
 
+LogConfig MakeManagerTestConfig()
+{
+    LogConfig config;
+    LoggerConfig root;
+    root.name = "root";
+    root.level = LogLevel::DEBUG;
+    root.appenders.push_back(LogAppenderConfig{
+        .type = LogAppenderType::kStdout,
+        .level = LogLevel::DEBUG,
+    });
+    config.loggers.push_back(std::move(root));
+    return config;
+}
+
 class ScopedDefaultLogConfig
 {
 public:
@@ -245,7 +261,8 @@ public:
     {
         try
         {
-            LogManager::GetInstance().applyConfig(DefaultLogConfig());
+            LogManager::GetInstance().applyConfig(
+                MakeManagerTestConfig());
         }
         catch(...)
         {
@@ -271,12 +288,12 @@ TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
         FileAppender appender(registry.acquire(file.path()));
         appender.setFormatter("%m");
 
-        appender.append(MakeLogAttr("first"));
+        AppendAttr(appender, MakeLogAttr("first"));
 
-        ASSERT_EQ(ReadFile(file.path()), "");
+        ASSERT_EQ(ReadFile(file.path()), "first\n");
     }
 
-    ASSERT_EQ(ReadFile(file.path()), "first");
+    ASSERT_EQ(ReadFile(file.path()), "first\n");
 }
 
 /*
@@ -298,17 +315,17 @@ TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
         FileAppender appender(registry.acquire(file.path()));
         appender.setFormatter("%m");
 
-        appender.append(MakeLogAttr("abc"));
-        ASSERT_EQ(ReadFile(file.path()), "");
+        AppendAttr(appender, MakeLogAttr("abc"));
+        ASSERT_EQ(ReadFile(file.path()), "abc\n");
 
-        appender.append(MakeLogAttr("defgh"));
-        ASSERT_EQ(ReadFile(file.path()), "abcdefgh");
+        AppendAttr(appender, MakeLogAttr("defgh"));
+        ASSERT_EQ(ReadFile(file.path()), "abc\ndefgh\n");
 
-        appender.append(MakeLogAttr("z"));
-        ASSERT_EQ(ReadFile(file.path()), "abcdefgh");
+        AppendAttr(appender, MakeLogAttr("z"));
+        ASSERT_EQ(ReadFile(file.path()), "abc\ndefgh\nz\n");
     }
 
-    ASSERT_EQ(ReadFile(file.path()), "abcdefghz");
+    ASSERT_EQ(ReadFile(file.path()), "abc\ndefgh\nz\n");
 }
 
 /*
@@ -329,11 +346,11 @@ TEST(TestLog, FileAppenderZeroWriteMaxSizeFlushesEveryWrite)
     FileAppender appender(registry.acquire(file.path()));
     appender.setFormatter("%m");
 
-    appender.append(MakeLogAttr("a"));
-    ASSERT_EQ(ReadFile(file.path()), "a");
+    AppendAttr(appender, MakeLogAttr("a"));
+    ASSERT_EQ(ReadFile(file.path()), "a\n");
 
-    appender.append(MakeLogAttr("b"));
-    ASSERT_EQ(ReadFile(file.path()), "ab");
+    AppendAttr(appender, MakeLogAttr("b"));
+    ASSERT_EQ(ReadFile(file.path()), "a\nb\n");
 }
 
 /*
@@ -403,15 +420,17 @@ TEST(TestLog, FileSinkRegisterRecreatesExpiredSinkAndKeepsAppending)
     {
         auto sink = registry.acquire(file.path());
         previous = sink;
-        sink->append("first");
-        sink->flush();
+        ASSERT_TRUE(sink->append(
+            "first", LogLevel::INFO).ok());
+        ASSERT_TRUE(sink->flush().ok());
     }
 
     EXPECT_TRUE(previous.expired());
 
     auto replacement = registry.acquire(file.path());
-    replacement->append("second");
-    replacement->flush();
+    ASSERT_TRUE(replacement->append(
+        "second", LogLevel::INFO).ok());
+    ASSERT_TRUE(replacement->flush().ok());
 
     EXPECT_EQ(ReadFile(file.path()), "firstsecond");
 }
@@ -433,10 +452,10 @@ TEST(TestLog, SharedFileSinkSurvivesOneAppenderDestruction)
     first->setFormatter("%m%n");
     second.setFormatter("%m%n");
 
-    first->append(MakeLogAttr("first"));
+    AppendAttr(*first, MakeLogAttr("first"));
     first.reset();
-    second.append(MakeLogAttr("second"));
-    second.flush();
+    AppendAttr(second, MakeLogAttr("second"));
+    ASSERT_TRUE(sink->flush().ok());
 
     EXPECT_EQ(ReadFile(file.path()), "first\nsecond\n");
 }
@@ -468,7 +487,7 @@ TEST(TestLog, SharedFileSinkPreservesConcurrentRecordBoundaries)
                 sequence < kRecordsPerThread;
                 ++sequence)
             {
-                appender.append(MakeLogAttr(
+                AppendAttr(appender, MakeLogAttr(
                     "t" + std::to_string(thread_id)
                     + "-" + std::to_string(sequence)));
             }
@@ -479,7 +498,7 @@ TEST(TestLog, SharedFileSinkPreservesConcurrentRecordBoundaries)
     {
         thread.join();
     }
-    sink->flush();
+    ASSERT_TRUE(sink->flush().ok());
 
     std::ifstream input(file.path());
     std::unordered_set<std::string> records;
@@ -526,16 +545,17 @@ TEST(TestLog, FileSinkRestoresSizeAndAppendsAcrossReopen)
     auto sink = registry.acquire(file.path());
     ASSERT_EQ(sink->currentFileSize(), 4U);
 
-    sink->append("-one");
-    sink->flush();
+    ASSERT_TRUE(sink->append(
+        "-one", LogLevel::INFO).ok());
+    ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(sink->currentFileSize(), 8U);
 
-    std::string error;
-    ASSERT_TRUE(sink->reopen(&error)) << error;
+    ASSERT_TRUE(sink->reopen().ok());
     EXPECT_EQ(sink->currentFileSize(), 8U);
 
-    sink->append("-two");
-    sink->flush();
+    ASSERT_TRUE(sink->append(
+        "-two", LogLevel::INFO).ok());
+    ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(sink->currentFileSize(), 12U);
     EXPECT_EQ(ReadFile(file.path()), "seed-one-two");
 }
@@ -552,10 +572,8 @@ TEST(TestLog, FileSinkRegisterRejectsInvalidFilePaths)
     TempLogDirectory directory("invalid_path");
     LogFileSinkRegister registry;
 
-    EXPECT_THROW(registry.acquire(""), std::invalid_argument);
-    EXPECT_THROW(
-        registry.acquire(directory.path().string()),
-        std::runtime_error);
+    EXPECT_THROW(registry.acquire(""), std::runtime_error);
+    EXPECT_EQ(registry.acquire(directory.path().string()), nullptr);
 }
 
 /*
@@ -616,7 +634,8 @@ log() 还应保留提交前的安全过滤。
 */
 TEST(TestLog, LoggerOwnAppenderFiltersAndLastRemovalMutes)
 {
-    auto logger = std::make_shared<Logger>("test_own_appender");
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_own_appender");
     auto appender = std::make_shared<CountingAppender>();
     logger->setLevel(LogLevel::INFO);
     appender->setLevel(LogLevel::DEBUG);
@@ -644,7 +663,8 @@ logUnchecked()。计数必须只增加一次，证明宏路径能够实际派发
 */
 TEST(TestLog, LogMacroDispatchesExactlyOnceThroughLogAttrWrap)
 {
-    auto logger = std::make_shared<Logger>("test_macro_dispatch");
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_macro_dispatch");
     auto appender = std::make_shared<CountingAppender>();
     logger->setLevel(LogLevel::DEBUG);
     appender->setLevel(LogLevel::DEBUG);
@@ -711,7 +731,8 @@ shared_ptr 快照并释放 appenders_mtx_，因此另一个线程应能在 Appen
 */
 TEST(TestLog, AppenderSnapshotAllowsRemovalDuringInFlightDispatch)
 {
-    auto logger = std::make_shared<Logger>("test_snapshot_dispatch");
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_snapshot_dispatch");
     auto appender = std::make_shared<BlockingAppender>();
     logger->setLevel(LogLevel::DEBUG);
     logger->addAppender(appender);
@@ -750,8 +771,286 @@ TEST(TestLog, AppenderSnapshotAllowsRemovalDuringInFlightDispatch)
     EXPECT_FALSE(logger->shouldLog(LogLevel::FATAL));
 }
 
+/*
+测试思路：先写入包含换行、CR、TAB、NUL 和 ESC 的正文，再 seal，验证正文保持
+原样且进入不可变状态；随后再次写入必须被拒绝。控制字符的可见转义由 Appender
+规范化测试覆盖。
+
+状态图：mutable -> seal -> sealed -> getSS/format 抛 logic_error。
+示例：正文仍包含真实 `\n`，第二次 seal 返回 false。
+*/
+TEST(TestLog, LogAttrSealFreezesControlCharactersAndRejectsMutation)
+{
+    std::string content("line\nnext\r\t", 11);
+    content.push_back('\0');
+    content.push_back('\x1b');
+    auto attr = MakeLogAttr(content);
+
+    ASSERT_TRUE(attr->seal());
+    EXPECT_TRUE(attr->isSealed());
+    EXPECT_NE(attr->getContent().find('\n'), std::string::npos);
+    EXPECT_NE(attr->getContent().find('\r'), std::string::npos);
+    EXPECT_NE(attr->getContent().find('\t'), std::string::npos);
+    EXPECT_NE(attr->getContent().find('\0'), std::string::npos);
+    EXPECT_NE(attr->getContent().find('\x1b'), std::string::npos);
+    EXPECT_FALSE(attr->seal());
+    EXPECT_THROW(attr->getSS(), std::logic_error);
+    EXPECT_THROW(attr->format("later"), std::logic_error);
+}
+
+/*
+测试思路：将 Appender 的最终记录上限设为 64 字节，输入 200 字节正文，验证限制
+发生在 formatter 之后，并且输出仍然只有一个终止换行。
+
+路径图：LogAttr -> formatter -> NormalizeAndLimitRecord -> FileAppender -> sink。
+示例：200 个 `x` 被截断为不超过 64 字节，并包含实际后缀
+`...[truncated 200 bytes]`。
+*/
+TEST(TestLog, AppenderNormalizesAndTruncatesFinalFormattedRecord)
+{
+    TempLogFile file("record_limit");
+    LogFileSinkRegister registry;
+    auto sink = registry.acquire(file.path());
+    ASSERT_NE(sink, nullptr);
+
+    FileAppender appender(sink);
+    appender.setFormatter("%m");
+    appender.setMaxRecordBytes(64);
+    AppendAttr(appender, MakeLogAttr(std::string(200, 'x')));
+    ASSERT_TRUE(sink->flush().ok());
+
+    const auto output = ReadFile(file.path());
+    ASSERT_LE(output.size(), 64U);
+    ASSERT_FALSE(output.empty());
+    EXPECT_EQ(output.back(), '\n');
+    EXPECT_NE(output.find("...[truncated 200 bytes]"), std::string::npos);
+    EXPECT_EQ(output.find('\n'), output.size() - 1);
+}
+
+TEST(TestLog, AppenderEscapesControlsAndPreservesUtf8)
+{
+    TempLogFile file("control_utf8");
+    LogFileSinkRegister registry;
+    auto sink = registry.acquire(file.path());
+    ASSERT_NE(sink, nullptr);
+
+    FileAppender appender(sink);
+    appender.setFormatter("%m");
+
+    const std::string content =
+        "line\nnext-\xE4\xB8\xAD\xE6\x96\x87";
+    AppendAttr(appender, MakeLogAttr(content));
+    ASSERT_TRUE(sink->flush().ok());
+
+    EXPECT_EQ(
+        ReadFile(file.path()),
+        "line\\nnext-\xE4\xB8\xAD\xE6\x96\x87\n");
+}
+
+/*
+测试思路：先累计 8 字节触发字节阈值 flush，再写 ERROR 验证 level flush，最后显式
+调用 durableFlush 覆盖 fdatasync 链路。
+
+状态图：0 --4B--> no flush --4B--> threshold flush --ERROR--> level flush。
+示例：`info` 不刷新，追加 `more` 后 flush_attempted=true。
+*/
+TEST(TestLog, SinkFlushesOnLevelAndSupportsDurableFlush)
+{
+    TempLogFile file("flush_level");
+    LogFileSinkRegister registry;
+    LogFileConfig config;
+    config.flush_threshold = 8;
+    config.flush_interval_ms = 30000;
+    registry.setFileConfig(config);
+
+    auto sink = registry.acquire(file.path());
+    ASSERT_NE(sink, nullptr);
+
+    auto info = sink->append("info", LogLevel::INFO);
+    EXPECT_TRUE(info.ok());
+    EXPECT_FALSE(info.flush_attempted);
+
+    auto threshold = sink->append("more", LogLevel::INFO);
+    EXPECT_TRUE(threshold.ok());
+    EXPECT_TRUE(threshold.flush_attempted);
+
+    auto error = sink->append("error", LogLevel::ERROR);
+    EXPECT_TRUE(error.ok());
+    EXPECT_TRUE(error.flush_attempted);
+
+    EXPECT_TRUE(sink->durableFlush().ok());
+    EXPECT_EQ(ReadFile(file.path()), "infomoreerror");
+}
+
+/*
+测试思路：active 达到阈值时先保持不动，下一条记录使预计大小越界后先轮转再写；
+连续轮转后归档数量必须受配置上限约束。
+
+路径图：active(10B) -> append(1B) -> archive#0 + active(1B) -> repeated rotate。
+示例：首次归档内容是 `1234567890`，active 内容是 `x`，最终归档不超过 2 个。
+*/
+TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
+{
+    TempLogDirectory directory("rotation");
+    const auto active = directory.path() / "net.log";
+    LogFileSinkRegister registry;
+    LogFileConfig config;
+    config.rotate_max_bytes = 10;
+    config.rotate_max_backup_files = 2;
+    config.flush_threshold = 10 * 1024 * 1024;
+    config.flush_interval_ms = 30000;
+    registry.setFileConfig(config);
+
+    auto sink = registry.acquire(active.string());
+    ASSERT_NE(sink, nullptr);
+    ASSERT_TRUE(sink->append("1234567890", LogLevel::INFO).ok());
+    EXPECT_EQ(ReadFile(active.string()), "1234567890");
+
+    ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
+    EXPECT_EQ(ReadFile(active.string()), "x");
+
+    size_t archive_count = 0;
+    for(const auto& entry : std::filesystem::directory_iterator(directory.path()))
+    {
+        if(entry.path().filename().string().find("net_") == 0)
+        {
+            ++archive_count;
+            EXPECT_EQ(ReadFile(entry.path().string()), "1234567890");
+        }
+    }
+    EXPECT_EQ(archive_count, 1U);
+
+    for(int i = 0; i < 4; ++i)
+    {
+        ASSERT_TRUE(sink->append("1234567890", LogLevel::INFO).ok());
+    }
+
+    archive_count = 0;
+    for(const auto& entry : std::filesystem::directory_iterator(directory.path()))
+    {
+        if(entry.path().filename().string().find("net_") == 0)
+        {
+            ++archive_count;
+        }
+    }
+    EXPECT_LE(archive_count, 2U);
+}
+
+/*
+测试思路：预先创建一个已经超过阈值的 active，acquire/open 只恢复大小，不做启动
+轮转；下一次 append 才执行同步轮转。
+
+状态图：open active(11B) -> no archive -> append(1B) -> rotate -> active(1B)。
+示例：open 后仍读到 `01234567890`，append 后 active 只包含 `x`。
+*/
+TEST(TestLog, SinkDoesNotRotateOversizedActiveFileDuringOpen)
+{
+    TempLogDirectory directory("rotation_startup");
+    const auto active = directory.path() / "net.log";
+    {
+        std::ofstream output(active, std::ios::binary);
+        output << "01234567890";
+    }
+
+    LogFileSinkRegister registry;
+    LogFileConfig config;
+    config.rotate_max_bytes = 10;
+    config.rotate_max_backup_files = 2;
+    config.flush_threshold = 10 * 1024 * 1024;
+    config.flush_interval_ms = 30000;
+    registry.setFileConfig(config);
+
+    auto sink = registry.acquire(active.string());
+    ASSERT_NE(sink, nullptr);
+    EXPECT_EQ(sink->currentFileSize(), 11U);
+    EXPECT_EQ(ReadFile(active.string()), "01234567890");
+
+    size_t archives_before_append = 0;
+    for(const auto& entry : std::filesystem::directory_iterator(directory.path()))
+    {
+        if(entry.path().filename().string().find("net_") == 0)
+        {
+            ++archives_before_append;
+        }
+    }
+    EXPECT_EQ(archives_before_append, 0U);
+
+    ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
+    EXPECT_EQ(ReadFile(active.string()), "x");
+}
+
+/*
+测试思路：通过真实配置创建一个文件 sink，再从 LogManager 外层依次调用全局和单
+路径 flush、durable flush、reopen，验证 manager 正确委托 registry。
+
+路径图：LogManager -> LogFileSinkRegister snapshot/find -> LogFileSink -> backend。
+示例：批量操作均成功，healthSnapshot 中能定位到规范化后的文件路径。
+*/
+TEST(TestLog, LogManagerDelegatesBatchFileOperations)
+{
+    TempLogFile file("manager_batch");
+    auto& manager = LogManager::GetInstance();
+
+    LogConfig config;
+    LoggerConfig root;
+    root.name = "root";
+    root.level = LogLevel::DEBUG;
+    root.appenders.push_back(LogAppenderConfig{
+        .type = LogAppenderType::kFile,
+        .level = LogLevel::DEBUG,
+        .file_path = file.path(),
+    });
+    config.loggers.push_back(root);
+    manager.applyConfig(config);
+
+    EXPECT_TRUE(manager.flushAll().ok());
+    EXPECT_TRUE(manager.durableFlushAll().ok());
+    EXPECT_TRUE(manager.reopenAll().ok());
+    EXPECT_TRUE(manager.flush(file.path()).ok());
+    EXPECT_TRUE(manager.durableFlush(file.path()).ok());
+
+    const auto health = manager.healthSnapshot();
+    ASSERT_FALSE(health.sinks.empty());
+    EXPECT_EQ(health.sinks.front().path,
+        std::filesystem::weakly_canonical(file.path()).string());
+
+    manager.applyConfig(MakeManagerTestConfig());
+}
+
+/*
+测试思路：在全部提交测试完成后关闭全局 manager，验证 Running 到 Stopped 的状态
+迁移，并覆盖重复 shutdown 的幂等语义。
+
+状态图：Running -> StopAccepting -> Stopped -> shutdown -> Stopped。
+示例：两次 shutdown 都返回成功，最终状态保持 kStopped。
+*/
+TEST(TestLog, LogManagerShutdownIsIdempotent)
+{
+    auto& manager = LogManager::GetInstance();
+    ASSERT_EQ(manager.state(), LogManagerState::kRunning);
+
+    EXPECT_TRUE(manager.shutdown().ok());
+    EXPECT_EQ(manager.state(), LogManagerState::kStopped);
+    EXPECT_TRUE(manager.shutdown().ok());
+}
+
 int main(int argc, char **argv)
 {
     testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    auto& manager = LogManager::GetInstance();
+    const auto initialize_result = manager.initialize(
+        MakeManagerTestConfig());
+    if(!initialize_result.ok())
+    {
+        std::cerr << "log manager test initialization failed: "
+                  << initialize_result.message << '\n';
+        return EXIT_FAILURE;
+    }
+
+    const int result = RUN_ALL_TESTS();
+    if(manager.state() != LogManagerState::kStopped)
+    {
+        (void)manager.shutdown();
+    }
+    return result;
 }

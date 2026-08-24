@@ -10,12 +10,16 @@
 #include "dao/dao_log.h"
 #include "dao/sqlite_orm_pool.h"
 #include "sqlite3.h"
+#include "app_config.h"
 
 #include <exception>
 #include <memory>
 #include <vector>
 #include <string>
 #include <stdexcept>
+
+
+using namespace kit_app;
 
 namespace kit_dao {
 
@@ -69,8 +73,23 @@ static std::vector<std::vector<const char*>> index_sqls{
 };
 
 
+SqliteOrmPoolConfig MakeSqlitePoolConfig()
+{
+    SqliteOrmPoolConfig config;
+#define XX(VAR) \
+    config.VAR = *(APP_CONFIG_VARS_SYSTEM_SQLITE_DB(VAR)->value())
 
+    XX(path);
+    XX(pool_capacity);
+    XX(busy_timeout_ms);
+    XX(synchronous);
+    XX(sync_schema);
+#undef XX
+    return config;
 }
+
+
+} // namespace 
 
 void EnsureSqliteIndexes(std::string path)
 {
@@ -158,10 +177,9 @@ std::shared_ptr<SqliteOrmType> InitSqliteDb()
     return InitSqliteDb(SqliteOrmPoolConfig{});
 }
 
-std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(
-    const SqliteOrmPoolConfig& sqlite_pool_config)
+std::shared_ptr<SqliteOrmPool> InitSqliteDbPool()
 {
-    return std::make_shared<SqliteOrmPool>(sqlite_pool_config);
+    return std::make_shared<SqliteOrmPool>(MakeSqlitePoolConfig());
 }
 
 }   // namespace kit_dao

@@ -6,43 +6,61 @@
  * @date 2025-04-18 23:08:20
  * @copyright Copyright (c) 2025 Kewin Li
  */
-#include "base/log_level.h"
+
 #include "base/log_attr.h"
+#include "base/log_inner.h"
+
 #include <cstdarg>
+#include <cstdio>
+#include <exception>
+#include <cstring>
 
-#include <iostream>
+namespace kit_muduo {
 
-namespace kit_muduo
-{
 
 LogAttr::LogAttr(std::shared_ptr<Logger> logger, LogLevel::Level level, const std::string &loggerName, const std::string &module, const char* fileName, int32_t line, uint32_t elapse, pthread_t tid, pid_t pid, const char* threadName, uint64_t timeStamp)
-    :_timeStamp(timeStamp)
-    ,_elapse(elapse)
-    ,_level(level)
-    ,_line(line)
-    ,_tid(tid)
-    ,_threadName(threadName)
-    ,_pid(pid)
-    ,_fileName(fileName)
-    ,_logger(logger)
-    ,_loggerName(loggerName)
-    ,_module(module)
+    :time_stamp_(timeStamp)
+    ,elapse_(elapse)
+    ,level_(level)
+    ,line_(line)
+    ,tid_(tid)
+    ,thread_name_(threadName)
+    ,pid_(pid)
+    ,file_name_(fileName)
+    ,logger_(logger)
+    ,logger_name_(loggerName)
+    ,module_(module)
 {
 
 }
 
 std::string LogAttr::getFileBaseName() const
 {
-    const size_t pos = _fileName.find_last_of("/\\");
+    const size_t pos = file_name_.find_last_of("/\\");
     if(pos == std::string::npos)
     {
-        return _fileName;
+        return file_name_;
     }
-    return _fileName.substr(pos + 1);
+    return file_name_.substr(pos + 1);
 }
+
+std::stringstream& LogAttr::getSS() 
+{
+    if(sealed_)
+    {
+        throw std::logic_error("log attribute sealed");
+    }
+    return content_; 
+}
+
 
 void LogAttr::format(const char *fmt, ...)
 {
+    if (sealed_)
+    {
+        throw std::logic_error("log attribute  sealed");
+    }
+
     va_list va;
     va_start(va, fmt);
     format(fmt, va);
@@ -51,18 +69,38 @@ void LogAttr::format(const char *fmt, ...)
 
 void LogAttr::format(const char *fmt, va_list va)
 {
+    if (sealed_)
+    {
+        throw std::logic_error("log attribute  sealed");
+    }
+
     char *buf = nullptr;
-    int len = vasprintf(&buf, fmt, va);
+    int len = vasprintf(&buf, fmt, std::move(va));
     if(-1 != len)
     {
         try {
-            _content << buf;
+            content_.write(buf, len);
             free(buf);
+        } catch(const std::exception &e) {
+            LOG_INNER_EXCPTION("log attr format exception: %s\n", e.what());
         } catch(...) {
-            std::cerr << "LogAttr format error! " << std::endl;
-            free(buf);
+            LOG_INNER_EXCPTION("log attr format unknown exception\n");
         }
 
     }
 }
-} // namespace kit
+
+bool LogAttr::seal()
+{
+    if(sealed_)
+    {
+        return false;
+    }
+
+    content_.clear();
+    sealed_ = true;
+    return true;
+}
+
+
+} // namespace kit_mduuo

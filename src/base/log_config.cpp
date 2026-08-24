@@ -14,6 +14,21 @@ namespace kit_muduo {
 
 namespace {
 
+/**************日志配置限制值**************/
+constexpr uint64_t kMinFlushThreshold = 1 * 1024;
+constexpr uint64_t kMaxFlushThreshold = 10 * 1024 * 1024;
+constexpr uint64_t kMinFlushIntervalMs = 0;
+constexpr uint64_t kMaxFlushIntervalMs = 30 * 1000;
+constexpr uint32_t kMinRetateBytes = 50 * 1024 * 1024;
+constexpr uint32_t kMaxRetateBytes = 300 * 1024 * 1024;
+
+constexpr uint32_t kMinBackupFiles = 0;
+constexpr uint32_t kMaxBackupFiles = 10;
+
+constexpr uint32_t kMinRecordBytes = 1 * 1024;
+constexpr uint32_t kMaxRecordBytes = 256 * 1024;
+/**************日志配置限制值**************/
+
 void ValidateFormatter(const std::string& pattern)
 {
     auto formatter = std::make_shared<LogFormatter>(pattern);
@@ -115,23 +130,57 @@ void ValidateLogConfig(const LogConfig& config)
     std::unordered_set<std::string> names;
     bool has_root = false;
 
-    // TODO file配置限制
-    // file校验
-    constexpr uint64_t kMinFlushThreshold = 1 * 1024;
-    constexpr uint64_t kMaxFlushThreshold = 10 * 1024 * 1024;
-    if(config.file.flush_threshold < kMinFlushThreshold
-        || config.file.flush_threshold > kMaxFlushThreshold)
+    const LogFileConfig& file = config.file;
+
+    if(config.mode != LogMode::kSync && config.mode != LogMode::kAsync)
+    {
+        throw ConfigError({},
+            "log mode invalid {'sync', 'async'}");
+    }
+
+    if(config.max_record_bytes < kMinRecordBytes
+        || config.max_record_bytes > kMaxRecordBytes)
+    {
+        throw ConfigError({}, "log file max record bytes invalid [1, 256] KB");
+    }
+
+
+    //  file配置限制
+    if(file.flush_threshold < kMinFlushThreshold
+        || file.flush_threshold > kMaxFlushThreshold)
     {
         throw ConfigError({},
             "log file flush threshold invalid [1 KiB, 10 MiB]");
     }
+    
+    if(file.flush_interval_ms <= kMinFlushIntervalMs 
+        || file.flush_interval_ms > kMaxFlushIntervalMs)
+    {
+        throw ConfigError({},
+            "log file flush interval invalid (0, 30,000] ms");
+    }
 
-    // 注意 0的意义是不轮转
-    if(config.file.max_backup_files < 0
-        || config.file.max_backup_files > 10)
+    if(!LogLevel::IsValid(file.flush_on_level))
+    {
+        throw ConfigError({},
+            "log file flush on level invalid");
+    }
+
+
+    if(file.rotate_max_bytes < kMinRetateBytes
+        || file.rotate_max_bytes > kMaxRetateBytes)
+    {
+        throw ConfigError({}, "log file rotate bytes invalid [50, 300] MB");
+    }
+
+    // 允许为0 说明不轮转
+    if(file.rotate_max_backup_files < kMinBackupFiles
+        || file.rotate_max_backup_files > kMaxBackupFiles)
     {
         throw ConfigError({}, "log file max backup files invalid [1, 10]");
     }
+
+
 
     // loggers校验
     for(const auto& logger : config.loggers)

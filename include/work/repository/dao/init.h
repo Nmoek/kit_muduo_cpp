@@ -89,8 +89,7 @@ using SqliteOrmType = decltype(SQLITE_ORM_TABLE_INIT_DEF(""));
 std::shared_ptr<SqliteOrmType> InitSqliteDb(
     const SqliteOrmPoolConfig& config);
 std::shared_ptr<SqliteOrmType> InitSqliteDb();
-std::shared_ptr<SqliteOrmPool> InitSqliteDbPool(
-    const SqliteOrmPoolConfig& config);
+std::shared_ptr<SqliteOrmPool> InitSqliteDbPool();
 
 void EnsureSqliteIndexes(std::string path);
 

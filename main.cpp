@@ -7,9 +7,8 @@
  * @copyright Copyright (c) 2025 HIKRayin
  */
 #include "application.h"
-#include "base/log.h"
 #include "domain/protocol_interaction_hub.h"
-#include "domain/protocol_interaction_publisher.h"
+#include "ioc/interaction.h"
 #include "net/http/http_server.h"
 #include "net/event_loop.h"
 #include "web/web_project.h"
@@ -31,17 +30,16 @@
 #include "service/svc_protocol.h"
 #include "repository/repo_protocol.h"
 #include "dao/dao_protocol.h"
-#include "dao/sqlite_orm_pool.h"
 
 #include "runtime/runtime_controller.h"
 #include "net/http/http_context.h"
 #include "net/http/http_request.h"
 #include "net/http/http_server.h"
 #include "service/svc_auth.h"
-#include "domain/protocol_interaction_publisher.h"
 
 #include "dao/init.h"
 #include "ioc/web.h"
+#include "ioc/log.h"
 #include "app_config.h"
 
 #include <functional>
@@ -71,87 +69,16 @@ using namespace kit_dao;
 /// @brief 全局事件循环
 static EventLoop loop;
 
-namespace {
-
-SqliteOrmPoolConfig MakeSqlitePoolConfig()
-{
-    SqliteOrmPoolConfig config;
-#define XX(VAR) \
-    config.VAR = *(APP_CONFIG_VARS_SYSTEM_SQLITE_DB(VAR)->value())
-
-    XX(path);
-    XX(pool_capacity);
-    XX(busy_timeout_ms);
-    XX(synchronous);
-    XX(sync_schema);
-#undef XX
-    return config;
-}
-
-WebServerStartupConfig MakeWebServerStartupConfig()
-{
-    WebServerStartupConfig config;
-#define XX(VAR) \
-    config.VAR = *(APP_CONFIG_VARS_SYSTEM_HTTP(VAR)->value())
-
-    XX(host);
-    XX(port);
-    XX(io_threads);
-#undef XX
-
-    config.static_root = *(
-        APP_CONFIG_VARS_SYSTEM_HTTP(static_root_path)->value());
-
-#define XX(VAR) \
-    config.business_thread_pool.VAR = *(APP_CONFIG_VARS_SYSTEM_BUSINESS(VAR)->value())
-
-    XX(max_threads);
-    XX(max_task_queue);
-    XX(thread_idle_seconds);
-    XX(submit_timeout_ms);
-#undef XX
-    return config;
-}
-
-ProtocolInteractionPublisherConfig MakePcInteracPublisherConfig()
-{
-    ProtocolInteractionPublisherConfig config;
-#define XX(VAR) \
-    config.VAR = *    (APP_CONFIG_VARS_WORK_INTRAC(VAR)->value())
-
-    XX(queue_capacity);
-    XX(stop_drain_timeout_ms);
-#undef XX
-
-#define XX(VAR) \
-    config.capture_options.VAR = *    (APP_CONFIG_VARS_WORK_INTRAC(VAR)->value())
-
-    XX(capture_max_text_bytes);
-    XX(capture_max_hex_bytes);
-    XX(capture_max_binary_attachment_bytes);
-
-#undef XX
-    return config;
-}
-}
-
-static void InitLog(const LogConfig& config)
-{
-    LogManager::GetInstance().applyConfig(config);
-}
 
 /**
  * @brief 该函数就是所有依赖初始化的地方
  * @return std::shared_ptr<Application> 
  */
-static std::shared_ptr<Application> InitApp(
-    const SqliteOrmPoolConfig& sqlite_pool_config,
-    ProtocolInteractionPublisherConfig publisher_config,
-    size_t runtime_loop_capacity,
-    const WebServerStartupConfig& web_server_config)
+static std::shared_ptr<Application> InitApp()
 {
 
-    auto sqliteDbPool = InitSqliteDbPool(sqlite_pool_config);
+    // 数据库初始化
+    auto sqliteDbPool = InitSqliteDbPool();
 
     std::shared_ptr<ProtocolDaoInterface> protocDao = std::make_shared<SqliteOrmProtocolDao>(sqliteDbPool);
     std::shared_ptr<ProtocolRepoInterface> protocRepo = std::make_shared<ProtocolRepository>(protocDao);
@@ -173,16 +100,14 @@ static std::shared_ptr<Application> InitApp(
     // 全局协议交互详情订阅器
     std::shared_ptr<ProtocolInteractionHub> hub = std::make_shared<ProtocolInteractionHub>();
 
-        
-    auto publisher = std::make_shared<ProtocolInteractionPublisher>(
-        std::vector<std::shared_ptr<InteractionSink>>{hub}
-        ,std::move(publisher_config)
-    );
+    auto publisher = InitInteractionPublisher({hub});
     publisher->start();
     
     // 全局运行态管理器
+    const size_t runtime_loop_capacity = *(APP_CONFIG_VARS_WORK_RUNTIME(loop_capacity)->value());
+
     std::shared_ptr<RuntimeControllerInterface> runtime_controller = std::make_shared<ProjectRuntimeManager>(projSvc, protocSvc, publisher, runtime_loop_capacity);
-    
+
 
     // 需要将app句柄放到Handler中
     static std::shared_ptr<ProtocolHandler> protocHdl;
@@ -200,7 +125,12 @@ static std::shared_ptr<Application> InitApp(
     //需要给运行态增加live清理回调
     runtime_controller->setInteractionCleanUpCallBack(std::bind(&ProtocolInteractionHandler::cleanupLive, interHdl, std::placeholders::_1, std::placeholders::_2));
 
-    auto server = InitWebServer(&loop, web_server_config, projHdl.get(), protocHdl.get(), authHdl.get(), userHdl.get(), interHdl.get());
+    auto server = InitWebServer(&loop, 
+        projHdl.get(), 
+        protocHdl.get(), 
+        authHdl.get(), 
+        userHdl.get(), 
+        interHdl.get());
 
     server->setAuthCallback([authSvc](HttpContextPtr ctx) {
         const std::string path = ctx->request()->path();
@@ -294,26 +224,17 @@ int main(int argc, char* argv[])
     std::shared_ptr<Application> app = nullptr;
     std::shared_ptr<kit_muduo::http::HttpServer> server = nullptr;
 
-
     // ASan触发检查
     setup_asan_report();
 
-
     try {
+        // 全局配置初始化
         InitGlobalAppConfig();
-        const auto sqlite_pool_config = MakeSqlitePoolConfig();
-        const auto publisher_config = MakePcInteracPublisherConfig();
-        const auto web_server_config = MakeWebServerStartupConfig();
-        const size_t runtime_loop_capacity = *(
-            APP_CONFIG_VARS_WORK_RUNTIME(loop_capacity)->value());
-        const auto log_config = *APP_CONFIG_VARS_SYSTEM_LOG()->value();
 
-        InitLog(log_config);
-        app = InitApp(
-            sqlite_pool_config,
-            publisher_config,
-            runtime_loop_capacity,
-            web_server_config);
+        // 日志系统初始化
+        InitLog();
+
+        app = InitApp();
     } catch(std::exception &e) {
         std::cerr << "application init fail!" << e.what() << std::endl;
         abort();

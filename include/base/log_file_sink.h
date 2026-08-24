@@ -10,11 +10,14 @@
 #ifndef __KIT_LOG_FILE_SINK_H__
 #define __KIT_LOG_FILE_SINK_H__
 
+#include "base/log_file_backend.h"
+#include "base/log_level.h"
+
 #include <atomic>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <unordered_map>
 #include <mutex>
 #include <vector>
@@ -23,25 +26,120 @@ namespace kit_muduo {
 
 struct LogFileConfig;
 class LogFileSinkRegister;
+class LogFileBackend;
 
-enum class LogFileSinkStatus
+enum class LogFileSinkResultStatus
 {
     kOk,
+
+    kNotFound,
+
     kOpenFailed,
     kWriteFailed,
     kFlushFailed,
+    kSyncFailed,
+    kRotateFailed,
+
 };
 
 struct LogFileSinkResult
 {
     /// @brief 本次写入状态
-    LogFileSinkStatus status{LogFileSinkStatus::kOk};
+    LogFileSinkResultStatus status{LogFileSinkResultStatus::kOk};
     /// @brief 本次尝试提交给 sink 的输入字节数(非持久化字节数)
     size_t requested_bytes{0};
-    /// @brief 本次写入是否触发了阈值 flush。
-    bool flush_attempted{false};
 
-    bool ok() const noexcept { return status == LogFileSinkStatus::kOk; }
+    /// @brief append 时表示实际写入字节数。 flush/reopen 等非 append 操作保持为 0。
+    size_t written_bytes{0};
+
+    // TODO 批量操作统计。(暂时不关心)
+    // 单 sink 操作成功时可以是 attempted=1、succeeded=1；
+    // 如果调用方不关心，也可以保持为 0。
+    size_t attempted{0};
+    size_t succeeded{0};
+
+    /// @brief 是否触发刷新条件
+    bool flush_attempted{false};
+    bool truncated{false};
+
+    size_t original_bytes{0};
+
+    // 单 sink 操作记录具体错误；
+    // 批量操作记录汇总错误。
+    std::string message;
+
+    bool ok() const noexcept
+    {
+        return status == LogFileSinkResultStatus::kOk;
+    }
+
+    static LogFileSinkResult Ok()
+    {
+        return {};
+    }
+
+    static LogFileSinkResult Failure(LogFileSinkResultStatus status,
+        std::string message)
+    {
+        LogFileSinkResult result;
+        result.status = status;
+        result.message = std::move(message);
+        return result;
+    }
+};
+
+enum class LogFileSinkHealthState
+{
+    kHealthy,  // 正常健康
+    kDegraded, // 退化
+    kFailed,  // 异常
+};
+
+/**
+ * @brief 日志文件健康监测
+ */
+struct LogFileSinkHealth
+{
+    // 成功写入的逻辑记录数量。
+    uint64_t written_records{0};
+
+    // 成功写入的字节数。
+    uint64_t written_bytes{0};
+
+    // 各类失败次数。
+    uint64_t write_failures{0};
+    uint64_t flush_failures{0};
+    uint64_t reopen_failures{0};
+    uint64_t rotate_failures{0};
+
+    // fallback 和截断统计。
+    uint64_t fallback_records{0};
+    uint64_t truncated_records{0};
+
+    // 当前 active 文件大小。
+    uint64_t current_file_size{0};
+
+    // 最近一次成功写入的时间，使用 Unix epoch milliseconds。
+    uint64_t last_success_ms{0};
+
+    // 当前连续失败次数。成功后清零。
+    uint32_t consecutive_failures{0};
+
+    // 当前健康状态。
+    LogFileSinkHealthState state{LogFileSinkHealthState::kHealthy};
+
+    // 最近一次错误信息。
+    std::string last_error;
+};
+
+struct LogFileArchive
+{
+    /// @brief 归档所属编号 -1代表不存在归档
+    int32_t rotate_seq{-1};
+    /// @brief 归档名的日期(防止编号异常重复 退化为比较日期)
+    std::string date_str;
+    /// @brief 归档路径对象
+    std::filesystem::path archive_path;
 };
 
 class LogFileSink
@@ -49,38 +147,76 @@ class LogFileSink
 public:
     using Ptr = std::shared_ptr<LogFileSink>;
 
-    LogFileSink(const std::string &normalize_path, const std::shared_ptr<const LogFileConfig>& base_file_confg);
+    LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path);
     ~LogFileSink() = default;
 
-    LogFileSinkResult append(const std::string& data);
-    void flush();
-    bool ensureOpen(std::string* error_message = nullptr);
-    bool reopen(std::string* error_message = nullptr);
+   LogFileSinkResult append(const std::string& log_data,
+        LogLevel::Level level,
+        bool truncated = false,
+        size_t original_bytes = 0);
+    LogFileSinkResult flush();
+    LogFileSinkResult durableFlush();
+    /**
+     * @brief 确保持久化通道打开(如果发现意外关闭需要重新打开)
+     * @return LogFileSinkResult 
+     */
+    LogFileSinkResult ensureOpen();
+
+    /**
+     * @brief 重新打开持久化通道(先刷新关闭 后重新打开)
+     * @return LogFileSinkResult 
+     */
+    LogFileSinkResult reopen();
+
+    void close();
+
     const std::string& normalizedPath() const noexcept { return normalize_path_; }
     uint64_t currentFileSize() const { return current_file_size_.load(); }
 
-private:
-    bool ensureOpenUnlocked(std::string* error_message);
-    bool openUnlocked(std::string* error_message);
-    bool flushUnlocked();
-    void reportErrorUnlocked(const char* operation);
+    LogFileSinkHealth healthSnapshot() const;
+
+
 
 private:
-    /// @brief 指向注册器日志文件配置指针
-    std::shared_ptr<const LogFileConfig> base_file_confg_;
+    LogFileSinkResult ensureOpenUnlocked();
+    LogFileSinkResult openUnlocked();
+    bool flushUnlocked();
+    bool durableFlushUnlocked();
+
+    bool shouldRotateUnlocked(size_t incoming_bytes) const noexcept;
+
+    bool rotateUnlocked();
+
+    bool scanArchives(std::vector<LogFileArchive> &archives);
+
+    bool newArchivePathUnlocked(std::string &new_archive_path);
+
+    bool cleanupOldArchivesUnlocked(const LogFileConfig&file_config, std::vector<LogFileArchive> &archives);
+
+private:
+
+    /** @brief 保留文件注册器的指针
+        重要作用: 减少配置副本引起的不一致问题, 方便访问注册器
+    */
+    LogFileSinkRegister *reg_;
     /// @brief 归一化后路径
     std::string normalize_path_;
-    /// @brief 文件流对象
-    std::ofstream ofs_;
+    /// @brief 文件持久化对象
+    std::unique_ptr<LogFileBackend> backend_;
     /// @brief 句柄操作锁
-    std::mutex mtx_;
+    mutable std::mutex mtx_;
     /// @brief 记录已写入的文件大小(避免每次访问)
     std::atomic_uint64_t current_file_size_{0};
     /// @brief 本轮已写的字节数
     uint64_t bytes_since_flush_{0};
+    /// @brief 上次触发刷新的单调时间
+    int64_t last_flush_time_{0};
     /// @brief 当前故障阶段是否已经向 stderr 报告
     bool error_reported_{false};
-    std::vector<uint8_t> log_datas_;
+    /// @brief 日志文件健康观测数据
+    LogFileSinkHealth health_;
+    /// @brief 下一次轮转的编号
+    int32_t next_rotate_seq_{0};
 };
 
 
@@ -89,25 +225,52 @@ private:
 class LogFileSinkRegister
 {
 public:
+    using SinksMap = std::unordered_map<std::string, std::weak_ptr<LogFileSink>>;
 
     LogFileSinkRegister();
     ~LogFileSinkRegister() = default;
 
+
     LogFileSink::Ptr acquire(const std::string &file_path);
 
-    // TODO 后续这个接口变为热更新时 就是观察者接口
+    // TODO 后续这个接口涉及热更新
     void setFileConfig(LogFileConfig config);
+    void setFileConfig(std::shared_ptr<const LogFileConfig> config);
 
-    const std::shared_ptr<const LogFileConfig>& fileConfig() const noexcept;
+    const std::shared_ptr<const LogFileConfig> fileConfig() const noexcept;
+
+    void commit(SinksMap &&sinks);
+
+    const SinksMap& logFileSinks() const;
+
+    std::vector<LogFileSink::Ptr> snapshotSinks() const;
+
+    LogFileSinkResult flushAll();
+
+    LogFileSinkResult flush(const std::string& file_path);
+
+    LogFileSinkResult durableFlushAll();
+
+    LogFileSinkResult durableFlush(const std::string& file_path);
+
+    LogFileSinkResult reopenAll();
+
+    LogFileSinkResult reopen(const std::string& file_path);
+
+    void closeAll() noexcept;
 
 private:
+    friend class LogManager;
+
     LogFileSink::Ptr create(const std::string &normalize_path);
+
+    LogFileSink::Ptr find(const std::string &file_path);
 
 
 private:
     /// @brief <归一化后路径, 日志文件对象>
-    std::unordered_map<std::string, std::weak_ptr<LogFileSink>> log_file_sinks_;
-    std::mutex mtx_;
+    SinksMap log_file_sinks_;
+    mutable std::mutex mtx_;
     std::shared_ptr<const LogFileConfig> file_config_;
 };
 

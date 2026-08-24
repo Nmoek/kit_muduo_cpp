@@ -13,7 +13,9 @@
 #include "base/log_level.h"
 #include "base/config_codec.h"
 
+#include <cctype>
 #include <initializer_list>
+#include <stdexcept>
 #include <vector>
 #include <algorithm>
 
@@ -40,20 +42,82 @@ struct LoggerConfig
     std::vector<LogAppenderConfig> appenders;
 };
 
+enum class LogMode { kSync, kAsync };
+enum class LogInitFailurePolicy { kFail, kStderr };
+
+inline LogMode LogModeFromString(std::string value)
+{
+    std::for_each(value.begin(), value.end(), [](auto &&c){
+        c = std::tolower(c);
+    });
+
+    if("sync" == value) { return LogMode::kSync; }
+    if("async" == value) { return LogMode::kAsync; }
+
+    throw std::invalid_argument("log mode invalid");
+}
+
+inline std::string LogModeToString(const LogMode value)
+{
+    if(LogMode::kAsync == value) { return "async"; }
+    if(LogMode::kSync == value) { return "sync"; }
+    throw std::invalid_argument("log mode invalid");
+}
+
+inline bool IsLogModeValid(LogMode value)
+{
+    return LogMode::kSync <= value && value <= LogMode::kAsync;
+}
+
+inline LogInitFailurePolicy LogInitFailurePolicyFromString(std::string value)
+{
+    std::for_each(value.begin(), value.end(), [](auto &&c){
+        c = std::tolower(c);
+    });
+
+    if("fail" == value) { return LogInitFailurePolicy::kFail; }
+    if("stderr" == value) { return LogInitFailurePolicy::kStderr; }
+
+    throw std::invalid_argument("log init failure policy invalid");
+}
+
+inline std::string LogInitFailurePolicyToString(const LogInitFailurePolicy value)
+{
+    if(LogInitFailurePolicy::kFail == value) { return "async"; }
+    if(LogInitFailurePolicy::kStderr == value) { return "sync"; }
+    throw std::invalid_argument("log init failure policy invalid");
+}
+
+inline bool IsLogInitFailurePolicyValid(LogInitFailurePolicy value)
+{
+    return LogInitFailurePolicy::kFail <= value && value <= LogInitFailurePolicy::kStderr;
+}
+
+
 struct LogFileConfig
 {
-    /// @brief 日志写入刷新阈值 1MB
+    /// @brief 日志写入刷新阈值 默认1MB
     uint64_t flush_threshold{1 * 1024 * 1024};
-    /// @brief TODO 文件大小轮转阈值
+    /// @brief 日志写入刷新时间间隔 默认3s
+    uint64_t flush_interval_ms{3000};
+    /// @brief 日志刷新等级(碰到就立即刷新) 默认ERROR
+    LogLevel::Level flush_on_level{LogLevel::ERROR};
+    /// @brief 文件大小轮转阈值
     uint64_t rotate_max_bytes{300 * 1024 * 1024};
-    /// @brief TODO 文件轮转数量
-    int32_t max_backup_files{5};
-    /// @brief TODO 文件是否进行压缩处理
+    /// @brief 文件轮转数量
+    uint32_t rotate_max_backup_files{5};
+    /// @brief 文件是否进行压缩处理
     bool compress_rotated{true};
+    /// @brief 日志初始化策略 默认启动失败就终止程序
+    LogInitFailurePolicy init_failure_policy{LogInitFailurePolicy::kFail};
 };
 
 struct LogConfig
 {
+    /// @brief 日志系统模式 默认同步
+    LogMode mode{LogMode::kSync};
+    /// @brief 日志单条记录上限(超限阶段) 默认256K
+    uint32_t max_record_bytes{256 * 1024};
     LogFileConfig file;
     std::vector<LoggerConfig> loggers;
 };
@@ -295,25 +359,23 @@ struct ConfigCodec<LogFileConfig, Policy>
         LogFileConfig result;
 
         log_config_detail::DecodeObject<Policy>(node,
-        {"flush_threshold", "rotate_max_bytes", "max_backup_files", "compress_rotated"},
+        {"flush_threshold", "rotate_max_bytes", "rotate_max_backup_files", "compress_rotated"},
         [&](const std::string& field, const Node& child) {
+        #define XX(NAME, TYPE) \
+            if(#NAME == field) \
+            { \
+                result.NAME = ConfigCodec<TYPE, Policy>::Decode(child); \
+            }
 
-            if(field == "flush_threshold")
-            {
-                result.flush_threshold = ConfigCodec<uint64_t, Policy>::Decode(child);
-            }
-            else if(field == "rotate_max_bytes")
-            {
-                result.rotate_max_bytes = ConfigCodec<uint64_t, Policy>::Decode(child);
-            }
-            else if(field == "max_backup_files")
-            {
-                result.max_backup_files = ConfigCodec<int32_t, Policy>::Decode(child);
-            }
-            else if(field == "compress_rotated")
-            {
-                result.compress_rotated = ConfigCodec<bool, Policy>::Decode(child);
-            }
+            XX(flush_threshold, uint64_t)
+            XX(flush_interval_ms, uint64_t)
+            XX(flush_on_level, LogLevel::Level)
+            XX(rotate_max_bytes, uint64_t)
+            XX(rotate_max_backup_files, int32_t)
+            XX(compress_rotated, bool)
+            XX(init_failure_policy, LogInitFailurePolicy)
+
+        #undef XX
         });
 
         return result;
@@ -322,19 +384,77 @@ struct ConfigCodec<LogFileConfig, Policy>
     static Node Encode(const LogFileConfig &value)
     {
         auto node = Policy::MakeMap();
+    #define XX(NAME, TYPE) \
+        Policy::Put(node, #NAME, ConfigCodec<TYPE, Policy>::Encode(value.NAME));
 
-        Policy::Put(node, "flush_threshold",
-            ConfigCodec<uint64_t, Policy>::Encode(value.flush_threshold));
-        Policy::Put(node, "rotate_max_bytes",
-            ConfigCodec<uint64_t, Policy>::Encode(value.rotate_max_bytes));
-        Policy::Put(node, "max_backup_files",
-            ConfigCodec<int32_t, Policy>::Encode(value.max_backup_files));
-        Policy::Put(node, "compress_rotated",
-            ConfigCodec<bool, Policy>::Encode(value.compress_rotated));
-        
+        XX(flush_threshold, uint64_t)
+        XX(flush_interval_ms, uint64_t)
+        XX(flush_on_level, LogLevel::Level)
+        XX(rotate_max_bytes, uint64_t)
+        XX(rotate_max_backup_files, int32_t)
+        XX(compress_rotated, bool)
+        XX(init_failure_policy, LogInitFailurePolicy)
+    #undef XX
         return node;
     }
 };
+
+template<class Policy>
+struct ConfigCodec<LogMode, Policy>
+{
+    using Node = typename Policy::Node;
+
+    static LogMode Decode(const Node& node)
+    {
+        try { 
+            const auto value = ConfigCodec<std::string, Policy>::Decode(node);
+            return LogModeFromString(std::move(value)); 
+            
+        } catch(const std::exception& error){
+            throw ConfigError(Policy::Context(node), error.what());
+        }
+    }
+
+    static Node Encode(LogMode value)
+    {
+        if(!IsLogModeValid(value))
+        {
+            throw ConfigError({}, "invalid log mode enum");
+        }
+
+        return ConfigCodec<std::string, Policy>::Encode(LogModeToString(value));
+    }
+};
+
+template<class Policy>
+struct ConfigCodec<LogInitFailurePolicy, Policy>
+{
+    using Node = typename Policy::Node;
+
+    static LogInitFailurePolicy Decode(const Node& node)
+    {
+
+        try { 
+            const auto value = ConfigCodec<std::string, Policy>::Decode(node);
+            return LogInitFailurePolicyFromString(std::move(value)); 
+            
+        } catch(const std::exception& error){
+            throw ConfigError(Policy::Context(node), error.what());
+        }
+    }
+
+    static Node Encode(LogInitFailurePolicy value)
+    {
+        if(!IsLogInitFailurePolicyValid(value))
+        {
+            throw ConfigError({}, "invalid log init failure policy enum");
+        }
+
+        return ConfigCodec<std::string, Policy>::Encode(LogInitFailurePolicyToString(value));
+    }
+};
+
+
 
 template<typename Policy>
 struct ConfigCodec<LogConfig, Policy>
@@ -346,14 +466,22 @@ struct ConfigCodec<LogConfig, Policy>
         LogConfig result;
 
         log_config_detail::DecodeObject<Policy>(node,
-        {"file", "loggers"},
+        {"mode", "max_record_bytes", "file", "loggers"},
         [&](const std::string& field, const Node& child) {
 
-            if(field == "file")
+            if("mode" == field)
+            {
+                result.mode = ConfigCodec<LogMode, Policy>::Decode(child);
+            }
+            else if("max_record_bytes" == field)
+            {
+                result.max_record_bytes =  ConfigCodec<uint32_t, Policy>::Decode(child);
+            }
+            if("file" == field)
             {
                 result.file =  ConfigCodec<LogFileConfig, Policy>::Decode(child);
             }
-            else if(field == "loggers")
+            else if("loggers" == field)
             {
                 result.loggers = ConfigCodec<std::vector<LoggerConfig>, Policy>::Decode(child);
             }
@@ -368,6 +496,10 @@ struct ConfigCodec<LogConfig, Policy>
         ValidateLogConfig(value);
         auto node = Policy::MakeMap();
 
+        Policy::Put(node, "mode",
+            ConfigCodec<LogMode, Policy>::Encode(value.mode));
+        Policy::Put(node, "max_record_bytes",
+            ConfigCodec<uint32_t, Policy>::Encode(value.max_record_bytes));
         Policy::Put(node, "file",
             ConfigCodec<LogFileConfig, Policy>::Encode(value.file));
         Policy::Put(node, "loggers",

@@ -9,6 +9,8 @@
 #ifndef __LOG_ATTR_H__
 #define __LOG_ATTR_H__
 
+#include "base/log_level.h"
+
 #include <memory>
 #include <sstream>
 
@@ -41,37 +43,31 @@ public:
      */
     LogAttr(std::shared_ptr<Logger> logger, LogLevel::Level level, const std::string &loggerName, const std::string &module, const char* fileName, int32_t line, uint32_t elapse, pthread_t tid, pid_t pid, const char* threadName, uint64_t timeStamp);
 
-    uint64_t getTimeStamp() const { return _timeStamp; }
-
-    uint32_t getElapse() const { return _elapse; }
-
-    LogLevel::Level getLevel() const { return _level; }
-    int32_t getLine() const { return _line; }
-
-    pthread_t getTid() const { return _tid; }
-
-    const std::string& getThreadName() const { return _threadName; }
-
-    pid_t getPid() const  { return _pid; }
-
-    const std::string& getFileName() const { return _fileName; }
+    uint64_t getTimeStamp() const { return time_stamp_; }
+    uint32_t getElapse() const { return elapse_; }
+    LogLevel::Level getLevel() const { return level_; }
+    int32_t getLine() const { return line_; }
+    pthread_t getTid() const { return tid_; }
+    const std::string& getThreadName() const { return thread_name_; }
+    pid_t getPid() const  { return pid_; }
+    const std::string& getFileName() const { return file_name_; }
 
     /**
-     * @brief 获取日志文件的纯文件名
+     * @brief 获取打印日志位置路径的纯文件名
      * @return std::string
      */
     std::string getFileBaseName() const;
 
-    std::string getContent() const { return _content.str(); }
+    std::string getContent() const { return content_.str(); }
 
 
-    std::shared_ptr<Logger> getLogger() const { return _logger; };
+    std::shared_ptr<Logger> getLogger() const { return logger_; };
 
-    const std::string& getLoggerName() const { return _loggerName; }
+    const std::string& getLoggerName() const { return logger_name_; }
 
-    const std::string& getModule() const { return _module; }
+    const std::string& getModule() const { return module_; }
 
-    std::stringstream& getSS() { return _content; }
+    std::stringstream& getSS();
 
     /**
      * @brief 实际内容变参模版处理
@@ -87,31 +83,38 @@ public:
      */
     void format(const char *fmt, va_list va);
 
+    bool seal();
+    bool isSealed() const noexcept { return sealed_; }
+
 private:
     /// @brief 日志时间戳
-    uint64_t _timeStamp{0};
+    uint64_t time_stamp_{0};
     /// @brief 程序启动到现在的毫秒
-    uint32_t _elapse{0};
+    uint32_t elapse_{0};
     /// @brief 当前日志本身的级别
-    LogLevel::Level _level;
+    LogLevel::Level level_;
     /// @brief 日志行号
-    int32_t _line{0};
+    int32_t line_{0};
     /// @brief 线程tid
-    pthread_t _tid{0};
+    pthread_t tid_{0};
     /// @brief 线程名称
-    std::string _threadName{""};
+    std::string thread_name_{""};
     /// @brief 线程真实pid
-    pid_t _pid{0};
+    pid_t pid_{0};
     /// @brief 日志文件路径
-    std::string _fileName{""};
+    std::string file_name_{""};
     /// @brief 实际日志内容
-    std::stringstream _content{""};
+    std::stringstream content_{""};
     /// @brief 属性属于哪个哪个日志器
-    std::shared_ptr<Logger> _logger{nullptr};
+    std::shared_ptr<Logger> logger_{nullptr};
     /// @brief 日志器的名称
-    std::string _loggerName{""};
+    std::string logger_name_{""};
     /// @brief 模块名
-    std::string _module{""};
+    std::string module_{""};
+    /// @brief 不可变状态
+    bool sealed_{false};
+
+
 };
 
 

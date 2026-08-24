@@ -28,6 +28,19 @@ namespace kit_muduo
 thread_local pid_t t_thread_id = 0;
 
 
+pid_t GetPid()
+{
+    static pid_t cur_pid = ::getpid();
+    return cur_pid;
+}
+
+
+pid_t GetPPid()
+{
+    static pid_t parent_pid = ::getppid();
+    return parent_pid;
+}
+
 
 pid_t GetThreadPid()
 {
@@ -182,6 +195,64 @@ std::string Utf8SafePrefix(const void *data, size_t size, size_t max_bytes)
     }
 
     return std::string(text, prefix_size);
+}
+
+std::string NormalizeFilePath(const std::string& file_path)
+{
+    // 拒绝全空白字符路径
+    // "a bc.log" 中间有空白允许
+    const bool contains_control_character = std::any_of(file_path.begin(),file_path.end(),
+    [](auto &&ch) 
+    {
+        const auto value = static_cast<unsigned char>(ch);
+
+        return value == '\t'
+            || value == '\n'
+            || value == '\r'
+            || value == '\v'
+            || value == '\f';
+    });
+
+    if(contains_control_character)
+    {
+        throw std::invalid_argument("file path must not contain control characters");
+    }
+
+
+    std::error_code error;
+    auto path = std::filesystem::absolute(std::filesystem::path{file_path}, error);
+    if(error)
+    {
+        throw std::runtime_error(
+            "cannot make file path absolute: " + file_path
+            + "; " + error.message());
+    }
+
+    path = std::filesystem::weakly_canonical(path, error);
+    if(error)
+    {
+        throw std::runtime_error(
+            "cannot normalize file path: " + file_path
+            + "; " + error.message());
+    }
+
+    return path.string();
+}
+
+std::string Trim(const std::string &str)
+{
+    if(str.empty())
+    {
+        return str;
+    }
+
+    auto pos1 = str.find_first_not_of(' ');
+    auto pos2 = str.find_last_not_of(' ');
+    if(std::string::npos == pos1 && std::string::npos == pos2)
+    {
+        return "";
+    }
+    return str.substr(pos1, pos2 - pos1 + 1);
 }
 
 

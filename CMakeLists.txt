@@ -196,7 +196,9 @@ set(BASE_SRC
     src/base/log_appender.cpp
     src/base/log_config.cpp
     src/base/log_file_sink.cpp
-
+    src/base/log_file_backend.cpp
+    src/base/regular_log_file_backend.cpp
+    
     src/base/util.cpp
     src/base/time_stamp.cpp
     src/base/bytes_codec.cpp
@@ -350,6 +352,8 @@ set(WORK_WEB_SRC
 
 set(IOC_SRC
     src/ioc/web.cpp
+    src/ioc/log.cpp
+    src/ioc/interaction.cpp
 )
 
 set(WORK_APP_SRC
