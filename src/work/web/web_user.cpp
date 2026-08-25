@@ -30,7 +30,7 @@ struct UserEditReq {
     std::string status;
     std::string password;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(UserEditReq, note_name, role, status, password)
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(UserEditReq, note_name, role, status, password)
 };
 
 struct UserNoteCondidatesReq

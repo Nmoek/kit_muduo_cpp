@@ -1319,6 +1319,45 @@ TEST_F(CustomTcpServerSuite, RuntimePublishesMatchedObservationThroughPublisherH
 
 /*
 测试思路：
+1. 响应配置只提供 function_code，fields 留空，模拟真实配置中未覆盖响应头字段的情况。
+2. response body 仍应正常发送，交互记录的 response head_text 不能退化为空白。
+
+示例：
+  response cfg={function_code:H1080,fields:{}} + body="ok"
+      -> response.head_text 为实际序列化头部十六进制
+*/
+TEST_F(CustomTcpServerSuite, ResponseObservationKeepsHeaderWhenResponseFieldsAreEmpty)
+{
+    auto project = MakeBodyLengthProject(9405);
+    auto server = server_start(project);
+    CustomTcpInteractionPipeline pipeline(9405, 4005, true);
+    server->setObserveCallback(pipeline.Callback());
+
+    auto protocol = MakeBodyLengthProtocol(4005, 9405, "H0100", {}, {'o', 'k'});
+    protocol.m_respCfg["fields"] = nljson::object();
+    auto response_without_fields = std::make_shared<CustomTcpMessage>(server->GetPatternInfo());
+    response_without_fields->setFunctionCodeHex("H1080");
+    response_without_fields->setBodyData(std::vector<char>{'o', 'k'});
+    EXPECT_FALSE(response_without_fields->toHeaderString().empty());
+    auto item = AddTcpRuntimeProtocol(server, protocol);
+    ASSERT_NE(item, nullptr);
+    pipeline.Subscribe(9405, 4005, item->cache(), server->cache(), true);
+    server->start();
+
+    std::vector<char> req_data;
+    ReqBuilderHelper1(req_data, nljson::parse(R"({"key1":"val1"})"));
+    ASSERT_EQ(tcp_send(req_data, nullptr, server->getBindAddr()), 0);
+    ASSERT_TRUE(pipeline.collector->WaitForRecordCount(1));
+    EXPECT_TRUE(server->stop());
+
+    const auto records = pipeline.collector->Records();
+    ASSERT_EQ(records.size(), 1U);
+    EXPECT_FALSE(records.front().response.head_text.empty());
+    EXPECT_EQ(records.front().response.body.text, "ok");
+}
+
+/*
+测试思路：
 1. 运行态只注册 H0100 协议项。
 2. 客户端发送同一格式但功能码为 H0200 的完整报文。
 3. 当前 CustomTcpParseStatus::kFuncCodeNotFound 映射为 InteractionResult::kRouteNotFound，测试固定现有实现。

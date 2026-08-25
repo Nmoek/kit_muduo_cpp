@@ -1110,6 +1110,51 @@ TEST(ProjectRuntimeManagerSuite, DelProtocolReConfigPersistsOnly)
 
 /*
 测试思路：
+1. TCP 格式修改后，协议状态为 kReConfig，但运行中的 server 仍可能保留旧协议项。
+2. 删除必须同时清理该运行项，否则随后创建相同功能码的协议会命中旧映射冲突。
+
+示例：
+  running + kReConfig + runtime item
+      -> Del(protocol) -> DB soft delete + runtime item removed
+*/
+TEST(ProjectRuntimeManagerSuite, DelProtocolReConfigRemovesStaleRuntimeItem)
+{
+    constexpr int64_t project_id = 99171;
+    constexpr int64_t protocol_id = 9917101;
+    auto protocol = MakeRuntimeHttpProtocolWithState(
+        protocol_id, project_id, "/runtime/delete-reconfig-running", ProtocolConfigState::kReConfig);
+
+    auto mocksvc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto mock_protocol_svc = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto runtime_manager = MakeRuntimeManagerForTest(mocksvc, mock_protocol_svc, 2);
+    auto server = MakeFakeRuntimeServer(project_id);
+    auto protocol_item = std::make_shared<HttpProtocolItem>();
+    protocol_item->init(protocol, HttpItemReqHeaderCfg(protocol.m_reqCfg), HttpItemRespHeaderCfg(protocol.m_respCfg));
+    ASSERT_TRUE(server->AddProtocolItem(protocol_item).ok());
+    runtime_manager->addServer(project_id, server);
+
+    {
+        InSequence seq;
+        EXPECT_CALL(*mock_protocol_svc, GetAccessInfo(_, protocol_id, _))
+            .WillOnce(DoAll(SetArgReferee<2>(MakeProtocolAccessInfo(protocol, ProjectRuntimeState::kRunning)),
+                            Return(true)));
+        EXPECT_CALL(*mock_protocol_svc, Del(_, protocol_id))
+            .WillOnce(Return(true));
+    }
+
+    auto result = runtime_manager->delProtocol(nullptr, project_id, protocol_id);
+
+    ASSERT_TRUE(result.ok()) << result.status.message;
+    EXPECT_EQ(result.receipt.persisted, 1);
+    EXPECT_EQ(result.receipt.runtime_applied, 1);
+    EXPECT_FALSE(server->GetProtocolItem(protocol_id).ok());
+
+    server->stop();
+    runtime_manager->removeServer(project_id);
+}
+
+/*
+测试思路：
 1. 普通 DetailCfg/UpdateProtocolCfg 不能修改 kReConfig 协议。
 2. manager 应在读取旧 cfg 和写 DB 前拒绝，让前端走 ReconfigProtocol 提交完整配置。
 3. 返回 persisted=0/runtime_applied=0。
