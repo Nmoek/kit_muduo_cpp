@@ -118,6 +118,174 @@
         }
     }
 
+    function validateText(text) {
+        const value = String(text == null ? '' : text);
+        for (let index = 0; index < value.length; index += 1) {
+            const code = value.charCodeAt(index);
+            const lineColumn = positionToLineColumn(value, index);
+            if (code === 0 || (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d)) {
+                return {
+                    valid: false,
+                    line: lineColumn.line,
+                    column: lineColumn.column,
+                    message: `第 ${lineColumn.line} 行，第 ${lineColumn.column} 列：Text Body 含有不允许的 ASCII 控制字符`,
+                };
+            }
+            if (code >= 0xd800 && code <= 0xdbff) {
+                const nextCode = value.charCodeAt(index + 1);
+                if (nextCode >= 0xdc00 && nextCode <= 0xdfff) {
+                    index += 1;
+                    continue;
+                }
+                return {
+                    valid: false,
+                    line: lineColumn.line,
+                    column: lineColumn.column,
+                    message: `第 ${lineColumn.line} 行，第 ${lineColumn.column} 列：Text Body 含有无效 UTF-16 字符`,
+                };
+            }
+            if (code >= 0xdc00 && code <= 0xdfff) {
+                return {
+                    valid: false,
+                    line: lineColumn.line,
+                    column: lineColumn.column,
+                    message: `第 ${lineColumn.line} 行，第 ${lineColumn.column} 列：Text Body 含有无效 UTF-16 字符`,
+                };
+            }
+        }
+
+        return {
+            valid: true,
+            line: null,
+            column: null,
+            message: value ? 'Text Body 格式正确' : '空 Body 将按未设置处理',
+        };
+    }
+
+    function validateEmpty(text) {
+        return String(text == null ? '' : text).length === 0
+            ? {
+                valid: true,
+                line: null,
+                column: null,
+                message: 'Empty Body 不包含内容',
+            }
+            : {
+                valid: false,
+                line: 1,
+                column: 1,
+                message: 'Empty Body 不允许包含内容',
+            };
+    }
+
+    const BINARY_FIELD_TYPES = Object.freeze({
+        INT8: 1,
+        UINT8: 1,
+        INT16: 2,
+        UINT16: 2,
+        INT32: 4,
+        UINT32: 4,
+        INT64: 8,
+        UINT64: 8,
+        FLOAT: 4,
+        DOUBLE: 8,
+    });
+
+    function validateBinaryFields(fields) {
+        const source = Array.isArray(fields) ? fields : [];
+        const errors = [];
+        const positions = new Set();
+        let configuredCount = 0;
+
+        source.forEach((field, index) => {
+            const item = field && typeof field === 'object' ? field : {};
+            const label = String(item.name || `字段${index + 1}`).trim() || `字段${index + 1}`;
+            const hasContent = [item.name, item.byte_pos, item.byte_len, item.type, item.value]
+                .some(value => String(value == null ? '' : value).trim() !== '');
+            if (!hasContent) return;
+            configuredCount += 1;
+
+            const bytePos = Number(item.byte_pos);
+            const byteLen = Number(item.byte_len);
+            const type = String(item.type || '').trim().toUpperCase();
+            const role = String(item.role || '').trim().toLowerCase();
+            const value = String(item.value || '').trim();
+            if (!String(item.name || '').trim()) errors.push(`${label}：字段名称不能为空`);
+            if (role !== 'common') errors.push(`${label}：Binary Body 字段角色必须是 common`);
+            if (!Number.isInteger(bytePos) || bytePos < 0) errors.push(`${label}：Byte 起始位置必须是非负整数`);
+            if (positions.has(bytePos)) errors.push(`${label}：Byte 起始位置不能重复`);
+            if (Number.isInteger(bytePos) && bytePos >= 0) positions.add(bytePos);
+            if (!Number.isInteger(byteLen) || byteLen <= 0) {
+                errors.push(`${label}：Byte 长度必须是大于 0 的整数`);
+            }
+            if (!Object.prototype.hasOwnProperty.call(BINARY_FIELD_TYPES, type) && type !== 'STR') {
+                errors.push(`${label}：字段类型不支持 ${type || '(空)'}`);
+            } else if (type === 'STR' && byteLen > 32) {
+                errors.push(`${label}：STR Byte 长度必须是 1~32 的整数`);
+            } else if (BINARY_FIELD_TYPES[type] && byteLen !== BINARY_FIELD_TYPES[type]) {
+                errors.push(`${label}：${type} 的 Byte 长度必须是 ${BINARY_FIELD_TYPES[type]}`);
+            }
+
+            if (!value) return;
+            const wireMatch = value.match(/^H([0-9a-fA-F]*)$/);
+            if (!wireMatch || wireMatch[1].length % 2 !== 0) {
+                errors.push(`${label}：字段值必须是 H 开头且长度为偶数的十六进制字节串`);
+                return;
+            }
+            const valueByteLen = wireMatch[1].length / 2;
+            if (Number.isInteger(byteLen) && valueByteLen !== byteLen) {
+                errors.push(`${label}：字段值字节数必须等于 ${byteLen}`);
+            }
+            if (type === 'STR') {
+                const bytes = wireMatch[1].match(/[0-9a-fA-F]{2}/g) || [];
+                if (bytes.some(byte => parseInt(byte, 16) > 0x7f)) {
+                    errors.push(`${label}：STR 字段值只能包含 ASCII 字符`);
+                }
+            }
+        });
+
+        return errors.length
+            ? { valid: false, line: null, column: null, message: errors.join('；') }
+            : {
+                valid: true,
+                line: null,
+                column: null,
+                message: configuredCount ? 'Binary Body 字段配置正确' : '空 Binary Body 将按未设置处理',
+            };
+    }
+
+    function validateBinaryJson(text) {
+        if (!String(text || '').trim()) return validateBinaryFields([]);
+        try {
+            const parsed = JSON.parse(text);
+            if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.fields)) {
+                return { valid: false, line: 1, column: 1, message: 'Binary Body 必须是包含 fields 数组的 JSON 对象' };
+            }
+            const malformedField = parsed.fields.findIndex(field => {
+                return !field || typeof field !== 'object' || !field.spec || typeof field.spec !== 'object';
+            });
+            if (malformedField >= 0) {
+                return {
+                    valid: false,
+                    line: null,
+                    column: null,
+                    message: `Binary Body 的 fields[${malformedField}] 缺少 spec 对象`,
+                };
+            }
+            const fields = parsed.fields.map(field => {
+                return Object.assign({}, field.spec, { value: field.value });
+            });
+            return validateBinaryFields(fields);
+        } catch (error) {
+            return {
+                valid: false,
+                line: null,
+                column: null,
+                message: `Binary Body JSON 格式错误：${normalizeErrorMessage(error && error.message)}`,
+            };
+        }
+    }
+
     function validateXml(text) {
         if (!text) {
             return {
@@ -156,6 +324,7 @@
         const normalizedType = String(bodyType || 'text').toLowerCase();
 
         if (NO_CONTENT_BODY_TYPES.includes(normalizedType)) {
+            if (normalizedType === 'empty') return validateEmpty(text);
             return {
                 valid: true,
                 line: null,
@@ -165,12 +334,7 @@
         }
 
         if (normalizedType === 'binary') {
-            return {
-                valid: true,
-                line: null,
-                column: null,
-                message: 'Binary Body 使用二进制字段配置',
-            };
+            return validateBinaryJson(text);
         }
 
         if (normalizedType === MULTIFORM_BODY_TYPE) {
@@ -190,12 +354,7 @@
             return validateXml(text);
         }
 
-        return {
-            valid: true,
-            line: null,
-            column: null,
-            message: text ? 'Text Body 不做语法校验' : '空 Body 将按未设置处理',
-        };
+        return validateText(text);
     }
 
     /**
@@ -252,12 +411,150 @@
         return normalizeBodyContent(text, bodyType);
     }
 
+    /**
+     * 格式化 JSON 语法树时不要先转换成 JavaScript 对象。
+     * JSON.parse/stringify 会折叠重复的对象键，导致协议 Body 内容丢失；
+     * 这里保留原始 token，并仅在格式化输出时接受并清理尾逗号。
+     * @param {string} text JSON 文本。
+     * @returns {string} 格式化后的 JSON 文本。
+     */
+    function formatJsonPreservingDuplicateKeys(text) {
+        const source = String(text == null ? '' : text);
+        let index = 0;
+
+        function fail(message) {
+            throw new Error(`JSON格式化失败：${message}`);
+        }
+
+        function skipWhitespace() {
+            while (/\s/.test(source[index] || '')) index += 1;
+        }
+
+        function parseString() {
+            if (source[index] !== '"') fail(`第 ${index + 1} 个字符应为字符串`);
+            const start = index;
+            index += 1;
+
+            while (index < source.length) {
+                const char = source[index];
+                if (char === '\\') {
+                    index += 2;
+                    continue;
+                }
+                if (char === '"') {
+                    index += 1;
+                    const raw = source.slice(start, index);
+                    try {
+                        JSON.parse(raw);
+                    } catch (error) {
+                        fail(`字符串无效：${error.message}`);
+                    }
+                    return raw;
+                }
+                if (char === '\n' || char === '\r') fail('字符串不能跨行');
+                index += 1;
+            }
+
+            fail('字符串缺少结束引号');
+        }
+
+        function parsePrimitive() {
+            const match = source.slice(index).match(/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/);
+            if (!match) fail(`第 ${index + 1} 个字符不是有效 JSON 值`);
+            index += match[0].length;
+            return match[0];
+        }
+
+        function parseValue(level) {
+            skipWhitespace();
+            const char = source[index];
+            if (char === '{') return parseObject(level);
+            if (char === '[') return parseArray(level);
+            if (char === '"') return parseString();
+            return parsePrimitive();
+        }
+
+        function parseObject(level) {
+            index += 1;
+            skipWhitespace();
+            if (source[index] === '}') {
+                index += 1;
+                return '{}';
+            }
+
+            const entries = [];
+            while (index < source.length) {
+                skipWhitespace();
+                const key = parseString();
+                skipWhitespace();
+                if (source[index] !== ':') fail(`第 ${index + 1} 个字符应为冒号`);
+                index += 1;
+                const value = parseValue(level + 1);
+                entries.push(`${'  '.repeat(level + 1)}${key}: ${value}`);
+                skipWhitespace();
+
+                if (source[index] === '}') {
+                    index += 1;
+                    break;
+                }
+                if (source[index] !== ',') fail(`第 ${index + 1} 个字符应为逗号或右大括号`);
+                index += 1;
+                skipWhitespace();
+                if (source[index] === '}') {
+                    index += 1;
+                    break;
+                }
+            }
+
+            if (source[index - 1] !== '}') fail('对象缺少结束大括号');
+            return `{\n${entries.join(',\n')}\n${'  '.repeat(level)}}`;
+        }
+
+        function parseArray(level) {
+            index += 1;
+            skipWhitespace();
+            if (source[index] === ']') {
+                index += 1;
+                return '[]';
+            }
+
+            const values = [];
+            while (index < source.length) {
+                const value = parseValue(level + 1);
+                values.push(`${'  '.repeat(level + 1)}${value}`);
+                skipWhitespace();
+
+                if (source[index] === ']') {
+                    index += 1;
+                    break;
+                }
+                if (source[index] !== ',') fail(`第 ${index + 1} 个字符应为逗号或右中括号`);
+                index += 1;
+                skipWhitespace();
+                if (source[index] === ']') {
+                    index += 1;
+                    break;
+                }
+            }
+
+            if (source[index - 1] !== ']') fail('数组缺少结束中括号');
+            return `[\n${values.join(',\n')}\n${'  '.repeat(level)}]`;
+        }
+
+        skipWhitespace();
+        if (!source.trim()) return '';
+        const result = parseValue(0);
+        skipWhitespace();
+        if (index !== source.length) fail(`第 ${index + 1} 个字符后存在多余内容`);
+        return result;
+    }
+
     function format(text, bodyType) {
         const normalizedType = String(bodyType || 'text').toLowerCase();
 
         if (normalizedType === 'json') {
             if (!String(text || '').trim()) return '';
-            return JSON.stringify(JSON.parse(text), null, 2);
+            return formatJsonPreservingDuplicateKeys(text);
         }
 
         if (normalizedType === 'xml') {
@@ -925,6 +1222,7 @@
                 countLabel: '普通字段',
                 onChange: function(fields) {
                     binaryFields = normalizeBinaryFields(fields);
+                    if (isBinaryMode()) runValidation();
                 },
             });
             return binaryFieldEditor;
@@ -1130,9 +1428,9 @@
         }
 
         function runValidation() {
-            return renderValidation(isMultiformMode()
-                ? validateMultiform()
-                : validateFn(textarea.value, typeSelect.value));
+            if (isMultiformMode()) return renderValidation(validateMultiform());
+            if (isBinaryMode()) return renderValidation(validateBinaryFields(binaryFields));
+            return renderValidation(validateFn(textarea.value, typeSelect.value));
         }
 
         const debouncedValidate = debounce(runValidation, 180);

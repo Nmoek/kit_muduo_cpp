@@ -734,63 +734,88 @@
             throw new Error('XML解析错误: ' + parserError.textContent);
         }
 
+        function escapeXmlText(value) {
+            return String(value == null ? '' : value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function escapeXmlAttribute(value) {
+            return escapeXmlText(value).replace(/"/g, '&quot;');
+        }
+
+        function formatCdata(value) {
+            return `<![CDATA[${String(value || '').replace(/\]\]>/g, ']]]]><![CDATA[>')}]]>`;
+        }
+
+        function formatInlineNode(node) {
+            if (node.nodeType === 1) {
+                const attributes = Array.from(node.attributes || [])
+                    .map(attr => ` ${attr.name}="${escapeXmlAttribute(attr.value)}"`)
+                    .join('');
+                const children = Array.from(node.childNodes || []);
+                if (!children.length) return `<${node.tagName}${attributes} />`;
+                return `<${node.tagName}${attributes}>${children.map(formatInlineNode).join('')}</${node.tagName}>`;
+            }
+            if (node.nodeType === 3) return escapeXmlText(node.nodeValue);
+            if (node.nodeType === 4) return formatCdata(node.nodeValue);
+            if (node.nodeType === 8) return `<!--${node.nodeValue}-->`;
+            if (node.nodeType === 7) return `<?${node.target}${node.data ? ` ${node.data}` : ''}?>`;
+            return '';
+        }
+
         function formatNode(node, indentLevel) {
             const indent = ' '.repeat(indentLevel * 4);
             let output = '';
 
-            if (node.nodeType === Node.ELEMENT_NODE) {
+            if (node.nodeType === 1) {
                 output += `${indent}<${node.tagName}`;
 
                 for (let i = 0; i < node.attributes.length; i++) {
                     const attr = node.attributes[i];
-                    output += ` ${attr.name}="${attr.value}"`;
+                    output += ` ${attr.name}="${escapeXmlAttribute(attr.value)}"`;
                 }
 
-                const childNodes = node.childNodes;
-                let hasElementChildren = false;
-                let textContent = '';
+                const childNodes = Array.from(node.childNodes || []);
+                const meaningfulChildren = childNodes.filter(child => {
+                    return child.nodeType !== 3 || child.textContent.trim();
+                });
 
-                for (let i = 0; i < childNodes.length; i++) {
-                    const child = childNodes[i];
-                    if (child.nodeType === Node.ELEMENT_NODE) {
-                        hasElementChildren = true;
-                    } else if (child.nodeType === Node.TEXT_NODE && child.textContent.trim()) {
-                        textContent += child.textContent.trim();
-                    }
+                if (!meaningfulChildren.length) {
+                    return `${output} />\n`;
                 }
 
-                if (hasElementChildren || textContent) {
+                const hasTextLikeChild = meaningfulChildren.some(child => child.nodeType === 3 || child.nodeType === 4);
+                const hasElementChild = meaningfulChildren.some(child => child.nodeType === 1);
+                if (hasTextLikeChild && !hasElementChild) {
+                    return `${output}>${meaningfulChildren.map(formatInlineNode).join('')}</${node.tagName}>\n`;
+                }
+                if (hasTextLikeChild) {
+                    return `${output}>${meaningfulChildren.map(formatInlineNode).join('')}</${node.tagName}>\n`;
+                }
+
+                {
                     output += '>\n';
-
-                    for (let i = 0; i < childNodes.length; i++) {
-                        const child = childNodes[i];
-                        if (child.nodeType === Node.ELEMENT_NODE ||
-                            (child.nodeType === Node.TEXT_NODE && child.textContent.trim())) {
-                            output += formatNode(child, indentLevel + 1);
-                        }
-                    }
-
+                    meaningfulChildren.forEach(child => {
+                        output += formatNode(child, indentLevel + 1);
+                    });
                     output += `${indent}</${node.tagName}>\n`;
-                } else {
-                    output += ' />\n';
                 }
-            } else if (node.nodeType === Node.TEXT_NODE) {
-                const text = node.textContent.trim();
-                if (text) {
-                    output += `${indent}${text}\n`;
-                }
-            } else if (node.nodeType === Node.COMMENT_NODE) {
+            } else if (node.nodeType === 8) {
                 output += `${indent}<!--${node.data}-->\n`;
-            } else if (node.nodeType === Node.DOCUMENT_TYPE_NODE) {
+            } else if (node.nodeType === 10) {
                 output += `${indent}<!DOCTYPE ${node.name}>\n`;
-            } else if (node.nodeType === Node.PROCESSING_INSTRUCTION_NODE) {
-                output += `${indent}<?${node.target} ${node.data}?>\n`;
+            } else if (node.nodeType === 7) {
+                output += `${indent}<?${node.target}${node.data ? ` ${node.data}` : ''}?>\n`;
             }
 
             return output;
         }
 
-        return formatNode(xmlDoc.documentElement, 0);
+        return Array.from(xmlDoc.childNodes || [])
+            .map(node => formatNode(node, 0))
+            .join('');
     }
 
     function appendProtocolBodyData(formData, body, bodyType, bodyData) {

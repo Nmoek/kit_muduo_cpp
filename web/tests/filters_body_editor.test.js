@@ -214,6 +214,96 @@ describe('V1.3 service filters and body editor', () => {
     });
 
     /**
+     * 测试思路：按 Body 类型覆盖短文本、长文本、嵌套结构、边界字符和常见语法错误，
+     * 同时验证格式化不会丢掉 XML 的文本/CDATA 内容，避免只测一个最小 happy path。
+     * 示例：JSON 重复键、XML 注释和 CDATA、Text 的 C0 控制字符、Empty 非空内容都必须得到明确结果。
+     */
+    it('Body 类型校验覆盖多种样式和长度边界', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const jsonSamples = [
+            '{}',
+            '{"ok":true}',
+            '{\n  "items": [1, 2, {"nested": null}]\n}',
+            '{\n  "1": "1",\n  "1": "1"\n}',
+            JSON.stringify({ payload: 'x'.repeat(4096) }),
+        ];
+        jsonSamples.forEach(sample => {
+            expect(context.KitProxy.bodySyntax.validate(sample, 'json').valid).toBe(true);
+            const formatted = context.KitProxy.bodySyntax.format(sample, 'json');
+            expect(context.KitProxy.bodySyntax.validate(formatted, 'json').valid).toBe(true);
+        });
+        const trailingCommaJson = '{\n  "1": "1",\n  "1": "1",\n}';
+        expect(context.KitProxy.bodySyntax.validate(trailingCommaJson, 'json').valid).toBe(false);
+        expect(context.KitProxy.bodySyntax.validate(
+            context.KitProxy.bodySyntax.format(trailingCommaJson, 'json'),
+            'json',
+        ).valid).toBe(true);
+        [
+            '{',
+            '{"key":}',
+            '{"key": 01}',
+            '{"key": "unterminated}',
+            '{"key": 1,}',
+        ].forEach(sample => {
+            expect(context.KitProxy.bodySyntax.validate(sample, 'json').valid).toBe(false);
+        });
+
+        const xml = '<root id="1"><!-- keep --><item>text &amp; value</item><raw><![CDATA[a < b & c]]></raw></root>';
+        const formattedXml = context.KitProxy.utils.formatXMLHelper(xml);
+        expect(context.KitProxy.bodySyntax.validate(xml, 'xml').valid).toBe(true);
+        expect(formattedXml).toContain('text &amp; value');
+        expect(formattedXml).toContain('<![CDATA[a < b & c]]>');
+        expect(formattedXml).toContain('<!-- keep -->');
+        expect(context.KitProxy.bodySyntax.validate(formattedXml, 'xml').valid).toBe(true);
+        expect(context.KitProxy.bodySyntax.validate('<root><item></root>', 'xml').valid).toBe(false);
+        expect(context.KitProxy.bodySyntax.validate('<a /><b />', 'xml').valid).toBe(false);
+        expect(() => context.KitProxy.utils.formatXMLHelper('<root><item></root>')).toThrow();
+
+        [
+            '',
+            'a',
+            '中文\n'.repeat(256),
+            'tab\tline\nnext\r',
+        ].forEach(sample => {
+            expect(context.KitProxy.bodySyntax.validate(sample, 'text').valid).toBe(true);
+        });
+        ['a\0b', 'a\u0001b', '\ud800'].forEach(sample => {
+            expect(context.KitProxy.bodySyntax.validate(sample, 'text').valid).toBe(false);
+        });
+
+        expect(context.KitProxy.bodySyntax.validate('', 'empty').valid).toBe(true);
+        expect(context.KitProxy.bodySyntax.validate(' ', 'empty').valid).toBe(false);
+        expect(context.KitProxy.bodySyntax.validate('legacy', 'none').valid).toBe(true);
+
+        const validBinary = JSON.stringify({
+            fields: [{
+                spec: {
+                    byte_len: 2,
+                    byte_pos: 0,
+                    name: 'code',
+                    role: 'common',
+                    type: 'UINT16',
+                },
+                value: 'H0102',
+            }],
+        });
+        expect(context.KitProxy.bodySyntax.validate(validBinary, 'binary').valid).toBe(true);
+        [
+            '{}',
+            JSON.stringify({ fields: [{}] }),
+            JSON.stringify({ fields: [null] }),
+            JSON.stringify({ fields: [{ spec: { byte_len: 2, byte_pos: 0, name: 'a', role: 'common', type: 'UINT16' }, value: 'H01' }] }),
+            JSON.stringify({ fields: [{ spec: { byte_len: 1, byte_pos: 0, name: 'a', role: 'common', type: 'UINT8' }, value: 'H01' }, { spec: { byte_len: 1, byte_pos: 0, name: 'b', role: 'common', type: 'UINT8' }, value: 'H02' }] }),
+            JSON.stringify({ fields: [{ spec: { byte_len: 1, byte_pos: 0, name: 'a', role: 'common', type: 'UNKNOWN' }, value: 'H01' }] }),
+            JSON.stringify({ fields: [{ spec: { byte_len: 1, byte_pos: 0, name: 'a', role: 'function_code', type: 'UINT8' }, value: 'H01' }] }),
+        ].forEach(sample => {
+            expect(context.KitProxy.bodySyntax.validate(sample, 'binary').valid).toBe(false);
+        });
+    });
+
+    /**
      * 测试思路：Body Editor 应把类型切换、语法校验和格式化封装成统一控件能力。
      * 示例：JSON 格式化后出现换行，切到 text 后同样内容不再按 JSON 报错。
      */
@@ -236,6 +326,30 @@ describe('V1.3 service filters and body editor', () => {
         editor.setType('text');
         editor.setValue('not json');
         expect(editor.validate().valid).toBe(true);
+    });
+
+    /**
+     * 测试思路：格式化协议 Body 不能把重复 JSON 键转换成对象后折叠，也应在输出时清理尾逗号。
+     * 示例：多个 "1" 键且最后一个成员带逗号，格式化后仍保留全部成员并可通过严格 JSON 校验。
+     */
+    it('JSON Body 格式化保留重复键并清理尾逗号', () => {
+        const context = createBrowserContext('?apiMode=mock');
+        loadCoreScripts(context);
+
+        const host = context.document.createElement('div');
+        context.document.body.appendChild(host);
+        const editor = context.KitProxy.bodyEditor.create(host, {
+            value: '{\n  "1": "1",\n  "1": "1",  "1": "1",\n}',
+            bodyType: 'json',
+            allowedTypes: ['json'],
+        });
+
+        host.querySelector('.body-editor-format').click();
+
+        const formatted = editor.getValue();
+        expect(formatted.match(/"1"\s*:/g)).toHaveLength(3);
+        expect(formatted).not.toMatch(/,\s*}/);
+        expect(context.KitProxy.bodySyntax.validate(formatted, 'json').valid).toBe(true);
     });
 
     /**
@@ -437,7 +551,7 @@ describe('V1.3 service filters and body editor', () => {
         stringField.querySelector('.add-field-btn').click();
         expect(readBinaryRows()[1].querySelector('.pattern-field-byte-pos').value).toBe('4');
         expect(editor.getValue()).toBe('');
-        expect(context.KitProxy.bodySyntax.validate('旧响应内容', 'binary').valid).toBe(true);
+        expect(context.KitProxy.bodySyntax.validate('旧响应内容', 'binary').valid).toBe(false);
         expect(context.KitProxy.bodySyntax.normalizeBodyContent('旧响应内容', 'binary')).toBe('');
     });
 
