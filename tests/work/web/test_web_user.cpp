@@ -324,4 +324,37 @@ TEST(UserHandlerNoteCandidatesTest, NormalizesOverMaxLimitToTen)
         });
 }
 
+/*
+测试思路：
+1. 模拟前端新增普通用户请求，省略管理员专用的 password 字段。
+2. 默认绑定应保留空密码，并继续走 UserService/Repository 创建链路。
+
+示例：
+  admin + {note_name:"normaluser",role:"normal",status:"active"}
+      -> Create(normal, password="") -> user_id=42
+*/
+TEST(UserHandlerUserCreateTest, NormalUserMayOmitPassword)
+{
+    auto user_repo = std::make_shared<StrictMock<MockUserRepo>>();
+    EXPECT_CALL(*user_repo, Create(_, Truly([](const User &user) {
+        return user.note_name == "normaluser"
+            && user.role == UserRole::kNormal
+            && user.status == UserStatus::kActive
+            && user.password_hash.empty();
+    }))).WillOnce(Return(42));
+
+    UserHandler handler(MakeUserService(user_repo));
+    auto ctx = MakeCandidateContext(
+        nljson{{"note_name", "normaluser"}, {"role", "normal"}, {"status", "active"}});
+    handler.Add(nullptr, ctx);
+
+    ExpectJsonResponse(ctx,
+        StateCode::k200Ok,
+        nljson{
+            {"code", 0},
+            {"message", "success"},
+            {"data", {{"user_id", 42}}},
+        });
+}
+
 } // namespace

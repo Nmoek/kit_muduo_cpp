@@ -799,7 +799,7 @@ ProtocolRuntimeResult ProjectRuntimeManager::delProtocolImpl(kit_muduo::HttpCont
 
     //注意: 运行态存在且协议是上线状态 需要清理运行态
     if(ProjectRuntimeState::kRunning == access_info.project_runtime_state
-        && ProtocolConfigState::kOn == access_info.protocol_config_state)
+        && access_info.protocol_config_state != ProtocolConfigState::kOff)
     {
 
         auto runtime_result = InvokeOnLoopSync(pj_server->getLoop(), 1000, [pj_server, protocol_id](){

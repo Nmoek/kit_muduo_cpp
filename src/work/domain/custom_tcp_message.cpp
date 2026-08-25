@@ -11,6 +11,7 @@
 #include "domain/custom_tcp_pattern.h"
 #include "domain/custom_tcp_message.h"
 #include "domain/custom_tcp_context.h"
+#include "net/net_data_converter.h"
 #include <optional>
 
 
@@ -64,6 +65,14 @@ uint64_t CustomTcpMessage::getHeaderLen() const
     {
         res += it.second.spec.byte_len;
     }
+    if(res == 0)
+    {
+        auto pattern = weak_pattern_.lock();
+        if(pattern)
+        {
+            return pattern->spec().header_bytes;
+        }
+    }
     return res;
 }
 
@@ -73,6 +82,16 @@ std::string CustomTcpMessage::toHeaderString() const
     for(auto &field : header_fields_by_byte_pos_)
     {
         data += field.second.hex() + " ";
+    }
+    if(data.find_first_not_of(' ') == std::string::npos)
+    {
+        const auto bytes = toBytes();
+        const auto header_len = getHeaderLen();
+        if(bytes.has_value() && header_len <= bytes->size())
+        {
+            return kit_muduo::BytesToHexString(
+                std::vector<uint8_t>(bytes->begin(), bytes->begin() + header_len));
+        }
     }
     return data;
 }
