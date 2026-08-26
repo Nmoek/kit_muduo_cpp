@@ -69,6 +69,10 @@
         return order === 'big' || order === 'little' || order === 'raw' ? order : fallback;
     }
 
+    function isAutoFilledLengthRole(role) {
+        return role === 'body_length' || role === 'total_length';
+    }
+
     function roleFromLegacySpecialKey(key) {
         if (key === 'start_magic_num_field' || key === 'start_magic_field') return 'start_magic';
         if (key === 'function_code_field') return 'function_code';
@@ -325,7 +329,7 @@
     function normalizePatternInfo(input, options = {}) {
         const source = input || {};
         const policy = normalizeLengthPolicyValue(source.length_policy, LengthPolicyValue.BODY_LENGTH);
-        const byteOrder = normalizeByteOrder(source.byte_order || source.default_order, policy === LengthPolicyValue.NO_LENGTH ? 'raw' : 'big');
+        const byteOrder = normalizeByteOrder(source.byte_order || source.default_order, 'big');
         const fields = [];
 
         if (Array.isArray(source.fields)) {
@@ -704,8 +708,21 @@
         const hiddenInput = fieldNode.querySelector('.pattern-field-value');
         const editor = fieldNode.querySelector('.pattern-value-editor-input');
         const wireInput = fieldNode.querySelector('.pattern-wire-hex-input');
+        const role = fieldNode.querySelector('.pattern-field-role')?.value || 'common';
         const mode = hiddenInput?.dataset.displayMode || 'H';
         if (!hiddenInput || !editor || !wireInput) return;
+
+        if (isAutoFilledLengthRole(role)) {
+            hiddenInput.value = '';
+            hiddenInput.dataset.displayMode = 'H';
+            delete hiddenInput.dataset.wireValue;
+            editor.value = '';
+            editor.placeholder = '自动填充';
+            editor.removeAttribute('maxlength');
+            wireInput.classList.remove('is-display-value', 'is-display-str');
+            updateValueDisplayButton(fieldNode);
+            return;
+        }
 
         wireInput.classList.toggle('is-display-value', mode !== 'H');
         wireInput.classList.toggle('is-display-str', mode === 'S');
@@ -834,6 +851,7 @@
 
     function syncValueAvailability(fieldNode, isProjectMode) {
         const role = fieldNode.querySelector('.pattern-field-role')?.value || 'common';
+        const autoFilled = isAutoFilledLengthRole(role);
         const valueInput = fieldNode.querySelector('.pattern-field-value');
         const valueEditor = fieldNode.querySelector('.pattern-value-editor-input');
         const wireInput = fieldNode.querySelector('.pattern-wire-hex-input');
@@ -863,7 +881,7 @@
             }
             if (label) label.textContent = '固定值';
         } else {
-            const enabled = fieldNode.dataset.valueEditable !== 'false';
+            const enabled = !autoFilled && fieldNode.dataset.valueEditable !== 'false';
             valueInput.disabled = !enabled;
             if (valueEditor) valueEditor.disabled = !enabled;
             if (wireInput) wireInput.classList.toggle('is-readonly', !enabled);
@@ -876,6 +894,7 @@
             valueEditor.required = !isProjectMode
                 && !valueEditor.disabled
                 && String(fieldNode.querySelector('.pattern-field-type')?.value || '').toUpperCase() === 'STR';
+            valueEditor.setAttribute('aria-label', autoFilled ? '字段值自动填充' : '字段值十六进制字节');
         }
         syncValueEditorFromHidden(fieldNode);
     }
@@ -2076,7 +2095,7 @@
                         <option value="${LengthPolicyValue.NO_LENGTH}" ${normalized.length_policy === LengthPolicyValue.NO_LENGTH ? 'selected' : ''}>${LengthPolicyText[LengthPolicyValue.NO_LENGTH]}</option>
                     </select>
                 </div>
-                <div class="form-group pattern-byte-order-group">
+                <div class="form-group pattern-byte-order-group" hidden>
                     <label for="pattern-byte-order">字节序</label>
                     <select id="pattern-byte-order" class="pattern-byte-order" required>
                         <option value="big" ${normalized.byte_order === 'big' ? 'selected' : ''}>big</option>

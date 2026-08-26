@@ -94,7 +94,7 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
 
     /**
      * 测试思路：config-pattern-modal 内部承担长度策略选择和 V2 字段编辑。
-     * 示例：弹窗应有 length_policy 下拉框，不再有“最小解析长度”；固定值按钮放在角色列并通过冒泡框填写。
+     * 示例：弹窗应有 length_policy 下拉框，隐藏 byte_order 控件但保留 big 值；固定值按钮放在角色列并通过冒泡框填写。
      */
     it('config-pattern-modal 内置长度策略、移除最小解析长度并用角色列填写固定值', () => {
         const target = context.document.createElement('button');
@@ -114,6 +114,8 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
 
         const modal = context.document.querySelector('.config-pattern-modal');
         expect(modal.querySelector('.pattern-length-policy')).toBeTruthy();
+        expect(modal.querySelector('.pattern-byte-order-group').hidden).toBe(true);
+        expect(modal.querySelector('.pattern-byte-order').value).toBe('big');
         expect(modal.querySelector('.pattern-least-length')).toBeNull();
         expect(modal.classList.contains('is-project-pattern')).toBe(true);
         expect(modal.querySelector('.pattern-field-grid-labels').textContent).not.toContain('match');
@@ -268,6 +270,72 @@ describe('V1.4 TCP Pattern, Body highlight and service interactions', () => {
         expect(preview?.textContent).toContain('STR · 5 Byte');
         expect(modal.querySelector('.pattern-summary-item.is-ok')).toBeTruthy();
         expect(modal.querySelector('.pattern-validation-errors').textContent).toBe('');
+    });
+
+    /**
+     * 测试思路：长度角色由运行时按 Body 或报文总长度回填，项目格式和协议项配置都不能展示伪造的零值。
+     * 示例：body_length/total_length 即使历史数据带 H0000，值输入框也只显示“自动填充”，隐藏值清空且不可编辑。
+     */
+    it('Body长度和总长度字段值显示自动填充', () => {
+        const target = context.document.createElement('button');
+        context.document.body.appendChild(target);
+        const pattern = {
+            version: 2,
+            header_bytes: 6,
+            byte_order: 'big',
+            length_policy: 'body_length',
+            fields: [
+                { name: 'Body长度', byte_pos: 0, byte_len: 2, type: 'UINT16', role: 'body_length', value: 'H0000' },
+                { name: '总长度', byte_pos: 2, byte_len: 4, type: 'UINT32', role: 'total_length', value: 'H00000000' },
+            ],
+        };
+
+        context.createCustomTcpPatternModal(target, '项目格式字段', pattern, null, true);
+        let rows = context.document.querySelectorAll('.config-pattern-modal .pattern-field-container');
+        rows.forEach(row => {
+            expect(row.querySelector('.pattern-value-editor-input').value).toBe('');
+            expect(row.querySelector('.pattern-value-editor-input').placeholder).toBe('自动填充');
+            expect(row.querySelector('.pattern-value-editor-input').disabled).toBe(true);
+            expect(row.querySelector('.pattern-field-value').value).toBe('');
+            expect(row.querySelector('.pattern-field-value-display-btn').disabled).toBe(true);
+        });
+        context.document.querySelector('.config-pattern-modal .cancel-btn').click();
+
+        context.createCustomTcpPatternModal(target, '协议项字段值', Object.assign({}, pattern, {
+            item_value_scope: 'header',
+        }), null, false);
+        rows = context.document.querySelectorAll('.config-pattern-modal .pattern-field-container');
+        expect(rows).toHaveLength(2);
+        rows.forEach(row => {
+            expect(row.querySelector('.pattern-value-editor-input').value).toBe('');
+            expect(row.querySelector('.pattern-value-editor-input').placeholder).toBe('自动填充');
+            expect(row.querySelector('.pattern-value-editor-input').disabled).toBe(true);
+            expect(row.querySelector('.pattern-field-value').value).toBe('');
+        });
+    });
+
+    /**
+     * 测试思路：字节序暂时隐藏仅影响界面，不能从 API 契约中删除；无输入时统一使用 big，已有显式值继续保留。
+     * 示例：缺省配置序列化为 byte_order=big，历史 little 配置再次保存仍输出 little。
+     */
+    it('隐藏字节序控件并保留默认和显式API值', () => {
+        const editor = context.KitProxy.tcpPatternEditor;
+        const defaultOrder = editor.serializePatternInfo({
+            version: 2,
+            header_bytes: 0,
+            length_policy: 'no_length',
+            fields: [],
+        });
+        const explicitOrder = editor.serializePatternInfo({
+            version: 2,
+            header_bytes: 0,
+            byte_order: 'little',
+            length_policy: 'body_length',
+            fields: [],
+        });
+
+        expect(defaultOrder.byte_order).toBe('big');
+        expect(explicitOrder.byte_order).toBe('little');
     });
 
     /**

@@ -657,6 +657,9 @@ void CustomTcpProjectServer::CustomTcpProcess(std::shared_ptr<CustomTcpProtocolI
         // 请求数据 => 脚本 => 响应数据
     ctx->response()->setBodyData(*resp_cfg_body_view.body_data);
 
+    // TODO: 后续确定协议项 is_endian 与项目 Pattern default_order 的优先级后，
+    // 在此响应组装边界消费 tcp_item->isEndian()；当前仅使用 Pattern 字段端序，
+    // 协议项配置的十六进制字段值仍作为原始 wire bytes 发送。
     if(!pattern->assembleMessageFromCfg(ctx->response(), resp_cfg, resp_cfg_body_view.body_data->size()))
     {
         PJSERVER_F_ERROR("custom tcp message assemble error! pcId[%ld]\n", tcp_item->getId());

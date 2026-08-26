@@ -302,7 +302,8 @@ std::pair<FieldValueMap, size_t> FieldValueMapParseFromJson(const nlohmann::json
         }
 
         it.value().get_to(field.spec);
-        // HACK 默认大端
+        // TODO: 旧二进制 Body 配置暂时固定按大端解析；后续明确其字节序来源，
+        // 再决定接入协议项 is_endian、项目 Pattern default_order 或独立字段配置。
         field.spec.byte_order = FieldByteOrder::kBigEndian;
         if(!field.spec.validate())
         {

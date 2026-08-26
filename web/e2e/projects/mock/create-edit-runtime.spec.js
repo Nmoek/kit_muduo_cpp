@@ -84,6 +84,7 @@ test('新增 TCP 测试服务并保存 TCP 格式入口', async ({ page, context
     const patternModal = page.locator('.config-pattern-modal.is-project-pattern');
     await expect(patternModal).toBeVisible();
     await expect(patternModal.locator('#pattern-length-policy')).toHaveValue('body_length');
+    await expect(patternModal.locator('.pattern-byte-order-group')).toBeHidden();
     await expect(patternModal.locator('#pattern-byte-order')).toHaveValue('big');
     await expect(patternModal.locator('.pattern-field-container')).toHaveCount(6);
     await expect(patternModal.locator('.pattern-byte-layout')).toBeVisible();

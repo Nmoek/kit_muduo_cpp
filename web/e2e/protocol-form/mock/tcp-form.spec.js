@@ -74,11 +74,15 @@ test('F6 TCP 表单加载 Pattern 和字段权限', async ({ page, context }) =>
     await expect(page.locator('#resp-pattern-infos')).toBeVisible();
 
     const modal = await openHeaderModal(page, '#req-pattern-infos');
+    await expect(modal.locator('.pattern-byte-order-group')).toHaveCount(0);
+    await expect(modal.locator('xpath=..')).toHaveAttribute('data-byte-order', 'big');
     await expect(await fieldRowBySelectValue(modal, '.pattern-field-role', 'function_code')).toBeVisible();
     const startMagicRow = await fieldRowBySelectValue(modal, '.pattern-field-role', 'start_magic');
     const bodyLengthRow = await fieldRowBySelectValue(modal, '.pattern-field-role', 'body_length');
     await expect(startMagicRow.locator('.pattern-value-editor-input')).toBeDisabled();
     await expect(bodyLengthRow.locator('.pattern-value-editor-input')).toBeDisabled();
+    await expect(bodyLengthRow.locator('.pattern-value-editor-input')).toHaveValue('');
+    await expect(bodyLengthRow.locator('.pattern-value-editor-input')).toHaveAttribute('placeholder', '自动填充');
     await expect(startMagicRow.locator('.pattern-field-role')).toBeDisabled();
     await expect(bodyLengthRow.locator('.pattern-field-role')).toBeDisabled();
     await modal.locator('.cancel-btn').click();

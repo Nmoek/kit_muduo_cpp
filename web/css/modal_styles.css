@@ -313,6 +313,11 @@
     gap: 14px;
 }
 
+/* 字节序仍参与表单读写，当前版本仅隐藏配置入口。 */
+.config-pattern-modal .pattern-byte-order-group[hidden] {
+    display: none;
+}
+
 .pattern-least-length-group {
     max-width: 260px;
 }

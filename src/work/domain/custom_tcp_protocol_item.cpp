@@ -140,6 +140,8 @@ bool CustomTcpItemCfg::fromJson(const nlohmann::json &tcp_json,  const CustomTcp
             PCITEM_F_ERROR("item cfg hex invalid, byte_pos[%ld], byte_len[%ld], value[%s]\n", byte_pos, field->byte_len, value_hex.c_str());
             return false;
         }
+        // TODO: 明确 ProtocolItem::isEndian() 的业务语义后，在协议项配置进入
+        // wire bytes 的边界统一处理端序；当前十六进制值按用户给出的原始字节保存。
         auto value_bytes = kit_muduo::HexStringToBytes(value_hex);
         parsed.field_values_by_byte_pos[byte_pos] = std::move(value_bytes);
 
