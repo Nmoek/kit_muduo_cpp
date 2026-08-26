@@ -29,9 +29,9 @@ public:
     /// byte_pos <---> FieldValue
     using HeadersValueMap = FieldValueMap;
 
-    explicit CustomTcpMessage(std::shared_ptr<CustomTcpPattern> pattern);
+    CustomTcpMessage();
 
-    ~CustomTcpMessage();
+    ~CustomTcpMessage() = default;
 
     CustomTcpMessage(CustomTcpMessage&&) = default;
 
@@ -72,6 +72,9 @@ public:
     std::string toString() const;
 
 private:
+    bool writeHeadersHelper(std::vector<uint8_t> &headers_data) const;
+
+private:
     /// @brief 功能码十六进制表示值
     std::string function_code_hex_;
     /// @brief 按 byte_pos 索引的报文头字段表
@@ -80,8 +83,6 @@ private:
     std::vector<uint8_t> body_data_;
     /// @brief 收发时间点
     kit_muduo::TimeStamp recordTime_;
-    /// @brief 当前受控的格式弱指针
-    std::weak_ptr<CustomTcpPattern> weak_pattern_;
 };
 using CustomTcpMessagePtr = std::shared_ptr<CustomTcpMessage>;
 

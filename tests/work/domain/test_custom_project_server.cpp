@@ -23,6 +23,7 @@
 #include "domain/custom_tcp_protocol_item.h"
 #include "domain/custom_tcp_context.h"
 #include "domain/custom_tcp_message.h"
+#include "domain/custom_tcp_pattern.h"
 #include "domain/custom_tcp_project_server.h"
 #include "domain/protocol_interaction_hub.h"
 #include "domain/protocol_interaction_publisher.h"
@@ -1335,9 +1336,27 @@ TEST_F(CustomTcpServerSuite, ResponseObservationKeepsHeaderWhenResponseFieldsAre
 
     auto protocol = MakeBodyLengthProtocol(4005, 9405, "H0100", {}, {'o', 'k'});
     protocol.m_respCfg["fields"] = nljson::object();
-    auto response_without_fields = std::make_shared<CustomTcpMessage>(server->GetPatternInfo());
-    response_without_fields->setFunctionCodeHex("H1080");
-    response_without_fields->setBodyData(std::vector<char>{'o', 'k'});
+    auto response_without_fields = std::make_shared<CustomTcpMessage>();
+    const auto pattern = server->GetPatternInfo();
+    const std::vector<char> response_body{'o', 'k'};
+    response_without_fields->setBodyData(response_body);
+    ASSERT_TRUE(pattern->assembleMessageFromCfg(
+        response_without_fields,
+        CustomTcpItemCfg(protocol.m_respCfg, pattern->spec()),
+        response_body.size()));
+    ASSERT_EQ(response_without_fields->getFieldNums(), pattern->spec().fields.size());
+    for(const auto& field_spec : pattern->spec().fields)
+    {
+        const auto* field = response_without_fields->getField(field_spec.byte_pos);
+        ASSERT_NE(field, nullptr);
+        EXPECT_EQ(field->bytes.size(), field_spec.byte_len);
+    }
+    ASSERT_NE(response_without_fields->getField(0), nullptr);
+    ASSERT_NE(response_without_fields->getField(12), nullptr);
+    ASSERT_NE(response_without_fields->getField(14), nullptr);
+    EXPECT_EQ(response_without_fields->getField(0)->hex(), "H23232323");
+    EXPECT_EQ(response_without_fields->getField(12)->hex(), "H1080");
+    EXPECT_EQ(response_without_fields->getField(14)->hex(), "H00000002");
     EXPECT_FALSE(response_without_fields->toHeaderString().empty());
     auto item = AddTcpRuntimeProtocol(server, protocol);
     ASSERT_NE(item, nullptr);
@@ -1511,7 +1530,7 @@ TEST_F(CustomTcpServerSuite, RuntimePublishesSerializeErrorForBadResponseConfig)
     EXPECT_EQ(record.protocol_id, 4004);
     EXPECT_EQ(record.protocol_type, ProtocolType::kCustomTcp);
     EXPECT_EQ(record.result, InteractionResult::kSerializeError);
-    EXPECT_EQ(record.error_message, "serialize error");
+    EXPECT_EQ(record.error_message, "assemble message error");
     EXPECT_EQ(record.request.meta["function_code"], "H0100");
     EXPECT_EQ(record.request.body.kind, InteractionPayloadKind::kJson);
     EXPECT_EQ(record.request.body.text, expected_request_body);

@@ -11,6 +11,7 @@
 
 #include "domain/custom_tcp_pattern_spec.h"
 #include "domain/custom_tcp_pattern.h"
+#include "domain/custom_tcp_message.h"
 #include "net/net_data_converter.h"
 
 #include <algorithm>
@@ -473,6 +474,160 @@ TEST(TestCustomTcpPattern, SerializeRespCfg2_1AndRespBody2_1PatchesTotalLength)
     EXPECT_EQ(result.function_code, "H0180");
     EXPECT_EQ(result.remain_body_bytes, resp_body.size());
     ExpectParsedFieldHex(result, 4, "H2F000000");
+}
+
+/*
+测试思路：
+1. response 配置只提供 function_code 和普通字段值，调用 assembleMessageFromCfg 直接构造消息字段表。
+2. 所有 pattern 字段都必须同时拥有 spec 和完整 bytes，不能只保留用户配置的 common 字段。
+3. body_length 字段必须根据传入 Body 长度生成，并且 CustomTcpMessage::toBytes 的结果应与 pattern.serialize 一致。
+
+示例：
+  resp_cfg + body(21 bytes)
+      -> start_magic/function_code/common/body_length 全部物化到 FieldValue
+      -> body_length = H00000015
+*/
+TEST(TestCustomTcpPattern, AssembleMessageFromCfgMaterializesBodyLengthFields)
+{
+    auto pattern = MakePatternJsonStr1Pattern();
+    const std::vector<uint8_t> body = BytesOf(kRespBody1);
+    auto message = std::make_shared<CustomTcpMessage>();
+    message->setBodyData(body);
+
+    ASSERT_TRUE(pattern.assembleMessageFromCfg(message, MakeRespCfg1(), body.size()));
+    ASSERT_EQ(message->getFieldNums(), pattern.spec().fields.size());
+    for(const auto& field_spec : pattern.spec().fields)
+    {
+        const auto* field = message->getField(field_spec.byte_pos);
+        ASSERT_NE(field, nullptr);
+        EXPECT_EQ(field->bytes.size(), field_spec.byte_len);
+    }
+
+    ASSERT_NE(message->getField(0), nullptr);
+    ASSERT_NE(message->getField(12), nullptr);
+    ASSERT_NE(message->getField(14), nullptr);
+    EXPECT_EQ(message->getField(0)->hex(), "H23232323");
+    EXPECT_EQ(message->getField(12)->hex(), "H1080");
+    EXPECT_EQ(message->getField(14)->hex(), "H00000015");
+
+    const auto assembled_bytes = message->toBytes();
+    const auto serialized_bytes = pattern.serialize(MakeRespCfg1(), body);
+    ASSERT_TRUE(assembled_bytes.has_value());
+    ASSERT_TRUE(serialized_bytes.has_value());
+    EXPECT_EQ(*assembled_bytes, *serialized_bytes);
+}
+
+/*
+测试思路：
+1. total_length pattern 的 response 组装必须把总长度字段写成 header_bytes + body_size，而不是只写 Body 长度。
+2. 该测试直接检查 assembleMessageFromCfg 生成的 FieldValue，并再次检查最终序列化报文。
+
+示例：
+  header_bytes=26, body_size=21
+      -> total_length = 47 = H2F000000
+*/
+TEST(TestCustomTcpPattern, AssembleMessageFromCfgMaterializesTotalLengthField)
+{
+    auto pattern = MakePatternJsonStr2_1Pattern();
+    const std::vector<uint8_t> body = BytesOf(kRespBody2_1);
+    auto message = std::make_shared<CustomTcpMessage>();
+    message->setBodyData(body);
+
+    ASSERT_TRUE(pattern.assembleMessageFromCfg(message, MakeRespCfg2_1(), body.size()));
+    ASSERT_EQ(message->getFieldNums(), pattern.spec().fields.size());
+    for(const auto& field_spec : pattern.spec().fields)
+    {
+        const auto* field = message->getField(field_spec.byte_pos);
+        ASSERT_NE(field, nullptr);
+        EXPECT_EQ(field->bytes.size(), field_spec.byte_len);
+    }
+
+    ASSERT_NE(message->getField(4), nullptr);
+    ASSERT_NE(message->getField(12), nullptr);
+    EXPECT_EQ(message->getField(4)->hex(), "H2F000000");
+    EXPECT_EQ(message->getField(12)->hex(), "H0180");
+
+    const auto assembled_bytes = message->toBytes();
+    const auto serialized_bytes = pattern.serialize(MakeRespCfg2_1(), body);
+    ASSERT_TRUE(assembled_bytes.has_value());
+    ASSERT_TRUE(serialized_bytes.has_value());
+    EXPECT_EQ(*assembled_bytes, *serialized_bytes);
+}
+
+/*
+测试思路：
+1. no_length 也必须通过 assembleMessageFromCfg 物化全部固定字段、功能码和普通字段。
+2. no_length 没有自动长度字段，因此组装成功后字段数应与 PatternSpec 完全一致。
+3. 组装消息的序列化结果必须和原有 pattern.serialize 保持一致。
+
+示例：
+  start_magic/function_code/common fields 全部 materialize
+      -> CustomTcpMessage::toBytes() == pattern.serialize(...)
+*/
+TEST(TestCustomTcpPattern, AssembleMessageFromCfgMaterializesNoLengthFields)
+{
+    auto pattern = MakePatternJsonStr3Pattern();
+    const std::vector<uint8_t> body;
+    auto message = std::make_shared<CustomTcpMessage>();
+    message->setBodyData(body);
+
+    ASSERT_TRUE(pattern.assembleMessageFromCfg(message, MakeRespCfg3(), body.size()));
+    ASSERT_EQ(message->getFieldNums(), pattern.spec().fields.size());
+    for(const auto& field_spec : pattern.spec().fields)
+    {
+        const auto* field = message->getField(field_spec.byte_pos);
+        ASSERT_NE(field, nullptr);
+        EXPECT_EQ(field->bytes.size(), field_spec.byte_len);
+    }
+    ASSERT_NE(message->getField(0), nullptr);
+    ASSERT_NE(message->getField(2), nullptr);
+    ASSERT_NE(message->getField(22), nullptr);
+    EXPECT_EQ(message->getField(0)->hex(), "H023A");
+    EXPECT_EQ(message->getField(2)->hex(), "H3131");
+    EXPECT_EQ(message->getField(22)->hex(), "H0D0A");
+
+    const auto assembled_bytes = message->toBytes();
+    const auto serialized_bytes = pattern.serialize(MakeRespCfg3(), body);
+    ASSERT_TRUE(assembled_bytes.has_value());
+    ASSERT_TRUE(serialized_bytes.has_value());
+    EXPECT_EQ(*assembled_bytes, *serialized_bytes);
+}
+
+/*
+测试思路：
+  assembleMessageFromCfg 和 serialize 必须使用相同的长度编码规则。
+  UINT8 body_length 无法表达 256，组装阶段应失败，而不是留下一个截断后的长度字段。
+
+示例：
+  body_size=256 -> assignLength 无法编码 -> assembleMessageFromCfg=false
+*/
+TEST(TestCustomTcpPattern, AssembleMessageFromCfgRejectsLengthOverflow)
+{
+    BodyLengthPattern pattern(MakeUint8BodyLengthSpec());
+    CustomTcpItemCfg cfg;
+    cfg.function_code = "H0100";
+    std::vector<uint8_t> body(256, 0xAA);
+    auto message = std::make_shared<CustomTcpMessage>();
+    message->setBodyData(body);
+
+    EXPECT_FALSE(pattern.assembleMessageFromCfg(message, cfg, body.size()));
+}
+
+/*
+测试思路：
+  CustomTcpMessage::toBytes 现在只负责序列化已经物化的 FieldValue.bytes，
+  不再根据 FieldRole 自动补齐固定字段、功能码或长度字段。
+  因此只添加 spec 而没有完整 bytes 时，序列化必须明确失败。
+*/
+TEST(TestCustomTcpMessage, ToBytesRejectsUnmaterializedFieldBytes)
+{
+    auto pattern = MakePatternJsonStr1Pattern();
+    auto message = std::make_shared<CustomTcpMessage>();
+    FieldValue field;
+    field.spec = *pattern.spec().byPos(0);
+    message->addField(field);
+
+    EXPECT_FALSE(message->toBytes().has_value());
 }
 
 /*

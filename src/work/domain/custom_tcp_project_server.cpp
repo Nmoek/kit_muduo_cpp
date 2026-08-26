@@ -655,14 +655,14 @@ void CustomTcpProjectServer::CustomTcpProcess(std::shared_ptr<CustomTcpProtocolI
     // 2. 脚本生成:
         // 获取当前协议的脚本
         // 请求数据 => 脚本 => 响应数据
+    ctx->response()->setBodyData(*resp_cfg_body_view.body_data);
 
-    if(!pattern->assembleMessageFromCfg(ctx->response(), resp_cfg))
+    if(!pattern->assembleMessageFromCfg(ctx->response(), resp_cfg, resp_cfg_body_view.body_data->size()))
     {
         PJSERVER_F_ERROR("custom tcp message assemble error! pcId[%ld]\n", tcp_item->getId());
-        message = "serialize error";
+        message = "assemble message error";
         inter_result = InteractionResult::kSerializeError;
     }
-    ctx->response()->setBodyData(*resp_cfg_body_view.body_data);
 
     sendAndObserve(conn, 
         ctx,

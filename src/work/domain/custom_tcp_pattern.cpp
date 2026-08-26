@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "domain/custom_tcp_pattern.h"
+#include "domain/custom_tcp_field_model.h"
 #include "domain/custom_tcp_pattern_spec.h"
 #include "domain/domain_log.h"
 #include "net/net_data_converter.h"
@@ -106,27 +107,19 @@ std::vector<uint8_t> CustomTcpPattern::ParseFromHex(const FieldSpec& field_spec,
     return bytes;
 }
 
-bool CustomTcpPattern::PatchUnsignedLength(std::vector<uint8_t> &headers_data, const FieldSpec& field, size_t value)
+std::optional<std::vector<uint8_t>> CustomTcpPattern::PatchUnsignedLength(const FieldSpec& field, size_t value)
 {
     try
     {
         FieldScalar scalar = MakeLengthScalar(field, value);
         const auto& bytes = EncodeField(field, scalar);
 
-        if(field.byte_pos + field.byte_len > headers_data.size()
-            || field.byte_len != bytes.size())
-        {
-            CUSTOM_F_ERROR("length value invalid!\n");
-            return false;
-        }
-
-        std::copy(bytes.begin(), bytes.end(), headers_data.begin() + field.byte_pos);
-        return true;
+        return bytes;
     }
     catch(const std::exception &e)
     {
         CUSTOM_F_ERROR("length value invalid: %s\n", e.what());
-        return false;
+        return std::nullopt;
     }
 }
 
@@ -197,9 +190,52 @@ bool BodyLengthPattern::patchLength(std::vector<uint8_t>& headers_data, size_t b
     }
     CUSTOM_F_DEBUG("patchLength::body_length: %ld \n", body_length);
 
-    return PatchUnsignedLength(headers_data, *body_spec, body_length);
+    auto bytes = PatchUnsignedLength(*body_spec, body_length);
+    if(!bytes.has_value())
+    {
+        return false;
+    }
+
+    if(body_spec->byte_pos + body_spec->byte_len > headers_data.size()
+        || body_spec->byte_len != bytes->size())
+    {
+        CUSTOM_F_ERROR("length value invalid!\n");
+        return false;
+    }
+
+    std::copy(bytes->begin(), bytes->end(), headers_data.begin() + body_spec->byte_pos);
+
+    return true;
 
 }
+
+std::optional<FieldValue> BodyLengthPattern::assignLength(size_t body_length) const
+{
+    FieldValue body_field_value;
+    const FieldSpec* body_spec = pattern_spec_.byUniqueRole(FieldRole::kBodyLength);
+    if(nullptr == body_spec)
+    {
+        CUSTOM_F_ERROR("role 'body_length' missing! \n");
+        return std::nullopt;
+    }
+    CUSTOM_F_DEBUG("patchLength::body_length: %ld \n", body_length);
+
+    auto bytes = PatchUnsignedLength(*body_spec, body_length);
+    if(!bytes.has_value())
+    {
+        return std::nullopt;
+    }
+    if(body_spec->byte_len != bytes->size())
+    {
+        CUSTOM_F_ERROR("length value invalid!\n");
+        return std::nullopt;
+    }
+    body_field_value.spec = *body_spec;
+    body_field_value.bytes = std::move(*bytes);
+
+    return body_field_value;
+}
+
 
 TotalLengthPattern::TotalLengthPattern(const CustomTcpPatternSpec &spec)
     :CustomTcpPatternBase<TotalLengthPattern>(spec)
@@ -255,7 +291,55 @@ bool TotalLengthPattern::patchLength(std::vector<uint8_t>& headers_data, size_t 
 
     CUSTOM_F_DEBUG("patchLength::total_length: %ld \n", total_length);
 
-    return PatchUnsignedLength(headers_data, *total_spec, total_length);
+    auto bytes = PatchUnsignedLength(*total_spec, total_length);
+    if(!bytes.has_value())
+    {
+        return false;
+    }
+    if(total_spec->byte_pos + total_spec->byte_len > headers_data.size()
+        || total_spec->byte_len != bytes->size())
+    {
+        CUSTOM_F_ERROR("length value invalid!\n");
+        return false;
+    }
+
+    std::copy(bytes->begin(), bytes->end(), headers_data.begin() + total_spec->byte_pos);
+    return true;
+}
+
+std::optional<FieldValue> TotalLengthPattern::assignLength(size_t body_length) const
+{
+    FieldValue total_field_value;
+    const FieldSpec* total_spec = pattern_spec_.byUniqueRole(FieldRole::kTotalLength);
+    if(nullptr == total_spec)
+    {
+        CUSTOM_F_ERROR("role 'total_length' missing! \n");
+        return std::nullopt;
+    }
+
+    size_t total_length = pattern_spec_.header_bytes + body_length;
+    if(total_length < pattern_spec_.header_bytes)
+    {
+        CUSTOM_F_WARN("total_length invalid! total_length[%ld] < headers_bytes[%ld] \n", total_length, pattern_spec_.header_bytes);
+        total_length = pattern_spec_.header_bytes;
+    }
+
+    CUSTOM_F_DEBUG("patchLength::total_length: %ld \n", total_length);
+
+    auto bytes = PatchUnsignedLength(*total_spec, total_length);
+    if(!bytes.has_value())
+    {
+        return std::nullopt;
+    }
+    if(total_spec->byte_len != bytes->size())
+    {
+        CUSTOM_F_ERROR("length value invalid!\n");
+        return std::nullopt;
+    }
+    total_field_value.spec = *total_spec;
+    total_field_value.bytes = std::move(*bytes);
+
+    return total_field_value;
 }
 
 
@@ -285,6 +369,12 @@ bool NoLengthPattern::patchLength(std::vector<uint8_t>& headers_data, size_t len
 {
     CUSTOM_F_INFO("policy 'no_length' dont need length \n");
     return true;
+}
+
+std::optional<FieldValue> NoLengthPattern::assignLength(size_t body_length) const
+{
+    CUSTOM_F_INFO("policy 'no_length' dont need length \n");
+    return std::nullopt;
 }
 
 std::shared_ptr<CustomTcpPattern> CustomTcpPatternFactory::Create(const nlohmann::json& json)

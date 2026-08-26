@@ -41,8 +41,8 @@ CustomTcpContext::CustomTcpContext(CustomTcpProjectServer *server)
     })
     ,remain_bytes_len_(0)
 {
-    request_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
-    response_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
+    request_ = std::make_shared<CustomTcpMessage>();
+    response_ = std::make_shared<CustomTcpMessage>();
 
     CUSTOM_F_DEBUG("CustomTcpContext::construct() %p\n", this);
 }
@@ -193,8 +193,8 @@ void CustomTcpContext::reset()
     request_.reset();
     response_.reset();
     result_ = CustomTcpParseResult{};
-    request_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
-    response_ = std::make_shared<CustomTcpMessage>(server_->GetPatternInfo());
+    request_ = std::make_shared<CustomTcpMessage>();
+    response_ = std::make_shared<CustomTcpMessage>();
 }
 
 

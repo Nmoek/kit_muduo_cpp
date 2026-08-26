@@ -62,8 +62,9 @@ public:
     virtual const CustomTcpPatternSpec& spec() const = 0;
     virtual std::optional<std::vector<uint8_t>> serialize(const CustomTcpItemCfg &item_cfg, const std::vector<uint8_t> &body_data) const = 0;
     virtual ParseHeaderResult parseHeader(const std::vector<uint8_t> &data) = 0;
-    virtual bool assembleMessageFromCfg(CustomTcpMessagePtr message, const CustomTcpItemCfg &item_cfg) = 0;
+    virtual bool assembleMessageFromCfg(CustomTcpMessagePtr message, const CustomTcpItemCfg &item_cfg, size_t Body_size) = 0;
     virtual bool writeLengthByPatch(std::vector<uint8_t> &headers_data, size_t body_length) = 0;
+    virtual std::optional<FieldValue> assignLengthByField(size_t body_length) = 0;
 
     int32_t checkStartMagic(const std::vector<FieldValue>& fields_value);
 
@@ -73,7 +74,7 @@ public:
 
     static std::vector<uint8_t> ParseFromHex(const FieldSpec& field_spec, const std::string &hex_str);
 
-    static bool PatchUnsignedLength(std::vector<uint8_t> &headers_data, const FieldSpec& field, size_t value);
+    static std::optional<std::vector<uint8_t>> PatchUnsignedLength(const FieldSpec& field, size_t value);
 
     static FieldScalar MakeLengthScalar(const FieldSpec& field, size_t value);
 };
@@ -161,71 +162,9 @@ public:
 
         try
         {
-            for(auto &field : pattern_spec.fields)
+            if(!writeHeadersHelper(pattern_spec.fields, item_cfg, headers_data))
             {
-                switch(WriteKindOf(field.role))
-                {
-                    case FieldWriteKind::kZeroFill:
-                    {
-                        // 什么都不做保持填充0
-                        break;
-                    }
-                    case FieldWriteKind::kFixedMatch:
-                    {
-                        if(!field.match.has_value() || !WriteAt(headers_data, field, field.match.value()))
-                        {
-                            CUSTOM_F_ERROR("write match error! name[%s] pos[%ld] \n", field.name.c_str(), field.byte_pos);
-                            return std::nullopt;
-                        }
-
-                        break;
-                    }
-                    case FieldWriteKind::kItemFunctionCode:
-                    {
-                        const auto& bytes = ParseFromHex(field, item_cfg.function_code);
-
-                        if(!WriteAt(headers_data, field, bytes))
-                        {
-                            CUSTOM_F_ERROR("write item function code error! name[%s] pos[%ld] \n", field.name.c_str(), field.byte_pos);
-                            return std::nullopt;
-                        }
-
-                        break;
-                    }
-                    case FieldWriteKind::kItemFieldOverride:
-                    {
-                        auto it = item_cfg.field_values_by_byte_pos.find(field.byte_pos);
-
-                        // 注意: 这里语义允许字段值只配置部分
-                        if(it == item_cfg.field_values_by_byte_pos.end())
-                        {
-                            CUSTOM_F_DEBUG("item override not set! name[%s] byte_pos[%ld] \n", field.name.c_str(), field.byte_pos);
-
-                            break;
-                        }
-
-                        if(!WriteAt(headers_data, field, it->second))
-                        {
-                            CUSTOM_F_ERROR("write item override error! name[%s] byte_pos[%ld] \n", field.name.c_str(), field.byte_pos);
-                            return std::nullopt;
-                        }
-
-                        break;
-                    }
-                    case FieldWriteKind::kAutoPatch:
-                    {
-                        // 什么都不做后续 根据长度策略自动填充
-                        break;
-                    }
-                    case FieldWriteKind::kUnsupported:
-                    {
-                        CUSTOM_F_ERROR("write field unsupport! name[%s] byte_pos[%ld] role_tag[%s]\n", field.name.c_str(), field.byte_pos, RoleTag(field.role).c_str());
-                        return std::nullopt;
-                    }
-                    default:
-                        CUSTOM_F_ERROR("undefine write kind\n");
-                        return std::nullopt;
-                }
+                return std::nullopt;
             }
 
             if(!derived().patchLength(headers_data, body_data.size()))
@@ -251,7 +190,7 @@ public:
         }
     }
 
-    bool assembleMessageFromCfg(CustomTcpMessagePtr message, const CustomTcpItemCfg &item_cfg) override
+    bool assembleMessageFromCfg(CustomTcpMessagePtr message, const CustomTcpItemCfg &item_cfg, size_t body_size) override
     {
         if(!message)
         {
@@ -259,6 +198,8 @@ public:
             return false;
         }
         const CustomTcpPatternSpec& pattern_spec = derived().spec();
+
+        message->setFunctionCodeHex(item_cfg.function_code);
 
         // 将格式与配置的值对应组合起来
         for(auto &cfg_field_spec : pattern_spec.fields)
@@ -283,12 +224,88 @@ public:
 
                 field.bytes.assign(it->second.begin(), it->second.end());
             }
+            else
+            {
+                // 按照角色放入
+                switch(WriteKindOf(field.spec.role))
+                {
+                    case FieldWriteKind::kZeroFill:
+                    case FieldWriteKind::kItemFieldOverride:
+                    case FieldWriteKind::kAutoPatch:
+                    {
+                        // 什么都不做保持填充0
+                        field.bytes.assign(field.spec.byte_len, 0x00);
+                        break;
+                    }
+                    case FieldWriteKind::kFixedMatch:
+                    {
+
+                        if(!field.spec.match.has_value()
+                            || field.spec.byte_len != field.spec.match->size())
+                        {
+                            CUSTOM_F_ERROR("write match error! name[%s] pos[%ld] \n", field.spec.name.c_str(), field.spec.byte_pos);
+                            return false;
+                        }
+                        auto bytes = field.spec.match.value();
+
+                        field.bytes = std::move(bytes);
+
+                        break;
+                    }
+                    case FieldWriteKind::kItemFunctionCode:
+                    {
+                        auto bytes = CustomTcpPattern::ParseFromHex(field.spec, item_cfg.function_code);
+
+                        if(field.spec.byte_len == bytes.size())
+                        {
+                            field.bytes = std::move(bytes);
+                        }
+                        else
+                        {
+                            CUSTOM_F_ERROR("write item function code error! name[%s] pos[%ld] \n", field.spec.name.c_str(), field.spec.byte_pos);
+                            return false;
+                        }
+
+                        break;
+                    }
+
+                    case FieldWriteKind::kUnsupported:
+                    {
+                        CUSTOM_F_ERROR("write field unsupport! name[%s] byte_pos[%ld] role_tag[%s]\n", field.spec.name.c_str(), field.spec.byte_pos, RoleTag(field.spec.role).c_str());
+
+                        return false;
+                    }
+                    default:
+                        CUSTOM_F_ERROR("undefine write kind\n");
+                        break;
+                }
+            }
+
             CUSTOM_F_DEBUG("Field matched: name[%s], byte_pos[%d], byte_len[%d], role_tag[%s], bytes[%s]\n",
-                cfg_field_spec.name.c_str(), cfg_field_spec.byte_pos, cfg_field_spec.byte_len, RoleTag(cfg_field_spec.role).c_str(),
+                field.spec.name.c_str(),
+                field.spec.byte_pos,
+                field.spec.byte_len,
+                RoleTag(field.spec.role).c_str(),
                 field.hex().c_str());
+
             message->addField(field);
         }
-        message->setFunctionCodeHex(item_cfg.function_code);
+
+        auto field_value = derived().assignLength(body_size);
+        if(field_value.has_value())
+        {
+            message->addField(*field_value);
+        }
+        else
+        {
+            if(LengthPolicy::kNoLength != derived().spec().length_policy)
+            {
+                CUSTOM_F_ERROR("policy '%s' assignLength error\n",  LengthPolicyToString(derived().spec().length_policy).c_str());
+                return false;
+            }
+
+        }
+
         return true;
     }
 
@@ -302,10 +319,93 @@ public:
         return true;
     }
 
+    std::optional<FieldValue> assignLengthByField(size_t body_length) override
+    {
+        auto field_value = derived().assignLength(body_length);
+        if(!field_value.has_value())
+        {
+            CUSTOM_F_ERROR("policy '%s' assignLength error\n",  LengthPolicyToString(derived().spec().length_policy).c_str());
+        }
+        return field_value;
+    }
+
 private:
     const Derived& derived() const
     {
         return static_cast<const Derived&>(*this);
+    }
+
+    bool writeHeadersHelper(const FieldSpecSet& fields,
+        const CustomTcpItemCfg &item_cfg,
+        std::vector<uint8_t> &headers_data) const
+    {
+        for(auto &field : fields)
+        {
+            switch(WriteKindOf(field.role))
+            {
+                case FieldWriteKind::kZeroFill:
+                {
+                    // 什么都不做保持填充0
+                    break;
+                }
+                case FieldWriteKind::kFixedMatch:
+                {
+                    if(!field.match.has_value() || !WriteAt(headers_data, field, field.match.value()))
+                    {
+                        CUSTOM_F_ERROR("write match error! name[%s] pos[%ld] \n", field.name.c_str(), field.byte_pos);
+                        return false;
+                    }
+
+                    break;
+                }
+                case FieldWriteKind::kItemFunctionCode:
+                {
+                    const auto& bytes = ParseFromHex(field, item_cfg.function_code);
+
+                    if(!WriteAt(headers_data, field, bytes))
+                    {
+                        CUSTOM_F_ERROR("write item function code error! name[%s] pos[%ld] \n", field.name.c_str(), field.byte_pos);
+                        return false;
+                    }
+
+                    break;
+                }
+                case FieldWriteKind::kItemFieldOverride:
+                {
+                    auto it = item_cfg.field_values_by_byte_pos.find(field.byte_pos);
+
+                    // 注意: 这里语义允许字段值只配置部分
+                    if(it == item_cfg.field_values_by_byte_pos.end())
+                    {
+                        CUSTOM_F_DEBUG("item override not set! name[%s] byte_pos[%ld] \n", field.name.c_str(), field.byte_pos);
+
+                        break;
+                    }
+
+                    if(!WriteAt(headers_data, field, it->second))
+                    {
+                        CUSTOM_F_ERROR("write item override error! name[%s] byte_pos[%ld] \n", field.name.c_str(), field.byte_pos);
+                        return false;
+                    }
+
+                    break;
+                }
+                case FieldWriteKind::kAutoPatch:
+                {
+                    // 什么都不做后续 根据长度策略自动填充
+                    break;
+                }
+                case FieldWriteKind::kUnsupported:
+                {
+                    CUSTOM_F_ERROR("write field unsupport! name[%s] byte_pos[%ld] role_tag[%s]\n", field.name.c_str(), field.byte_pos, RoleTag(field.role).c_str());
+                        return false;
+                }
+                default:
+                    CUSTOM_F_ERROR("undefine write kind\n");
+                        return false;
+            }
+        }
+        return true;
     }
 
 protected:
@@ -325,6 +425,7 @@ public:
     bool remainBodyBytes(const std::vector<FieldValue>& fields_value, uint64_t& remain_bytes) const;
 
     bool patchLength(std::vector<uint8_t>& headers_data, size_t body_length) const;
+    std::optional<FieldValue> assignLength(size_t body_length) const;
 };
 
 
@@ -341,6 +442,7 @@ public:
     bool remainBodyBytes(const std::vector<FieldValue>& fields_value, uint64_t& remain_bytes) const;
 
     bool patchLength(std::vector<uint8_t>& headers_data, size_t body_length) const;
+    std::optional<FieldValue> assignLength(size_t body_length) const;
 };
 
 
@@ -357,6 +459,7 @@ public:
     bool remainBodyBytes(const std::vector<FieldValue>& fields_value, uint64_t& remain_bytes) const;
 
     bool patchLength(std::vector<uint8_t>& headers_data, size_t body_length) const;
+    std::optional<FieldValue> assignLength(size_t body_length) const;
 };
 
 class CustomTcpPatternFactory

@@ -18,16 +18,10 @@
 namespace kit_domain {
 
 
-CustomTcpMessage::CustomTcpMessage(std::shared_ptr<CustomTcpPattern> pattern)
+CustomTcpMessage::CustomTcpMessage()
     :recordTime_(0)
-    ,weak_pattern_(pattern)
 {
-    CUSTOM_F_DEBUG("CustomTcpRequest::construct() %p\n", this);
-}
 
-CustomTcpMessage::~CustomTcpMessage()
-{
-    CUSTOM_F_DEBUG("CustomTcpMessage::~CustomTcpMessage() %p\n", this);
 }
 
 void CustomTcpMessage::addField(const FieldValue &field_value)
@@ -65,16 +59,9 @@ uint64_t CustomTcpMessage::getHeaderLen() const
     {
         res += it.second.spec.byte_len;
     }
-    if(res == 0)
-    {
-        auto pattern = weak_pattern_.lock();
-        if(pattern)
-        {
-            return pattern->spec().header_bytes;
-        }
-    }
     return res;
 }
+
 
 std::string CustomTcpMessage::toHeaderString() const
 {
@@ -83,32 +70,17 @@ std::string CustomTcpMessage::toHeaderString() const
     {
         data += field.second.hex() + " ";
     }
-    if(data.find_first_not_of(' ') == std::string::npos)
-    {
-        const auto bytes = toBytes();
-        const auto header_len = getHeaderLen();
-        if(bytes.has_value() && header_len <= bytes->size())
-        {
-            return kit_muduo::BytesToHexString(
-                std::vector<uint8_t>(bytes->begin(), bytes->begin() + header_len));
-        }
-    }
+
     return data;
 }
 
 
-std::optional<std::vector<uint8_t>> CustomTcpMessage::toBytes()const 
+std::optional<std::vector<uint8_t>> CustomTcpMessage::toBytes() const
 {
-    auto pattern = weak_pattern_.lock();
-    if(!pattern)
-    {
-        CUSTOM_F_INFO("custom tcp pattern null\n");
-        return std::nullopt;
-    }
     uint64_t header_len = getHeaderLen();
     if(header_len <= 0)
     {
-        CUSTOM_F_ERROR("custom tcp pattern info not asseble\n");
+        CUSTOM_F_ERROR("custom tcp pattern header_len invalid\n");
         return std::nullopt;
     }
 
@@ -116,75 +88,21 @@ std::optional<std::vector<uint8_t>> CustomTcpMessage::toBytes()const
 
     try
     {
-        for(auto &it : header_fields_by_byte_pos_)
+
+        for(auto &[pos, filed_value] : header_fields_by_byte_pos_)
         {
-            const auto& field = it.second;
-            const auto &field_spec = field.spec;
-            switch(WriteKindOf(field_spec.role))
+            const auto& spec = filed_value.spec;
+            const auto &bytes = filed_value.bytes;
+
+            if(bytes.size() != spec.byte_len
+                || spec.byte_pos + spec.byte_len > headers_data.size())
             {
-                case FieldWriteKind::kZeroFill:
-                {
-                    // 什么都不做保持填充0
-                    break;
-                }
-                case FieldWriteKind::kFixedMatch:
-                {
-                    if(!field_spec.match.has_value() || !CustomTcpPattern::WriteAt(headers_data, field_spec, field_spec.match.value()))
-                    {
-                        CUSTOM_F_ERROR("write match error! name[%s] pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
-                        return std::nullopt;
-                    }
-
-                    break;
-                }
-                case FieldWriteKind::kItemFunctionCode:
-                {
-                    const auto& bytes = CustomTcpPattern::ParseFromHex(field_spec, function_code_hex_);
-
-                    if(!CustomTcpPattern::WriteAt(headers_data, field_spec, bytes))
-                    {
-                        CUSTOM_F_ERROR("write item function code error! name[%s] pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
-                        return std::nullopt;
-                    }
-
-                    break;
-                }
-                case FieldWriteKind::kItemFieldOverride:
-                {
-                    if(field.bytes.empty())
-                    {
-                        CUSTOM_F_DEBUG("item override not set! name[%s] byte_pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
-
-                        break;                    
-                    }
-
-                    if(!CustomTcpPattern::WriteAt(headers_data, field_spec, field.bytes))
-                    {
-                        CUSTOM_F_ERROR("write item override error! name[%s] byte_pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
-                        return std::nullopt;
-                    }
-
-                    break;
-                }
-                case FieldWriteKind::kAutoPatch:
-                {
-                    // 什么都不做后续 根据长度策略自动填充
-                    break;
-                }
-                case FieldWriteKind::kUnsupported:
-                {
-                    CUSTOM_F_ERROR("write field unsupport! name[%s] byte_pos[%ld] role_tag[%s]\n", field_spec.name.c_str(), field_spec.byte_pos, RoleTag(field_spec.role).c_str());
-                    return std::nullopt;
-                }
-                default:
-                    CUSTOM_F_ERROR("undefine write kind\n");
-                    return std::nullopt;
+                CUSTOM_F_ERROR("custom tcp serialize error! byte_pos[%lu], byte_len[%lu]\n", spec.byte_pos, spec.byte_len);
+                return std::nullopt;
             }
-        }
 
-        if(!pattern->writeLengthByPatch(headers_data, body_data_.size()))
-        {
-            return std::nullopt;
+            std::copy(bytes.begin(), bytes.end(), headers_data.begin() + filed_value.spec.byte_pos);
+
         }
 
         std::vector<uint8_t> data;
@@ -215,6 +133,75 @@ std::string CustomTcpMessage::toString() const
     return std::string(data->begin(), data->end());
 }
 
+bool CustomTcpMessage::writeHeadersHelper(std::vector<uint8_t> &headers_data) const
+{
+    for(auto &it : header_fields_by_byte_pos_)
+    {
+        const auto& field = it.second;
+        const auto &field_spec = field.spec;
+        switch(WriteKindOf(field_spec.role))
+        {
+            case FieldWriteKind::kZeroFill:
+            {
+                // 什么都不做保持填充0
+                break;
+            }
+            case FieldWriteKind::kFixedMatch:
+            {
+                if(!field_spec.match.has_value() || !CustomTcpPattern::WriteAt(headers_data, field_spec, field_spec.match.value()))
+                {
+                    CUSTOM_F_ERROR("write match error! name[%s] pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+                    return false;
+                }
+
+                break;
+            }
+            case FieldWriteKind::kItemFunctionCode:
+            {
+                const auto& bytes = CustomTcpPattern::ParseFromHex(field_spec, function_code_hex_);
+
+                if(!CustomTcpPattern::WriteAt(headers_data, field_spec, bytes))
+                {
+                    CUSTOM_F_ERROR("write item function code error! name[%s] pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+                    return false;
+                }
+
+                break;
+            }
+            case FieldWriteKind::kItemFieldOverride:
+            {
+                if(field.bytes.empty())
+                {
+                    CUSTOM_F_DEBUG("item override not set! name[%s] byte_pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+
+                    break;
+                }
+
+                if(!CustomTcpPattern::WriteAt(headers_data, field_spec, field.bytes))
+                {
+                    CUSTOM_F_ERROR("write item override error! name[%s] byte_pos[%ld] \n", field_spec.name.c_str(), field_spec.byte_pos);
+                    return false;
+                }
+
+                break;
+            }
+            case FieldWriteKind::kAutoPatch:
+            {
+                // 什么都不做后续 根据长度策略自动填充
+                break;
+            }
+            case FieldWriteKind::kUnsupported:
+            {
+                CUSTOM_F_ERROR("write field unsupport! name[%s] byte_pos[%ld] role_tag[%s]\n", field_spec.name.c_str(), field_spec.byte_pos, RoleTag(field_spec.role).c_str());
+                return false;
+            }
+            default:
+                CUSTOM_F_ERROR("undefine write kind\n");
+                return false;
+        }
+    }
+    return true;
+}
 
 
 }
