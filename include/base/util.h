@@ -155,6 +155,13 @@ std::string NormalizeFilePath(const std::string& file_path);
  */
 std::string Trim(const std::string &str);
 
+/**
+ * @brief 操作系统内存页上取整对齐
+ * @param n 
+ * @param page 
+ * @return size_t 
+ */
+size_t AlignToCachePage(size_t n, size_t page);
 
 } // namespace kit
 #endif

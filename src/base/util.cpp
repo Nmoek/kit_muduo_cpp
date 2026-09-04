@@ -255,5 +255,9 @@ std::string Trim(const std::string &str)
     return str.substr(pos1, pos2 - pos1 + 1);
 }
 
+size_t AlignToCachePage(size_t n, size_t page) 
+{
+    return (n + page - 1) / page * page;
+}
 
 } // namespace kit

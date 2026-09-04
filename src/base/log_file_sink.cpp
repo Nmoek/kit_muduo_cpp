@@ -108,11 +108,17 @@ LogFileSinkResult LogFileSink::append(const std::string& data,
         result.message = std::move(open_result.message);
         return result;
     }
+    auto file_config = reg_->config();
+    if (!file_config) 
+    {
+        LOG_INNER_WARN("log file config null, default used\n");
+        file_config = std::make_shared<const LogFileConfig>(LogFileConfig{});
+    }
 
     // 判断是否需要进行轮转处理
-    if(shouldRotateUnlocked(data.size()))
+    if(shouldRotateUnlocked(*file_config, data.size()))
     {
-        if (!rotateUnlocked())
+        if (!rotateUnlocked(*file_config))
         {
             result.status = LogFileSinkResultStatus::kRotateFailed;
             result.message = "log file rotate error";
@@ -139,13 +145,14 @@ LogFileSinkResult LogFileSink::append(const std::string& data,
     result.written_bytes = backend_result.written_bytes;
 
     bytes_since_flush_ += result.requested_bytes;
-    current_file_size_ .fetch_add(result.written_bytes, std::memory_order_relaxed);
+    accepted_generation_bytes_.fetch_add(result.written_bytes, std::memory_order_relaxed);
 
-    auto file_config = reg_->fileConfig();
-    if(!file_config)
+    // 健康监测数据更新
+    ++health_.written_records;
+    health_.written_bytes += data.size();
+    if (truncated)
     {
-        // HACK 使用默认配置
-        file_config = std::make_shared<const LogFileConfig>(LogFileConfig{});
+        ++health_.truncated_records;
     }
 
     bool flush_by_bytes = bytes_since_flush_ >= file_config->flush_threshold;
@@ -233,7 +240,7 @@ LogFileSinkHealth LogFileSink::healthSnapshot() const
 { 
     std::lock_guard<std::mutex> lock(mtx_);
     LogFileSinkHealth result = health_;
-    result.current_file_size =   current_file_size_.load(std::memory_order_acquire);
+    result.current_file_size =   accepted_generation_bytes_.load(std::memory_order_acquire);
 
     return result;
 }
@@ -267,7 +274,7 @@ LogFileSinkResult LogFileSink::openUnlocked()
     }
 
     bytes_since_flush_ = 0;
-    current_file_size_.store(backend_->openSize(), std::memory_order_release);
+    accepted_generation_bytes_.store(backend_->openSize(), std::memory_order_release);
     error_reported_ = false;
     last_flush_time_ = TimeStamp::MonotonicNowMs();
 
@@ -302,15 +309,14 @@ bool LogFileSink::durableFlushUnlocked()
 }
 
 
-bool LogFileSink::shouldRotateUnlocked(size_t incoming_bytes) const noexcept
+bool LogFileSink::shouldRotateUnlocked(const LogFileConfig& file_config, size_t incoming_bytes) const noexcept
 {
-    const auto file_conifg = reg_->fileConfig();
-
-    return file_conifg
-            && current_file_size_.load(std::memory_order_relaxed) + incoming_bytes > file_conifg->rotate_max_bytes;
+    return file_config.rotate_max_backup_files !=0
+        && accepted_generation_bytes_.load(std::memory_order_relaxed) > file_config.rotate_max_bytes - incoming_bytes;
 }
-
-bool LogFileSink::rotateUnlocked()
+#if 0
+{
+bool LogFileSink::rotateUnlockedV2()
 {
     if(!flushUnlocked())
     {
@@ -360,7 +366,7 @@ bool LogFileSink::rotateUnlocked()
 
     // FileSink 状态重置
     bytes_since_flush_ = 0;
-    current_file_size_.store(0, std::memory_order_relaxed);
+    accepted_generation_bytes_.store(0, std::memory_order_relaxed);
     error_reported_ = false;
 
     const auto file_config = reg_->fileConfig();
@@ -380,7 +386,57 @@ bool LogFileSink::rotateUnlocked()
 
     return true;
 }
+}
+#endif 
 
+bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
+{
+    // 扫描路径中归档文件
+    std::vector<LogFileArchive> archives;
+    if(!scanArchives(archives))
+    {
+        rotateFailureHandleUnlocked(LogBackendResult::Failure(LogBackendStatus::kWriteFailed,
+            "scan archives failed"));
+        return false;
+    }
+
+    std::string archive_log;
+    if (!newArchivePathUnlocked(archive_log))
+    {
+        rotateFailureHandleUnlocked(LogBackendResult::Failure(LogBackendStatus::kWriteFailed,
+            "create archive path failed"));
+        return false;
+    }
+
+    LogFileRotateRequest request
+    {
+        backend_->generation(),
+        backend_->lastSequence(),
+        normalize_path_,
+        archive_log,
+        archive_log + ".zst",
+        file_config.compress_rotated
+    };
+
+    // TODO 后续补充为配置项
+    // 30s 轮转压缩时间 
+    static constexpr auto kRotateTimeoutMs = 30*1000;
+
+    const auto result = backend_->rotate(request, kRotateTimeoutMs);
+    if (!result.ok())
+    { 
+        rotateFailureHandleUnlocked(result);
+        return false;
+    }
+    accepted_generation_bytes_ = 0;
+
+    if(!cleanupOldArchivesUnlocked(file_config, archives))
+    {
+        LOG_INNER_WARN("log file cleanup old archives failed! %lu: %s \n", backend_->generation(), normalize_path_.c_str());
+    }
+
+    return true;
+}
 
 bool LogFileSink::scanArchives(std::vector<LogFileArchive> &archives)
 {
@@ -511,13 +567,13 @@ bool LogFileSink::newArchivePathUnlocked(std::string &new_archive_path)
     return true;
 }
 
-bool LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig&file_config, 
+bool LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig& file_config, 
     std::vector<LogFileArchive> &archives)
 {
 
     std::error_code error;
     // 注意 这里减1是有一个新生成的归档文件没有在当前列表中
-    while(archives.size() > file_config.rotate_max_backup_files - 1)
+    while(archives.size() + 1 > file_config.rotate_max_backup_files)
     {
         const auto &archive = archives.back();
         bool ok = std::filesystem::remove(archive.archive_path, error);
@@ -533,10 +589,30 @@ bool LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig&file_config,
     return true;
 }
 
+void LogFileSink::rotateFailureHandleUnlocked(const LogBackendResult& result)
+{
+    ++health_.rotate_failures;
+    ++health_.consecutive_failures;
 
+    // 轮转失败不等于 active 通道必然失效。例如，zstd 发布失败时
+    // active 文件仍可能已经重新打开；只有 backend 已关闭才标记 Failed。
+    health_.state = backend_->isOpen()
+        ? LogFileSinkHealthState::kDegraded
+        : LogFileSinkHealthState::kFailed;
+
+    health_.last_error = result.message.empty()
+        ? "log backend rotate failed without details"
+        : result.message;
+
+    // 复用 4-0 的 stderr 单次报告机制，不能递归写普通日志。
+    LOG_FILE_SINK_REPORTED("rotate", health_.last_error.c_str());
+}
+
+
+/************LogFileSinkRegister*********** */
 
 LogFileSinkRegister::LogFileSinkRegister()
-    :file_config_(std::make_shared<const LogFileConfig>())
+    :file_config_(std::make_shared<const LogFileConfig>(LogFileConfig{}))
 {
 
 }
@@ -568,23 +644,22 @@ LogFileSink::Ptr LogFileSinkRegister::acquire(const std::string &file_path)
     return sink;
 }
 
-void LogFileSinkRegister::setFileConfig(LogFileConfig config) 
+void LogFileSinkRegister::setConfig(LogFileConfig config) 
 { 
-    setFileConfig(std::make_shared<const LogFileConfig>(std::move(config)));
+    setConfig(std::make_shared<const LogFileConfig>(std::move(config)));
 }
 
-void LogFileSinkRegister::setFileConfig(std::shared_ptr<const LogFileConfig> config)
+void LogFileSinkRegister::setConfig(std::shared_ptr<const LogFileConfig> config)
 {
     std::atomic_exchange_explicit(&file_config_, config, std::memory_order_release);
 }
 
 
-const std::shared_ptr<const LogFileConfig> LogFileSinkRegister::fileConfig() const noexcept 
+const std::shared_ptr<const LogFileConfig> LogFileSinkRegister::config() const noexcept 
 { 
-    auto config = std::atomic_load_explicit(
+    return std::atomic_load_explicit(
     &file_config_,
     std::memory_order_acquire);
-    return config; 
 }
 
 void LogFileSinkRegister::commit(SinksMap &&sinks)

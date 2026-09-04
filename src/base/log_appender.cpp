@@ -91,6 +91,7 @@ std::string NormalizeAndLimitRecord(const std::string &formated_data, uint32_t m
                 }
                 else
                 {
+                    // 按utf编码规则 进行字节边界判断
                     size_t sequence_size = 1;
                     if ((ch & 0xE0) == 0xC0)
                     {
@@ -109,13 +110,10 @@ std::string NormalizeAndLimitRecord(const std::string &formated_data, uint32_t m
                         && i + sequence_size <= tmp_data.size())
                     {
                         bool valid_continuation = true;
-                        for (size_t offset = 1;
-                            offset < sequence_size;
-                            ++offset)
+                        for (size_t offset = 1; offset < sequence_size; ++offset)
                         {
-                            const auto continuation =
-                                static_cast<unsigned char>(
-                                    tmp_data[i + offset]);
+                            const auto continuation = static_cast<unsigned char>( tmp_data[i + offset]);
+                            
                             if ((continuation & 0xC0) != 0x80)
                             {
                                 valid_continuation = false;
@@ -141,7 +139,8 @@ std::string NormalizeAndLimitRecord(const std::string &formated_data, uint32_t m
         safe_boundaries.push_back(body.size());
     }
 
-    if(body.size() > max_record_bytes)
+    // 实际数据 + 末尾换行符
+    if(body.size() + 1 > max_record_bytes)
     {
         truncated = true;
 
@@ -160,6 +159,7 @@ std::string NormalizeAndLimitRecord(const std::string &formated_data, uint32_t m
             safe_boundaries.begin(),
             safe_boundaries.end(),
             prefix_limit);
+        // 完整边界向下取
         const size_t prefix_size = boundary == safe_boundaries.begin()
             ? 0
             : *std::prev(boundary);
@@ -220,12 +220,7 @@ void LogAppender::append(LogAttr::Ptr attr)
         return;
     }
 
-    bool truncated = false;
-    const size_t original_bytes = formated_data.size();
-
-    std::string log_data = NormalizeAndLimitRecord(formated_data, max_record_bytes_, truncated);
-
-    append(log_data, attr_level, truncated, original_bytes);
+    append(formated_data, attr_level);
 }
 
 void LogAppender::setFormatter(LogFormatter::Ptr pfarmatter)
@@ -250,13 +245,27 @@ LogFormatter::Ptr LogAppender::getFormatter() const
 
 /*********ConsoleAppender***********/
 
-void ConsoleAppender::append(const std::string& log_data,
-    LogLevel::Level level,
-    bool truncated,
-    size_t original_bytes)
+void ConsoleAppender::append(const std::string& log_data, LogLevel::Level level)
 {
-    std::lock_guard<std::mutex> lock(GetConsoleMtx());
-    std::cout << log_data;
+
+    // HACK 仅截断处理 不做转义 也不做完整边界探查
+    if(log_data.size() > max_record_bytes_)
+    {
+        const std::string suffix ="...[truncated " 
+            + std::to_string(log_data.size()) + " bytes]";
+        std::string_view truncated_data{log_data.substr(0, max_record_bytes_ - suffix.size() - 1)};
+        std::lock_guard<std::mutex> lock(GetConsoleMtx());
+        std::cout << truncated_data
+            << suffix
+            << '\n';
+    }
+    else
+    {
+        std::lock_guard<std::mutex> lock(GetConsoleMtx());
+        std::cout << log_data;
+    }
+
+
 }
 
 std::mutex& ConsoleAppender::GetConsoleMtx()
@@ -287,16 +296,17 @@ bool FileAppender::openForAppend(std::string* error_message)
 }
 
 
-void FileAppender::append(const std::string& log_data,
-    LogLevel::Level level,
-    bool truncated,
-    size_t original_bytes)
+void FileAppender::append(const std::string& log_data, LogLevel::Level level)
 {
-    auto result = file_sink_->append(log_data, level, truncated, original_bytes);
+    bool truncated = false;
+    size_t original_bytes = 0;
+    std::string normalize_log_data = NormalizeAndLimitRecord(log_data, max_record_bytes_, truncated);
+
+    auto result = file_sink_->append(normalize_log_data, level, truncated, original_bytes);
     if(!result.ok())
     {
         // 使用 cerr通道补充打一次
-        std::cerr << "CERR: " << log_data;
+        std::cerr << "CERR: " << normalize_log_data;
     }
 }
 

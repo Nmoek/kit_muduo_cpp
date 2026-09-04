@@ -9,6 +9,7 @@
 
 #include "base/log.h"
 #include "base/log_appender.h"
+#include "base/log_async.h"
 #include "base/log_config.h"
 #include "base/log_file_sink.h"
 #include "base/log_formatter.h"
@@ -28,6 +29,7 @@ namespace kit_muduo {
 
 struct PreparedLogConfig
 {
+    LogAsyncConfig aync_config;
     LogFileConfig file_config;
     LogFileSinkRegister::SinksMap sinks;
     std::unordered_map<std::string, Logger::Ptr> loggers;
@@ -117,32 +119,6 @@ LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
 
 } // namespace
 
-class LogSubmissionGuard
-{
-public:
-    LogSubmissionGuard(LogManager &manager)
-        :manager_(manager)
-        ,entered_(manager_.tryEnterLogSubmission())
-    { }
-
-    ~LogSubmissionGuard()
-    {
-        if(entered_)
-        {
-            manager_.leaveLogSubmission();
-        }
-    }
-
-    bool entered() const noexcept
-    {
-        return entered_;
-    }
-
-private:
-    LogManager &manager_;
-    bool entered_{false};
-};
-
 Logger::Logger(LogManager* manager, const std::string &name)
     :manager_(manager)
     ,name_(name)
@@ -182,13 +158,13 @@ void Logger::logUnchecked(LogAttr::Ptr attr)
     }
 
     // 日志提交RAII
-    LogSubmissionGuard guard(*manager_);
+    // LogSubmissionGuard guard(*manager_);
 
-    if(!guard.entered())
-    {
-        LOG_INNER_DEBUG("log attr submission rejected! \n");
-        return;
-    }
+    // if(!guard.entered())
+    // {
+    //     LOG_INNER_DEBUG("log attr submission rejected! \n");
+    //     return;
+    // }
 
     dispatchUnlocked(attr);
 }
@@ -269,6 +245,11 @@ bool Logger::shouldLog(LogLevel::Level level) const
     return level >= getLevel();
 }
 
+void Logger::logForAync(LogAttr::Ptr attr)
+{
+    (void)manager_->submitForAsync(std::move(attr));
+}
+
 void Logger::replaceAppenders(std::list<LogAppender::Ptr> appenders)
 {
     const auto route = appenders.empty()
@@ -311,7 +292,9 @@ Logger::Ptr Logger::getRootFallback() const
         return nullptr;
     }
 
-    return root_fallback_.lock();
+    auto root = root_fallback_.lock();
+
+    return root.get() == this ? nullptr : root;
 }
 
 bool Logger::shouldLogWithRootFallback(LogLevel::Level level) const
@@ -353,7 +336,7 @@ LogAttrWrap::~LogAttrWrap() noexcept
         if(attr_ && attr_->getLogger())
         {
             attr_->seal();
-            attr_->getLogger()->logUnchecked(attr_);
+            attr_->getLogger()->logForAync(std::move(attr_));
         }
 
     } catch(const std::exception &e) {
@@ -378,6 +361,7 @@ LogManager::LogManager()
     :state_(LogManagerState::kInit)
     ,root_logger_(std::make_shared<Logger>(this, "root"))
 {
+    root_logger_->addAppender(std::make_shared<ConsoleAppender>());
     loggers_.emplace("root", root_logger_);
 
 }
@@ -400,6 +384,9 @@ LogManagerResult LogManager::initialize(const LogConfig& config)
     try {
 
         applyConfig(config);
+
+        // 开启异步分发器
+        async_dispatcher_->start();
 
         state_.store(LogManagerState::kRunning, std::memory_order_release);
 
@@ -482,6 +469,38 @@ void LogManager::applyConfig(const LogConfig &config)
 LogFileSink::Ptr LogManager::acquireFileSink(const std::string &file_path)
 {
     return file_register_.acquire(file_path);
+}
+
+LogManagerResult LogManager::submitForAsync(LogAttr::Ptr attr)
+{
+    if(!attr)
+    {
+        return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
+            "log async attribute is null");
+    }
+
+    if(!async_dispatcher_)
+    {
+        return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState,
+            "log async dispatcher unavailable");
+    }
+
+    const auto submit_result = async_dispatcher_->submit(std::move(attr));
+    switch(submit_result.status)
+    {
+        case LogSubmitStatus::kQueued:
+            return LogManagerResult::Ok();
+        case LogSubmitStatus::kDropped:
+            return LogManagerResult::Failure(
+                LogManagerResultStatus::kOperationFailed,
+                "log async dropped");
+        case LogSubmitStatus::kStopped:
+            return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState,
+                "log async dispatcher stopped");
+    }
+
+    return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
+        "log async unknown submit status");
 }
 
 LogManagerResult LogManager::flushAll()
@@ -635,16 +654,24 @@ LogManagerResult LogManager::shutdown()
         return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState, "log manager cannot shutdown in current state");
     }
 
-    // 先阻止新的日志提交。
-    accepting_logs_ = false;
-
     state_.store(LogManagerState::kStopAccepting, std::memory_order_release);
 
+    // TODO 这部分是同步处理的遗留写法 先不删
+#if 0
+    {
+    // 先阻止新的日志提交。
+    accepting_logs_ = false;
 
     // 等待内存中日志完全写入 drain
     lifecycle_cv_.wait(lock, [this](){
         return 0 == active_log_submissions_;
     });
+    }
+#endif
+    if(!async_dispatcher_->shutdown())
+    {
+        LOG_INNER_WARN("log async dispathcher drain timeout! queue capacity: %ld/%ld\n", async_dispatcher_->queueSize(), async_dispatcher_->capacity());
+    }
 
     // 从这里开始 所有日志不再进入系统
     const auto flush_result = file_register_.flushAll();
@@ -660,10 +687,10 @@ LogManagerResult LogManager::shutdown()
     return LogManagerResult::Ok();
 }
 
-LogManagerHealthSnapshot
+LogManagerHealthStat
 LogManager::healthSnapshot() const
 {
-    LogManagerHealthSnapshot result;
+    LogManagerHealthStat result;
     result.manager_state = state();
     const auto sinks = file_register_.snapshotSinks();
 
@@ -694,7 +721,7 @@ LogManager::healthSnapshot() const
 
         result.truncated_records += health.truncated_records;
 
-        result.sinks.push_back(LogManagerHealthSnapshot::SinkEntry{
+        result.sinks.push_back(LogManagerHealthStat::SinkEntry{
             .path = sink->normalizedPath(),
             .health = std::move(health)
         });
@@ -706,7 +733,8 @@ LogManager::healthSnapshot() const
 PreparedLogConfig LogManager::prepareLogConfig(const LogConfig& config)
 {
     PreparedLogConfig prepared;
-    prepared.file_config = std::move(config.file);
+    prepared.file_config = config.file;
+    prepared.aync_config = config.async;
 
     // 文件注册使用副本操作，有的已打开的文件不需要重新打开
     prepared.sinks = file_register_.logFileSinks();
@@ -765,15 +793,26 @@ void LogManager::publishPreparedConfig(PreparedLogConfig&& prepared)
 {
     // TODO 观察者通知相关模块
 
+    /* 发布 LogFileSinkRegister */
     // 提交 预准备的文件持久化操作句柄
     file_register_.commit(std::move(prepared.sinks));
     
     // 提交 文件落盘相关配置
-    file_register_.setFileConfig(std::move(prepared.file_config));
+    file_register_.setConfig(std::move(prepared.file_config));
 
-    // 发布 logger
+    // TODO 后续这个接口可重入 需要调整 现在先不考虑热更新
+    /* 发布 LogAsyncDispatcher */
+    if(!async_dispatcher_ || async_dispatcher_->shutdown())
+    {
+        async_dispatcher_ = std::make_unique<LogAsyncDispatcher>(std::move(prepared.aync_config));
 
+        if (LogManagerState::kRunning == state())
+        {
+            async_dispatcher_->start();
+        }
+    }
 
+    /* 发布 logger */
     // 已存在logger配置更新
     std::lock_guard<std::mutex> lock(loggers_mtx_);
 

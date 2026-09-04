@@ -195,6 +195,7 @@ void ValidateAppConfigVars(const AppConfigVars& vars)
         "work.interaction.capture_max_binary_attachment_bytes",
         "must be positive");
 
+    // 静态资源目录校验
     ValidateStaticRoot(root);
 
     // 日志项校验

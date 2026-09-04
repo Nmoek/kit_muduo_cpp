@@ -171,7 +171,7 @@ public:
     void close();
 
     const std::string& normalizedPath() const noexcept { return normalize_path_; }
-    uint64_t currentFileSize() const { return current_file_size_.load(); }
+    uint64_t currentFileSize() const { return accepted_generation_bytes_.load(); }
 
     LogFileSinkHealth healthSnapshot() const;
 
@@ -183,15 +183,17 @@ private:
     bool flushUnlocked();
     bool durableFlushUnlocked();
 
-    bool shouldRotateUnlocked(size_t incoming_bytes) const noexcept;
+    bool shouldRotateUnlocked(const LogFileConfig& file_conifg, size_t incoming_bytes) const noexcept;
 
-    bool rotateUnlocked();
+    bool rotateUnlocked(const LogFileConfig& file_conifg);
 
     bool scanArchives(std::vector<LogFileArchive> &archives);
 
     bool newArchivePathUnlocked(std::string &new_archive_path);
 
     bool cleanupOldArchivesUnlocked(const LogFileConfig&file_config, std::vector<LogFileArchive> &archives);
+
+    void rotateFailureHandleUnlocked(const LogBackendResult& result);
 
 private:
 
@@ -205,8 +207,8 @@ private:
     std::unique_ptr<LogFileBackend> backend_;
     /// @brief 句柄操作锁
     mutable std::mutex mtx_;
-    /// @brief 记录已写入的文件大小(避免每次访问)
-    std::atomic_uint64_t current_file_size_{0};
+    /// @brief 记录已交付backend的文件大小(并不等于已写入文件的大小)
+    std::atomic_uint64_t accepted_generation_bytes_{0};
     /// @brief 本轮已写的字节数
     uint64_t bytes_since_flush_{0};
     /// @brief 上次触发刷新的单调时间
@@ -234,10 +236,10 @@ public:
     LogFileSink::Ptr acquire(const std::string &file_path);
 
     // TODO 后续这个接口涉及热更新
-    void setFileConfig(LogFileConfig config);
-    void setFileConfig(std::shared_ptr<const LogFileConfig> config);
+    void setConfig(LogFileConfig config);
+    void setConfig(std::shared_ptr<const LogFileConfig> config);
 
-    const std::shared_ptr<const LogFileConfig> fileConfig() const noexcept;
+    const std::shared_ptr<const LogFileConfig> config() const noexcept;
 
     void commit(SinksMap &&sinks);
 

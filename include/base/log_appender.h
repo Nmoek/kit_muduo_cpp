@@ -77,10 +77,7 @@ protected:
      * @brief 日志输出
      * @param[in] pattr 当前日志属性
      */
-    virtual void append(const std::string& log_data,
-        LogLevel::Level level,
-        bool truncated = false,
-        size_t original_bytes = 0) = 0;
+    virtual void append(const std::string& log_data, LogLevel::Level level) = 0;
 
 protected:
     /// @brief 日志输出器级别
@@ -105,10 +102,7 @@ public:
 
     ~ConsoleAppender() = default;
 
-    void append(const std::string& log_data,
-        LogLevel::Level level,
-        bool truncated = false,
-        size_t original_bytes = 0) override;
+    void append(const std::string& log_data, LogLevel::Level level) override;
 
 public:
     static std::mutex& GetConsoleMtx();
@@ -128,10 +122,7 @@ public:
 
     bool openForAppend(std::string* error_message = nullptr);
 
-    void append(const std::string& log_data,
-        LogLevel::Level level,
-        bool truncated = false,
-        size_t original_bytes = 0) override;
+    void append(const std::string& log_data, LogLevel::Level level) override;
     void flush() { file_sink_->flush(); }
 
 private:

@@ -29,12 +29,26 @@ public:
 
     LogBackendResult durableFlush() noexcept override;
 
+    LogBackendResult rotate(const LogFileRotateRequest& request, int64_t timeout_ms = -1) noexcept override;
+
+    bool isOpen() const noexcept override;
+
+    uint64_t openSize() const noexcept override;
+
+    uint64_t generation() const noexcept override;
+    
+    uint64_t lastSequence() const noexcept override;
+    
 private:
     LogBackendResult openInner(const std::string& normalize_path);
 
 private:
     /// @brief 常规文件fd句柄
     int32_t fd_{-1};
+    /// @brief 当前对象是否处于打开状态
+    bool is_open_{false};
+    /// @brief 当前打开文件时的大小
+    uint64_t open_size_{0};
 };
 
 

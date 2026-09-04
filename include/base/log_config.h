@@ -42,32 +42,7 @@ struct LoggerConfig
     std::vector<LogAppenderConfig> appenders;
 };
 
-enum class LogMode { kSync, kAsync };
 enum class LogInitFailurePolicy { kFail, kStderr };
-
-inline LogMode LogModeFromString(std::string value)
-{
-    std::for_each(value.begin(), value.end(), [](auto &&c){
-        c = std::tolower(c);
-    });
-
-    if("sync" == value) { return LogMode::kSync; }
-    if("async" == value) { return LogMode::kAsync; }
-
-    throw std::invalid_argument("log mode invalid");
-}
-
-inline std::string LogModeToString(const LogMode value)
-{
-    if(LogMode::kAsync == value) { return "async"; }
-    if(LogMode::kSync == value) { return "sync"; }
-    throw std::invalid_argument("log mode invalid");
-}
-
-inline bool IsLogModeValid(LogMode value)
-{
-    return LogMode::kSync <= value && value <= LogMode::kAsync;
-}
 
 inline LogInitFailurePolicy LogInitFailurePolicyFromString(std::string value)
 {
@@ -83,8 +58,8 @@ inline LogInitFailurePolicy LogInitFailurePolicyFromString(std::string value)
 
 inline std::string LogInitFailurePolicyToString(const LogInitFailurePolicy value)
 {
-    if(LogInitFailurePolicy::kFail == value) { return "async"; }
-    if(LogInitFailurePolicy::kStderr == value) { return "sync"; }
+    if(LogInitFailurePolicy::kFail == value) { return "fail"; }
+    if(LogInitFailurePolicy::kStderr == value) { return "stderr"; }
     throw std::invalid_argument("log init failure policy invalid");
 }
 
@@ -112,13 +87,26 @@ struct LogFileConfig
     LogInitFailurePolicy init_failure_policy{LogInitFailurePolicy::kFail};
 };
 
+/// @brief 异步处理配置
+struct LogAsyncConfig
+{
+    /// @brief 队列元素个数容量
+    size_t queue_capacity{8192};
+    /// @brief 队列总字节数
+    uint64_t max_queue_bytes{16u * 1024u * 1024u};
+    /// @brief 停止时最多等待时间 单位ms
+    uint64_t stop_drain_timeout_ms{3000};
+};
+
 struct LogConfig
 {
-    /// @brief 日志系统模式 默认同步
-    LogMode mode{LogMode::kSync};
     /// @brief 日志单条记录上限(超限阶段) 默认256K
     uint32_t max_record_bytes{256 * 1024};
+    /// @brief 日志异步配置
+    LogAsyncConfig async;
+    /// @brief 日志文件写入配置
     LogFileConfig file;
+    /// @brief 各个日志器等级、
     std::vector<LoggerConfig> loggers;
 };
 
@@ -350,6 +338,51 @@ struct ConfigCodec<LoggerConfig, Policy>
 };
 
 template<typename Policy>
+struct ConfigCodec<LogAsyncConfig, Policy>
+{
+    using Node = typename Policy::Node;
+
+    static LogAsyncConfig Decode(const Node &node)
+    {
+        LogAsyncConfig result;
+
+        log_config_detail::DecodeObject<Policy>(node,
+        {"queue_capacity", 
+            "max_queue_bytes", 
+            "stop_drain_timeout_ms"},
+        [&](const std::string& field, const Node& child) {
+        #define XX(NAME, TYPE) \
+            if(#NAME == field) \
+            { \
+                result.NAME = ConfigCodec<TYPE, Policy>::Decode(child); \
+            }
+
+            XX(queue_capacity, size_t)
+            XX(max_queue_bytes, uint64_t)
+            XX(stop_drain_timeout_ms, uint64_t)
+
+        #undef XX
+        });
+
+        return result;
+    }
+
+    static Node Encode(const LogAsyncConfig &value)
+    {
+        auto node = Policy::MakeMap();
+    #define XX(NAME, TYPE) \
+        Policy::Put(node, #NAME, ConfigCodec<TYPE, Policy>::Encode(value.NAME));
+
+        XX(queue_capacity, size_t)
+        XX(max_queue_bytes, uint64_t)
+        XX(stop_drain_timeout_ms, uint64_t)
+
+    #undef XX
+        return node;
+    }
+};
+
+template<typename Policy>
 struct ConfigCodec<LogFileConfig, Policy>
 {
     using Node = typename Policy::Node;
@@ -359,7 +392,13 @@ struct ConfigCodec<LogFileConfig, Policy>
         LogFileConfig result;
 
         log_config_detail::DecodeObject<Policy>(node,
-        {"flush_threshold", "rotate_max_bytes", "rotate_max_backup_files", "compress_rotated"},
+        {"flush_threshold", 
+            "flush_interval_ms",
+            "flush_on_level",
+            "rotate_max_bytes", 
+            "rotate_max_backup_files", 
+            "compress_rotated",
+            "init_failure_policy"},
         [&](const std::string& field, const Node& child) {
         #define XX(NAME, TYPE) \
             if(#NAME == field) \
@@ -399,32 +438,6 @@ struct ConfigCodec<LogFileConfig, Policy>
     }
 };
 
-template<class Policy>
-struct ConfigCodec<LogMode, Policy>
-{
-    using Node = typename Policy::Node;
-
-    static LogMode Decode(const Node& node)
-    {
-        try { 
-            const auto value = ConfigCodec<std::string, Policy>::Decode(node);
-            return LogModeFromString(std::move(value)); 
-            
-        } catch(const std::exception& error){
-            throw ConfigError(Policy::Context(node), error.what());
-        }
-    }
-
-    static Node Encode(LogMode value)
-    {
-        if(!IsLogModeValid(value))
-        {
-            throw ConfigError({}, "invalid log mode enum");
-        }
-
-        return ConfigCodec<std::string, Policy>::Encode(LogModeToString(value));
-    }
-};
 
 template<class Policy>
 struct ConfigCodec<LogInitFailurePolicy, Policy>
@@ -466,16 +479,16 @@ struct ConfigCodec<LogConfig, Policy>
         LogConfig result;
 
         log_config_detail::DecodeObject<Policy>(node,
-        {"mode", "max_record_bytes", "file", "loggers"},
+        {"max_record_bytes", "async", "file", "loggers"},
         [&](const std::string& field, const Node& child) {
 
-            if("mode" == field)
-            {
-                result.mode = ConfigCodec<LogMode, Policy>::Decode(child);
-            }
-            else if("max_record_bytes" == field)
+            if("max_record_bytes" == field)
             {
                 result.max_record_bytes =  ConfigCodec<uint32_t, Policy>::Decode(child);
+            }
+            if("async" == field)
+            {
+                result.async =  ConfigCodec<LogAsyncConfig, Policy>::Decode(child);
             }
             if("file" == field)
             {
@@ -496,10 +509,10 @@ struct ConfigCodec<LogConfig, Policy>
         ValidateLogConfig(value);
         auto node = Policy::MakeMap();
 
-        Policy::Put(node, "mode",
-            ConfigCodec<LogMode, Policy>::Encode(value.mode));
         Policy::Put(node, "max_record_bytes",
             ConfigCodec<uint32_t, Policy>::Encode(value.max_record_bytes));
+        Policy::Put(node, "async",
+            ConfigCodec<LogAsyncConfig, Policy>::Encode(value.async));
         Policy::Put(node, "file",
             ConfigCodec<LogFileConfig, Policy>::Encode(value.file));
         Policy::Put(node, "loggers",

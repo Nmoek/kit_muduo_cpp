@@ -19,7 +19,7 @@ constexpr uint64_t kMinFlushThreshold = 1 * 1024;
 constexpr uint64_t kMaxFlushThreshold = 10 * 1024 * 1024;
 constexpr uint64_t kMinFlushIntervalMs = 0;
 constexpr uint64_t kMaxFlushIntervalMs = 30 * 1000;
-constexpr uint32_t kMinRetateBytes = 50 * 1024 * 1024;
+constexpr uint32_t kMinRetateBytes = 1 * 1024 * 1024;
 constexpr uint32_t kMaxRetateBytes = 300 * 1024 * 1024;
 
 constexpr uint32_t kMinBackupFiles = 0;
@@ -27,6 +27,13 @@ constexpr uint32_t kMaxBackupFiles = 10;
 
 constexpr uint32_t kMinRecordBytes = 1 * 1024;
 constexpr uint32_t kMaxRecordBytes = 256 * 1024;
+
+constexpr size_t kMinQueueCapacity = 1;
+constexpr size_t kMaxQueueCapacity = 8*1024;
+constexpr uint64_t kMinQueueBytes = 1;
+constexpr uint64_t kMaxQueueBytes = 50 * 1024 * 1024;
+constexpr uint32_t kMinStopDrainTimeout = 3000;
+constexpr uint32_t kMaxStopDrainTimeout = 10000;
 /**************日志配置限制值**************/
 
 void ValidateFormatter(const std::string& pattern)
@@ -112,6 +119,9 @@ LogConfig DefaultLogConfig()
     });
 
     return LogConfig{
+        .async{
+
+        },
         // TODO 日志文件配置
         .file{
 
@@ -131,12 +141,7 @@ void ValidateLogConfig(const LogConfig& config)
     bool has_root = false;
 
     const LogFileConfig& file = config.file;
-
-    if(config.mode != LogMode::kSync && config.mode != LogMode::kAsync)
-    {
-        throw ConfigError({},
-            "log mode invalid {'sync', 'async'}");
-    }
+    const LogAsyncConfig &async = config.async;
 
     if(config.max_record_bytes < kMinRecordBytes
         || config.max_record_bytes > kMaxRecordBytes)
@@ -144,6 +149,24 @@ void ValidateLogConfig(const LogConfig& config)
         throw ConfigError({}, "log file max record bytes invalid [1, 256] KB");
     }
 
+
+    // async配置限制
+    if(async.queue_capacity <= kMinQueueCapacity || async.queue_capacity > kMaxQueueCapacity)
+    {
+        throw ConfigError({},
+            "log 'aync.queue_capacity' invalid [2, 8K]");
+    }
+    if(async.max_queue_bytes < kMinQueueBytes || async.max_queue_bytes > kMaxQueueBytes
+        || async.max_queue_bytes < config.max_record_bytes)
+    {
+        throw ConfigError({},
+            "log 'aync.max_queue_bytes' invalid [1, 50M] Bytes, and must >= 'max_record_bytes'");
+    }
+    if(async.stop_drain_timeout_ms < kMinStopDrainTimeout || async.stop_drain_timeout_ms > kMaxStopDrainTimeout)
+    {
+        throw ConfigError({},
+            "log 'aync.stop_drain_timeout_ms' invalid [3000, 10000] ms");
+    }
 
     //  file配置限制
     if(file.flush_threshold < kMinFlushThreshold

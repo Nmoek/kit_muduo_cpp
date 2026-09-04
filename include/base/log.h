@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string_view>
 
+#include "base/log_async.h"
 #include "base/log_config.h"
 #include "base/log_file_sink.h"
 #include "base/log_level.h"
@@ -30,6 +31,7 @@
 #include "base/time_stamp.h"
 #include "base/util.h"
 #include "base/log_inner.h"
+
 
 
 /********1、流式输出 ********/
@@ -130,9 +132,12 @@ public:
      */
     bool shouldLog(LogLevel::Level level) const;
 
+    void logForAync(LogAttr::Ptr attr);
+
 private:
     friend class LogManager;
     friend class LogAttrWrap;
+    friend class LogAsyncWorker;
 
     enum class OutputRoute
     {
@@ -164,7 +169,7 @@ private:
 private:
     /// @brief 日志管理器
     LogManager *manager_;
-    /// @brief 日志器名字 默认=“root”
+    /// @brief 日志器名字
     std::string name_;
     /// @brief 日志器级别
     std::atomic_int32_t level_;
@@ -259,7 +264,7 @@ struct PreparedLogConfig;
 /**
  * @brief 日志系统健康监测
  */
-struct LogManagerHealthSnapshot
+struct LogManagerHealthStat
 {
     struct SinkEntry
     {
@@ -367,12 +372,17 @@ public:
      */
     void applyConfig(const LogConfig &config);
 
+
+
+
     /**
      * @brief 获取日志文件管理对象
      * @param path 
      * @return LogFileSink::Ptr 
      */
     LogFileSink::Ptr acquireFileSink(const std::string &file_path);
+
+    LogManagerResult submitForAsync(LogAttr::Ptr attr);
 
     LogManagerResult flushAll();
     LogManagerResult flush(const std::string& file_path);
@@ -389,7 +399,7 @@ public:
      * @brief 统计所有文件写入侧健康情况
      * @return LogManagerHealthSnapshot 
      */
-    LogManagerHealthSnapshot healthSnapshot() const;
+    LogManagerHealthStat healthSnapshot() const;
 
 public:
     /// @brief 静态日志器获取动作集合
@@ -424,6 +434,9 @@ private:
     mutable std::mutex loggers_mtx_;
     /// @brief 日志文件管理
     LogFileSinkRegister file_register_;
+    /// @brief 日志异步分发器
+    std::unique_ptr<LogAsyncDispatcher> async_dispatcher_{nullptr};
+
     /// @brief 退出使用 活跃日志器监控锁
     std::mutex lifecycle_mtx_;
     /// @brief 退出使用 活跃日志器监控 条件变量

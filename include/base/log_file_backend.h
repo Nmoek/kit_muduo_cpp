@@ -50,6 +50,19 @@ struct LogBackendResult
 };
 
 /**
+ * @brief 日志文件轮转配置
+ */
+struct LogFileRotateRequest
+{
+    uint64_t generation{0};
+    uint64_t last_sequence{0};
+    std::string active_path;
+    std::string archive_log_path;
+    std::string archive_compression_path;
+    bool compression_enabled{false};
+};
+
+/**
  * @brief 持久化操作工具类 本质上不能有任何业务上下文
  */
 class LogFileBackend
@@ -81,9 +94,16 @@ public:
      */
     virtual LogBackendResult durableFlush() noexcept = 0;
 
-    bool isOpen() const noexcept { return is_open_; }
+    virtual LogBackendResult rotate(const LogFileRotateRequest& request, int64_t timeout_ms = -1) noexcept = 0;
 
-    uint64_t openSize() const noexcept { return open_size_; };
+    virtual bool isOpen() const noexcept = 0;
+
+    virtual uint64_t openSize() const noexcept = 0;
+
+    virtual uint64_t generation() const noexcept = 0;
+
+    virtual uint64_t lastSequence() const noexcept = 0;
+
 
     /**
      * @brief 检查路径并创建不存在的路径
@@ -97,9 +117,8 @@ public:
     static std::unique_ptr<LogFileBackend> NewDefaultBackend();
 
 protected:
-    bool is_open_{false};
-    /// @brief 当前打开文件时的大小
-    uint64_t open_size_{0};
+    uint64_t generation_{0};
+    uint64_t last_sequence_{0};
 };
 
 }

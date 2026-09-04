@@ -10,11 +10,19 @@ system:
     port: 5555
     static_root_path: web
   log:
+    max_record_bytes: 262144
+    async:
+      queue_capacity: 8192
+      max_queue_bytes: 16777216
+      stop_drain_timeout_ms: 3000
     file:
       flush_threshold: 1048576
+      flush_interval_ms: 3000
+      flush_on_level: ERROR
       rotate_max_bytes: 314572800
-      max_backup_files: 5
+      rotate_max_backup_files: 5
       compress_rotated: true
+      init_failure_policy: fail
     loggers:
       - name: root
         level: DEBUG
@@ -23,21 +31,21 @@ system:
             level: DEBUG
         formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
       - name: base
-        level: INFO
+        level: DEBUG
         appenders:
           - type: stdout
             level: WARN
           - type: file
-            level: INFO
+            level: DEBUG
             file_path: log/base.log
         formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
       - name: net
-        level: INFO
+        level: DEBUG
         appenders:
           - type: stdout
             level: WARN
           - type: file
-            level: INFO
+            level: DEBUG
             file_path: log/net.log
         formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
       - name: web
@@ -50,12 +58,12 @@ system:
             file_path: log/web.log
         formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
       - name: domain
-        level: INFO
+        level: DEBUG
         appenders:
           - type: stdout
-            level: INFO
+            level: DEBUG
           - type: file
-            level: INFO
+            level: DEBUG
             file_path: log/domain.log
         formatter: "[%d][%le][%f #%l][%gn.%mn]<%pid:%tn> %m"
   sqlite_db:

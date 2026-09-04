@@ -38,7 +38,6 @@ Thread::~Thread()
 
 void Thread::start()
 {
-    started_ = true;
     sem_t sem;
     if(sem_init(&sem, 0, 0) != 0)
     {
@@ -82,6 +81,7 @@ void Thread::start()
         usleep(100);
         break;
     }
+    started_ = true;
     sem_destroy(&sem);
 }
 
@@ -89,7 +89,7 @@ void Thread::join()
 {
     if(!thread_ || !thread_->joinable())
     {
-        THREAD_WARN() << "thread isn't joinable" << std::endl;
+        THREAD_F_WARN("thread isn't joinable\n");
         return;
     }
     thread_->join();

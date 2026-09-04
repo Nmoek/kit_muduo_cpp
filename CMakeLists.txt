@@ -198,7 +198,8 @@ set(BASE_SRC
     src/base/log_file_sink.cpp
     src/base/log_file_backend.cpp
     src/base/regular_log_file_backend.cpp
-    
+    src/base/log_async.cpp
+
     src/base/util.cpp
     src/base/time_stamp.cpp
     src/base/bytes_codec.cpp
@@ -207,10 +208,13 @@ set(BASE_SRC
     src/base/thread_pool.cpp
     src/base/event_loop_thread.cpp
     src/base/event_loop_thread_pool.cpp
+    src/base/thread_group.cpp
 
     src/base/lexical_cast.cpp
     src/base/config_context.cpp
     src/base/config.cpp
+    
+    src/base/sem.cpp
 )
 
 set(NET_HTTP_SRC

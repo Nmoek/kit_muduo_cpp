@@ -563,12 +563,13 @@ void PrintQueueBenchmarkSummary(const char *name, const std::vector<QueueBenchma
 
 /*
  * 测试思路：
- *   1. 容量为 0 是非法输入，构造时应直接拒绝；
+ *   1. 容量为 0 和 1 都是非法输入，构造时应直接拒绝；
  *   2. 队列内部把容量归一化到 2 的整数次幂，方便 ring buffer 用 mask 取模；
  *   3. 新队列初始必须为空，size 为 0。
  *
  * 举例：
- *   用户传入容量 3，实际容量应归一化为 4；用户传入容量 5，实际容量应归一化为 8。
+ *   用户传入容量 1 应被拒绝；用户传入容量 3，实际容量应归一化为 4；
+ *   用户传入容量 5，实际容量应归一化为 8。
  *
  * 图示：
  *   input capacity: 3
@@ -576,17 +577,22 @@ void PrintQueueBenchmarkSummary(const char *name, const std::vector<QueueBenchma
  *           v
  *   normalized ring slots: [0] [1] [2] [3]
  */
-TEST(TestBoundedLockFreeQueue, RejectsZeroAndNormalizesCapacity)
+TEST(TestBoundedLockFreeQueue, RejectsCapacityBelowTwoAndNormalizesCapacity)
 {
     EXPECT_THROW({
         BoundedLockFreeQueue<int> queue(0);
         (void)queue;
     }, std::invalid_argument);
 
-    BoundedLockFreeQueue<int> one(1);
-    EXPECT_EQ(one.capacity(), 1U);
-    EXPECT_TRUE(one.empty());
-    EXPECT_EQ(one.size(), 0U);
+    EXPECT_THROW({
+        BoundedLockFreeQueue<int> queue(1);
+        (void)queue;
+    }, std::invalid_argument);
+
+    BoundedLockFreeQueue<int> two(2);
+    EXPECT_EQ(two.capacity(), 2U);
+    EXPECT_TRUE(two.empty());
+    EXPECT_EQ(two.size(), 0U);
 
     BoundedLockFreeQueue<int> three(3);
     EXPECT_EQ(three.capacity(), 4U);
@@ -595,6 +601,35 @@ TEST(TestBoundedLockFreeQueue, RejectsZeroAndNormalizesCapacity)
 
     BoundedLockFreeQueue<int> five(5);
     EXPECT_EQ(five.capacity(), 8U);
+}
+
+/*
+ * 测试思路：容量 2 是当前 MPMC 序列号协议允许的最小容量，验证它既能达到满载
+ * 状态，也能在消费后再次写入同一个物理槽位。
+ *
+ * 举例：push 10、20 后第三次 push 失败；pop 10 后 push 30 成功，最终按 FIFO
+ * 读出 20、30。
+ */
+TEST(TestBoundedLockFreeQueue, MinimumCapacityTwoSupportsFullAndReuse)
+{
+    BoundedLockFreeQueue<int> queue(2);
+    int out = -1;
+
+    ASSERT_TRUE(queue.tryPush(10));
+    ASSERT_TRUE(queue.tryPush(20));
+    EXPECT_EQ(queue.size(), 2U);
+    EXPECT_FALSE(queue.tryPush(30));
+
+    ASSERT_TRUE(queue.tryPop(out));
+    EXPECT_EQ(out, 10);
+    ASSERT_TRUE(queue.tryPush(30));
+    EXPECT_EQ(queue.size(), 2U);
+
+    ASSERT_TRUE(queue.tryPop(out));
+    EXPECT_EQ(out, 20);
+    ASSERT_TRUE(queue.tryPop(out));
+    EXPECT_EQ(out, 30);
+    EXPECT_TRUE(queue.empty());
 }
 
 /*

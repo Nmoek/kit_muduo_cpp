@@ -12,7 +12,9 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <filesystem>
 #include <sys/stat.h>
+#include <system_error>
 #include <unistd.h>
 
 namespace kit_muduo {
@@ -127,6 +129,58 @@ LogBackendResult RegularLogFileBackend::durableFlush() noexcept
     }
 
     return LogBackendResult::Ok();
+}
+
+LogBackendResult RegularLogFileBackend::rotate(const LogFileRotateRequest& request, int64_t timeout_ms) noexcept
+{
+    auto result = flush();
+    if(!result.ok())
+    {
+        return result;
+    }
+    close();
+
+    std::error_code error;
+    std::filesystem::rename(request.active_path, request.archive_log_path, error);
+    if(error)
+    {
+        return LogBackendResult::Failure(LogBackendStatus::kWriteFailed, "rotate rename error: " + error.message()); 
+    }
+
+    result = open(request.active_path);
+    if(!result.ok())
+    {
+        return result;
+    }
+
+    /// TODO 普通写文件采用全量压缩
+    if(0/*request.compression_enabled*/)
+    {
+
+    }
+    ++generation_;
+    return LogBackendResult::Ok();
+}
+
+bool RegularLogFileBackend::isOpen() const noexcept
+{
+    return is_open_;
+}
+
+uint64_t RegularLogFileBackend::openSize() const noexcept
+{
+    return open_size_;
+}
+
+uint64_t RegularLogFileBackend::generation() const noexcept
+{
+    return generation_;
+}
+    
+uint64_t RegularLogFileBackend::lastSequence() const noexcept
+{
+    // 注意 普通文件写 没有分批写入概念
+    return 0;
 }
 
 LogBackendResult RegularLogFileBackend::openInner(const std::string& normalize_path)

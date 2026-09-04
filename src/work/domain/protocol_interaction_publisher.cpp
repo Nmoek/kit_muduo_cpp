@@ -14,6 +14,7 @@
 
 
 #include <atomic>
+#include <chrono>
 #include <exception>
 
 using namespace kit_muduo;
@@ -135,7 +136,7 @@ void ProtocolInteractionPublisher::workLoop()
         }
 
         std::unique_lock<std::mutex> lock(worker_mtx_);
-        worker_cond_.wait(lock, [this](){
+        worker_cond_.wait_for(lock, std::chrono::milliseconds(50), [this](){
             return is_stopping_.load(std::memory_order_acquire) || !queue_.empty();
         });
     }
@@ -159,11 +160,6 @@ void ProtocolInteractionPublisher::drainQueueTimeOut(int64_t will_timeout)
             }
             queueObsHandle(queue_obs);
         }
-    }
-
-    if(!queue_.empty())
-    {
-        PUBLISHER_F_DEBUG("interaction queue not empty\n");
     }
 }
 

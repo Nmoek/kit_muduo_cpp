@@ -174,9 +174,9 @@ private:
      */
     static size_t normalizeCapacity(size_t capacity)
     {
-        if(0 == capacity)
+        if(capacity <= 1)
         {
-            throw std::invalid_argument("queue capacity disallow 0");
+            throw std::invalid_argument("queue capacity disallow <= 1");
         }
         size_t normalized = 1;
         while(normalized < capacity)

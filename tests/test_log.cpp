@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "base/log.h"
+#include "base/log_async.h"
 
 #include <atomic>
 #include <chrono>
@@ -172,13 +173,12 @@ class CountingAppender final : public LogAppender
 {
 public:
     void append(const std::string&,
-        LogLevel::Level level,
-        bool,
-        size_t) override
+        LogLevel::Level level) override
     {
         if(level >= getLevel())
         {
-            count_.fetch_add(1, std::memory_order_relaxed);
+            count_.fetch_add(1, std::memory_order_release);
+            cv_.notify_all();
         }
     }
 
@@ -187,17 +187,25 @@ public:
         return count_.load(std::memory_order_relaxed);
     }
 
+    bool waitForCount(int expected, std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(wait_mtx_);
+        return cv_.wait_for(lock, timeout, [this, expected] {
+            return count_.load(std::memory_order_acquire) >= expected;
+        });
+    }
+
 private:
     std::atomic_int count_{0};
+    std::mutex wait_mtx_;
+    std::condition_variable cv_;
 };
 
 class BlockingAppender final : public LogAppender
 {
 public:
     void append(const std::string&,
-        LogLevel::Level,
-        bool,
-        size_t) override
+        LogLevel::Level) override
     {
         blockUntilReleased();
     }
@@ -223,6 +231,17 @@ public:
         return count_.load(std::memory_order_relaxed);
     }
 
+    bool waitForCount(int expected, std::chrono::milliseconds timeout)
+    {
+        std::unique_lock<std::mutex> lock(gate_mtx_);
+        return entered_cv_.wait_for(
+            lock,
+            timeout,
+            [this, expected] {
+                return count_.load(std::memory_order_acquire) >= expected;
+            });
+    }
+
 private:
     void blockUntilReleased()
     {
@@ -231,6 +250,7 @@ private:
         entered_cv_.notify_all();
         release_cv_.wait(lock, [this] { return released_; });
         count_.fetch_add(1, std::memory_order_relaxed);
+        entered_cv_.notify_all();
     }
     std::mutex gate_mtx_;
     std::condition_variable entered_cv_;
@@ -309,7 +329,7 @@ TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
     LogFileSinkRegister registry;
     LogFileConfig config;
     config.flush_threshold = 8;
-    registry.setFileConfig(config);
+    registry.setConfig(config);
 
     {
         FileAppender appender(registry.acquire(file.path()));
@@ -341,7 +361,7 @@ TEST(TestLog, FileAppenderZeroWriteMaxSizeFlushesEveryWrite)
     LogFileSinkRegister registry;
     LogFileConfig config;
     config.flush_threshold = 0;
-    registry.setFileConfig(config);
+    registry.setConfig(config);
 
     FileAppender appender(registry.acquire(file.path()));
     appender.setFormatter("%m");
@@ -656,10 +676,12 @@ TEST(TestLog, LoggerOwnAppenderFiltersAndLastRemovalMutes)
 }
 
 /*
-测试思路：日志宏先执行 shouldLog()，通过后由 LogAttrWrap 析构调用
-logUnchecked()。计数必须只增加一次，证明宏路径能够实际派发且没有重复提交。
+测试思路：日志宏先执行 shouldLog()，通过后由 LogAttrWrap 析构将 seal 后的
+LogAttr 提交到异步队列。测试在有界时间内等待 writer 派发，计数必须只增加一次，
+证明宏路径能够异步派发且没有重复提交。
 
-示例：KIT_DEBUG(logger) << "once" -> CountingAppender count 从 0 变为 1。
+路径图：KIT_DEBUG -> LogAttrWrap -> dispatcher -> worker -> CountingAppender。
+示例：KIT_DEBUG(logger) << "once" -> 1 秒内 count 从 0 变为 1。
 */
 TEST(TestLog, LogMacroDispatchesExactlyOnceThroughLogAttrWrap)
 {
@@ -672,7 +694,679 @@ TEST(TestLog, LogMacroDispatchesExactlyOnceThroughLogAttrWrap)
 
     KIT_DEBUG(logger, "log_test") << "once";
 
+    ASSERT_TRUE(appender->waitForCount(
+        1, std::chrono::milliseconds(1000)));
     EXPECT_EQ(appender->count(), 1);
+}
+
+/*
+测试思路：直接创建独立 LogAsyncDispatcher，提交已经 seal 的 LogAttr，验证
+submit() 返回 queued，后台 worker 最终调用 Logger -> Appender，且 shutdown 能够
+在队列排空后完成回收。
+
+路径图：sealed LogAttr -> dispatcher -> MPMC -> worker -> Logger -> Appender。
+示例：提交一条 "async-once"，1 秒内计数从 0 变为 1。
+*/
+TEST(TestLog, AsyncDispatcherQueuesSealedAttrAndDrainsWorker)
+{
+    LogAsyncConfig config;
+    config.queue_capacity = 8;
+    config.max_queue_bytes = 1024;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_dispatcher");
+    auto appender = std::make_shared<CountingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    auto attr = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "async-once");
+    ASSERT_TRUE(attr->seal());
+
+    const auto submit = dispatcher.submit(attr);
+    EXPECT_EQ(submit.status, LogSubmitStatus::kQueued);
+    EXPECT_EQ(submit.bytes, attr->getContent().size());
+    ASSERT_TRUE(appender->waitForCount(
+        1,
+        std::chrono::milliseconds(1000)));
+    EXPECT_EQ(appender->count(), 1);
+
+    EXPECT_TRUE(dispatcher.shutdown());
+}
+
+/*
+测试思路：LogAsyncDispatcher 直接复用 BoundedLockFreeQueue，队列容量小于 2
+不满足 MPMC 序列号协议，因此 dispatcher 构造阶段必须拒绝 0 和 1，而不是
+启动一个容量不合法的异步 worker。
+
+边界图：queue_capacity <= 1 -> invalid_argument；queue_capacity = 2 -> 正常启动。
+*/
+TEST(TestLog, AsyncDispatcherRejectsCapacityBelowTwo)
+{
+    LogAsyncConfig invalid_zero;
+    invalid_zero.queue_capacity = 0;
+    EXPECT_THROW(
+        LogAsyncDispatcher dispatcher(invalid_zero),
+        std::invalid_argument);
+
+    LogAsyncConfig invalid_one;
+    invalid_one.queue_capacity = 1;
+    EXPECT_THROW(
+        LogAsyncDispatcher dispatcher(invalid_one),
+        std::invalid_argument);
+
+    LogAsyncConfig valid;
+    valid.queue_capacity = 2;
+    LogAsyncDispatcher dispatcher(valid);
+    EXPECT_EQ(dispatcher.capacity(), 2U);
+}
+
+/*
+测试思路：连续提交多条 sealed LogAttr，验证 worker 被一次唤醒后持续 tryPop
+直到队列为空，所有记录都能被同一个 Appender 处理，避免 waitPop 单条消费语义。
+
+路径图：N 条 LogAttr -> 一次/多次 semaphore 唤醒 -> while(tryPop) -> Appender。
+示例：32 条记录全部完成后 count 必须等于 32。
+*/
+TEST(TestLog, AsyncDispatcherDrainsMultipleQueuedAttrs)
+{
+    constexpr int kRecords = 32;
+
+    LogAsyncConfig config;
+    config.queue_capacity = 64;
+    config.max_queue_bytes = 16 * 1024;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_batch");
+    auto appender = std::make_shared<CountingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    for(int index = 0; index < kRecords; ++index)
+    {
+        auto attr = MakeLoggerAttr(
+            logger,
+            LogLevel::INFO,
+            "async-" + std::to_string(index));
+        ASSERT_TRUE(attr->seal());
+        ASSERT_EQ(
+            dispatcher.submit(std::move(attr)).status,
+            LogSubmitStatus::kQueued);
+    }
+
+    ASSERT_TRUE(appender->waitForCount(
+        kRecords,
+        std::chrono::milliseconds(1000)));
+    EXPECT_EQ(appender->count(), kRecords);
+    EXPECT_TRUE(dispatcher.shutdown());
+}
+
+/*
+测试思路：不提前等待 appender 计数，直接在队列中留下多条 sealed LogAttr 后调用
+shutdown()。shutdown 必须唤醒 worker、排空队列并等待 drain 完成；再次调用 shutdown
+应保持幂等，不重复启动或回收线程。
+
+生命周期图：started -> queued records -> shutdown/drain -> worker joined -> shutdown again。
+示例：16 条记录在 shutdown 返回前全部完成，第二次 shutdown 仍返回 true。
+*/
+TEST(TestLog, AsyncDispatcherShutdownDrainsQueuedRecordsAndIsIdempotent)
+{
+    constexpr int kRecords = 16;
+
+    LogAsyncConfig config;
+    config.queue_capacity = 32;
+    config.max_queue_bytes = 4096;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_shutdown_drain");
+    auto appender = std::make_shared<CountingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    for(int index = 0; index < kRecords; ++index)
+    {
+        auto attr = MakeLoggerAttr(
+            logger,
+            LogLevel::INFO,
+            "shutdown-" + std::to_string(index));
+        ASSERT_TRUE(attr->seal());
+        ASSERT_EQ(
+            dispatcher.submit(std::move(attr)).status,
+            LogSubmitStatus::kQueued);
+    }
+
+    EXPECT_TRUE(dispatcher.shutdown());
+    EXPECT_EQ(appender->count(), kRecords);
+    EXPECT_TRUE(dispatcher.shutdown());
+}
+
+/*
+测试思路：dispatcher shutdown 后不再接受新的 sealed LogAttr，提交结果必须明确
+返回 stopped，不能伪装成 queued 或成功。
+
+状态图：started -> shutdown -> stopped submission。
+示例：shutdown 后 submit("late") -> LogSubmitStatus::kStopped。
+*/
+TEST(TestLog, AsyncDispatcherRejectsSubmissionAfterShutdown)
+{
+    LogAsyncConfig config;
+    config.queue_capacity = 4;
+    config.max_queue_bytes = 1024;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+    ASSERT_TRUE(dispatcher.shutdown());
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_stopped");
+    auto attr = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "late");
+    ASSERT_TRUE(attr->seal());
+
+    EXPECT_EQ(
+        dispatcher.submit(std::move(attr)).status,
+        LogSubmitStatus::kStopped);
+}
+
+/*
+测试思路：将 dispatcher 的总字节预算设置为 4 字节，提交 5 字节记录，验证
+记录不会进入队列，并按当前等级策略返回 dropped；返回的 bytes 必须保留原记录
+大小，便于调用方统计被丢弃的数据量。
+
+路径图：sealed LogAttr(5B) -> byte budget reject -> kDropped(5B)。
+*/
+TEST(TestLog, AsyncDispatcherDropsRecordExceedingByteBudget)
+{
+    LogAsyncConfig config;
+    config.queue_capacity = 8;
+    config.max_queue_bytes = 4;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_budget");
+    auto attr = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "12345");
+    ASSERT_TRUE(attr->seal());
+
+    const auto submit = dispatcher.submit(std::move(attr));
+    EXPECT_EQ(submit.status, LogSubmitStatus::kDropped);
+    EXPECT_EQ(submit.bytes, 5U);
+    EXPECT_EQ(dispatcher.queueSize(), 0U);
+    EXPECT_TRUE(dispatcher.shutdown());
+}
+
+/*
+测试思路：submit() 的输入契约要求属性非空且已经 seal。分别提交未 seal 属性和
+空指针，验证两者都在入口直接返回 stopped，不触发队列预算或等级等待。
+
+状态图：invalid attr -> kStopped；null attr -> kStopped。
+*/
+TEST(TestLog, AsyncDispatcherRejectsInvalidAttributes)
+{
+    LogAsyncConfig config;
+    config.queue_capacity = 8;
+    config.max_queue_bytes = 1024;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_invalid_attr");
+    auto unsealed = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "unsealed");
+
+    EXPECT_EQ(
+        dispatcher.submit(unsealed).status,
+        LogSubmitStatus::kStopped);
+    EXPECT_EQ(
+        dispatcher.submit(nullptr).status,
+        LogSubmitStatus::kStopped);
+    EXPECT_EQ(dispatcher.queueSize(), 0U);
+    EXPECT_TRUE(dispatcher.shutdown());
+}
+
+/*
+测试思路：多个生产线程同时向同一个 dispatcher 提交 sealed 属性，单 worker 必须
+完整消费所有记录，验证 MPMC 入队、semaphore 唤醒和批量 tryPop 的组合行为。
+
+并发图：4 producers -> MPMC -> 1 worker -> CountingAppender。
+示例：4 个线程各提交 50 条，最终计数为 200 且无提交失败。
+*/
+TEST(TestLog, AsyncDispatcherConsumesConcurrentProducerSubmissions)
+{
+    constexpr int kThreads = 4;
+    constexpr int kRecordsPerThread = 50;
+
+    LogAsyncConfig config;
+    config.queue_capacity = 512;
+    config.max_queue_bytes = 128 * 1024;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_concurrent");
+    auto appender = std::make_shared<CountingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    std::atomic_int submit_failures{0};
+    std::vector<std::thread> producers;
+    producers.reserve(kThreads);
+    for(int thread_id = 0; thread_id < kThreads; ++thread_id)
+    {
+        producers.emplace_back([
+            &dispatcher,
+            &logger,
+            &submit_failures,
+            thread_id] {
+            for(int sequence = 0;
+                sequence < kRecordsPerThread;
+                ++sequence)
+            {
+                auto attr = MakeLoggerAttr(
+                    logger,
+                    LogLevel::INFO,
+                    "producer-" + std::to_string(thread_id)
+                        + "-" + std::to_string(sequence));
+                if(!attr->seal())
+                {
+                    submit_failures.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                    continue;
+                }
+                if(dispatcher.submit(std::move(attr)).status
+                    != LogSubmitStatus::kQueued)
+                {
+                    submit_failures.fetch_add(
+                        1,
+                        std::memory_order_relaxed);
+                }
+            }
+        });
+    }
+
+    for(auto& producer : producers)
+    {
+        producer.join();
+    }
+
+    constexpr int kExpected = kThreads * kRecordsPerThread;
+    EXPECT_EQ(submit_failures.load(std::memory_order_relaxed), 0);
+    ASSERT_TRUE(appender->waitForCount(
+        kExpected,
+        std::chrono::milliseconds(2000)));
+    EXPECT_EQ(appender->count(), kExpected);
+    EXPECT_TRUE(dispatcher.shutdown());
+}
+
+/*
+测试思路：用 BlockingAppender 卡住 worker 正在处理的第一条记录，再按队列实际
+归一化容量填满剩余槽位，确保探测提交发生时队列持续满载。验证固定满载策略：
+DEBUG/INFO 不等待，WARN 最多等待 10 ms，ERROR/FATAL 最多等待 50 ms，超时后
+统一返回 dropped。
+
+时序图：first -> worker(阻塞)；queued[capacity] -> queue(满)；probe(level) -> 等待/丢弃。
+*/
+TEST(TestLog, AsyncDispatcherAppliesLevelBasedFullQueueWaits)
+{
+    struct Case
+    {
+        LogLevel::Level level;
+        std::chrono::milliseconds expected_wait;
+    };
+
+    const std::vector<Case> cases{
+        {LogLevel::DEBUG, std::chrono::milliseconds::zero()},
+        {LogLevel::INFO, std::chrono::milliseconds::zero()},
+        {LogLevel::WARN, std::chrono::milliseconds(10)},
+        {LogLevel::ERROR, std::chrono::milliseconds(50)},
+        {LogLevel::FATAL, std::chrono::milliseconds(50)},
+    };
+
+    for(const auto& test_case : cases)
+    {
+        SCOPED_TRACE(static_cast<int>(test_case.level));
+
+        LogAsyncConfig config;
+        config.queue_capacity = 3;
+        config.max_queue_bytes = 1024;
+        config.stop_drain_timeout_ms = 1000;
+
+        LogAsyncDispatcher dispatcher(config);
+        dispatcher.start();
+        // BoundedLockFreeQueue 会把配置容量向上归一化为 2 的幂；满载判断必须
+        // 使用实际容量，不能把 config.queue_capacity(3) 当作槽位上限。
+        ASSERT_EQ(dispatcher.capacity(), 4U);
+
+        auto logger = std::make_shared<Logger>(
+            &LogManager::GetInstance(), "test_async_full_queue");
+        auto appender = std::make_shared<BlockingAppender>();
+        logger->setLevel(LogLevel::DEBUG);
+        appender->setLevel(LogLevel::DEBUG);
+        logger->addAppender(appender);
+
+        auto first = MakeLoggerAttr(
+            logger,
+            LogLevel::INFO,
+            "blocking-first");
+        ASSERT_TRUE(first->seal());
+        ASSERT_EQ(
+            dispatcher.submit(std::move(first)).status,
+            LogSubmitStatus::kQueued);
+        ASSERT_TRUE(appender->waitUntilEntered(
+            std::chrono::milliseconds(1000)));
+
+        // 第一条正在 worker 中执行，剩余记录填满归一化后的 4 槽队列。
+        for(size_t index = 0; index < dispatcher.capacity(); ++index)
+        {
+            auto queued = MakeLoggerAttr(
+                logger,
+                LogLevel::INFO,
+                "queued-" + std::to_string(index));
+            ASSERT_TRUE(queued->seal());
+            ASSERT_EQ(
+                dispatcher.submit(std::move(queued)).status,
+                LogSubmitStatus::kQueued);
+        }
+
+        auto probe = MakeLoggerAttr(
+            logger,
+            test_case.level,
+            "probe");
+        ASSERT_TRUE(probe->seal());
+
+        const auto begin = std::chrono::steady_clock::now();
+        const auto submit = dispatcher.submit(std::move(probe));
+        const auto elapsed = std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - begin);
+
+        EXPECT_EQ(submit.status, LogSubmitStatus::kDropped);
+        if(test_case.expected_wait == std::chrono::milliseconds::zero())
+        {
+            EXPECT_LT(elapsed.count(), 20);
+        }
+        else
+        {
+            EXPECT_GE(
+                elapsed.count(),
+                test_case.expected_wait.count() - 3);
+            EXPECT_LT(
+                elapsed.count(),
+                test_case.expected_wait.count() + 200);
+        }
+
+        appender->release();
+        EXPECT_TRUE(dispatcher.shutdown());
+    }
+}
+
+/*
+测试思路：先让 worker 卡在第一条日志，再按队列实际容量填满剩余槽位；下一条
+ERROR 日志必须进入 not_full_cv_ 等待。释放第一条后，worker 弹出第二条并通知
+等待生产者，探测日志应在 50ms 等级等待窗口内成功入队，而不是被误判为 dropped。
+
+时序图：first -> worker(阻塞)；queued[capacity] -> queue(满)；probe -> wait(not_full_cv_)
+-> release first -> pop/notify -> probe queued。
+*/
+TEST(TestLog, AsyncDispatcherWakesWaitingProducerAfterCapacityReleased)
+{
+    LogAsyncConfig config;
+    // 当前 MPMC 队列契约要求容量至少为 2。
+    config.queue_capacity = 2;
+    config.max_queue_bytes = 1024;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_space_wakeup");
+    auto appender = std::make_shared<BlockingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    auto first = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "blocking-first");
+    ASSERT_TRUE(first->seal());
+    ASSERT_EQ(
+        dispatcher.submit(std::move(first)).status,
+        LogSubmitStatus::kQueued);
+    ASSERT_TRUE(appender->waitUntilEntered(
+        std::chrono::milliseconds(1000)));
+
+    for(size_t index = 0; index < dispatcher.capacity(); ++index)
+    {
+        auto queued = MakeLoggerAttr(
+            logger,
+            LogLevel::INFO,
+            "queued-" + std::to_string(index));
+        ASSERT_TRUE(queued->seal());
+        ASSERT_EQ(
+            dispatcher.submit(std::move(queued)).status,
+            LogSubmitStatus::kQueued);
+    }
+
+    auto probe = MakeLoggerAttr(
+        logger,
+        LogLevel::ERROR,
+        "waiting-probe");
+    ASSERT_TRUE(probe->seal());
+
+    auto submit_future = std::async(
+        std::launch::async,
+        [&dispatcher, probe = std::move(probe)]() mutable {
+            return dispatcher.submit(std::move(probe));
+        });
+
+    // 给提交线程进入条件变量等待的机会，之后再释放 worker。
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    appender->release();
+
+    ASSERT_EQ(
+        submit_future.wait_for(std::chrono::milliseconds(500)),
+        std::future_status::ready);
+    const auto submit = submit_future.get();
+    EXPECT_EQ(submit.status, LogSubmitStatus::kQueued);
+
+    const bool processed = appender->waitForCount(
+        1 + static_cast<int>(dispatcher.capacity()) + 1,
+        std::chrono::milliseconds(1000));
+    EXPECT_TRUE(dispatcher.shutdown());
+    EXPECT_TRUE(processed);
+}
+
+/*
+测试思路：记录槽位仍有余量，但总字节预算被第二条大记录占满。第三条较小的
+ERROR 记录必须等待字节预算释放；worker 弹出第二条后，not_full_cv_ 被通知，第三条
+应成功入队，验证条件变量等待谓词覆盖记录数和字节数两个维度。
+
+预算图：max_bytes=10；8B -> queued_bytes=8；4B -> 等待；释放 8B -> 4B queued。
+*/
+TEST(TestLog, AsyncDispatcherWakesWaitingProducerAfterByteBudgetReleased)
+{
+    LogAsyncConfig config;
+    config.queue_capacity = 4;
+    config.max_queue_bytes = 10;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_byte_wakeup");
+    auto appender = std::make_shared<BlockingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    auto first = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "a");
+    ASSERT_TRUE(first->seal());
+    ASSERT_EQ(
+        dispatcher.submit(std::move(first)).status,
+        LogSubmitStatus::kQueued);
+    ASSERT_TRUE(appender->waitUntilEntered(
+        std::chrono::milliseconds(1000)));
+
+    auto second = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "12345678");
+    ASSERT_TRUE(second->seal());
+    ASSERT_EQ(second->getContent().size(), 8U);
+    ASSERT_EQ(
+        dispatcher.submit(std::move(second)).status,
+        LogSubmitStatus::kQueued);
+
+    auto probe = MakeLoggerAttr(
+        logger,
+        LogLevel::ERROR,
+        "1234");
+    ASSERT_TRUE(probe->seal());
+
+    auto submit_future = std::async(
+        std::launch::async,
+        [&dispatcher, probe = std::move(probe)]() mutable {
+            return dispatcher.submit(std::move(probe));
+        });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    appender->release();
+
+    ASSERT_EQ(
+        submit_future.wait_for(std::chrono::milliseconds(500)),
+        std::future_status::ready);
+    const auto submit = submit_future.get();
+    const bool processed = appender->waitForCount(
+        3,
+        std::chrono::milliseconds(200));
+    EXPECT_TRUE(dispatcher.shutdown());
+
+    EXPECT_EQ(submit.status, LogSubmitStatus::kQueued);
+    EXPECT_TRUE(processed);
+}
+
+/*
+测试思路：在同一个满载队列上同时放置多个 ERROR 生产者。worker 每消费一条记录
+就释放一个容量并 notify_one，生产者应逐个被唤醒，最终所有记录都能入队并完成，
+验证条件变量通知不会只唤醒一次后停滞。
+
+并发图：3 producers -> not_full_cv_；worker pop/notify_one -> 逐个入队 -> appender。
+示例：first、second 加 3 条 probe 共 5 条，最终 Counting 结果为 5。
+*/
+TEST(TestLog, AsyncDispatcherProgressesMultipleWaitingProducers)
+{
+    constexpr int kProducers = 3;
+
+    LogAsyncConfig config;
+    // 当前 MPMC 队列契约要求容量至少为 2。
+    config.queue_capacity = 2;
+    config.max_queue_bytes = 4096;
+    config.stop_drain_timeout_ms = 1000;
+
+    LogAsyncDispatcher dispatcher(config);
+    dispatcher.start();
+
+    auto logger = std::make_shared<Logger>(
+        &LogManager::GetInstance(), "test_async_multiple_waiters");
+    auto appender = std::make_shared<BlockingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+
+    auto first = MakeLoggerAttr(
+        logger,
+        LogLevel::INFO,
+        "blocking-first");
+    ASSERT_TRUE(first->seal());
+    ASSERT_EQ(
+        dispatcher.submit(std::move(first)).status,
+        LogSubmitStatus::kQueued);
+    ASSERT_TRUE(appender->waitUntilEntered(
+        std::chrono::milliseconds(1000)));
+
+    for(size_t index = 0; index < dispatcher.capacity(); ++index)
+    {
+        auto queued = MakeLoggerAttr(
+            logger,
+            LogLevel::INFO,
+            "queued-" + std::to_string(index));
+        ASSERT_TRUE(queued->seal());
+        ASSERT_EQ(
+            dispatcher.submit(std::move(queued)).status,
+            LogSubmitStatus::kQueued);
+    }
+
+    std::vector<std::future<LogSubmitResult>> submissions;
+    submissions.reserve(kProducers);
+    for(int index = 0; index < kProducers; ++index)
+    {
+        auto probe = MakeLoggerAttr(
+            logger,
+            LogLevel::ERROR,
+            "waiting-probe-" + std::to_string(index));
+        ASSERT_TRUE(probe->seal());
+
+        submissions.emplace_back(std::async(
+            std::launch::async,
+            [&dispatcher, probe = std::move(probe)]() mutable {
+                return dispatcher.submit(std::move(probe));
+            }));
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    appender->release();
+
+    for(auto& submission : submissions)
+    {
+        ASSERT_EQ(
+            submission.wait_for(std::chrono::milliseconds(1000)),
+            std::future_status::ready);
+        EXPECT_EQ(submission.get().status, LogSubmitStatus::kQueued);
+    }
+
+    ASSERT_TRUE(appender->waitForCount(
+        1 + static_cast<int>(dispatcher.capacity()) + kProducers,
+        std::chrono::milliseconds(1000)));
+    EXPECT_TRUE(dispatcher.shutdown());
 }
 
 /*
@@ -861,7 +1555,7 @@ TEST(TestLog, SinkFlushesOnLevelAndSupportsDurableFlush)
     LogFileConfig config;
     config.flush_threshold = 8;
     config.flush_interval_ms = 30000;
-    registry.setFileConfig(config);
+    registry.setConfig(config);
 
     auto sink = registry.acquire(file.path());
     ASSERT_NE(sink, nullptr);
@@ -899,7 +1593,7 @@ TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
     config.rotate_max_backup_files = 2;
     config.flush_threshold = 10 * 1024 * 1024;
     config.flush_interval_ms = 30000;
-    registry.setFileConfig(config);
+    registry.setConfig(config);
 
     auto sink = registry.acquire(active.string());
     ASSERT_NE(sink, nullptr);
@@ -958,7 +1652,7 @@ TEST(TestLog, SinkDoesNotRotateOversizedActiveFileDuringOpen)
     config.rotate_max_backup_files = 2;
     config.flush_threshold = 10 * 1024 * 1024;
     config.flush_interval_ms = 30000;
-    registry.setFileConfig(config);
+    registry.setConfig(config);
 
     auto sink = registry.acquire(active.string());
     ASSERT_NE(sink, nullptr);
