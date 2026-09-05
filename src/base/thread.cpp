@@ -10,8 +10,10 @@
 #include "base/util.h"
 #include "base/base_log.h"
 
+#include <atomic>
 #include <cerrno>
-#include <semaphore.h>
+#include <memory>
+#include <stdexcept>
 #include <unistd.h>
 
 namespace kit_muduo {
@@ -30,25 +32,25 @@ Thread::Thread(ThreadFunc func, const std::string &name)
 
 Thread::~Thread()
 {
-    if(started_ && !joined_)
+    join();
+    if(started() && sem_destroy(&sem_) < 0)
     {
-        thread_->detach();
+        THREAD_F_WARN("sem_destroy failed:%d:%s \n", errno, strerror(errno));
     }
 }
 
 void Thread::start()
 {
-    sem_t sem;
-    if(sem_init(&sem, 0, 0) != 0)
+    if(sem_init(&sem_, 0, 0) != 0)
     {
         THREAD_F_ERROR("sem_init failed: %d:%s\n", errno, strerror(errno));
-        abort();
+        throw std::runtime_error("thread init failed");
     }
 
     thread_ = std::make_shared<std::thread>([this, 
         name = name_, 
-        func = func_,
-        &sem](){
+        func = func_](){
+
         try
         {
             this->pid_ = GetThreadPid();
@@ -58,7 +60,8 @@ void Thread::start()
                 ::pthread_setname_np(::pthread_self(), name.c_str());
             }
 
-            sem_post(&sem);
+            sem_post(&sem_);
+
             if(func)
             {
                 func();
@@ -66,12 +69,12 @@ void Thread::start()
         }
         catch (std::exception &e)
         {
-            THREAD_F_ERROR("!!![EXCEPTION]!!! func run error: %s \n", e.what());
+            THREAD_F_ERROR("!!![EXCEPTION]!!! thread exception exit: %s \n", e.what());
         }
     });
 
     // 注意: 必须确保子线程起来后才能继续往下
-    while(-1 == sem_wait(&sem))
+    while(-1 == sem_wait(&sem_))
     {
         if(EINTR == errno)
         {
@@ -82,7 +85,6 @@ void Thread::start()
         break;
     }
     started_ = true;
-    sem_destroy(&sem);
 }
 
 void Thread::join()

@@ -11,6 +11,7 @@
 
 #include "base/noncopyable.h"
 
+#include <semaphore.h>
 #include <thread>
 #include <functional>
 #include <memory>
@@ -30,7 +31,7 @@ public:
     void start();
     void join();
 
-    bool started() const { return started_; }
+    bool started() const { return started_.load(); }
     bool joined() const { return joined_; }
     static int32_t createdNum() { return _createdNum; }
 
@@ -45,13 +46,13 @@ private:
     static std::atomic_int _createdNum;
 
 private:
-    bool started_;
+    std::atomic_bool started_;
     bool joined_;
     std::shared_ptr<std::thread> thread_;
     pid_t pid_;
     ThreadFunc func_;
     std::string name_;
-
+    sem_t sem_;
 };
 
 
