@@ -1,14 +1,10 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.0...4.4.0)
 project(protocol-test-platform)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include (cmake/utils.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
-
-
-set(CMAKE_VERBOSE_MAKEFILE ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 
 set(CMAKE_CXX_FLAGS  "$ENV{CXXFLAGS} \
@@ -51,6 +47,7 @@ option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
 option(MUDUO_TEST.LOG "build test_log" OFF)
 option(MUDUO_TEST.CONFIG "build test_config" OFF)
+option(MUDUO_TEST.COMPRESSION "build test_compression" OFF)
 
 option(MUDUO_TEST.TCP_SERVER "build test_tcp_server" OFF)
 option(MUDUO_TEST.HTTP_MESSAGE "build test_http_message" OFF)
@@ -116,7 +113,6 @@ option(COVERAGE_TEST "make coverage file" OFF)
 # export ASAN_OPTIONS=detect_leaks=1:abort_on_error=0:verbosity=1:log_path=/mnt/nfs/proxy_log/kit_asan.log:hard_rss_limit_mb=4096
 
 
-
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
@@ -143,34 +139,49 @@ elseif(CMAKE_BUILD_TYPE MATCHES "Release")
     message("Release mode")
 endif()
 
-# 添加第三方包搜索路径
+# 添加第三方裸库搜索路径
 list(APPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/pkg")
-# gtest包添加
+
+############系统包##########
+
 find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(ZLIB REQUIRED)
 
 if(MUDUO_BENCH.LOG)
     find_package(benchmark CONFIG REQUIRED)
 endif()
 
+############系统包##########
+
+
+############vcpkg包##########
+
+# zstd包
+find_kit_package(
+    zstd
+    VERSION 1.5.7
+    TARGET_VAR KIT_ZSTD_LIBS
+    TARGETS
+        zstd::libzstd
+)
+
+############vcpkg包##########
+
 enable_testing()
 
-
-
 # 添加第三方库链接路径
-set(PKG_LIB_PATH
+set(THIRD_LIB_PATH
     "pkg/llhttp/lib"
     "pkg/pugixml/lib"
     "pkg/simdutf/lib"
     "pkg/HowardHinnant_date/lib"
     "pkg/yaml-cpp/lib"
 )
-
-link_directories(${PKG_LIB_PATH})
+link_directories(${THIRD_LIB_PATH})
 
 # include
 include_directories(
-    ${GTEST_INCLUDE_DIRS}
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/include/work/
     ${PROJECT_SOURCE_DIR}/include/work/service/
@@ -215,6 +226,9 @@ set(BASE_SRC
     src/base/config.cpp
     
     src/base/sem.cpp
+
+    src/base/compression.cpp
+    src/base/zstd_compression.cpp
 )
 
 set(NET_HTTP_SRC
@@ -384,43 +398,48 @@ set(DEF
 
 )
 
-add_library(kit_muduo SHARED ${MUDUO_SRC})
-redefine_file_macro(kit_muduo)   #重定义 __FILE__
-target_compile_definitions(kit_muduo PRIVATE ${DEF} ${SQLITE3_DEF})
-
-# 运行时依赖库
-set(KIT_RUNTIME_LIBS
-    kit_muduo
+set(KIT_MUDUO_LIBS
     dl
     pthread
     llhttp
     crypt
     OpenSSL::Crypto
+    ZLIB::ZLIB
     pugixml
     simdutf
     yaml-cpp
+    ${KIT_ZSTD_LIBS}
 )
+
+add_library(kit_muduo SHARED ${MUDUO_SRC})
+redefine_file_macro(kit_muduo)   #重定义 __FILE__
+target_compile_definitions(kit_muduo PRIVATE ${DEF} ${SQLITE3_DEF})
+target_link_libraries(kit_muduo PUBLIC ${KIT_MUDUO_LIBS}
+)
+
 
 # 测试目标额外依赖 GTest。工作层源码集中编译到静态库，避免每个工作层
 # 测试目标都重新编译一遍业务实现。domain 单测可只链接 kit_work_domain。
 add_library(kit_work_domain STATIC ${WORK_DOMAIN_SRC})
 redefine_file_macro(kit_work_domain)   #重定义 __FILE__
 target_compile_definitions(kit_work_domain PRIVATE ${DEF})
-target_link_libraries(kit_work_domain PUBLIC ${KIT_RUNTIME_LIBS})
+target_link_libraries(kit_work_domain PUBLIC kit_muduo)
 
 add_library(kit_work STATIC ${WORK_APP_SRC})
 redefine_file_macro(kit_work)   #重定义 __FILE__
 target_compile_definitions(kit_work PRIVATE ${DEF})
-target_link_libraries(kit_work PUBLIC kit_work_domain ${KIT_RUNTIME_LIBS})
+target_link_libraries(kit_work PUBLIC kit_work_domain kit_muduo)
+
 
 # lib
 set(LIB_LIB
-    ${KIT_RUNTIME_LIBS}
+    kit_muduo
     GTest::gtest
     GTest::gtest_main
     GTest::gmock
     GTest::gmock_main
 )
+
 
 # **********************************tests**********************************#
 
@@ -431,7 +450,7 @@ if(WORK_BENCH.SQLITE_INTERACTION)
     redefine_file_macro(interaction_history_storage_bench)
     target_compile_definitions(interaction_history_storage_bench PRIVATE ${DEF})
     target_link_libraries(interaction_history_storage_bench PRIVATE
-        ${KIT_RUNTIME_LIBS}
+        kit_muduo
         OpenSSL::Crypto
     )
 endif()
@@ -442,7 +461,7 @@ if(MUDUO_BENCH.LOG)
     redefine_file_macro(log_benchmark)
     target_compile_definitions(log_benchmark PRIVATE ${DEF})
     target_link_libraries(log_benchmark PRIVATE
-        ${KIT_RUNTIME_LIBS}
+        kit_muduo
         benchmark::benchmark
     )
 
@@ -451,7 +470,7 @@ if(MUDUO_BENCH.LOG)
     redefine_file_macro(log_benchmark_optimize)
     target_compile_definitions(log_benchmark_optimize PRIVATE ${DEF})
     target_link_libraries(log_benchmark_optimize PRIVATE
-        ${KIT_RUNTIME_LIBS}
+        kit_muduo
         benchmark::benchmark
     )
 endif()
@@ -474,6 +493,9 @@ function(add_kit_test module_option test_option target_name)
         redefine_file_macro(${target_name})   #重定义 __FILE__
         target_compile_definitions(${target_name} PRIVATE ${DEF})
         target_link_libraries(${target_name} PRIVATE ${LIB_LIB})
+
+        string(TOUPPER "${target_name}" _tagert_upper_name)
+        add_test(NAME ${_tagert_upper_name} COMMAND ${target_name})
     endif()
 endfunction()
 
@@ -524,6 +546,11 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
 add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config
     tests/test_config.cpp
     src/app_config.cpp)
+
+# 压缩模块测试 test_compression
+add_kit_test(MUDUO_TEST MUDUO_TEST.COMPRESSION test_compression
+    tests/test_compression.cpp)
+    
 
 # TcpServer测试 test_tcp_server
 add_kit_test(MUDUO_TEST MUDUO_TEST.TCP_SERVER test_tcp_server tests/test_tcp_server.cpp)
@@ -681,7 +708,7 @@ if(EXAMPLE.HTTP)
 
 # http服务器示例
 add_executable(example_http_server example/example_http_server.cpp)
-target_link_libraries(example_http_server PRIVATE kit_work ${KIT_RUNTIME_LIBS})
+target_link_libraries(example_http_server PRIVATE kit_work kit_muduo)
 redefine_file_macro(example_http_server)   #重定义 __FILE__
 target_compile_definitions(example_http_server PRIVATE ${DEF})
 
@@ -690,7 +717,7 @@ endif()
 
 # app服务器实例
 add_executable(kit_protocol_test_platform main.cpp)
-target_link_libraries(kit_protocol_test_platform PRIVATE kit_work ${KIT_RUNTIME_LIBS})
+target_link_libraries(kit_protocol_test_platform PRIVATE kit_muduo kit_work)
 redefine_file_macro(kit_protocol_test_platform)   #重定义 __FILE__
 target_compile_definitions(kit_protocol_test_platform PRIVATE ${DEF})
 

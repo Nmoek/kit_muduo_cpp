@@ -13,6 +13,7 @@
 #include "simdutf.h"
 
 #include <ctime>
+#include <zlib.h>
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <stdint.h>
@@ -258,6 +259,12 @@ std::string Trim(const std::string &str)
 size_t AlignToCachePage(size_t n, size_t page) 
 {
     return (n + page - 1) / page * page;
+}
+
+uint32_t CalcCrc32(const unsigned char *buf, uint32_t len)
+{
+    const auto crc = crc32_z(0L, nullptr, 0);
+    return crc32_z(crc, buf, len);
 }
 
 } // namespace kit

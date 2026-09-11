@@ -1,13 +1,21 @@
 #!/bin/sh
 
 
+set -eu
+
+set -a
+. ./.env
+set +a
+
 mkdir -p build
 mkdir -p bin
 
 rm -r ./bin/*
 
-cmake -S . -B build -G "Ninja"
+codegraph sync
+
+cmake --preset linux-release
 echo "build...."
-cmake --build build
+cmake --build --preset linux-release
 
 echo "build finish!"

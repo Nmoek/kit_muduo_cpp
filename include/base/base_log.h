@@ -105,3 +105,18 @@
 #define CONFIG_F_FATAL(fmt, ...)     BASE_F_FATAL("config", fmt, ##__VA_ARGS__)
 
 /*******conifg模块*********/
+
+/*******compress模块*********/
+#define COMPRESS_DEBUG()     BASE_DEBUG("compress")
+#define COMPRESS_INFO()      BASE_INFO("compress")
+#define COMPRESS_WARN()      BASE_WARN("compress")
+#define COMPRESS_ERROR()     BASE_ERROR("compress")
+#define COMPRESS_FATAL()     BASE_FATAL("compress")
+
+#define COMPRESS_F_DEBUG(fmt, ...)     BASE_F_DEBUG("compress", fmt, ##__VA_ARGS__)
+#define COMPRESS_F_INFO(fmt, ...)      BASE_F_INFO("compress", fmt, ##__VA_ARGS__)
+#define COMPRESS_F_WARN(fmt, ...)      BASE_F_WARN("compress", fmt, ##__VA_ARGS__)
+#define COMPRESS_F_ERROR(fmt, ...)     BASE_F_ERROR("compress", fmt, ##__VA_ARGS__)
+#define COMPRESS_F_FATAL(fmt, ...)     BASE_F_FATAL("compress", fmt, ##__VA_ARGS__)
+
+/*******compress模块*********/

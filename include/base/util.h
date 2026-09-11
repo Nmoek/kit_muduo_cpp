@@ -163,5 +163,12 @@ std::string Trim(const std::string &str);
  */
 size_t AlignToCachePage(size_t n, size_t page);
 
+/**
+ * @brief CRC32工具(借用zip库)
+ * @param buf 
+ * @param len 
+ * @return uint32_t 
+ */
+uint32_t CalcCrc32(const unsigned char *buf, uint32_t len);
 } // namespace kit
 #endif
