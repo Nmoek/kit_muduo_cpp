@@ -414,7 +414,6 @@ bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
         backend_->lastSequence(),
         normalize_path_,
         archive_log,
-        archive_log + ".zst",
         file_config.compress_rotated
     };
 
@@ -454,7 +453,7 @@ bool LogFileSink::scanArchives(std::vector<LogFileArchive> &archives)
         net_000_20260101-003000.log
         '.' '*' 注意正则转义问题
     */
-    std::string patther_format{"^" + escaped_prefix + "_([0-9]{3,})_([0-9]{8}-[0-9]{6})\\.log$"};
+    std::string patther_format{"^" + escaped_prefix + "_([0-9]{3,})_([0-9]{8}-[0-9]{6})\\.log(\\..*)?$"};
 
     const std::regex archive_core_pattern{patther_format};
 
@@ -575,12 +574,12 @@ bool LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig& file_config,
     // 注意 这里减1是有一个新生成的归档文件没有在当前列表中
     while(archives.size() + 1 > file_config.rotate_max_backup_files)
     {
-        const auto &archive = archives.back();
-        bool ok = std::filesystem::remove(archive.archive_path, error);
+        const auto &archive_path = archives.back().archive_path;
+        bool ok = std::filesystem::remove(archive_path , error);
         if(error || !ok)
         {
             LOG_INNER_WARN("log rotate remove overflow file error[%s]: %s\n",
-                archive.archive_path.filename().c_str(), error.message().c_str());
+                archive_path.filename().c_str(), error.message().c_str());
         }
         archives.pop_back();
     }

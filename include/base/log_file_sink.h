@@ -10,6 +10,7 @@
 #ifndef __KIT_LOG_FILE_SINK_H__
 #define __KIT_LOG_FILE_SINK_H__
 
+#include "base/compression.h"
 #include "base/log_file_backend.h"
 #include "base/log_level.h"
 

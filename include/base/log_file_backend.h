@@ -9,6 +9,7 @@
 #ifndef __KIT_LOG_FILE_BACKEND_H__
 #define __KIT_LOG_FILE_BACKEND_H__
 
+#include "base/compression.h"
 #include <memory>
 #include <string>
 
@@ -58,7 +59,6 @@ struct LogFileRotateRequest
     uint64_t last_sequence{0};
     std::string active_path;
     std::string archive_log_path;
-    std::string archive_compression_path;
     bool compression_enabled{false};
 };
 
@@ -68,6 +68,7 @@ struct LogFileRotateRequest
 class LogFileBackend
 {
 public:
+    LogFileBackend();
     virtual ~LogFileBackend() = default;
 
     /**
@@ -119,6 +120,7 @@ public:
 protected:
     uint64_t generation_{0};
     uint64_t last_sequence_{0};
+    std::shared_ptr<CompressionCodec> compress_codec_;
 };
 
 }

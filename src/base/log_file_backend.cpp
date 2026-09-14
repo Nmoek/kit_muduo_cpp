@@ -9,10 +9,21 @@
 #include "base/log_file_backend.h"
 #include "base/log_inner.h"
 #include "base/regular_log_file_backend.h"
+#include "base/zstd_compression.h"
 
 #include <filesystem>
 
 namespace kit_muduo {
+
+LogFileBackend::LogFileBackend()
+    :compress_codec_(std::make_shared<ZstdCompressionCodec>(ZstdCodecOptions{
+        10,
+        true,
+    }))
+{
+
+}
+
 
 bool LogFileBackend::chechkAndCreateLogPath(const std::string &normalize_path)
 {

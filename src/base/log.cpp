@@ -73,6 +73,8 @@ LogFileSink::Ptr FindAndMakeSink(LogFileSinkRegister& file_register,
         LOG_INNER_ERROR("log file sink reopen error [%s]: %s \n", normalize_path.c_str(), open_result.message.c_str());
         return nullptr;
     }
+
+    
     sinks[normalize_path] = sink;
 
     return sink;
@@ -481,10 +483,11 @@ LogManagerResult LogManager::submitForAsync(LogAttr::Ptr attr)
 
     if(!async_dispatcher_)
     {
-        return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState,
-            "log async dispatcher unavailable");
+        attr->getLogger()->logUnchecked(std::move(attr));
+        return LogManagerResult::Ok();
     }
 
+    
     const auto submit_result = async_dispatcher_->submit(std::move(attr));
     switch(submit_result.status)
     {

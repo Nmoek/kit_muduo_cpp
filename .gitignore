@@ -40,3 +40,4 @@ tests/benchmarks/results/
 *.bin
 *.exe
 *.openapi*
+*.log

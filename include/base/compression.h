@@ -155,6 +155,8 @@ public:
 
     virtual std::unique_ptr<StreamDecompressor> createDecompressor() = 0;
 
+    virtual std::string suffix() const noexcept = 0;
+
     static std::unique_ptr<CompressionCodec> Create();
 
 };

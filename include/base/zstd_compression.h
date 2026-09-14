@@ -19,7 +19,7 @@ namespace kit_muduo {
 struct ZstdCodecOptions
 {
     /******压缩参数*****/
-    /// @brief 压缩等级默认为1  1-3 快速   15-22高压缩比
+    /// @brief 压缩等级默认为3  1-3 快速   15-22高压缩比
     int32_t compression_level{1};
     /// @brief 开启帧数据校验和
     bool compression_checksum{true};
@@ -42,6 +42,8 @@ public:
     std::unique_ptr<StreamCompressor> createCompressor() override;
 
     std::unique_ptr<StreamDecompressor> createDecompressor() override;
+
+    std::string suffix() const noexcept override { return "zst"; }
 private:
     ZstdCodecOptions options_;
 };

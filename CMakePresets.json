@@ -1,0 +1,34 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+        "name": "linux-release",
+        "displayName": "Linux Release",
+        "generator": "Ninja",
+        "binaryDir": "${sourceDir}/build/",
+        "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "cacheVariables": {
+            "CMAKE_BUILD_TYPE": "Release",
+            "VCPKG_TARGET_TRIPLET": "x64-linux",
+            "VCPKG_INSTALLED_DIR": "${sourceDir}/build-vcpkg/",
+            "VCPKG_MANIFEST_INSTALL": "ON",
+            "MUDUO_TEST": "OFF",
+            "WORK_TEST": "OFF",
+            "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "jobs": 4,
+      "verbose": false
+    }
+  ]
+}
