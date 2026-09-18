@@ -10,10 +10,12 @@
 #include "base/thread_pool.h"
 #include "base/base_log.h"
 
+#include <atomic>
 #include <cassert>
 #include <exception>
 #include <future>
 #include <memory>
+#include <string>
 #include <thread>
 #include <iostream>
 #include <mutex>
@@ -22,17 +24,26 @@
 
 namespace kit_muduo {
 
-ThreadPool::ThreadPool(int32_t initThreadCount)
-    :init_thread_count_(initThreadCount)
+namespace {
+
+thread_local ThreadPool* current_worker_pool = nullptr;
+}
+
+std::atomic_uint32_t ThreadPool::s_generate_id{1};
+
+ThreadPool::ThreadPool(int32_t initThreadCount, const std::string name)
+    :name_(name + std::to_string(s_generate_id.fetch_add(1, std::memory_order_relaxed)))
+    ,init_thread_count_(initThreadCount)
     ,cur_thread_count_(0)
     ,busy_count_(0)
     ,thread_max_threshhold_(kDefaultMaxThread)
-    ,is_running_(false)
+    ,state_(ThreadPoolState::kInit)
     ,thread_max_idle_interval_(kDefaultMaxIdleInterval)
     ,cur_task_count_(0)
     ,task_que_max_threshhold_(kDefaultMaxTaskQueue)
     ,mode_(FIXED_MOD)
 {
+
 }
 
 
@@ -43,41 +54,51 @@ ThreadPool::~ThreadPool()
 
 void ThreadPool::start()
 {
-    if(checkState())
-    {
-        return;
-    }
     if(init_thread_count_ <= 0)
     {
         throw std::invalid_argument("thread count is invalid!!");
     }
-    
-    is_running_ = true;
+
+    ThreadPoolState expect_state = ThreadPoolState::kInit;
+    if(!state_.compare_exchange_strong(expect_state, ThreadPoolState::kStart, std::memory_order_acq_rel))
+    {
+        THREAD_F_INFO("thread pool %s running...\n", name_.c_str());
+        return;
+    }
+
     for(int i = 0;i < init_thread_count_;++i)
     {
-        auto th = std::make_unique<WorkThread>(this);
+        auto th = std::make_unique<WorkThread>(this, name_);
         th->setPoolFunc(std::bind(&ThreadPool::threadRunFunc, this, std::placeholders::_1));
 
         ++cur_thread_count_;
         pool_.emplace(th->getGenerateId(), std::move(th));
     }
 
+    state_ = ThreadPoolState::kRunning;
+    
     //启动公平性 初始化完之后一起启动
     for(auto &t : pool_)
+    {
         (t.second)->start();
-
-    usleep(50);
+    }
 
     TPOOL_INFO() << "thread pool start success!" << std::endl;
 }
 
 void ThreadPool::stop()
 {
-    if(!checkState())
+    if(current_worker_pool == this)
     {
+        throw std::logic_error("ThreadPool::stop() called from worker itself");
+    }
+    ThreadPoolState expect_state = ThreadPoolState::kRunning;
+    if(!state_.compare_exchange_strong(expect_state, ThreadPoolState::kStop, std::memory_order_acq_rel))
+    {
+        THREAD_F_INFO("thread pool %s stopping...\n", name_.c_str());
         return;
     }
-    is_running_ = false;
+
     notEmpty_.notify_all();
     notFull_.notify_all();
     // 退出条件
@@ -85,7 +106,7 @@ void ThreadPool::stop()
     // 忙碌线程=0
 
     {
-    TPOOL_INFO() << "thread pool start exit...." << std::endl;
+    TPOOL_INFO() << "thread pool start exit....\n";
     std::unique_lock<std::mutex> lock(task_que_mutex_);
     waitExit_.wait(lock, [this](){
         TPOOL_F_DEBUG("waitExit_ notify! task size=%d, busy worker= %d/%d \n", cur_task_count_.load() ,busy_count_.load() , cur_thread_count_.load());
@@ -97,13 +118,12 @@ void ThreadPool::stop()
     cur_task_count_ = 0;
     cur_thread_count_ = busy_count_ = 0;
 
-    TPOOL_INFO() << "thread pool exit success" << std::endl;
-
+    TPOOL_INFO() << "thread pool exit success!\n";
 }
 
 void ThreadPool::setMode(PoolMode mode)
 {
-    if(checkState())
+    if(isRunning())
         return;
 
     mode_ = mode;
@@ -111,6 +131,7 @@ void ThreadPool::setMode(PoolMode mode)
 
 void ThreadPool::threadRunFunc(uint32_t generateId)
 {
+    current_worker_pool = this;
     auto waitSt = std::cv_status::no_timeout;
     bool need_exit = false;
 
@@ -121,14 +142,14 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
         if(CACHE_MOD == mode_)
         {
             while(cur_task_count_ <= 0
-                && is_running_)
+                && isRunning())
             {
                 // 空闲超过 30s的线程需要退出
                 waitSt = notEmpty_.wait_for(lock, std::chrono::seconds(thread_max_idle_interval_));
                 if(std::cv_status::timeout == waitSt)
                 {
 
-                    if(checkState() && CACHE_MOD == mode_)
+                    if(isRunning() && CACHE_MOD == mode_)
                     {
                         // 先解队列锁
                         lock.unlock();
@@ -152,7 +173,7 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
         else
         {
             notEmpty_.wait(lock, [this](){
-                return task_que_.size() > 0 || !is_running_;
+                return task_que_.size() > 0 || !isRunning();
             });
         }
         if(need_exit)
@@ -162,13 +183,13 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
         // 注意: 这里两种回收策略
         // 1. 不拿任务 直接退出
         // 2. 先拿任务 然后 再退出(本项目采用)
-        if(!is_running_ && task_que_.size() <= 0)
+        if(!isRunning() && task_que_.size() <= 0)
         {
            break;
         }
 
         
-        TPOOL_F_DEBUG("wait task size=%d, isRun=%d \n", task_que_.size(), is_running_.load());
+        TPOOL_F_DEBUG("wait task size=%d, state=%d \n", task_que_.size(), state_.load());
 
         auto task = task_que_.front();
         task_que_.pop();
@@ -203,8 +224,10 @@ void ThreadPool::threadRunFunc(uint32_t generateId)
 
 void ThreadPool::setTaskQueMaxThreshHold(int32_t threshhold)
 {
-    if(checkState())
+    if(isRunning() || threshhold <= 0)
+    {
         return;
+    }
     task_que_max_threshhold_ = threshhold;
 }
 
@@ -216,7 +239,7 @@ int32_t ThreadPool::getTaskQueMaxThreshHold() const
 
 void ThreadPool::setThreadMaxThreshHold(int32_t threshhold)
 {
-    if(checkState())
+    if(isRunning())
         return;
     thread_max_threshhold_ = std::max(threshhold, init_thread_count_);
 }
@@ -229,8 +252,10 @@ int32_t ThreadPool::getThreadMaxThreshHold() const
 
 void ThreadPool::setThreadMaxIdleInterval(int32_t interval_s)
 {
-    if(checkState())
+    if(isRunning() || interval_s <= 0)
+    {
         return;
+    }
     thread_max_idle_interval_ = interval_s;
 }
 
@@ -243,13 +268,13 @@ int32_t ThreadPool::getThreadMaxIdleInterval() const
 
 void ThreadPool::addThread()
 {
-    if(!checkState() || !isCache())
+    if(!isRunning() || !isCache())
     {
         return;
     }
     std::unique_lock<std::mutex> lock(pool_mutex_);
 
-    if(!checkState() || !isCache())
+    if(!isRunning() || !isCache())
     {
         return;
     }
@@ -257,7 +282,7 @@ void ThreadPool::addThread()
     // 机会式清理
     const std::vector<WorkThread::UPtr>& has_exited_threads = cleanupExitedThreadsUnLock();
 
-    auto th = std::make_unique<WorkThread>(this);
+    auto th = std::make_unique<WorkThread>(this, name_);
     th->setPoolFunc(std::bind(&ThreadPool::threadRunFunc, this, std::placeholders::_1));
  
     TPOOL_INFO() << "id= " << th->getGenerateId() << " thread create, " << cur_thread_count_ << "/" << thread_max_threshhold_ << std::endl;
@@ -282,12 +307,12 @@ void ThreadPool::addThread()
 
 void ThreadPool::markThreadExitedWithException(uint32_t generateId)
 {
-    if(!checkState())
+    if(!isRunning())
     {
         return;
     }
     std::unique_lock<std::mutex> lock(pool_mutex_);
-    if(!checkState())
+    if(!isRunning())
     {
         return;
     }
@@ -299,13 +324,13 @@ void ThreadPool::markThreadExitedWithException(uint32_t generateId)
 
 bool ThreadPool::markThreadExited(uint32_t generateId)
 {
-    if(!checkState() || !isClear())
+    if(!isRunning() || !isClear())
     {
         return false;
     }
     std::unique_lock<std::mutex> lock(pool_mutex_);
 
-    if(!checkState() || !isClear())
+    if(!isRunning() || !isClear())
     {
         return false;
     }
@@ -359,11 +384,17 @@ void ThreadPool::joinAndClearThreads()
 
 
 /*************WorkThread**************/
-uint32_t WorkThread::s_generateId = 0;
+std::atomic_uint32_t WorkThread::s_generate_id{1};
 
-WorkThread::WorkThread(ThreadPool *raw_pool)
-    :Thread(std::bind(&WorkThread::workFunc, this), std::to_string(s_generateId) + "_worker")
-    ,id_(s_generateId++)
+WorkThread::WorkThread(ThreadPool *raw_pool, std::string name)
+    : WorkThread(raw_pool, std::move(name), s_generate_id.fetch_add(1, std::memory_order_relaxed))
+{
+
+}
+
+WorkThread::WorkThread(ThreadPool* raw_pool, std::string name, uint32_t id)
+    :Thread(std::bind(&WorkThread::workFunc, this), std::move(name) + "-" + std::to_string(id))
+    ,id_(id)
     ,pool_func_(nullptr)
     ,raw_pool_(raw_pool)
 {

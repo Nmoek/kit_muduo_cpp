@@ -91,7 +91,7 @@ void Thread::join()
 {
     if(!thread_ || !thread_->joinable())
     {
-        THREAD_F_WARN("thread isn't joinable\n");
+        THREAD_F_INFO("thread isn't joinable\n");
         return;
     }
     thread_->join();

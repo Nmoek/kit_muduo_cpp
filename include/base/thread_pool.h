@@ -11,6 +11,7 @@
 
 #include "base/thread.h"
 
+#include <string>
 #include <vector>
 #include <queue>
 #include <memory>
@@ -27,7 +28,13 @@
 
 namespace kit_muduo {
 
-
+enum class ThreadPoolState
+{
+    kInit,
+    kStart,
+    kRunning,
+    kStop,
+};
 
 
 class ThreadPool;
@@ -38,7 +45,7 @@ public:
     using UPtr = std::unique_ptr<WorkThread>;
     using PoolFunc = std::function<void(uint32_t)>;
 
-    WorkThread(ThreadPool *raw_pool);
+    WorkThread(ThreadPool *raw_pool, std::string name);
 
     ~WorkThread() = default;
 
@@ -52,11 +59,18 @@ public:
 
 
 private:
+    /**
+     * @brief 委托构造 解决参数初始化竞争问题
+     * @param raw_pool 
+     * @param name 
+     * @param id 
+     */
+    WorkThread(ThreadPool* raw_pool, std::string name, uint32_t id);
     void workFunc();
 
 private:
     /// @brief 线程唯一ID
-    static uint32_t s_generateId;
+    static std::atomic_uint32_t s_generate_id;
 
 private:
     uint32_t id_;
@@ -100,12 +114,13 @@ public:
 
 public:
 
-    ThreadPool(int32_t initThreadCount = std::thread::hardware_concurrency());
+    explicit ThreadPool(int32_t initThreadCount = std::thread::hardware_concurrency(), const std::string name = "TPool");
 
     ~ThreadPool();
 
     void start();
 
+    /// 注意: 禁止工作线程回调中停止线程池
     void stop();
     /**
      * @brief 设置线程池启动模式
@@ -160,16 +175,16 @@ public:
      * @return SubmitResult<decltype(func(args...))> 
      */
     template<typename FuncType, typename... Args>
-    auto trySubmitTask(int32_t interval_ms, FuncType &&func, Args&&... args) -> SubmitResult<decltype(func(args...))>
+    auto trySubmitTask(int32_t interval_ms, FuncType &&func, Args&&... args) -> SubmitResult<std::invoke_result_t<FuncType, Args...>>
     {
-        using ReturnType = decltype(func(args...));
+        using ReturnType = std::invoke_result_t<FuncType, Args...>;
         auto task = std::make_shared<std::packaged_task<ReturnType()>>(
             std::bind(std::forward<FuncType>(func), std::forward<Args>(args)...)
         );
         auto result = SubmitResult<ReturnType>();
         result.status = SubmitStatus::kOK;
 
-        if(!is_running_)
+        if(!isRunning())
         {
             result.status = SubmitStatus::kStopping;
             return result;
@@ -180,7 +195,7 @@ public:
 
         auto waitCondFunc = [this](){
 
-            return cur_task_count_ < task_que_max_threshhold_ || !is_running_;
+            return cur_task_count_ < task_que_max_threshhold_ || !isRunning();
         };
 
         if(-1 == interval_ms)
@@ -205,7 +220,7 @@ public:
             }
         }
 
-        if(!is_running_)
+        if(!isRunning())
         {
             result.status = SubmitStatus::kStopping;
             return result;
@@ -235,7 +250,7 @@ public:
      * @return std::future<decltype(func(args...))>
      */
     template<class FuncType, class ...Args>
-    auto submitTask(FuncType &&func, Args&& ...args) -> SubmitResult<decltype(func(args...))>
+    auto submitTask(FuncType &&func, Args&& ...args) -> SubmitResult<std::invoke_result_t<FuncType, Args...>>
     {
         return trySubmitTask(-1, std::forward<FuncType>(func), std::forward<Args>(args)...);
     }
@@ -253,9 +268,9 @@ private:
     void threadRunFunc(uint32_t generateId);
 
 
-    inline bool checkState() const
+    inline bool isRunning() const
     {
-        return is_running_;
+        return state_.load() == ThreadPoolState::kRunning;
     }
 
     inline bool isCache() const
@@ -309,7 +324,9 @@ private:
     void joinAndClearThreads();
 
 private:
-
+    static std::atomic_uint32_t s_generate_id;
+private:
+    std::string name_;
     /// @brief 线程集合
     std::unordered_map<uint32_t, WorkThread::UPtr> pool_;
     /// @brief 已退出线程的id集合
@@ -325,7 +342,7 @@ private:
     /// @brief 线程数量上限
     int32_t thread_max_threshhold_;
     /// @brief 线程池运行状态
-    std::atomic_bool is_running_{false};
+    std::atomic<ThreadPoolState> state_{ThreadPoolState::kInit};
     /// @brief 线程最大空闲时间
     int32_t thread_max_idle_interval_{0};
 
