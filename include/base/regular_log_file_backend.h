@@ -10,6 +10,7 @@
 #define __KIT_REGULAR_LOG_FILE_BACKEND_H__
 
 #include "base/log_file_backend.h"
+#include "base/log_full_recompress.h"
 
 #include <future>
 #include <memory>
@@ -20,6 +21,8 @@ namespace kit_muduo {
 class RegularLogFileBackend final : public LogFileBackend
 {
 public:
+    explicit RegularLogFileBackend(FullRecompressScheduler& scheduler);
+    
     ~RegularLogFileBackend();
 
     LogBackendResult open(const std::string& normalize_path) override;
@@ -42,10 +45,11 @@ public:
     
     uint64_t lastSequence() const noexcept override;
     
+    bool recompress(std::string archive_path) noexcept override;
 private:
     LogBackendResult openInner(const std::string& normalize_path);
 
-    CompressionResult compressArchiveLogFile(const std::string& archive_log_path, const std::string& archive_zst_path);
+    bool submitFullRecompress(FullRecompressTask task) noexcept;
 
 private:
     /// @brief 常规文件fd句柄
@@ -55,14 +59,10 @@ private:
     /// @brief 当前打开文件时的大小
     uint64_t open_size_{0};
 
-    struct LogFileCompressResult
-    {
-        std::string archive_log_path;
-        std::string archive_compression_path;
-        std::future<CompressionResult> compress_task_f;
-        std::atomic_bool compress_completed{false};
-    };
-    std::shared_ptr<LogFileCompressResult> compress_result_{nullptr};
+    /// @brief 全量压缩调度器
+    FullRecompressScheduler& scheduler_;
+    /// @brief 是否压缩退化(压缩失败保留归档日志)
+    bool compression_degraded_{false};
 };
 
 

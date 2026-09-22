@@ -38,6 +38,7 @@ set(SQLITE3_DEF
 # MUDUO_TEST=ON 构建全部 muduo 测试；MUDUO_TEST.HTTP_MESSAGE=ON 只构建对应子测试。
 option(MUDUO_TEST "build all muduo tests" OFF)
 option(MUDUO_TEST.TIME_STAMP "build test_time_stamp" OFF)
+option(MUDUO_TEST.DEFER "build test_defer" OFF)
 option(MUDUO_TEST.INET_ADDRESS "build test_inet_address" OFF)
 option(MUDUO_TEST.THREAD "build test_thread" OFF)
 option(MUDUO_TEST.EVENT_LOOP_THREAD "build test_event_loop_thread" OFF)
@@ -46,6 +47,7 @@ option(MUDUO_TEST.SOCKET "build test_socket" OFF)
 option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
 option(MUDUO_TEST.LOG "build test_log" OFF)
+option(MUDUO_TEST.LOG_FULL_RECOMPRESS "build test_log_full_recompress" OFF)
 option(MUDUO_TEST.CONFIG "build test_config" OFF)
 option(MUDUO_TEST.COMPRESSION "build test_compression" OFF)
 
@@ -210,6 +212,9 @@ set(BASE_SRC
     src/base/log_file_backend.cpp
     src/base/regular_log_file_backend.cpp
     src/base/log_async.cpp
+    src/base/log_full_recompress.cpp
+    src/base/log_mmap_batch.cpp
+    src/base/log_compress_coordinator.cpp
 
     src/base/util.cpp
     src/base/time_stamp.cpp
@@ -516,6 +521,13 @@ endfunction()
 # time_stamp  时间戳测试 test_time_stamp
 add_kit_test(MUDUO_TEST MUDUO_TEST.TIME_STAMP test_time_stamp tests/test_time_stamp.cpp)
 
+# defer 仅依赖头文件和 GTest，避免构建无关的网络及业务库。
+if(MUDUO_TEST OR MUDUO_TEST.DEFER)
+    add_executable(test_defer tests/test_defer.cpp include/base/defer.h)
+    target_link_libraries(test_defer PRIVATE GTest::gtest)
+    add_test(NAME TEST_DEFER COMMAND test_defer)
+endif()
+
 # inet_address 网络地址测试 test_inet_address
 add_kit_test(MUDUO_TEST MUDUO_TEST.INET_ADDRESS test_inet_address tests/test_inet_address.cpp)
 
@@ -541,6 +553,10 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)
 
 # Log测试 test_log
 add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
+
+# 普通日志轮转与全量压缩链路测试
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG_FULL_RECOMPRESS
+    test_log_full_recompress tests/test_log_full_recompress.cpp)
 
 # Config测试 test_config
 add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config

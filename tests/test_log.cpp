@@ -21,6 +21,7 @@
 #include <memory>
 #include <optional>
 #include <pthread.h>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -31,6 +32,46 @@
 using namespace kit_muduo;
 
 namespace {
+
+class TestLogCompressRuntime
+{
+public:
+    TestLogCompressRuntime()
+        : coordinator_(
+            nullptr,
+            std::make_unique<FullRecompressWorker>(
+                std::shared_ptr<CompressionCodec>(
+                    CompressionCodec::Create())))
+    {
+        coordinator_.start();
+    }
+
+    ~TestLogCompressRuntime()
+    {
+        coordinator_.stopFullAccepting();
+        (void)coordinator_.drainFull(5000);
+        coordinator_.wait();
+    }
+
+    LogCompressCoordinator& coordinator() noexcept
+    {
+        return coordinator_;
+    }
+
+private:
+    LogCompressCoordinator coordinator_;
+};
+
+LogCompressCoordinator& GetTestLogCompressCoordinator()
+{
+    static TestLogCompressRuntime runtime;
+    return runtime.coordinator();
+}
+
+bool DrainTestLogCompression(uint64_t timeout_ms = 5000)
+{
+    return GetTestLogCompressCoordinator().drainFull(timeout_ms);
+}
 
 class TempLogFile
 {
@@ -305,7 +346,8 @@ TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
     LogFileSinkRegister registry;
 
     {
-        FileAppender appender(registry.acquire(file.path()));
+        FileAppender appender(registry.acquire(
+            file.path(), GetTestLogCompressCoordinator()));
         appender.setFormatter("%m");
 
         AppendAttr(appender, MakeLogAttr("first"));
@@ -332,7 +374,8 @@ TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
     registry.setConfig(config);
 
     {
-        FileAppender appender(registry.acquire(file.path()));
+        FileAppender appender(registry.acquire(
+            file.path(), GetTestLogCompressCoordinator()));
         appender.setFormatter("%m");
 
         AppendAttr(appender, MakeLogAttr("abc"));
@@ -363,7 +406,8 @@ TEST(TestLog, FileAppenderZeroWriteMaxSizeFlushesEveryWrite)
     config.flush_threshold = 0;
     registry.setConfig(config);
 
-    FileAppender appender(registry.acquire(file.path()));
+    FileAppender appender(registry.acquire(
+        file.path(), GetTestLogCompressCoordinator()));
     appender.setFormatter("%m");
 
     AppendAttr(appender, MakeLogAttr("a"));
@@ -386,9 +430,12 @@ TEST(TestLog, FileSinkRegisterSharesOnlyTheSamePath)
     TempLogFile file_b("registry_same_b");
     LogFileSinkRegister registry;
 
-    auto first = registry.acquire(file_a.path());
-    auto second = registry.acquire(file_a.path());
-    auto other = registry.acquire(file_b.path());
+    auto first = registry.acquire(
+        file_a.path(), GetTestLogCompressCoordinator());
+    auto second = registry.acquire(
+        file_a.path(), GetTestLogCompressCoordinator());
+    auto other = registry.acquire(
+        file_b.path(), GetTestLogCompressCoordinator());
 
     EXPECT_EQ(first, second);
     EXPECT_NE(first, other);
@@ -417,11 +464,15 @@ TEST(TestLog, FileSinkRegisterNormalizesEquivalentPaths)
         std::filesystem::current_path());
 
     LogFileSinkRegister registry;
-    auto canonical_sink = registry.acquire(target.string());
+    auto canonical_sink = registry.acquire(
+        target.string(), GetTestLogCompressCoordinator());
 
-    EXPECT_EQ(registry.acquire(dotted.string()), canonical_sink);
-    EXPECT_EQ(registry.acquire(parent.string()), canonical_sink);
-    EXPECT_EQ(registry.acquire(relative.string()), canonical_sink);
+    EXPECT_EQ(registry.acquire(
+        dotted.string(), GetTestLogCompressCoordinator()), canonical_sink);
+    EXPECT_EQ(registry.acquire(
+        parent.string(), GetTestLogCompressCoordinator()), canonical_sink);
+    EXPECT_EQ(registry.acquire(
+        relative.string(), GetTestLogCompressCoordinator()), canonical_sink);
 }
 
 /*
@@ -438,7 +489,8 @@ TEST(TestLog, FileSinkRegisterRecreatesExpiredSinkAndKeepsAppending)
     std::weak_ptr<LogFileSink> previous;
 
     {
-        auto sink = registry.acquire(file.path());
+        auto sink = registry.acquire(
+            file.path(), GetTestLogCompressCoordinator());
         previous = sink;
         ASSERT_TRUE(sink->append(
             "first", LogLevel::INFO).ok());
@@ -447,7 +499,8 @@ TEST(TestLog, FileSinkRegisterRecreatesExpiredSinkAndKeepsAppending)
 
     EXPECT_TRUE(previous.expired());
 
-    auto replacement = registry.acquire(file.path());
+    auto replacement = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     ASSERT_TRUE(replacement->append(
         "second", LogLevel::INFO).ok());
     ASSERT_TRUE(replacement->flush().ok());
@@ -466,7 +519,8 @@ TEST(TestLog, SharedFileSinkSurvivesOneAppenderDestruction)
 {
     TempLogFile file("shared_appender_lifetime");
     LogFileSinkRegister registry;
-    auto sink = registry.acquire(file.path());
+    auto sink = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     auto first = std::make_unique<FileAppender>(sink);
     FileAppender second(sink);
     first->setFormatter("%m%n");
@@ -494,13 +548,15 @@ TEST(TestLog, SharedFileSinkPreservesConcurrentRecordBoundaries)
 
     TempLogFile file("shared_concurrent");
     LogFileSinkRegister registry;
-    auto sink = registry.acquire(file.path());
+    auto sink = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     std::vector<std::thread> threads;
 
     for(int thread_id = 0; thread_id < kThreads; ++thread_id)
     {
         threads.emplace_back([&registry, &file, thread_id] {
-            FileAppender appender(registry.acquire(file.path()));
+            FileAppender appender(registry.acquire(
+                file.path(), GetTestLogCompressCoordinator()));
             appender.setFormatter("%m%n");
 
             for(int sequence = 0;
@@ -562,7 +618,8 @@ TEST(TestLog, FileSinkRestoresSizeAndAppendsAcrossReopen)
     }
 
     LogFileSinkRegister registry;
-    auto sink = registry.acquire(file.path());
+    auto sink = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     ASSERT_EQ(sink->currentFileSize(), 4U);
 
     ASSERT_TRUE(sink->append(
@@ -592,8 +649,10 @@ TEST(TestLog, FileSinkRegisterRejectsInvalidFilePaths)
     TempLogDirectory directory("invalid_path");
     LogFileSinkRegister registry;
 
-    EXPECT_THROW(registry.acquire(""), std::runtime_error);
-    EXPECT_EQ(registry.acquire(directory.path().string()), nullptr);
+    EXPECT_THROW(registry.acquire(
+        "", GetTestLogCompressCoordinator()), std::runtime_error);
+    EXPECT_EQ(registry.acquire(
+        directory.path().string(), GetTestLogCompressCoordinator()), nullptr);
 }
 
 /*
@@ -1504,7 +1563,8 @@ TEST(TestLog, AppenderNormalizesAndTruncatesFinalFormattedRecord)
 {
     TempLogFile file("record_limit");
     LogFileSinkRegister registry;
-    auto sink = registry.acquire(file.path());
+    auto sink = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     ASSERT_NE(sink, nullptr);
 
     FileAppender appender(sink);
@@ -1525,7 +1585,8 @@ TEST(TestLog, AppenderEscapesControlsAndPreservesUtf8)
 {
     TempLogFile file("control_utf8");
     LogFileSinkRegister registry;
-    auto sink = registry.acquire(file.path());
+    auto sink = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     ASSERT_NE(sink, nullptr);
 
     FileAppender appender(sink);
@@ -1557,7 +1618,8 @@ TEST(TestLog, SinkFlushesOnLevelAndSupportsDurableFlush)
     config.flush_interval_ms = 30000;
     registry.setConfig(config);
 
-    auto sink = registry.acquire(file.path());
+    auto sink = registry.acquire(
+        file.path(), GetTestLogCompressCoordinator());
     ASSERT_NE(sink, nullptr);
 
     auto info = sink->append("info", LogLevel::INFO);
@@ -1578,10 +1640,12 @@ TEST(TestLog, SinkFlushesOnLevelAndSupportsDurableFlush)
 
 /*
 测试思路：active 达到阈值时先保持不动，下一条记录使预计大小越界后先轮转再写；
-连续轮转后归档数量必须受配置上限约束。
+压缩异步完成期间允许物理归档短暂超过配置数量，后续再次轮转时重新扫描并收敛。
 
 路径图：active(10B) -> append(1B) -> archive#0 + active(1B) -> repeated rotate。
-示例：首次归档内容是 `1234567890`，active 内容是 `x`，最终归档不超过 2 个。
+示例：首次归档内容是 `1234567890`，active 内容是 `x`，归档名符合
+`net_NNN_YYYYMMDD-HHMMSS-mmm.log.zst`；再次轮转并排空压缩任务后，
+归档文件数量收敛到不超过 2 个。
 */
 TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
 {
@@ -1595,21 +1659,35 @@ TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
     config.flush_interval_ms = 30000;
     registry.setConfig(config);
 
-    auto sink = registry.acquire(active.string());
+    auto sink = registry.acquire(
+        active.string(), GetTestLogCompressCoordinator());
     ASSERT_NE(sink, nullptr);
     ASSERT_TRUE(sink->append("1234567890", LogLevel::INFO).ok());
     EXPECT_EQ(ReadFile(active.string()), "1234567890");
 
     ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
     EXPECT_EQ(ReadFile(active.string()), "x");
+    ASSERT_TRUE(DrainTestLogCompression());
 
     size_t archive_count = 0;
+    const std::regex archive_pattern{
+        R"(^net_[0-9]{3,}_[0-9]{8}-[0-9]{6}-[0-9]{3}\.log(?:\.zst)?$)"};
     for(const auto& entry : std::filesystem::directory_iterator(directory.path()))
     {
         if(entry.path().filename().string().find("net_") == 0)
         {
             ++archive_count;
-            EXPECT_EQ(ReadFile(entry.path().string()), "1234567890");
+            EXPECT_TRUE(std::regex_match(
+                entry.path().filename().string(), archive_pattern));
+            if(entry.path().extension() == ".log")
+            {
+                EXPECT_EQ(ReadFile(entry.path().string()), "1234567890");
+            }
+            else
+            {
+                EXPECT_EQ(entry.path().extension(), ".zst");
+                EXPECT_GT(std::filesystem::file_size(entry.path()), 0U);
+            }
         }
     }
     EXPECT_EQ(archive_count, 1U);
@@ -1618,6 +1696,13 @@ TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
     {
         ASSERT_TRUE(sink->append("1234567890", LogLevel::INFO).ok());
     }
+
+    // 轮转和异步压缩并行时，物理文件数量允许暂时超过软上限。
+    ASSERT_TRUE(DrainTestLogCompression());
+
+    // 再发生一次轮转，清理逻辑会基于最新扫描结果收敛历史归档。
+    ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
+    ASSERT_TRUE(DrainTestLogCompression());
 
     archive_count = 0;
     for(const auto& entry : std::filesystem::directory_iterator(directory.path()))
@@ -1654,7 +1739,8 @@ TEST(TestLog, SinkDoesNotRotateOversizedActiveFileDuringOpen)
     config.flush_interval_ms = 30000;
     registry.setConfig(config);
 
-    auto sink = registry.acquire(active.string());
+    auto sink = registry.acquire(
+        active.string(), GetTestLogCompressCoordinator());
     ASSERT_NE(sink, nullptr);
     EXPECT_EQ(sink->currentFileSize(), 11U);
     EXPECT_EQ(ReadFile(active.string()), "01234567890");

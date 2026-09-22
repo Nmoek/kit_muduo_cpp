@@ -9,8 +9,10 @@
 #ifndef __KIT_LOG_FILE_BACKEND_H__
 #define __KIT_LOG_FILE_BACKEND_H__
 
-#include "base/compression.h"
+#include "base/log_compress_coordinator.h"
+
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace  kit_muduo {
@@ -68,7 +70,6 @@ struct LogFileRotateRequest
 class LogFileBackend
 {
 public:
-    LogFileBackend();
     virtual ~LogFileBackend() = default;
 
     /**
@@ -105,6 +106,7 @@ public:
 
     virtual uint64_t lastSequence() const noexcept = 0;
 
+    virtual bool recompress(std::string archive_path) noexcept = 0;
 
     /**
      * @brief 检查路径并创建不存在的路径
@@ -115,12 +117,11 @@ public:
     bool chechkAndCreateLogPath(const std::string &normalize_path);
 
 public:
-    static std::unique_ptr<LogFileBackend> NewDefaultBackend();
+    static std::unique_ptr<LogFileBackend> NewDefaultBackend(LogCompressCoordinator& compress_coordinator);
 
 protected:
     uint64_t generation_{0};
     uint64_t last_sequence_{0};
-    std::shared_ptr<CompressionCodec> compress_codec_;
 };
 
 }

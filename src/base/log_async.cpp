@@ -116,7 +116,11 @@ LogAsyncDispatcher::LogAsyncDispatcher(LogAsyncConfig async_config)
 
 void LogAsyncDispatcher::start() 
 {
-    accepting_.store(true, std::memory_order_release);
+    bool expected = false;
+    if(!accepting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    {
+        return;
+    }
     worker_.start();
 }
 

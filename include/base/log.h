@@ -22,6 +22,7 @@
 #include <string_view>
 
 #include "base/log_async.h"
+#include "base/log_compress_coordinator.h"
 #include "base/log_config.h"
 #include "base/log_file_sink.h"
 #include "base/log_level.h"
@@ -436,6 +437,9 @@ private:
     LogFileSinkRegister file_register_;
     /// @brief 日志异步分发器
     std::unique_ptr<LogAsyncDispatcher> async_dispatcher_{nullptr};
+    /// @brief 日志压缩协调器
+    std::unique_ptr<LogCompressCoordinator> compress_coordinator_{nullptr};
+
 
     /// @brief 退出使用 活跃日志器监控锁
     std::mutex lifecycle_mtx_;

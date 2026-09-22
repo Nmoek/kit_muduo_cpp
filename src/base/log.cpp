@@ -10,11 +10,14 @@
 #include "base/log.h"
 #include "base/log_appender.h"
 #include "base/log_async.h"
+#include "base/log_compress_coordinator.h"
 #include "base/log_config.h"
+#include "base/log_file_backend.h"
 #include "base/log_file_sink.h"
 #include "base/log_formatter.h"
 #include "base/log_attr.h"
 #include "base/log_inner.h"
+#include "base/regular_log_file_backend.h"
 
 #include <atomic>
 #include <cassert>
@@ -51,6 +54,7 @@ LogFormatter::Ptr MakeFormatter(const std::string &pattern)
 }
 
 LogFileSink::Ptr FindAndMakeSink(LogFileSinkRegister& file_register, 
+    LogCompressCoordinator& compress_coordinator,
     LogFileSinkRegister::SinksMap &sinks,
     const std::string &normalize_path)
 {
@@ -65,7 +69,8 @@ LogFileSink::Ptr FindAndMakeSink(LogFileSinkRegister& file_register,
         }
     }
 
-    sink = std::make_shared<LogFileSink>(&file_register, normalize_path);
+    // HACK 默认采用 普通写文件 + 全量压缩 落盘策略
+    sink = std::make_shared<LogFileSink>(&file_register, normalize_path, LogFileBackend::NewDefaultBackend(compress_coordinator));
 
     auto open_result = sink->reopen();
     if(!open_result.ok())
@@ -82,6 +87,7 @@ LogFileSink::Ptr FindAndMakeSink(LogFileSinkRegister& file_register,
 
 // 注意 这里面不显式抛异常
 LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
+    LogCompressCoordinator& compress_coordinator,
     LogFileSinkRegister::SinksMap& sinks,
     const LogAppenderConfig &config, 
     const LogFormatter::Ptr &formatter, 
@@ -100,7 +106,7 @@ LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
     {
         const std::string normalize_path = NormalizeFilePath(config.file_path);
 
-        LogFileSink::Ptr sink = FindAndMakeSink(file_register, sinks, normalize_path);
+        LogFileSink::Ptr sink = FindAndMakeSink(file_register, compress_coordinator, sinks, normalize_path);
         if(!sink)
         {
             LOG_INNER_ERROR("system.log.loggers[%s].appenders[%ld].file_path= %s\n", logger_name.c_str(), appender_index, config.file_path.c_str());
@@ -384,9 +390,19 @@ LogManagerResult LogManager::initialize(const LogConfig& config)
     }
 
     try {
+        // 压缩器 zstd
+        std::shared_ptr<CompressionCodec> compress_codec = CompressionCodec::Create();
+
+        // TODO mmap batch调度器暂时不初始化
+        compress_coordinator_ = std::make_unique<LogCompressCoordinator>(
+            nullptr, 
+            std::make_unique<FullRecompressWorker>(compress_codec)
+        );
 
         applyConfig(config);
 
+        // 开启压缩协调器
+        compress_coordinator_->start();
         // 开启异步分发器
         async_dispatcher_->start();
 
@@ -470,7 +486,7 @@ void LogManager::applyConfig(const LogConfig &config)
 
 LogFileSink::Ptr LogManager::acquireFileSink(const std::string &file_path)
 {
-    return file_register_.acquire(file_path);
+    return file_register_.acquire(file_path, *compress_coordinator_);
 }
 
 LogManagerResult LogManager::submitForAsync(LogAttr::Ptr attr)
@@ -671,10 +687,14 @@ LogManagerResult LogManager::shutdown()
     });
     }
 #endif
+    // TODO 写线程队列关闭超时继续往下执行有风险
     if(!async_dispatcher_->shutdown())
     {
         LOG_INNER_WARN("log async dispathcher drain timeout! queue capacity: %ld/%ld\n", async_dispatcher_->queueSize(), async_dispatcher_->capacity());
     }
+    compress_coordinator_->stopFullAccepting();
+    compress_coordinator_->stopMmapAccepting();
+    compress_coordinator_->wait();
 
     // 从这里开始 所有日志不再进入系统
     const auto flush_result = file_register_.flushAll();
@@ -755,6 +775,7 @@ PreparedLogConfig LogManager::prepareLogConfig(const LogConfig& config)
         for(const auto& appender_config : logger_config.appenders)
         {
             auto appender = MakeAppender(file_register_,
+                *compress_coordinator_,
                 prepared.sinks,
                 appender_config,
                 formatter,

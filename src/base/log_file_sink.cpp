@@ -7,6 +7,7 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 
+#include "base/log_compress_coordinator.h"
 #include "base/log_config.h"
 #include "base/log_file_sink.h"
 #include "base/log_inner.h"
@@ -29,6 +30,7 @@
 #include <regex>
 #include <stdexcept>
 #include <system_error>
+#include <unistd.h>
 
 namespace kit_muduo {
 
@@ -51,7 +53,7 @@ std::string MakeArchiveData(const std::string &formatter)
     // 手动将0时区往后调8h 给日志打印使用
     const auto fixed_utc = utc + std::chrono::hours{8};
     std::ostringstream ss;
-    ss << date::format(formatter, fixed_utc);
+    ss << date::format(formatter, fixed_utc) << "-" << std::setw(3) << std::setfill('0') << real_time_ms % 1000;
     return ss.str();
 }
 
@@ -82,10 +84,10 @@ std::string EscapeRegexLiteral(std::string_view value)
 
 } // namespace
 
-LogFileSink::LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path)
+LogFileSink::LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path, std::unique_ptr<LogFileBackend> backend)
     :reg_(reg)
     ,normalize_path_(normalize_path)
-    ,backend_((LogFileBackend::NewDefaultBackend()))
+    ,backend_(std::move(backend))
 {
     assert(reg_);
 }
@@ -392,6 +394,9 @@ bool LogFileSink::rotateUnlockedV2()
 bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
 {
     // 扫描路径中归档文件
+    // [重要] 每次都扫描的目的
+    // 1. 确认当前轮转编号最大值
+    // 2. 防止外部用户操作 删除/修改归档文件
     std::vector<LogFileArchive> archives;
     if(!scanArchives(archives))
     {
@@ -416,22 +421,30 @@ bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
         archive_log,
         file_config.compress_rotated
     };
+    
+    const auto old_generation = backend_->generation();
 
-    // TODO 后续补充为配置项
-    // 30s 轮转压缩时间 
-    static constexpr auto kRotateTimeoutMs = 30*1000;
+    const auto result = backend_->rotate(request);
 
-    const auto result = backend_->rotate(request, kRotateTimeoutMs);
-    if (!result.ok())
+    const bool archive_committed = backend_->generation() != old_generation;
+    if(archive_committed)
+    {
+        accepted_generation_bytes_.store(0, std::memory_order_release);
+        bytes_since_flush_ = 0;
+    }
+
+    if(!result.ok())
     { 
         rotateFailureHandleUnlocked(result);
         return false;
     }
-    accepted_generation_bytes_ = 0;
+    // 清理超出上限的归档文件
+    cleanupOldArchivesUnlocked(file_config, archives);
 
-    if(!cleanupOldArchivesUnlocked(file_config, archives))
+    // 压缩补偿
+    if(file_config.compress_rotated)
     {
-        LOG_INNER_WARN("log file cleanup old archives failed! %lu: %s \n", backend_->generation(), normalize_path_.c_str());
+        compensateOldArchivesUnlocked(archives);
     }
 
     return true;
@@ -453,7 +466,7 @@ bool LogFileSink::scanArchives(std::vector<LogFileArchive> &archives)
         net_000_20260101-003000.log
         '.' '*' 注意正则转义问题
     */
-    std::string patther_format{"^" + escaped_prefix + "_([0-9]{3,})_([0-9]{8}-[0-9]{6})\\.log(\\..*)?$"};
+    std::string patther_format{"^" + escaped_prefix + "_([0-9]{3,})_([0-9]{8}-[0-9]{6}-[0-9]{3})\\.log(?:\\.(zst))?$"}; //  TODO 压缩后缀硬编码
 
     const std::regex archive_core_pattern{patther_format};
 
@@ -478,8 +491,6 @@ bool LogFileSink::scanArchives(std::vector<LogFileArchive> &archives)
         const auto path = it->path();
         const auto filename = path.filename().string();
 
-        LOG_INNER_DEBUG("log directory scan path: %s \n", path.c_str());
-
         std::smatch reg_field;
         if(!std::regex_match(filename, reg_field, archive_core_pattern)
             || !it->is_regular_file(error) || error)
@@ -499,28 +510,36 @@ bool LogFileSink::scanArchives(std::vector<LogFileArchive> &archives)
         }
         a.archive_path = std::move(path);
         a.date_str = std::move(date_str);
+        a.is_compress_compensate = reg_field[3].str().empty();  // 压缩后缀为空代表要补偿
         archives.emplace_back(std::move(a));
     }
 
     if(archives.empty())
     {
-        LOG_INNER_DEBUG("log rotate scan archives empty\n");
+        LOG_INNER_INFO("log rotate scan archives empty\n");
         return true;
     }
 
+    // 归档名 排序按照日期时间字符串，相同时再按序号
     std::sort(archives.begin(), archives.end(), [](const LogFileArchive &a, const LogFileArchive &b){
-        if(a.rotate_seq == b.rotate_seq)
+        if(a.date_str == b.date_str)
         {
-            return a.archive_path.string() > b.archive_path.string();
+            // 编号相同时 优先删无压缩后缀的文件
+            if(a.rotate_seq == b.rotate_seq)
+            {
+                return a.archive_path.string().size() > b.archive_path.string().size();
+            }
+            return a.rotate_seq > b.rotate_seq;
         }
-        return a.rotate_seq > b.rotate_seq;
+
+        return a.date_str > b.date_str;
     });
 
-    next_rotate_seq_ = archives.front().rotate_seq + 1;
+    next_rotate_seq_ = archives.empty() ? 0 : archives.front().rotate_seq + 1;
 
     for(auto &a : archives)
     {
-        LOG_INNER_DEBUG("log archives info: %s \n", a.archive_path.string().c_str());
+        LOG_INNER_DEBUG("log archives info: %s compress[%d]\n", a.archive_path.string().c_str(), static_cast<int>(a.is_compress_compensate));
     }
 
     return true;
@@ -531,28 +550,34 @@ bool LogFileSink::newArchivePathUnlocked(std::string &new_archive_path)
     const std::string &date_str = MakeArchiveData("%Y%m%d-%H%M%S");
 
     const std::filesystem::path active{normalize_path_};
-    const auto directory = active.parent_path().empty() ? std::filesystem::path{"."}
-        : active.parent_path();
+    const auto directory = active.parent_path().empty() ? std::filesystem::path{"."} : active.parent_path();
 
     // 获取文件名 不含拓展
     const std::string& file_name = active.stem().string();
 
     char tmp[64] = {0};
     std::filesystem::path target_path;
-    std::error_code error;
+    std::error_code error1, error2;
     for(;;)
     {
+        next_rotate_seq_ %= kRotateReqMax;
+
         memset(tmp, 0, sizeof(tmp));
         snprintf(tmp, sizeof(tmp)-1, "%s_%03d_%s.log", file_name.c_str(), next_rotate_seq_, date_str.c_str());
 
         target_path = directory / tmp;
-        bool exists = std::filesystem::exists(target_path, error);
-        if(error)
+        bool exists1 = std::filesystem::exists(target_path, error1);
+
+        std::string compress_tmp{tmp};
+        compress_tmp += ".zst"; //TODO 压缩后缀硬编码
+        std::filesystem::path compress_path = directory / compress_tmp;
+        bool exists2 = std::filesystem::exists(compress_path, error2);
+        if(error1 || error2)
         {
-            LOG_INNER_ERROR("archive path inspect failed[%s]: ", target_path.string().c_str(), error.message().c_str());
+            LOG_INNER_ERROR("archive path inspect failed[%s]: %s | %s\n", target_path.string().c_str(), error1.message().c_str(), error2.message().c_str());
             return false;
         }
-        if(exists)
+        if(exists1 || exists2)
         {
             // 存在重名可能性
             ++next_rotate_seq_;
@@ -566,14 +591,14 @@ bool LogFileSink::newArchivePathUnlocked(std::string &new_archive_path)
     return true;
 }
 
-bool LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig& file_config, 
+void LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig& file_config, 
     std::vector<LogFileArchive> &archives)
 {
-
     std::error_code error;
-    // 注意 这里减1是有一个新生成的归档文件没有在当前列表中
+    // 注意 这里减1是当前新生成的归档文件没有扫描加入到当前列表中
     while(archives.size() + 1 > file_config.rotate_max_backup_files)
     {
+        // TODO 这里无法和FullRecompree压缩记录中的信息联动
         const auto &archive_path = archives.back().archive_path;
         bool ok = std::filesystem::remove(archive_path , error);
         if(error || !ok)
@@ -583,10 +608,20 @@ bool LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig& file_config,
         }
         archives.pop_back();
     }
-
-
-    return true;
 }
+
+void LogFileSink::compensateOldArchivesUnlocked(std::vector<LogFileArchive> &archives)
+{
+    for(auto &a : archives)
+    {
+        const std::string& archive_path = a.archive_path.string();
+        if(a.is_compress_compensate && !backend_->recompress(archive_path))
+        {
+            LOG_INNER_WARN("log archives recompress submit error[%s]\n", archive_path.c_str());
+        }
+    }
+}
+
 
 void LogFileSink::rotateFailureHandleUnlocked(const LogBackendResult& result)
 {
@@ -617,7 +652,7 @@ LogFileSinkRegister::LogFileSinkRegister()
 }
 
 
-LogFileSink::Ptr LogFileSinkRegister::acquire(const std::string &file_path)
+LogFileSink::Ptr LogFileSinkRegister::acquire(const std::string &file_path, LogCompressCoordinator& compress_coordinator)
 {
     const std::string normalize_path = NormalizeFilePath(file_path);
 
@@ -633,7 +668,7 @@ LogFileSink::Ptr LogFileSinkRegister::acquire(const std::string &file_path)
 
     // BUG 如果变为统一加载无误后再统一变更提交，这里发现不存在就创建的逻辑就完全无意义
 
-    auto sink = create(normalize_path);
+    auto sink = create(normalize_path, compress_coordinator);
     if(!sink)
     {
         return nullptr;
@@ -815,9 +850,9 @@ void LogFileSinkRegister::closeAll() noexcept
     }
 }
 
-LogFileSink::Ptr LogFileSinkRegister::create(const std::string &normalize_path)
+LogFileSink::Ptr LogFileSinkRegister::create(const std::string &normalize_path, LogCompressCoordinator& compress_coordinator)
 {
-    auto sink = std::make_shared<LogFileSink>(this, normalize_path);
+    auto sink = std::make_shared<LogFileSink>(this, normalize_path, LogFileBackend::NewDefaultBackend(compress_coordinator));
 
     auto open_result = sink->reopen();
     if(!open_result.ok())

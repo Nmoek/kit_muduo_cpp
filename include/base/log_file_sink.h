@@ -136,11 +136,13 @@ struct LogFileSinkHealth
 struct LogFileArchive
 {
     /// @brief 归档所属编号 -1代表不存在归档
-    int32_t rotate_seq{-1};
+    int32_t rotate_seq{0};
     /// @brief 归档名的日期(防止编号异常重复 退化为比较日期)
     std::string date_str;
     /// @brief 归档路径对象
     std::filesystem::path archive_path;
+    /// @brief 是否进行压缩补偿
+    bool is_compress_compensate{false};
 };
 
 class LogFileSink
@@ -148,7 +150,7 @@ class LogFileSink
 public:
     using Ptr = std::shared_ptr<LogFileSink>;
 
-    LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path);
+    LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path, std::unique_ptr<LogFileBackend> backend);
     ~LogFileSink() = default;
 
    LogFileSinkResult append(const std::string& log_data,
@@ -192,12 +194,19 @@ private:
 
     bool newArchivePathUnlocked(std::string &new_archive_path);
 
-    bool cleanupOldArchivesUnlocked(const LogFileConfig&file_config, std::vector<LogFileArchive> &archives);
+    void cleanupOldArchivesUnlocked(const LogFileConfig&file_config, std::vector<LogFileArchive> &archives);
+
+    /**
+     * @brief 对归档文件进行压缩补偿 需放在清理归档动作之后
+     * @param archives 
+     */
+    void compensateOldArchivesUnlocked(std::vector<LogFileArchive> &archives);
 
     void rotateFailureHandleUnlocked(const LogBackendResult& result);
 
 private:
-
+    static constexpr int32_t kRotateReqMax = 1000;
+    
     /** @brief 保留文件注册器的指针
         重要作用: 减少配置副本引起的不一致问题, 方便访问注册器
     */
@@ -234,7 +243,7 @@ public:
     ~LogFileSinkRegister() = default;
 
 
-    LogFileSink::Ptr acquire(const std::string &file_path);
+    LogFileSink::Ptr acquire(const std::string &file_path, LogCompressCoordinator& compress_coordinator);
 
     // TODO 后续这个接口涉及热更新
     void setConfig(LogFileConfig config);
@@ -265,7 +274,7 @@ public:
 private:
     friend class LogManager;
 
-    LogFileSink::Ptr create(const std::string &normalize_path);
+    LogFileSink::Ptr create(const std::string &normalize_path, LogCompressCoordinator& compress_coordinator);
 
     LogFileSink::Ptr find(const std::string &file_path);
 

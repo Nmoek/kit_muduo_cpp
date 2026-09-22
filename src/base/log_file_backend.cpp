@@ -15,14 +15,6 @@
 
 namespace kit_muduo {
 
-LogFileBackend::LogFileBackend()
-    :compress_codec_(std::make_shared<ZstdCompressionCodec>(ZstdCodecOptions{
-        10,
-        true,
-    }))
-{
-
-}
 
 
 bool LogFileBackend::chechkAndCreateLogPath(const std::string &normalize_path)
@@ -67,10 +59,10 @@ bool LogFileBackend::chechkAndCreateLogPath(const std::string &normalize_path)
 }
 
 
-std::unique_ptr<LogFileBackend> LogFileBackend::NewDefaultBackend()
+std::unique_ptr<LogFileBackend> LogFileBackend::NewDefaultBackend(LogCompressCoordinator& compress_coordinator)
 {
     // HACK 默认使用普通写文件 持久化
-    return std::make_unique<RegularLogFileBackend>();
+    return std::make_unique<RegularLogFileBackend>(compress_coordinator.fullScheduler());
 }
 
 
