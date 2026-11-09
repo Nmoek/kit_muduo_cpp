@@ -220,7 +220,7 @@ void LogAppender::append(LogAttr::Ptr attr)
         return;
     }
 
-    append(formated_data, attr_level);
+    append(formated_data);
 }
 
 void LogAppender::setFormatter(LogFormatter::Ptr pfarmatter)
@@ -245,7 +245,7 @@ LogFormatter::Ptr LogAppender::getFormatter() const
 
 /*********ConsoleAppender***********/
 
-void ConsoleAppender::append(const std::string& log_data, LogLevel::Level level)
+void ConsoleAppender::append(const std::string& log_data)
 {
 
     // HACK 仅截断处理 不做转义 也不做完整边界探查
@@ -296,13 +296,13 @@ bool FileAppender::openForAppend(std::string* error_message)
 }
 
 
-void FileAppender::append(const std::string& log_data, LogLevel::Level level)
+void FileAppender::append(const std::string& log_data)
 {
     bool truncated = false;
     size_t original_bytes = 0;
     std::string normalize_log_data = NormalizeAndLimitRecord(log_data, max_record_bytes_, truncated);
 
-    auto result = file_sink_->append(normalize_log_data, level, truncated, original_bytes);
+    auto result = file_sink_->append(normalize_log_data, truncated, original_bytes);
     if(!result.ok())
     {
         // 使用 cerr通道补充打一次

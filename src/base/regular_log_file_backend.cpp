@@ -58,7 +58,7 @@ inline uint64_t WriteAll(int32_t fd, const char* data, uint64_t len)
 } // namespace
 
 RegularLogFileBackend::RegularLogFileBackend(FullRecompressScheduler& scheduler)
-    :scheduler_(scheduler)
+    :compress_scheduler_(scheduler)
 {
 
 }
@@ -116,21 +116,10 @@ LogBackendResult RegularLogFileBackend::flush() noexcept
 {
     if(!is_open_ || fd_ < 0)
     {
-        return LogBackendResult::Failure(LogBackendStatus::kFlushFailed, "log file not open");
-    }
-
-    // 直接 ::write 不需要刷新
-    return LogBackendResult::Ok();
-}
-
-LogBackendResult RegularLogFileBackend::durableFlush() noexcept
-{
-    if(!is_open_ || fd_ < 0)
-    {
         return LogBackendResult::Failure(LogBackendStatus::kSyncFailed, "log file not open");
     }
     
-    // 仅刷新写入数据 元数据不刷新
+    // 同步数据及读取数据所需的元数据。
     if(::fdatasync(fd_) < 0)
     {
         return LogBackendResult::Failure(LogBackendStatus::kSyncFailed, strerror(errno));
@@ -164,7 +153,7 @@ LogBackendResult RegularLogFileBackend::rotate(const LogFileRotateRequest& reque
         task.task_id = FullRecompressTask::NextTaskId();
         task.generation = request.generation;
         task.archive_log_path = request.archive_log_path;
-        task.archive_compression_path = request.archive_log_path + "." + scheduler_.compressSuffix();
+        task.archive_compression_path = request.archive_log_path + "." + compress_scheduler_.compressSuffix();
         if(!submitFullRecompress(std::move(task)))
         {
             LOG_INNER_ERROR("log full recompress submit error!\n");
@@ -202,8 +191,13 @@ bool RegularLogFileBackend::recompress(std::string archive_path) noexcept
     task.task_id = FullRecompressTask::NextTaskId();
     task.generation = 0;
     task.archive_log_path = std::move(archive_path);
-    task.archive_compression_path = task.archive_log_path + "." + scheduler_.compressSuffix();
+    task.archive_compression_path = task.archive_log_path + "." + compress_scheduler_.compressSuffix();
     return submitFullRecompress(std::move(task));
+}
+
+bool RegularLogFileBackend::archiveInUse(const std::string& path) const noexcept
+{
+    return compress_scheduler_.archiveInUse(path);
 }
 
 LogBackendResult RegularLogFileBackend::openInner(const std::string& normalize_path)
@@ -243,7 +237,7 @@ bool RegularLogFileBackend::submitFullRecompress(FullRecompressTask task) noexce
 {
     try {
 
-        if(!scheduler_.submit(std::move(task)))
+        if(!compress_scheduler_.submit(std::move(task)))
         {
             compression_degraded_ = true;
             return false;

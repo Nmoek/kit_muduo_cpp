@@ -183,10 +183,11 @@ void ValidateLogConfig(const LogConfig& config)
             "log file flush interval invalid (0, 30,000] ms");
     }
 
-    if(!LogLevel::IsValid(file.flush_on_level))
+    if(file.mmap_batch_bytes < kMinFlushThreshold
+        || file.mmap_batch_bytes > kMaxFlushThreshold)
     {
         throw ConfigError({},
-            "log file flush on level invalid");
+            "log file mmap batch bytes invalid [1 KiB, 10 MiB]");
     }
 
 

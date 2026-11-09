@@ -1144,3 +1144,89 @@ TEST(TestConfig, GlobalAppConfigReadRequiresInitialization)
 {
     EXPECT_THROW(GetAppConfigVars(), std::logic_error);
 }
+
+/*
+测试思路：4-1 只保留异步模式，旧开关/等级等待字段必须当未知字段拒绝，避免静默忽略配置。
+例：mode: sync、async.info_enqueue_timeout_ms: 1、async.warn_enqueue_timeout_ms: 1 均报错。
+*/
+TEST(TestConfig, LogConfigRejectsRemovedAsyncSwitches)
+{
+    using Codec = ConfigCodec<LogConfig, YamlPolicy>;
+    for (const char* yaml : {
+            "mode: sync\n",
+            "async:\n  info_enqueue_timeout_ms: 1\n",
+            "async:\n  warn_enqueue_timeout_ms: 1\n"})
+    {
+        SCOPED_TRACE(yaml);
+        EXPECT_THROW(Codec::Decode(YAML::Load(yaml)), ConfigError);
+    }
+}
+
+/*
+测试思路：记录数与字节数是独立预算，启动校验不能接受无效队列或小于最大记录的预算。
+例：capacity=1、max_bytes=max_record-1、stop_timeout=0 各自被拒绝，合法边界 2/最大记录可通过。
+*/
+TEST(TestConfig, LogAsyncBudgetsRejectInvalidValuesAndRoundTrip)
+{
+    const auto baseline = DefaultLogConfig();
+    for (int field = 0; field < 4; ++field)
+    {
+        auto config = baseline;
+        if (field == 0) config.async.queue_capacity = 0;
+        if (field == 1) config.async.queue_capacity = 1;
+        if (field == 2) config.async.max_queue_bytes = config.max_record_bytes - 1;
+        if (field == 3) config.async.stop_drain_timeout_ms = 0;
+        EXPECT_THROW(ValidateLogConfig(config), ConfigError);
+    }
+    auto valid = baseline;
+    valid.async.queue_capacity = 2;
+    valid.async.max_queue_bytes = valid.max_record_bytes;
+    ASSERT_NO_THROW(ValidateLogConfig(valid));
+    using Codec = ConfigCodec<LogConfig, YamlPolicy>;
+    const auto decoded = Codec::Decode(Codec::Encode(valid));
+    EXPECT_EQ(decoded.async.queue_capacity, 2U);
+    EXPECT_EQ(decoded.async.max_queue_bytes, valid.max_record_bytes);
+    EXPECT_EQ(decoded.async.stop_drain_timeout_ms, valid.async.stop_drain_timeout_ms);
+}
+
+/*
+测试思路：regular/mmap_buffered 应能显式选择，且解码后保留所选后端；不要求新增压缩等级配置。
+例：file.backend=mmap_buffered 应得到 kMmapBuffered；若报 unknown field 或退回默认值，接口仍未接通。
+*/
+TEST(TestConfig, LogConfigAcceptsPlannedBackend)
+{
+    using Codec = ConfigCodec<LogConfig, YamlPolicy>;
+    EXPECT_NO_THROW({
+        const auto config = Codec::Decode(YAML::Load("file:\n  backend: regular\n"));
+        EXPECT_EQ(config.file.backend, LogFileBackendType::kRegular);
+    });
+    EXPECT_NO_THROW({
+        const auto config = Codec::Decode(YAML::Load("file:\n  backend: mmap_buffered\n"));
+        EXPECT_EQ(config.file.backend, LogFileBackendType::kMmapBuffered);
+    });
+}
+
+
+// 测试思路：sink 落盘阈值与 mmap 提交阈值独立编解码；旧等级字段不再接受。
+// 例：flush=8KiB、batch=1KiB 往返保持不同数值；batch=0/超过10MiB 拒绝。
+TEST(LogFlushConfigTest, IndependentThresholdsAndRemovedLevelField)
+{
+    using namespace kit_muduo;
+    using Codec = ConfigCodec<LogConfig, ConfigYamlPolicy>;
+    auto config = DefaultLogConfig();
+    config.file.flush_threshold = 8192;
+    config.file.mmap_batch_bytes = 1024;
+    const auto encoded = Codec::Encode(config);
+    EXPECT_FALSE(encoded["file"]["flush_on_level"]);
+    const auto decoded = Codec::Decode(encoded);
+    EXPECT_EQ(decoded.file.flush_threshold, 8192U);
+    EXPECT_EQ(decoded.file.mmap_batch_bytes, 1024U);
+    EXPECT_NO_THROW(ValidateLogConfig(decoded));
+    config.file.mmap_batch_bytes = 0;
+    EXPECT_THROW(ValidateLogConfig(config), ConfigError);
+    config.file.mmap_batch_bytes = 10 * 1024 * 1024 + 1;
+    EXPECT_THROW(ValidateLogConfig(config), ConfigError);
+    auto old = YAML::Clone(encoded);
+    old["file"]["flush_on_level"] = "ERROR";
+    EXPECT_THROW(Codec::Decode(old), ConfigError);
+}

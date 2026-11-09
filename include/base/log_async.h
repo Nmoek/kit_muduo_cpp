@@ -10,22 +10,21 @@
 #define __KIT_LOG_ASYNC_H__
 
 #include "base/bounded_lock_free_queue.h"
-#include "base/sem.h"
 #include "base/log_level.h"
 #include "base/log_attr.h"
-#include "base/thread.h"
+#include "base/log_config.h"
 
 #include <atomic>
 #include <chrono>
 #include <mutex>
 #include <condition_variable>
 #include <memory>
+#include <thread>
 
 namespace kit_muduo {
 
 class LogAsyncDispatcher;
 class LogFileSinkRegister;
-class Thread;
 struct LogAsyncConfig;
 
 
@@ -60,29 +59,53 @@ struct LogAsyncHealthStats
     std::atomic_uint64_t writer_queue_high_watermark{0};
 };
 
+// 可共享的通知句柄；sink 只持有它，不捕获 worker 或裸 fd。
+class LogAsyncWakeup
+{
+public:
+    LogAsyncWakeup();
+    ~LogAsyncWakeup();
+    LogAsyncWakeup(const LogAsyncWakeup&) = delete;
+    LogAsyncWakeup& operator=(const LogAsyncWakeup&) = delete;
+    int fd() const noexcept { return fd_; }
+    void notify() const noexcept;
+private:
+    int fd_{-1};
+};
+
 /**
  * @brief 日志异步处理线程
  */
 class LogAsyncWorker
 {
 public:
-    LogAsyncWorker(LogAsyncDispatcher& dispatcher);
+    LogAsyncWorker(LogAsyncDispatcher& dispatcher, LogFileSinkRegister& sinks);
     ~LogAsyncWorker();
 
     void start();
     void stop() noexcept;
     bool drain(int64_t timeout_ms) noexcept;
+    void join();
+    void notify() const noexcept { if (wakeup_) wakeup_->notify(); }
 
 private:
+    /// @brief 异步单写线程一次唤醒允许处理的最大上限日志条数
+    static constexpr int32_t kLogAsyncHandleLimits = 256;
+
     void workLoop() noexcept;
     void handle(LogAttr::Ptr attr) noexcept;
+    void closeEvents() noexcept;
 
 private:
     LogAsyncDispatcher& dispatcher_;
-    // LogFileSinkRegister& file_sinks_;
-    Thread thread_;
+    LogFileSinkRegister& file_sinks_;
+    std::shared_ptr<LogAsyncWakeup> wakeup_;
+    int epoll_fd_{-1};
+    int timer_fd_{-1};
+    std::thread thread_;
+    bool started_{false}; // 生命周期操作由所属 dispatcher 的控制线程串行调用。
     std::atomic_bool stopping_{false};
-    std::atomic_bool drained_{false};
+    std::atomic_bool drained_{true}; // 尚未启动时没有待排空工作。
 
     std::mutex drain_mtx_;
     std::condition_variable drain_cv_;
@@ -92,17 +115,17 @@ private:
 class LogAsyncDispatcher 
 {
 public:
-    explicit LogAsyncDispatcher(size_t queue_capacity = 8192);
-    explicit LogAsyncDispatcher(LogAsyncConfig async_config);
 
+    explicit LogAsyncDispatcher(LogFileSinkRegister& sinks, LogAsyncConfig async_config = {});
+    ~LogAsyncDispatcher();
+
+    // 生命周期由控制线程串行调用；独立使用时须先收拢生产者再 shutdown。
     void start();
 
     bool shutdown();
 
     LogSubmitResult submit(LogAttr::Ptr attr) noexcept;
     bool tryPop(LogAttr::Ptr& attr) noexcept;
-    bool waitFor(int64_t timeout_ms);
-    void wait();
 
     size_t capacity() const noexcept { return queue_.capacity(); }
     /**
@@ -118,9 +141,14 @@ public:
 
     const std::shared_ptr<const LogAsyncConfig> config() const noexcept;
 
+    void join();
+
 private:
+    void stopAndWake() noexcept;
     inline bool tryReserveBytes(size_t bytes) noexcept;
-    inline void releaseBytes(size_t bytes) noexcept;
+    void releaseBytes(size_t bytes) noexcept;
+    void notifyCapacityAvailable() noexcept;
+    bool waitForCapacity(size_t bytes, std::chrono::steady_clock::time_point deadline);
 
     bool tryEnqueue(std::shared_ptr<LogAttr> attr) noexcept;
     LogSubmitResult drop(LogAttr::Ptr attr) noexcept;
@@ -130,7 +158,8 @@ private:
 
 private:
     friend class LogSubmissionGuard;
-    friend class LogAsyncWriter;
+    friend class LogAsyncWorker;
+    friend class LogAsyncDispatcherTestPeer;
 
     // TODO 后续再考虑是否暴露对外配置
     // 高等级等待时间是内部策略，不暴露为配置字段。
@@ -141,14 +170,15 @@ private:
     LogAsyncWorker worker_;
 
     std::atomic<bool> accepting_{false};
+    bool closed_{false}; // 受 mtx_ 保护；停止或启动失败后不可重启。
     std::atomic<uint64_t> queued_bytes_{0};
+    // 覆盖登记后的条件检查、休眠和醒来检查；与通知方通过 RMW 建立顺序。
+    std::atomic<size_t> waiting_producers_{0};
 
     std::shared_ptr<const LogAsyncConfig> async_config_;
 
-    /// @brief 控制队列空载/满载情况锁
+    /// @brief 生命周期及生产者等待协议锁；正常入队/出队不持有此锁。
     std::mutex mtx_;
-    /// @brief 任务队列不空条件变量
-    std::condition_variable not_empty_cv_;
     /// @brief 任务队列不满条件变量
     std::condition_variable not_full_cv_;
 

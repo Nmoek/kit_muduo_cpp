@@ -8,6 +8,7 @@
  */
 #include "base/log.h"
 #include "base/log_async.h"
+#include "log_test_support.h"
 
 #include <atomic>
 #include <chrono>
@@ -31,6 +32,55 @@
 
 using namespace kit_muduo;
 
+// 仅测试可访问等待协议边界；不启动 worker，手工模拟生产者预留的预算。
+// 真实 worker 的消费和停止行为继续由下方既有异步集成用例覆盖。
+namespace kit_muduo {
+class LogAsyncDispatcherTestPeer
+{
+public:
+    static void prepare(LogAsyncDispatcher& dispatcher, size_t reserved_bytes)
+    {
+        dispatcher.accepting_.store(true);
+        dispatcher.queued_bytes_.store(reserved_bytes);
+    }
+    static auto lock(LogAsyncDispatcher& dispatcher)
+    {
+        return std::unique_lock<std::mutex>(dispatcher.mtx_);
+    }
+    static size_t waiters(LogAsyncDispatcher& dispatcher)
+    {
+        return dispatcher.waiting_producers_.load(std::memory_order_acquire);
+    }
+    static size_t bytes(LogAsyncDispatcher& dispatcher)
+    {
+        return dispatcher.queued_bytes_.load(std::memory_order_acquire);
+    }
+    static void release(LogAsyncDispatcher& dispatcher, size_t bytes)
+    {
+        dispatcher.releaseBytes(bytes);
+    }
+    static bool wait(LogAsyncDispatcher& dispatcher, size_t bytes)
+    {
+        return dispatcher.waitForCapacity(bytes,
+            std::chrono::steady_clock::now() + std::chrono::seconds(2));
+    }
+    static void registerWaiter(LogAsyncDispatcher& dispatcher)
+    {
+        dispatcher.waiting_producers_.fetch_add(1, std::memory_order_acq_rel);
+    }
+    static void unregisterWaiter(LogAsyncDispatcher& dispatcher)
+    {
+        dispatcher.waiting_producers_.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    static auto waitForNotification(LogAsyncDispatcher& dispatcher,
+                                    std::unique_lock<std::mutex>& lock)
+    {
+        return dispatcher.not_full_cv_.wait_for(lock, std::chrono::seconds(2));
+    }
+    static void stop(LogAsyncDispatcher& dispatcher) { dispatcher.stopAndWake(); }
+};
+} // namespace kit_muduo
+
 namespace {
 
 class TestLogCompressRuntime
@@ -38,16 +88,17 @@ class TestLogCompressRuntime
 public:
     TestLogCompressRuntime()
         : coordinator_(
-            nullptr,
+            std::make_unique<MmapBatchDispatcher>(),
             std::make_unique<FullRecompressWorker>(
-                std::shared_ptr<CompressionCodec>(
-                    CompressionCodec::Create())))
+                FullRecompressWorker::Options{}))
     {
         coordinator_.start();
     }
 
     ~TestLogCompressRuntime()
     {
+        coordinator_.stopMmapAccepting();
+        (void)coordinator_.drainMmap(5000);
         coordinator_.stopFullAccepting();
         (void)coordinator_.drainFull(5000);
         coordinator_.wait();
@@ -68,16 +119,34 @@ LogCompressCoordinator& GetTestLogCompressCoordinator()
     return runtime.coordinator();
 }
 
-bool DrainTestLogCompression(uint64_t timeout_ms = 5000)
+bool DrainTestLogCompression(const LogFileSink::Ptr& sink = {}, uint64_t timeout_ms = 5000)
 {
+    if (!GetTestLogCompressCoordinator().drainMmap(timeout_ms)) return false;
+    if (sink && !sink->finishArchiveCompletions().ok()) return false;
     return GetTestLogCompressCoordinator().drainFull(timeout_ms);
 }
+
+// mmap 的 close/析构不隐式 flush；测试所有者必须先等待双分支和 End，再释放 sink。
+class ScopedSinkShutdown
+{
+public:
+    explicit ScopedSinkShutdown(LogFileSink::Ptr sink) : sink_(std::move(sink)) {}
+    ~ScopedSinkShutdown()
+    {
+        if (!sink_) return;
+        EXPECT_TRUE(sink_->flush().ok());
+        EXPECT_TRUE(DrainTestLogCompression(sink_));
+        sink_->close();
+    }
+private:
+    LogFileSink::Ptr sink_;
+};
 
 class TempLogFile
 {
 public:
     explicit TempLogFile(const std::string &case_name)
-        :path_("/tmp/kit_muduo_test_log_" + std::to_string(::getpid()) + "_" + case_name + "_test.log")
+        :path_(directory_.file(case_name + "_test.log"))
     {
         ::unlink(path_.c_str());
     }
@@ -93,6 +162,7 @@ public:
     }
 
 private:
+    log_test::TempDirectory directory_;
     std::string path_;
 };
 
@@ -213,14 +283,10 @@ LogAttr::Ptr MakeLoggerAttr(
 class CountingAppender final : public LogAppender
 {
 public:
-    void append(const std::string&,
-        LogLevel::Level level) override
+    void append(const std::string&) override
     {
-        if(level >= getLevel())
-        {
-            count_.fetch_add(1, std::memory_order_release);
-            cv_.notify_all();
-        }
+        count_.fetch_add(1, std::memory_order_release);
+        cv_.notify_all();
     }
 
     int count() const noexcept
@@ -245,8 +311,7 @@ private:
 class BlockingAppender final : public LogAppender
 {
 public:
-    void append(const std::string&,
-        LogLevel::Level) override
+    void append(const std::string&) override
     {
         blockUntilReleased();
     }
@@ -301,9 +366,20 @@ private:
     std::atomic_int count_{0};
 };
 
+class ReleaseBlockingAppenderOnExit
+{
+public:
+    explicit ReleaseBlockingAppenderOnExit(std::shared_ptr<BlockingAppender> appender)
+        : appender_(std::move(appender)) {}
+    ~ReleaseBlockingAppenderOnExit() { appender_->release(); }
+private:
+    std::shared_ptr<BlockingAppender> appender_;
+};
+
 LogConfig MakeManagerTestConfig()
 {
     LogConfig config;
+    config.file.backend = LogFileBackendType::kMmapBuffered;
     LoggerConfig root;
     root.name = "root";
     root.level = LogLevel::DEBUG;
@@ -335,10 +411,10 @@ public:
 
 /*
 测试思路：通过默认 LogFileSinkRegister 获取 sink，再交给 FileAppender，验证
-新接口下小日志不会主动触发阈值 flush，最后一个 sink 引用析构时文件流正常关闭。
+新接口下小日志不会主动触发阈值 flush，最后一个 sink 所有者显式 flush/drain 后再关闭映射。
 
-路径图：FileAppender -> shared LogFileSink -> ofstream。
-示例：append("first") -> appender 析构 -> 文件最终为 "first"。
+路径图：FileAppender -> shared LogFileSink -> mmap slot -> active worker。
+示例：append("first") 时 active 为空，显式 flush 后为 "first\n"。
 */
 TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
 {
@@ -346,12 +422,15 @@ TEST(TestLog, FileAppenderDefaultWriteMaxSizeDoesNotFlushSmallFirstWrite)
     LogFileSinkRegister registry;
 
     {
-        FileAppender appender(registry.acquire(
-            file.path(), GetTestLogCompressCoordinator()));
+        auto sink = registry.acquire(file.path(), GetTestLogCompressCoordinator());
+        ScopedSinkShutdown cleanup(sink);
+        FileAppender appender(sink);
         appender.setFormatter("%m");
 
         AppendAttr(appender, MakeLogAttr("first"));
 
+        EXPECT_EQ(ReadFile(file.path()), "");
+        ASSERT_TRUE(sink->flush().ok());
         ASSERT_EQ(ReadFile(file.path()), "first\n");
     }
 
@@ -374,17 +453,20 @@ TEST(TestLog, FileAppenderFlushesAfterCumulativeConfiguredBytes)
     registry.setConfig(config);
 
     {
-        FileAppender appender(registry.acquire(
-            file.path(), GetTestLogCompressCoordinator()));
+        auto sink = registry.acquire(file.path(), GetTestLogCompressCoordinator());
+        ScopedSinkShutdown cleanup(sink);
+        FileAppender appender(sink);
         appender.setFormatter("%m");
 
         AppendAttr(appender, MakeLogAttr("abc"));
-        ASSERT_EQ(ReadFile(file.path()), "abc\n");
+        EXPECT_EQ(ReadFile(file.path()), "");
 
         AppendAttr(appender, MakeLogAttr("defgh"));
         ASSERT_EQ(ReadFile(file.path()), "abc\ndefgh\n");
 
         AppendAttr(appender, MakeLogAttr("z"));
+        EXPECT_EQ(ReadFile(file.path()), "abc\ndefgh\n");
+        ASSERT_TRUE(sink->flush().ok());
         ASSERT_EQ(ReadFile(file.path()), "abc\ndefgh\nz\n");
     }
 
@@ -406,8 +488,9 @@ TEST(TestLog, FileAppenderZeroWriteMaxSizeFlushesEveryWrite)
     config.flush_threshold = 0;
     registry.setConfig(config);
 
-    FileAppender appender(registry.acquire(
-        file.path(), GetTestLogCompressCoordinator()));
+    auto sink = registry.acquire(file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
+    FileAppender appender(sink);
     appender.setFormatter("%m");
 
     AppendAttr(appender, MakeLogAttr("a"));
@@ -491,9 +574,10 @@ TEST(TestLog, FileSinkRegisterRecreatesExpiredSinkAndKeepsAppending)
     {
         auto sink = registry.acquire(
             file.path(), GetTestLogCompressCoordinator());
+        ScopedSinkShutdown cleanup(sink);
         previous = sink;
         ASSERT_TRUE(sink->append(
-            "first", LogLevel::INFO).ok());
+            "first").ok());
         ASSERT_TRUE(sink->flush().ok());
     }
 
@@ -501,8 +585,9 @@ TEST(TestLog, FileSinkRegisterRecreatesExpiredSinkAndKeepsAppending)
 
     auto replacement = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(replacement);
     ASSERT_TRUE(replacement->append(
-        "second", LogLevel::INFO).ok());
+        "second").ok());
     ASSERT_TRUE(replacement->flush().ok());
 
     EXPECT_EQ(ReadFile(file.path()), "firstsecond");
@@ -521,6 +606,7 @@ TEST(TestLog, SharedFileSinkSurvivesOneAppenderDestruction)
     LogFileSinkRegister registry;
     auto sink = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     auto first = std::make_unique<FileAppender>(sink);
     FileAppender second(sink);
     first->setFormatter("%m%n");
@@ -550,6 +636,7 @@ TEST(TestLog, SharedFileSinkPreservesConcurrentRecordBoundaries)
     LogFileSinkRegister registry;
     auto sink = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     std::vector<std::thread> threads;
 
     for(int thread_id = 0; thread_id < kThreads; ++thread_id)
@@ -620,10 +707,11 @@ TEST(TestLog, FileSinkRestoresSizeAndAppendsAcrossReopen)
     LogFileSinkRegister registry;
     auto sink = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     ASSERT_EQ(sink->currentFileSize(), 4U);
 
     ASSERT_TRUE(sink->append(
-        "-one", LogLevel::INFO).ok());
+        "-one").ok());
     ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(sink->currentFileSize(), 8U);
 
@@ -631,7 +719,7 @@ TEST(TestLog, FileSinkRestoresSizeAndAppendsAcrossReopen)
     EXPECT_EQ(sink->currentFileSize(), 8U);
 
     ASSERT_TRUE(sink->append(
-        "-two", LogLevel::INFO).ok());
+        "-two").ok());
     ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(sink->currentFileSize(), 12U);
     EXPECT_EQ(ReadFile(file.path()), "seed-one-two");
@@ -725,6 +813,7 @@ TEST(TestLog, LoggerOwnAppenderFiltersAndLastRemovalMutes)
 
     logger->log(MakeLoggerAttr(logger, LogLevel::DEBUG, "filtered"));
     logger->log(MakeLoggerAttr(logger, LogLevel::ERROR, "accepted"));
+    ASSERT_TRUE(appender->waitForCount(1, std::chrono::milliseconds(1000)));
     EXPECT_EQ(appender->count(), 1);
 
     logger->delAppender(appender);
@@ -758,8 +847,193 @@ TEST(TestLog, LogMacroDispatchesExactlyOnceThroughLogAttrWrap)
     EXPECT_EQ(appender->count(), 1);
 }
 
+namespace {
+using AsyncWaitPeer = LogAsyncDispatcherTestPeer;
+
+// 等待明确的原子状态变化；时间仅作为失败保护，不用于猜测线程是否已休眠。
+template<typename Predicate>
+bool AwaitAsyncState(Predicate predicate)
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!predicate())
+    {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+class AsyncCapacityWaitTest : public testing::Test
+{
+protected:
+    AsyncCapacityWaitTest() : dispatcher_(registry_, makeConfig()) {}
+    static LogAsyncConfig makeConfig()
+    {
+        LogAsyncConfig config;
+        config.queue_capacity = 4;
+        config.max_queue_bytes = 10;
+        return config;
+    }
+    void SetUp() override { AsyncWaitPeer::prepare(dispatcher_, 10); }
+    void TearDown() override { AsyncWaitPeer::stop(dispatcher_); }
+    LogFileSinkRegister registry_;
+    LogAsyncDispatcher dispatcher_;
+};
+} // namespace
+
+// 测试思路：无人等待时故意持有等待锁，另一线程释放预算必须仍能完成。
+// 例：预留 10B -> 释放 3B -> 剩余 7B；正常释放路径不能依赖 mtx_。
+TEST_F(AsyncCapacityWaitTest, ReleaseWithoutWaitersDoesNotAcquireWaitMutex)
+{
+    auto lock = AsyncWaitPeer::lock(dispatcher_);
+    auto release = std::async(std::launch::async, [this] {
+        AsyncWaitPeer::release(dispatcher_, 3);
+    });
+    EXPECT_EQ(release.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    lock.unlock(); // 断言失败也必须先解锁，避免 future 析构等待形成死锁。
+    release.get();
+    EXPECT_EQ(AsyncWaitPeer::bytes(dispatcher_), 7U);
+}
+
+// 测试思路：释放发生在登记之前，没有可接收通知的等待者；登记后的二次检查必须发现空间。
+// 例：10B 已占用 -> 释放 4B -> 登记需要 4B 的生产者 -> 立即满足条件、注销登记。
+TEST_F(AsyncCapacityWaitTest, ReleaseBeforeRegistrationIsObservedByRecheck)
+{
+    auto release = std::async(std::launch::async, [this] {
+        AsyncWaitPeer::release(dispatcher_, 4);
+    });
+    release.get();
+    EXPECT_TRUE(AsyncWaitPeer::wait(dispatcher_, 4));
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+}
+
+// 测试思路：固定在“已登记并检查不足，但尚未休眠”的窗口，消费者必须等待同一把锁。
+// 时序：持锁/登记/10B满 -> 消费者释放4B但通知未完成 -> 原子解锁等待 -> 收到通知。
+// 例：消费者不能提前完成通知，等待者无需等到 2s 超时即可醒来。
+TEST_F(AsyncCapacityWaitTest, ReleaseBetweenCheckAndSleepCannotNotifyTooEarly)
+{
+    auto lock = AsyncWaitPeer::lock(dispatcher_);
+    AsyncWaitPeer::registerWaiter(dispatcher_);
+    EXPECT_EQ(AsyncWaitPeer::bytes(dispatcher_), 10U);
+    auto release = std::async(std::launch::async, [this] {
+        AsyncWaitPeer::release(dispatcher_, 4);
+    });
+    const bool released = AwaitAsyncState([this] {
+        return AsyncWaitPeer::bytes(dispatcher_) == 6;
+    });
+    EXPECT_TRUE(released);
+    EXPECT_EQ(release.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+    // 模拟谓词已返回 false 后的原子解锁/等待，不再次读取已变为可用的预算。
+    EXPECT_EQ(AsyncWaitPeer::waitForNotification(dispatcher_, lock), std::cv_status::no_timeout);
+    AsyncWaitPeer::unregisterWaiter(dispatcher_);
+    lock.unlock();
+    release.get();
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+}
+
+// 测试思路：先登记大记录，再登记两条小记录，只释放一次预算；所有能满足的等待者都应醒来。
+// 例：满载10B；A需8B、B/C各需2B；释放4B后B/C醒来，A继续等，停止后A也退出。
+// 此处只检查等待协议，不预留/消耗释放的容量，避免入队竞争掩盖广播通知的效果。
+TEST_F(AsyncCapacityWaitTest, OneReleaseWakesAllEligibleSizes)
+{
+    auto large = std::async(std::launch::async, [this] { return AsyncWaitPeer::wait(dispatcher_, 8); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return AsyncWaitPeer::waiters(dispatcher_) == 1; }));
+    auto small = std::async(std::launch::async, [this] { return AsyncWaitPeer::wait(dispatcher_, 2); });
+    auto another_small = std::async(std::launch::async, [this] { return AsyncWaitPeer::wait(dispatcher_, 2); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return AsyncWaitPeer::waiters(dispatcher_) == 3; }));
+    AsyncWaitPeer::release(dispatcher_, 4);
+    EXPECT_EQ(small.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_EQ(another_small.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_EQ(large.wait_for(std::chrono::milliseconds(0)), std::future_status::timeout);
+    AsyncWaitPeer::stop(dispatcher_);
+    EXPECT_TRUE(small.get());
+    EXPECT_TRUE(another_small.get());
+    EXPECT_TRUE(large.get()); // 停止同样是退出等待的条件，不表示容量可用。
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+}
+
+// 测试思路：没有出队事件时，放宽字节预算也必须唤醒已登记生产者。
+// 例：10B满、等待2B；预算从10B改成12B -> 配置通知 -> 条件成立，登记归零。
+TEST_F(AsyncCapacityWaitTest, IncreasingBudgetWakesRegisteredProducer)
+{
+    auto waiter = std::async(std::launch::async, [this] { return AsyncWaitPeer::wait(dispatcher_, 2); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return AsyncWaitPeer::waiters(dispatcher_) == 1; }));
+    auto config = makeConfig();
+    config.max_queue_bytes = 12;
+    dispatcher_.setConfig(config);
+    EXPECT_EQ(waiter.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_TRUE(waiter.get());
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+}
+
+// 测试思路：队列槽位满但预算未满时，入队先预留预算再失败；回退不能泄漏预算或死锁。
+// 例：4个槽位各1B；8B等待者已登记；2B入队失败后仍占4B，弹出两条后8B条件成立。
+TEST_F(AsyncCapacityWaitTest, FailedQueuePushRollsBackBytesWhileProducerWaits)
+{
+    AsyncWaitPeer::release(dispatcher_, 10);
+    auto attr = MakeLogAttr("x");
+    ASSERT_TRUE(attr->seal());
+    for (size_t i = 0; i < dispatcher_.capacity(); ++i)
+    {
+        ASSERT_EQ(dispatcher_.submit(attr).status, LogSubmitStatus::kQueued);
+    }
+    auto waiter = std::async(std::launch::async, [this] { return AsyncWaitPeer::wait(dispatcher_, 8); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return AsyncWaitPeer::waiters(dispatcher_) == 1; }));
+    auto rejected = MakeLogAttr("xx");
+    EXPECT_TRUE(rejected->seal());
+    EXPECT_EQ(dispatcher_.submit(rejected).status, LogSubmitStatus::kDropped);
+    EXPECT_EQ(AsyncWaitPeer::bytes(dispatcher_), 4U);
+    LogAttr::Ptr popped;
+    EXPECT_TRUE(dispatcher_.tryPop(popped));
+    EXPECT_TRUE(dispatcher_.tryPop(popped));
+    EXPECT_EQ(waiter.wait_for(std::chrono::milliseconds(500)), std::future_status::ready);
+    EXPECT_TRUE(waiter.get());
+    EXPECT_EQ(AsyncWaitPeer::bytes(dispatcher_), 2U);
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+}
+
+// 测试思路：生产者已经因预算不足登记等待时关闭接收门，必须立即退出并返回 stopped。
+// 例：10B预算已满，ERROR 2B等待 -> stopAndWake -> stopped，登记清零，后续提交也拒绝。
+TEST_F(AsyncCapacityWaitTest, StopWakesSubmitterAndClearsRegistration)
+{
+    auto logger = std::make_shared<Logger>(&LogManager::GetInstance(), "stop-wait");
+    auto attr = MakeLoggerAttr(logger, LogLevel::ERROR, "xx");
+    ASSERT_TRUE(attr->seal());
+    auto submit = std::async(std::launch::async, [this, attr] { return dispatcher_.submit(attr); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return AsyncWaitPeer::waiters(dispatcher_) == 1; }));
+    AsyncWaitPeer::stop(dispatcher_);
+    EXPECT_EQ(submit.get().status, LogSubmitStatus::kStopped);
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+    EXPECT_EQ(dispatcher_.submit(attr).status, LogSubmitStatus::kStopped);
+}
+
+// 测试思路：ERROR 已登记后持有等待锁，使其直到 50ms 期限之后才能返回；同时放宽预算。
+// 时序：等待 -> 配置已发布/通知卡在锁上 -> 期限过去 -> 解锁 -> 丢弃，不能再重新入队。
+// 例：原预算10B、探测2B；预算变12B仍应返回 dropped，队列保持为空。
+TEST_F(AsyncCapacityWaitTest, ExpiredWaitDoesNotRetryEvenWhenCapacityBecomesAvailable)
+{
+    auto logger = std::make_shared<Logger>(&LogManager::GetInstance(), "expired-wait");
+    auto attr = MakeLoggerAttr(logger, LogLevel::ERROR, "xx");
+    ASSERT_TRUE(attr->seal());
+    auto submit = std::async(std::launch::async, [this, attr] { return dispatcher_.submit(attr); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return AsyncWaitPeer::waiters(dispatcher_) == 1; }));
+    auto lock = AsyncWaitPeer::lock(dispatcher_);
+    auto config = makeConfig();
+    config.max_queue_bytes = 12;
+    auto update = std::async(std::launch::async, [this, config] { dispatcher_.setConfig(config); });
+    EXPECT_TRUE(AwaitAsyncState([this] { return dispatcher_.config()->max_queue_bytes == 12; }));
+    // 等待跨过真实等级期限；窗口已由登记计数及互斥锁固定，不靠 sleep 猜测等待状态。
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    lock.unlock();
+    update.get();
+    EXPECT_EQ(submit.get().status, LogSubmitStatus::kDropped);
+    EXPECT_TRUE(dispatcher_.queueEmpty());
+    EXPECT_EQ(AsyncWaitPeer::waiters(dispatcher_), 0U);
+}
+
 /*
-测试思路：直接创建独立 LogAsyncDispatcher，提交已经 seal 的 LogAttr，验证
+测试思路：为空 register 创建独立 LogAsyncDispatcher，register 先构造、后析构；
+提交已经 seal 的 LogAttr，验证
 submit() 返回 queued，后台 worker 最终调用 Logger -> Appender，且 shutdown 能够
 在队列排空后完成回收。
 
@@ -773,7 +1047,8 @@ TEST(TestLog, AsyncDispatcherQueuesSealedAttrAndDrainsWorker)
     config.max_queue_bytes = 1024;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
@@ -809,21 +1084,22 @@ TEST(TestLog, AsyncDispatcherQueuesSealedAttrAndDrainsWorker)
 */
 TEST(TestLog, AsyncDispatcherRejectsCapacityBelowTwo)
 {
+    LogFileSinkRegister registry;
     LogAsyncConfig invalid_zero;
     invalid_zero.queue_capacity = 0;
     EXPECT_THROW(
-        LogAsyncDispatcher dispatcher(invalid_zero),
+        LogAsyncDispatcher dispatcher(registry, invalid_zero),
         std::invalid_argument);
 
     LogAsyncConfig invalid_one;
     invalid_one.queue_capacity = 1;
     EXPECT_THROW(
-        LogAsyncDispatcher dispatcher(invalid_one),
+        LogAsyncDispatcher dispatcher(registry, invalid_one),
         std::invalid_argument);
 
     LogAsyncConfig valid;
     valid.queue_capacity = 2;
-    LogAsyncDispatcher dispatcher(valid);
+    LogAsyncDispatcher dispatcher(registry, valid);
     EXPECT_EQ(dispatcher.capacity(), 2U);
 }
 
@@ -831,7 +1107,7 @@ TEST(TestLog, AsyncDispatcherRejectsCapacityBelowTwo)
 测试思路：连续提交多条 sealed LogAttr，验证 worker 被一次唤醒后持续 tryPop
 直到队列为空，所有记录都能被同一个 Appender 处理，避免 waitPop 单条消费语义。
 
-路径图：N 条 LogAttr -> 一次/多次 semaphore 唤醒 -> while(tryPop) -> Appender。
+路径图：N 条 LogAttr -> 一次/多次 eventfd 唤醒 -> while(tryPop) -> Appender。
 示例：32 条记录全部完成后 count 必须等于 32。
 */
 TEST(TestLog, AsyncDispatcherDrainsMultipleQueuedAttrs)
@@ -843,7 +1119,8 @@ TEST(TestLog, AsyncDispatcherDrainsMultipleQueuedAttrs)
     config.max_queue_bytes = 16 * 1024;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
@@ -889,7 +1166,8 @@ TEST(TestLog, AsyncDispatcherShutdownDrainsQueuedRecordsAndIsIdempotent)
     config.max_queue_bytes = 4096;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
@@ -930,7 +1208,8 @@ TEST(TestLog, AsyncDispatcherRejectsSubmissionAfterShutdown)
     config.max_queue_bytes = 1024;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
     ASSERT_TRUE(dispatcher.shutdown());
 
@@ -961,7 +1240,8 @@ TEST(TestLog, AsyncDispatcherDropsRecordExceedingByteBudget)
     config.max_queue_bytes = 4;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
@@ -992,7 +1272,8 @@ TEST(TestLog, AsyncDispatcherRejectsInvalidAttributes)
     config.max_queue_bytes = 1024;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
@@ -1029,7 +1310,8 @@ TEST(TestLog, AsyncDispatcherConsumesConcurrentProducerSubmissions)
     config.max_queue_bytes = 128 * 1024;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
@@ -1123,7 +1405,8 @@ TEST(TestLog, AsyncDispatcherAppliesLevelBasedFullQueueWaits)
         config.max_queue_bytes = 1024;
         config.stop_drain_timeout_ms = 1000;
 
-        LogAsyncDispatcher dispatcher(config);
+        LogFileSinkRegister registry;
+        LogAsyncDispatcher dispatcher(registry, config);
         dispatcher.start();
         // BoundedLockFreeQueue 会把配置容量向上归一化为 2 的幂；满载判断必须
         // 使用实际容量，不能把 config.queue_capacity(3) 当作槽位上限。
@@ -1132,6 +1415,7 @@ TEST(TestLog, AsyncDispatcherAppliesLevelBasedFullQueueWaits)
         auto logger = std::make_shared<Logger>(
             &LogManager::GetInstance(), "test_async_full_queue");
         auto appender = std::make_shared<BlockingAppender>();
+        ReleaseBlockingAppenderOnExit unblock(appender);
         logger->setLevel(LogLevel::DEBUG);
         appender->setLevel(LogLevel::DEBUG);
         logger->addAppender(appender);
@@ -1208,12 +1492,14 @@ TEST(TestLog, AsyncDispatcherWakesWaitingProducerAfterCapacityReleased)
     config.max_queue_bytes = 1024;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
         &LogManager::GetInstance(), "test_async_space_wakeup");
     auto appender = std::make_shared<BlockingAppender>();
+    ReleaseBlockingAppenderOnExit unblock(appender);
     logger->setLevel(LogLevel::DEBUG);
     appender->setLevel(LogLevel::DEBUG);
     logger->addAppender(appender);
@@ -1284,12 +1570,14 @@ TEST(TestLog, AsyncDispatcherWakesWaitingProducerAfterByteBudgetReleased)
     config.max_queue_bytes = 10;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
         &LogManager::GetInstance(), "test_async_byte_wakeup");
     auto appender = std::make_shared<BlockingAppender>();
+    ReleaseBlockingAppenderOnExit unblock(appender);
     logger->setLevel(LogLevel::DEBUG);
     appender->setLevel(LogLevel::DEBUG);
     logger->addAppender(appender);
@@ -1345,10 +1633,10 @@ TEST(TestLog, AsyncDispatcherWakesWaitingProducerAfterByteBudgetReleased)
 
 /*
 测试思路：在同一个满载队列上同时放置多个 ERROR 生产者。worker 每消费一条记录
-就释放一个容量并 notify_one，生产者应逐个被唤醒，最终所有记录都能入队并完成，
+就释放一个容量并 notify_all，生产者应被唤醒后竞争入队，最终所有记录都能入队并完成，
 验证条件变量通知不会只唤醒一次后停滞。
 
-并发图：3 producers -> not_full_cv_；worker pop/notify_one -> 逐个入队 -> appender。
+并发图：3 producers -> not_full_cv_；worker pop/notify_all -> 竞争入队 -> appender。
 示例：first、second 加 3 条 probe 共 5 条，最终 Counting 结果为 5。
 */
 TEST(TestLog, AsyncDispatcherProgressesMultipleWaitingProducers)
@@ -1361,12 +1649,14 @@ TEST(TestLog, AsyncDispatcherProgressesMultipleWaitingProducers)
     config.max_queue_bytes = 4096;
     config.stop_drain_timeout_ms = 1000;
 
-    LogAsyncDispatcher dispatcher(config);
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
     dispatcher.start();
 
     auto logger = std::make_shared<Logger>(
         &LogManager::GetInstance(), "test_async_multiple_waiters");
     auto appender = std::make_shared<BlockingAppender>();
+    ReleaseBlockingAppenderOnExit unblock(appender);
     logger->setLevel(LogLevel::DEBUG);
     appender->setLevel(LogLevel::DEBUG);
     logger->addAppender(appender);
@@ -1487,6 +1777,7 @@ TEST(TestLog, AppenderSnapshotAllowsRemovalDuringInFlightDispatch)
     auto logger = std::make_shared<Logger>(
         &LogManager::GetInstance(), "test_snapshot_dispatch");
     auto appender = std::make_shared<BlockingAppender>();
+    ReleaseBlockingAppenderOnExit unblock(appender);
     logger->setLevel(LogLevel::DEBUG);
     logger->addAppender(appender);
 
@@ -1520,6 +1811,7 @@ TEST(TestLog, AppenderSnapshotAllowsRemovalDuringInFlightDispatch)
 
     EXPECT_TRUE(entered);
     EXPECT_TRUE(removed_while_blocked);
+    EXPECT_TRUE(appender->waitForCount(1, std::chrono::milliseconds(1000)));
     EXPECT_EQ(appender->count(), 1);
     EXPECT_FALSE(logger->shouldLog(LogLevel::FATAL));
 }
@@ -1565,6 +1857,7 @@ TEST(TestLog, AppenderNormalizesAndTruncatesFinalFormattedRecord)
     LogFileSinkRegister registry;
     auto sink = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     ASSERT_NE(sink, nullptr);
 
     FileAppender appender(sink);
@@ -1581,12 +1874,14 @@ TEST(TestLog, AppenderNormalizesAndTruncatesFinalFormattedRecord)
     EXPECT_EQ(output.find('\n'), output.size() - 1);
 }
 
+// 测试思路：控制字符由 appender 转义，UTF-8 原样保留；例：真实换行变为 \\n，中文仍可逐字节比对。
 TEST(TestLog, AppenderEscapesControlsAndPreservesUtf8)
 {
     TempLogFile file("control_utf8");
     LogFileSinkRegister registry;
     auto sink = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     ASSERT_NE(sink, nullptr);
 
     FileAppender appender(sink);
@@ -1603,13 +1898,13 @@ TEST(TestLog, AppenderEscapesControlsAndPreservesUtf8)
 }
 
 /*
-测试思路：先累计 8 字节触发字节阈值 flush，再写 ERROR 验证 level flush，最后显式
-调用 durableFlush 覆盖 fdatasync 链路。
+测试思路：先累计 8 字节触发字节阈值 flush，再写不足阈值的尾部，最后显式
+调用 flush 同步尾部。sink 接口只接受文本及截断信息。
 
-状态图：0 --4B--> no flush --4B--> threshold flush --ERROR--> level flush。
+状态图：0 --4B--> no flush --4B--> threshold flush --5B--> no flush。
 示例：`info` 不刷新，追加 `more` 后 flush_attempted=true。
 */
-TEST(TestLog, SinkFlushesOnLevelAndSupportsDurableFlush)
+TEST(TestLog, SinkFlushesByBytesAndManualRequest)
 {
     TempLogFile file("flush_level");
     LogFileSinkRegister registry;
@@ -1620,21 +1915,22 @@ TEST(TestLog, SinkFlushesOnLevelAndSupportsDurableFlush)
 
     auto sink = registry.acquire(
         file.path(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     ASSERT_NE(sink, nullptr);
 
-    auto info = sink->append("info", LogLevel::INFO);
+    auto info = sink->append("info");
     EXPECT_TRUE(info.ok());
     EXPECT_FALSE(info.flush_attempted);
 
-    auto threshold = sink->append("more", LogLevel::INFO);
+    auto threshold = sink->append("more");
     EXPECT_TRUE(threshold.ok());
     EXPECT_TRUE(threshold.flush_attempted);
 
-    auto error = sink->append("error", LogLevel::ERROR);
+    auto error = sink->append("error");
     EXPECT_TRUE(error.ok());
-    EXPECT_TRUE(error.flush_attempted);
+    EXPECT_FALSE(error.flush_attempted);
 
-    EXPECT_TRUE(sink->durableFlush().ok());
+    EXPECT_TRUE(sink->flush().ok());
     EXPECT_EQ(ReadFile(file.path()), "infomoreerror");
 }
 
@@ -1661,13 +1957,16 @@ TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
 
     auto sink = registry.acquire(
         active.string(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     ASSERT_NE(sink, nullptr);
-    ASSERT_TRUE(sink->append("1234567890", LogLevel::INFO).ok());
+    ASSERT_TRUE(sink->append("1234567890").ok());
+    ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(ReadFile(active.string()), "1234567890");
 
-    ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
+    ASSERT_TRUE(sink->append("x").ok());
+    ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(ReadFile(active.string()), "x");
-    ASSERT_TRUE(DrainTestLogCompression());
+    ASSERT_TRUE(DrainTestLogCompression(sink));
 
     size_t archive_count = 0;
     const std::regex archive_pattern{
@@ -1694,15 +1993,15 @@ TEST(TestLog, SinkRotatesBeforeNextOversizedWriteAndCleansArchives)
 
     for(int i = 0; i < 4; ++i)
     {
-        ASSERT_TRUE(sink->append("1234567890", LogLevel::INFO).ok());
+        ASSERT_TRUE(sink->append("1234567890").ok());
     }
 
     // 轮转和异步压缩并行时，物理文件数量允许暂时超过软上限。
-    ASSERT_TRUE(DrainTestLogCompression());
+    ASSERT_TRUE(DrainTestLogCompression(sink));
 
     // 再发生一次轮转，清理逻辑会基于最新扫描结果收敛历史归档。
-    ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
-    ASSERT_TRUE(DrainTestLogCompression());
+    ASSERT_TRUE(sink->append("x").ok());
+    ASSERT_TRUE(DrainTestLogCompression(sink));
 
     archive_count = 0;
     for(const auto& entry : std::filesystem::directory_iterator(directory.path()))
@@ -1741,6 +2040,7 @@ TEST(TestLog, SinkDoesNotRotateOversizedActiveFileDuringOpen)
 
     auto sink = registry.acquire(
         active.string(), GetTestLogCompressCoordinator());
+    ScopedSinkShutdown cleanup(sink);
     ASSERT_NE(sink, nullptr);
     EXPECT_EQ(sink->currentFileSize(), 11U);
     EXPECT_EQ(ReadFile(active.string()), "01234567890");
@@ -1755,13 +2055,14 @@ TEST(TestLog, SinkDoesNotRotateOversizedActiveFileDuringOpen)
     }
     EXPECT_EQ(archives_before_append, 0U);
 
-    ASSERT_TRUE(sink->append("x", LogLevel::INFO).ok());
+    ASSERT_TRUE(sink->append("x").ok());
+    ASSERT_TRUE(sink->flush().ok());
     EXPECT_EQ(ReadFile(active.string()), "x");
 }
 
 /*
 测试思路：通过真实配置创建一个文件 sink，再从 LogManager 外层依次调用全局和单
-路径 flush、durable flush、reopen，验证 manager 正确委托 registry。
+路径 flush、reopen，验证 manager 正确委托 registry。
 
 路径图：LogManager -> LogFileSinkRegister snapshot/find -> LogFileSink -> backend。
 示例：批量操作均成功，healthSnapshot 中能定位到规范化后的文件路径。
@@ -1784,10 +2085,8 @@ TEST(TestLog, LogManagerDelegatesBatchFileOperations)
     manager.applyConfig(config);
 
     EXPECT_TRUE(manager.flushAll().ok());
-    EXPECT_TRUE(manager.durableFlushAll().ok());
     EXPECT_TRUE(manager.reopenAll().ok());
     EXPECT_TRUE(manager.flush(file.path()).ok());
-    EXPECT_TRUE(manager.durableFlush(file.path()).ok());
 
     const auto health = manager.healthSnapshot();
     ASSERT_FALSE(health.sinks.empty());
@@ -1798,25 +2097,77 @@ TEST(TestLog, LogManagerDelegatesBatchFileOperations)
 }
 
 /*
-测试思路：在全部提交测试完成后关闭全局 manager，验证 Running 到 Stopped 的状态
-迁移，并覆盖重复 shutdown 的幂等语义。
-
-状态图：Running -> StopAccepting -> Stopped -> shutdown -> Stopped。
-示例：两次 shutdown 都返回成功，最终状态保持 kStopped。
+测试思路：worker 卡在 appender 时 shutdown 超时必须保留资源，停止门已关闭；释放后重试完成。
+时序：first(运行阻塞) + second(排队) -> shutdown=false -> release -> shutdown=true。
+例：两条已接收日志最终各处理一次，停止后的 third 被拒绝。
 */
-TEST(TestLog, LogManagerShutdownIsIdempotent)
+TEST(TestLog, AsyncShutdownTimeoutCanRetryWithoutLosingAcceptedRecords)
 {
-    auto& manager = LogManager::GetInstance();
-    ASSERT_EQ(manager.state(), LogManagerState::kRunning);
-
-    EXPECT_TRUE(manager.shutdown().ok());
-    EXPECT_EQ(manager.state(), LogManagerState::kStopped);
-    EXPECT_TRUE(manager.shutdown().ok());
+    LogAsyncConfig config;
+    config.queue_capacity = 2;
+    config.stop_drain_timeout_ms = 10;
+    LogFileSinkRegister registry;
+    LogAsyncDispatcher dispatcher(registry, config);
+    auto logger = std::make_shared<Logger>(&LogManager::GetInstance(), "timeout-retry");
+    auto appender = std::make_shared<BlockingAppender>();
+    ReleaseBlockingAppenderOnExit unblock(appender);
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+    dispatcher.start();
+    auto first = MakeLoggerAttr(logger, LogLevel::INFO, "first");
+    first->seal();
+    ASSERT_EQ(dispatcher.submit(first).status, LogSubmitStatus::kQueued);
+    ASSERT_TRUE(appender->waitUntilEntered(std::chrono::milliseconds(1000)));
+    auto second = MakeLoggerAttr(logger, LogLevel::INFO, "second");
+    second->seal();
+    ASSERT_EQ(dispatcher.submit(second).status, LogSubmitStatus::kQueued);
+    EXPECT_FALSE(dispatcher.shutdown());
+    EXPECT_EQ(dispatcher.submit(second).status, LogSubmitStatus::kStopped);
+    EXPECT_THROW(dispatcher.start(), std::logic_error);
+    appender->release();
+    ASSERT_TRUE(appender->waitForCount(2, std::chrono::milliseconds(1000)));
+    EXPECT_TRUE(dispatcher.shutdown());
+    dispatcher.join();
+    EXPECT_EQ(appender->count(), 2);
 }
+
+/*
+测试思路：独立 dispatcher 析构负责 drain/join，不能等成员 CV 已销毁才停 worker；
+注入的空 register 在 dispatcher 之后析构，保证 worker 解绑通知时引用有效。
+例：提交 20 条后直接离开作用域，外部 appender 计数必须恰好 20，无需 sleep 猜时序。
+*/
+TEST(TestLog, AsyncDispatcherDestructorDrainsBeforeDestroyingMembers)
+{
+    auto logger = std::make_shared<Logger>(&LogManager::GetInstance(), "destructor-drain");
+    auto appender = std::make_shared<CountingAppender>();
+    logger->setLevel(LogLevel::DEBUG);
+    appender->setLevel(LogLevel::DEBUG);
+    logger->addAppender(appender);
+    {
+        LogFileSinkRegister registry;
+        LogAsyncConfig config;
+        config.queue_capacity = 32;
+        LogAsyncDispatcher dispatcher(registry, config);
+        dispatcher.start();
+        for (int i = 0; i < 20; ++i)
+        {
+            auto attr = MakeLoggerAttr(logger, LogLevel::INFO, std::to_string(i));
+            attr->seal();
+            EXPECT_EQ(dispatcher.submit(attr).status, LogSubmitStatus::kQueued);
+        }
+    }
+    EXPECT_EQ(appender->count(), 20);
+}
+
+// manager shutdown 的不可重启单例场景移到 test_log_lifecycle 的独立子进程，
+// 本目标由 main 最后收拢，支持 --gtest_shuffle / --gtest_repeat。
 
 int main(int argc, char **argv)
 {
     testing::InitGoogleTest(&argc, argv);
+    // 本目标包含 mmap 缓冲阈值断言；默认 regular 的工厂分支另由生命周期目标验收。
+    log_test::InitializeAppConfig("mmap_buffered");
     auto& manager = LogManager::GetInstance();
     const auto initialize_result = manager.initialize(
         MakeManagerTestConfig());

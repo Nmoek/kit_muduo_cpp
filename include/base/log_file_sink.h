@@ -12,9 +12,9 @@
 
 #include "base/compression.h"
 #include "base/log_file_backend.h"
-#include "base/log_level.h"
 
 #include <atomic>
+#include <optional>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -28,6 +28,7 @@ namespace kit_muduo {
 struct LogFileConfig;
 class LogFileSinkRegister;
 class LogFileBackend;
+class LogAsyncWakeup;
 
 enum class LogFileSinkResultStatus
 {
@@ -145,6 +146,23 @@ struct LogFileArchive
     bool is_compress_compensate{false};
 };
 
+
+struct LogFileFlushState
+{
+    /// @brief 自上次成功同步以来，backend 实际接受的未同步字节数
+    uint64_t pending_sync_bytes{0};
+    /// @brief 单调时钟毫秒：首次待同步期限；失败后更新为失败结束时间 + 间隔
+    std::optional<int64_t> next_flush_time;
+    /// @brief 上次刷新失败时，字节阈值不能绕过 next_flush_time 提前自动重试
+    bool last_flush_failed{false};
+
+    void accept(uint64_t bytes, int64_t now_ms, uint64_t interval_ms);
+    std::optional<int64_t> nextAttemptTime(uint64_t byte_threshold) const;
+    bool shouldAutoFlush(int64_t now_ms, uint64_t byte_threshold) const;
+    void failed(int64_t now_ms, uint64_t interval_ms);
+    void clear() noexcept { *this = {}; }
+};
+
 class LogFileSink
 {
 public:
@@ -153,12 +171,12 @@ public:
     LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path, std::unique_ptr<LogFileBackend> backend);
     ~LogFileSink() = default;
 
-   LogFileSinkResult append(const std::string& log_data,
-        LogLevel::Level level,
+    LogFileSinkResult append(const std::string& log_data,
         bool truncated = false,
         size_t original_bytes = 0);
     LogFileSinkResult flush();
-    LogFileSinkResult durableFlush();
+    std::optional<int64_t> nextFlushTime() const;
+    LogFileSinkResult flushIfDue(int64_t now);
     /**
      * @brief 确保持久化通道打开(如果发现意外关闭需要重新打开)
      * @return LogFileSinkResult 
@@ -178,13 +196,14 @@ public:
 
     LogFileSinkHealth healthSnapshot() const;
 
+    LogFileSinkResult finishArchiveCompletions();
 
+    LogFileSinkResult closeForShutdown();
 
 private:
     LogFileSinkResult ensureOpenUnlocked();
     LogFileSinkResult openUnlocked();
-    bool flushUnlocked();
-    bool durableFlushUnlocked();
+    LogFileSinkResult flushUnlocked();
 
     bool shouldRotateUnlocked(const LogFileConfig& file_conifg, size_t incoming_bytes) const noexcept;
 
@@ -204,6 +223,8 @@ private:
 
     void rotateFailureHandleUnlocked(const LogBackendResult& result);
 
+    void pollArchiveCompletions();
+
 private:
     static constexpr int32_t kRotateReqMax = 1000;
     
@@ -219,10 +240,7 @@ private:
     mutable std::mutex mtx_;
     /// @brief 记录已交付backend的文件大小(并不等于已写入文件的大小)
     std::atomic_uint64_t accepted_generation_bytes_{0};
-    /// @brief 本轮已写的字节数
-    uint64_t bytes_since_flush_{0};
-    /// @brief 上次触发刷新的单调时间
-    int64_t last_flush_time_{0};
+    LogFileFlushState flush_state_;
     /// @brief 当前故障阶段是否已经向 stderr 报告
     bool error_reported_{false};
     /// @brief 日志文件健康观测数据
@@ -261,15 +279,20 @@ public:
 
     LogFileSinkResult flush(const std::string& file_path);
 
-    LogFileSinkResult durableFlushAll();
 
-    LogFileSinkResult durableFlush(const std::string& file_path);
 
     LogFileSinkResult reopenAll();
 
     LogFileSinkResult reopen(const std::string& file_path);
 
     void closeAll() noexcept;
+
+    void setFlushWakeup(std::shared_ptr<LogAsyncWakeup> wakeup);
+    void clearFlushWakeup(const std::shared_ptr<LogAsyncWakeup>& wakeup);
+    void notifyFlushSchedule() const noexcept;
+    std::optional<int64_t> nextFlushTime() const;
+    void flushDue(int64_t now);
+
 
 private:
     friend class LogManager;
@@ -282,8 +305,11 @@ private:
 private:
     /// @brief <归一化后路径, 日志文件对象>
     SinksMap log_file_sinks_;
+    // 串行化创建/替换集合；创建时不占用快照查询使用的 mtx_。
+    std::mutex mutation_mtx_;
     mutable std::mutex mtx_;
     std::shared_ptr<const LogFileConfig> file_config_;
+    std::shared_ptr<LogAsyncWakeup> flush_wakeup_;
 };
 
 

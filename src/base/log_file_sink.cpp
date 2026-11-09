@@ -9,6 +9,7 @@
 
 #include "base/log_compress_coordinator.h"
 #include "base/log_config.h"
+#include "base/log_async.h"
 #include "base/log_file_sink.h"
 #include "base/log_inner.h"
 #include "base/time_stamp.h"
@@ -35,6 +36,13 @@
 namespace kit_muduo {
 
 namespace {
+
+// 声明在 sink 锁之前，析构时锁已释放；唤醒句柄不反向访问 sink。
+struct NotifyFlushSchedule
+{
+    LogFileSinkRegister* reg;
+    ~NotifyFlushSchedule() { reg->notifyFlushSchedule(); }
+};
 
 /// @brief 用于只报告1次错误宏
 #define LOG_FILE_SINK_REPORTED(OP, MSG) do{\
@@ -84,6 +92,42 @@ std::string EscapeRegexLiteral(std::string_view value)
 
 } // namespace
 
+void LogFileFlushState::accept(uint64_t bytes, int64_t now_ms, uint64_t interval_ms)
+{
+    if (bytes == 0) return;
+    if (pending_sync_bytes == 0) next_flush_time = now_ms + interval_ms;
+    pending_sync_bytes += bytes;
+}
+
+std::optional<int64_t> LogFileFlushState::nextAttemptTime(uint64_t byte_threshold) const
+{
+    if (pending_sync_bytes == 0)
+    {
+        return std::nullopt;
+    }
+    if (last_flush_failed)
+    {
+        return next_flush_time;
+    }
+    // 0 表示字节已达阈值，可立即执行；失败后的重试不进入此分支。
+    return pending_sync_bytes >= byte_threshold ? std::optional<int64_t>{0} : next_flush_time;
+}
+
+bool LogFileFlushState::shouldAutoFlush(int64_t now_ms, uint64_t byte_threshold) const
+{
+    const auto next = nextAttemptTime(byte_threshold);
+    return next && now_ms >= *next;
+}
+
+void LogFileFlushState::failed(int64_t now_ms, uint64_t interval_ms)
+{
+    if(pending_sync_bytes != 0)
+    {
+        next_flush_time = now_ms + interval_ms;
+        last_flush_failed = true;
+    }
+}
+
 LogFileSink::LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_path, std::unique_ptr<LogFileBackend> backend)
     :reg_(reg)
     ,normalize_path_(normalize_path)
@@ -93,140 +137,119 @@ LogFileSink::LogFileSink(LogFileSinkRegister *reg, const std::string &normalize_
 }
 
 LogFileSinkResult LogFileSink::append(const std::string& data,
-    LogLevel::Level level,
-    bool truncated,
-    size_t original_bytes)
+    bool truncated, size_t original_bytes)
 {
+    NotifyFlushSchedule notify{reg_};
+    std::lock_guard<std::mutex> lock(mtx_);
     LogFileSinkResult result;
     result.requested_bytes = data.size();
     result.truncated = truncated;
     result.original_bytes = original_bytes;
-
-    std::lock_guard<std::mutex> lock(mtx_);
-    auto open_result = ensureOpenUnlocked();
-    if(!open_result.ok())
+    const auto opened = ensureOpenUnlocked();
+    if (!opened.ok())
     {
-        result.status = open_result.status;
-        result.message = std::move(open_result.message);
+        result.status = opened.status;
+        result.message = opened.message;
         return result;
     }
-    auto file_config = reg_->config();
-    if (!file_config) 
-    {
-        LOG_INNER_WARN("log file config null, default used\n");
-        file_config = std::make_shared<const LogFileConfig>(LogFileConfig{});
-    }
+    const auto file_config = reg_->config();
 
-    // 判断是否需要进行轮转处理
-    if(shouldRotateUnlocked(*file_config, data.size()))
+    if (shouldRotateUnlocked(*file_config, data.size()))
     {
-        if (!rotateUnlocked(*file_config))
+        if(!rotateUnlocked(*file_config))
         {
             result.status = LogFileSinkResultStatus::kRotateFailed;
             result.message = "log file rotate error";
-
             return result;
         }
     }
+    const auto written_result = backend_->append(data);
 
-    auto backend_result = backend_->append(data);
-    if(!backend_result.ok())
+    result.requested_bytes = written_result.requested_bytes;
+    result.written_bytes = written_result.written_bytes;
+
+    flush_state_.accept(written_result.written_bytes, TimeStamp::MonotonicNowMs(), file_config->flush_interval_ms);
+
+    accepted_generation_bytes_.fetch_add(written_result.written_bytes, std::memory_order_relaxed);
+    health_.written_bytes += written_result.written_bytes;
+    if (!written_result.ok())
     {
-        LOG_FILE_SINK_REPORTED("write", backend_result.message.c_str());
-
-        backend_->close();
-
+        // 部分接受也属于待同步数据；不得 close 并丢失该 fd/slot 的重试机会。
+        LOG_FILE_SINK_REPORTED("write", written_result.message.c_str());
         result.status = LogFileSinkResultStatus::kWriteFailed;
-        result.requested_bytes = backend_result.requested_bytes;
-        result.written_bytes = backend_result.written_bytes;
-        result.message = std::move(backend_result.message);
+        result.message = written_result.message;
+        ++health_.write_failures;
         return result;
     }
-    // 实际写入情况
-    result.requested_bytes = backend_result.requested_bytes;
-    result.written_bytes = backend_result.written_bytes;
-
-    bytes_since_flush_ += result.requested_bytes;
-    accepted_generation_bytes_.fetch_add(result.written_bytes, std::memory_order_relaxed);
-
-    // 健康监测数据更新
     ++health_.written_records;
-    health_.written_bytes += data.size();
     if (truncated)
     {
         ++health_.truncated_records;
     }
 
-    bool flush_by_bytes = bytes_since_flush_ >= file_config->flush_threshold;
-
-    int64_t mono_now = TimeStamp::MonotonicNowMs();
-    bool flush_by_time = mono_now - last_flush_time_ >=  file_config->flush_interval_ms;
-    bool flush_by_level = level >= file_config->flush_on_level;
-
-    if(flush_by_bytes || flush_by_time || flush_by_level)
+    const auto now = TimeStamp::MonotonicNowMs();
+    if (flush_state_.pending_sync_bytes >= file_config->flush_threshold
+        && flush_state_.shouldAutoFlush(now, file_config->flush_threshold))
     {
+        const auto flushed = flushUnlocked();
         result.flush_attempted = true;
-        if(!flushUnlocked())
-        {
-            result.status = LogFileSinkResultStatus::kFlushFailed;
-            return result;
-        }
+        result.status = flushed.status;
+        result.message = flushed.message;
     }
-
     return result;
 }
-
 
 LogFileSinkResult LogFileSink::flush()
 {
+    NotifyFlushSchedule notify{reg_};
     std::lock_guard<std::mutex> lock(mtx_);
-    LogFileSinkResult result;
-    result.flush_attempted = true;
-    if(!flushUnlocked())
-    {
-        result.status = LogFileSinkResultStatus::kFlushFailed;
-        return result;
-    }
-    return result;
+    return flushUnlocked();
 }
 
-LogFileSinkResult LogFileSink::durableFlush()
+std::optional<int64_t> LogFileSink::nextFlushTime() const
 {
     std::lock_guard<std::mutex> lock(mtx_);
-    LogFileSinkResult result;
-    result.flush_attempted = true;
-
-    if(!durableFlushUnlocked())
-    {
-        result.status = LogFileSinkResultStatus::kSyncFailed;
-        return result;
-    }
-
-    bytes_since_flush_ = 0;
-    return result;
+    return flush_state_.nextAttemptTime(reg_->config()->flush_threshold);
 }
 
+LogFileSinkResult LogFileSink::flushIfDue(int64_t now)
+{
+    NotifyFlushSchedule notify{reg_};
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!flush_state_.shouldAutoFlush(now, reg_->config()->flush_threshold))
+    {
+        return LogFileSinkResult::Ok();
+    }
+    return flushUnlocked();
+}
 
 LogFileSinkResult LogFileSink::ensureOpen()
 {
+    NotifyFlushSchedule notify{reg_};
     std::lock_guard<std::mutex> lock(mtx_);
     return ensureOpenUnlocked();
 }
 
 LogFileSinkResult LogFileSink::reopen()
 {
+    NotifyFlushSchedule notify{reg_};
     std::lock_guard<std::mutex> lock(mtx_);
     
     if(backend_->isOpen())
     {
-        const auto flush_result = backend_->flush();
+        const auto flush_result = flushUnlocked();
 
         if (!flush_result.ok())
         {
-            return LogFileSinkResult::Failure(LogFileSinkResultStatus::kFlushFailed, flush_result.message);
+            return flush_result;
         }
 
         backend_->close();
+        if (backend_->isOpen())
+        {
+            return LogFileSinkResult::Failure(LogFileSinkResultStatus::kOpenFailed,
+                "backend close deferred; retry reopen after pending work");
+        }
     }
 
     return openUnlocked();
@@ -247,9 +270,39 @@ LogFileSinkHealth LogFileSink::healthSnapshot() const
     return result;
 }
 
+LogFileSinkResult LogFileSink::finishArchiveCompletions()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    backend_->pollArchiveCompletions();
+    if(backend_->hasPendingArchives())
+    {
+        return LogFileSinkResult::Failure(LogFileSinkResultStatus::kFlushFailed,
+            "archive completion/cleanup still pending");
+    }
+    return LogFileSinkResult::Ok();
+}
+
+LogFileSinkResult LogFileSink::closeForShutdown()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    if(backend_->hasPendingArchives())
+    {
+        return LogFileSinkResult::Failure(LogFileSinkResultStatus::kFlushFailed,
+            "cannot close backend with pending archives");
+    }
+    backend_->close();
+    if(backend_->isOpen())
+    {
+        return LogFileSinkResult::Failure(LogFileSinkResultStatus::kFlushFailed,
+            "backend refused final close");
+    }
+    return LogFileSinkResult::Ok();
+}
 
 LogFileSinkResult LogFileSink::ensureOpenUnlocked()
 {
+    backend_->pollArchiveCompletions();
+
     if(backend_->isOpen())
     {
         return LogFileSinkResult::Ok();
@@ -275,124 +328,56 @@ LogFileSinkResult LogFileSink::openUnlocked()
             "cannot open file [" + normalize_path_ + "]:" + backend_result.message);
     }
 
-    bytes_since_flush_ = 0;
+    flush_state_.clear();
+    flush_state_.accept(backend_->openSize(), TimeStamp::MonotonicNowMs(),
+                        reg_->config()->flush_interval_ms);
     accepted_generation_bytes_.store(backend_->openSize(), std::memory_order_release);
     error_reported_ = false;
-    last_flush_time_ = TimeStamp::MonotonicNowMs();
 
     return LogFileSinkResult::Ok();
 }
 
-bool LogFileSink::flushUnlocked()
+LogFileSinkResult LogFileSink::flushUnlocked()
 {
-    auto backend_result = backend_->flush();
-    if(!backend_result.ok())
+    const auto backend_result = backend_->flush();
+    LogFileSinkResult result;
+    result.flush_attempted = true;
+    if (!backend_result.ok())
     {
+        flush_state_.failed(TimeStamp::MonotonicNowMs(), reg_->config()->flush_interval_ms);
+
+        ++health_.flush_failures;
+        health_.last_error = backend_result.message;
+
         LOG_FILE_SINK_REPORTED("flush", backend_result.message.c_str());
-        return false;
+
+        result.status = backend_result.status == LogBackendStatus::kSyncFailed
+            ? LogFileSinkResultStatus::kSyncFailed : LogFileSinkResultStatus::kFlushFailed;
+        result.message = backend_result.message;
+        return result;
     }
-
-    bytes_since_flush_ = 0;
-    last_flush_time_ = TimeStamp::MonotonicNowMs();
-    return true;
+    flush_state_.clear();
+    error_reported_ = false;
+    return result;
 }
-
-bool LogFileSink::durableFlushUnlocked()
-{
-    auto backend_result = backend_->durableFlush();
-    if(!backend_result.ok())
-    {
-        LOG_FILE_SINK_REPORTED("durable flush", backend_result.message.c_str());
-        return false;
-    }
-    bytes_since_flush_ = 0;
-    last_flush_time_ = TimeStamp::MonotonicNowMs();
-    return true;
-}
-
 
 bool LogFileSink::shouldRotateUnlocked(const LogFileConfig& file_config, size_t incoming_bytes) const noexcept
 {
-    return file_config.rotate_max_backup_files !=0
-        && accepted_generation_bytes_.load(std::memory_order_relaxed) > file_config.rotate_max_bytes - incoming_bytes;
+    const auto accepted_bytes = accepted_generation_bytes_.load(std::memory_order_relaxed);
+    if(0 == file_config.rotate_max_backup_files || 0 == accepted_bytes)
+    {
+        return false;
+    }
+
+    // 单条超过阈值仍完整写入空 generation；减法只在不会下溢时执行。
+    return incoming_bytes > file_config.rotate_max_bytes ||
+        accepted_bytes > file_config.rotate_max_bytes - incoming_bytes;
 }
-#if 0
-{
-bool LogFileSink::rotateUnlockedV2()
-{
-    if(!flushUnlocked())
-    {
-        LOG_INNER_ERROR("rotate flush error\n");
-        return false;
-    }
-
-    // 扫描路径中归档文件
-    std::vector<LogFileArchive> archives;
-    if(!scanArchives(archives))
-    {
-        LOG_INNER_ERROR("log rotate scan error\n");
-        return false;
-    }
-
-    // 创建归档名
-    std::string new_archive_path;
-    if(!newArchivePathUnlocked(new_archive_path))
-    {
-        return false;
-    }
-
-    // 归档名创建成功再关闭
-    backend_->close();
-
-    LOG_INNER_DEBUG("log file rotate new new_archive_path: %s \n", new_archive_path.c_str());
-
-    // 更新当前active名称
-    std::error_code error;
-    std::filesystem::rename(normalize_path_, new_archive_path, error);
-    if(error)
-    {
-        // 重新打开旧路径
-        (void)openUnlocked();
-
-        LOG_INNER_ERROR("log file rotate rename error [%s]: %s\n", new_archive_path.c_str(), error.message().c_str());
-        return false;
-    }
-
-    // 新建active文件
-    auto open_result = openUnlocked();
-    if(!open_result.ok())
-    {
-        LOG_INNER_ERROR("log file rotate reopen active error [%s]: %s\n", normalize_path_.c_str(), open_result.message.c_str());
-        return false;
-    }
-
-    // FileSink 状态重置
-    bytes_since_flush_ = 0;
-    accepted_generation_bytes_.store(0, std::memory_order_relaxed);
-    error_reported_ = false;
-
-    const auto file_config = reg_->fileConfig();
-    if(file_config && file_config->rotate_max_backup_files > 0)
-    {
-        // 清理旧超限归档
-        // 清理失败先不报错
-        if(!cleanupOldArchivesUnlocked(*file_config, archives))
-        {
-            LOG_INNER_WARN("log file rotate cleanup old archives error!\n");
-        }
-    }
-    else
-    {
-        LOG_INNER_DEBUG("log file config null / backup=0\n");
-    }
-
-    return true;
-}
-}
-#endif 
 
 bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
 {
+    backend_->pollArchiveCompletions();
+
     // 扫描路径中归档文件
     // [重要] 每次都扫描的目的
     // 1. 确认当前轮转编号最大值
@@ -418,7 +403,7 @@ bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
         backend_->generation(),
         backend_->lastSequence(),
         normalize_path_,
-        archive_log,
+        std::move(archive_log),
         file_config.compress_rotated
     };
     
@@ -430,7 +415,7 @@ bool LogFileSink::rotateUnlocked(const LogFileConfig& file_config)
     if(archive_committed)
     {
         accepted_generation_bytes_.store(0, std::memory_order_release);
-        bytes_since_flush_ = 0;
+        flush_state_.clear();
     }
 
     if(!result.ok())
@@ -594,19 +579,29 @@ bool LogFileSink::newArchivePathUnlocked(std::string &new_archive_path)
 void LogFileSink::cleanupOldArchivesUnlocked(const LogFileConfig& file_config, 
     std::vector<LogFileArchive> &archives)
 {
-    std::error_code error;
+    size_t index = archives.size();
     // 注意 这里减1是当前新生成的归档文件没有扫描加入到当前列表中
-    while(archives.size() + 1 > file_config.rotate_max_backup_files)
+    while(archives.size() + 1 > file_config.rotate_max_backup_files && index)
     {
+        --index;
         // TODO 这里无法和FullRecompree压缩记录中的信息联动
-        const auto &archive_path = archives.back().archive_path;
+        const auto &archive_path = archives.at(index).archive_path;
+        if(backend_->archiveInUse(archive_path))
+        {
+            LOG_INNER_DEBUG("log rorate full recompressing: %s \n", archive_path.c_str());
+            continue;
+        }
+        std::error_code error;
         bool ok = std::filesystem::remove(archive_path , error);
         if(error || !ok)
         {
             LOG_INNER_WARN("log rotate remove overflow file error[%s]: %s\n",
                 archive_path.filename().c_str(), error.message().c_str());
+            continue;
         }
-        archives.pop_back();
+        // 文件可能已经被已完成的 worker 删除；无错误时从扫描快照移除即可。
+        // 指定下标是因为不能无条件从队尾直接删除，在途归档可能还在处理
+        archives.erase(archives.begin() + index);
     }
 }
 
@@ -615,9 +610,21 @@ void LogFileSink::compensateOldArchivesUnlocked(std::vector<LogFileArchive> &arc
     for(auto &a : archives)
     {
         const std::string& archive_path = a.archive_path.string();
-        if(a.is_compress_compensate && !backend_->recompress(archive_path))
+        if(!a.is_compress_compensate || backend_->archiveInUse(archive_path))
         {
-            LOG_INNER_WARN("log archives recompress submit error[%s]\n", archive_path.c_str());
+            LOG_INNER_DEBUG("log rorate full recompressing: %s \n", archive_path.c_str());
+            continue;
+        }
+        std::error_code error;
+        const bool exists = std::filesystem::exists(a.archive_path, error);
+        if (error || !exists)
+        {
+            continue; // 扫描之后可能已经实时发布并删除原文。
+        }
+
+        if(!backend_->recompress(archive_path))
+        {
+            LOG_INNER_WARN("log archives recompress submit error: %s\n", archive_path.c_str());
         }
     }
 }
@@ -642,6 +649,12 @@ void LogFileSink::rotateFailureHandleUnlocked(const LogBackendResult& result)
     LOG_FILE_SINK_REPORTED("rotate", health_.last_error.c_str());
 }
 
+void LogFileSink::pollArchiveCompletions()
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+    backend_->pollArchiveCompletions();
+}
+
 
 /************LogFileSinkRegister*********** */
 
@@ -654,19 +667,10 @@ LogFileSinkRegister::LogFileSinkRegister()
 
 LogFileSink::Ptr LogFileSinkRegister::acquire(const std::string &file_path, LogCompressCoordinator& compress_coordinator)
 {
+    NotifyFlushSchedule notify{this};
+    std::lock_guard<std::mutex> mutation_lock(mutation_mtx_);
     const std::string normalize_path = NormalizeFilePath(file_path);
-
-    std::lock_guard<std::mutex> lock(mtx_);
-    const auto it = log_file_sinks_.find(normalize_path);
-    if(it != log_file_sinks_.end())
-    {
-        if(auto sink = it->second.lock())
-        {
-            return sink;
-        }
-    }
-
-    // BUG 如果变为统一加载无误后再统一变更提交，这里发现不存在就创建的逻辑就完全无意义
+    if (auto sink = find(normalize_path)) return sink;
 
     auto sink = create(normalize_path, compress_coordinator);
     if(!sink)
@@ -674,7 +678,10 @@ LogFileSink::Ptr LogFileSinkRegister::acquire(const std::string &file_path, LogC
         return nullptr;
     }
 
-    log_file_sinks_[normalize_path] = sink;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        log_file_sinks_[normalize_path] = sink;
+    }
     return sink;
 }
 
@@ -686,6 +693,7 @@ void LogFileSinkRegister::setConfig(LogFileConfig config)
 void LogFileSinkRegister::setConfig(std::shared_ptr<const LogFileConfig> config)
 {
     std::atomic_exchange_explicit(&file_config_, config, std::memory_order_release);
+    notifyFlushSchedule();
 }
 
 
@@ -698,6 +706,8 @@ const std::shared_ptr<const LogFileConfig> LogFileSinkRegister::config() const n
 
 void LogFileSinkRegister::commit(SinksMap &&sinks)
 {
+    NotifyFlushSchedule notify{this};
+    std::lock_guard<std::mutex> mutation_lock(mutation_mtx_);
     std::lock_guard<std::mutex> lock(mtx_);
     log_file_sinks_ = std::move(sinks);
 }
@@ -760,43 +770,6 @@ LogFileSinkResult LogFileSinkRegister::flush(const std::string& file_path)
     }
 
     return sink->flush();
-}
-
-LogFileSinkResult LogFileSinkRegister::durableFlushAll()
-{
-    auto sinks = snapshotSinks();
-    std::string error_msg;
-    LogFileSinkResult result;
-    for(auto &sink : sinks)
-    {
-        if(!sink)
-        {
-            continue;
-        }
-        result = sink->durableFlush();
-        if(!result.ok())
-        {
-            error_msg += "durable flush error[" + sink->normalizedPath() + "]:" + result.message + "\n";
-            continue;
-        }
-    }
-
-    return error_msg.empty() ? 
-        LogFileSinkResult::Ok() 
-        : LogFileSinkResult::Failure(LogFileSinkResultStatus::kSyncFailed, error_msg);
-}
-
-LogFileSinkResult LogFileSinkRegister::durableFlush(const std::string& file_path)
-{
-    const std::string &normalize_path = NormalizeFilePath(file_path);
-
-    auto sink = find(normalize_path);
-    if(!sink)
-    {
-        return LogFileSinkResult::Failure(LogFileSinkResultStatus::kNotFound, "log file not found: " + normalize_path);
-    }
-
-    return sink->durableFlush();
 }
 
 LogFileSinkResult LogFileSinkRegister::reopenAll()
@@ -864,6 +837,49 @@ LogFileSink::Ptr LogFileSinkRegister::create(const std::string &normalize_path, 
     return sink;
 }
 
+
+void LogFileSinkRegister::setFlushWakeup(std::shared_ptr<LogAsyncWakeup> wakeup)
+{
+    std::atomic_store(&flush_wakeup_, std::move(wakeup));
+    notifyFlushSchedule();
+}
+
+void LogFileSinkRegister::clearFlushWakeup(const std::shared_ptr<LogAsyncWakeup>& wakeup)
+{
+    auto expected = wakeup;
+    std::atomic_compare_exchange_strong(&flush_wakeup_, &expected,
+                                       std::shared_ptr<LogAsyncWakeup>{});
+}
+
+void LogFileSinkRegister::notifyFlushSchedule() const noexcept
+{
+    if (auto wakeup = std::atomic_load(&flush_wakeup_)) wakeup->notify();
+}
+
+std::optional<int64_t> LogFileSinkRegister::nextFlushTime() const
+{
+    std::optional<int64_t> earliest;
+    for (const auto& sink : snapshotSinks())
+    {
+        const auto next = sink->nextFlushTime();
+        if (next && (!earliest || *next < *earliest))
+        {
+            earliest = next;
+        }
+    }
+    return earliest;
+}
+
+void LogFileSinkRegister::flushDue(int64_t now)
+{
+    for (const auto& sink : snapshotSinks())
+    {
+        if (const auto next = sink->nextFlushTime(); next && *next <= now)
+        {
+            (void)sink->flushIfDue(now); // sink 保留错误与重试期限，继续检查其他文件。
+        }
+    }
+}
 
 LogFileSink::Ptr LogFileSinkRegister::find(const std::string &file_path)
 {

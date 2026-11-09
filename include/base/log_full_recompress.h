@@ -12,12 +12,12 @@
 
 #include "base/compression.h"
 #include "base/noncopyable.h"
-#include "base/thread.h"
 
 #include <atomic>
 #include <cassert>
 #include <cerrno>
 #include <condition_variable>
+#include <mutex>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -25,6 +25,7 @@
 #include <string>
 #include <fcntl.h>
 #include <system_error>
+#include <thread>
 #include <unistd.h>
 #include <unordered_set>
 
@@ -54,6 +55,7 @@ public:
     virtual ~FullRecompressScheduler() = default;
     virtual bool submit(FullRecompressTask task) noexcept = 0;
     virtual std::string compressSuffix() const noexcept = 0;
+    virtual bool archiveInUse(const std::string& path) const noexcept = 0;
 };
 
 class FullRecompressWorker final: Noncopyable, public FullRecompressScheduler
@@ -73,14 +75,15 @@ public:
         std::error_code cleanup_error;
     };
 
-    explicit FullRecompressWorker(std::shared_ptr<CompressionCodec> codec);
-    FullRecompressWorker(std::shared_ptr<CompressionCodec> codec, Options options);
+    explicit FullRecompressWorker(Options options);
     ~FullRecompressWorker() override;
 
     void start();
 
     bool submit(FullRecompressTask task) noexcept override;
     std::string compressSuffix() const noexcept override { return compress_codec_->suffix(); }
+
+    bool archiveInUse(const std::string& path) const noexcept override;
 
     void stopAccepting() noexcept;
 
@@ -96,7 +99,7 @@ private:
 private:
     std::shared_ptr<CompressionCodec> compress_codec_;
     Options options_;
-    Thread thread_;
+    std::thread thread_;
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::queue<FullRecompressTask> queue_;

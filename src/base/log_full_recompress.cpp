@@ -13,6 +13,8 @@
 #include <chrono>
 #include <exception>
 #include <filesystem>
+#include <pthread.h>
+#include <stdexcept>
 #include <system_error>
 
 namespace kit_muduo {
@@ -78,19 +80,12 @@ private:
 };
 
 
-
 } // namespace
 
-FullRecompressWorker::FullRecompressWorker(std::shared_ptr<CompressionCodec> codec)
-    :FullRecompressWorker(std::move(codec), Options{})
-{
 
-}
-
-FullRecompressWorker::FullRecompressWorker(std::shared_ptr<CompressionCodec> codec, Options options)
-    :compress_codec_(std::move(codec))
+FullRecompressWorker::FullRecompressWorker(Options options)
+    :compress_codec_(CompressionCodec::Create())
     ,options_(std::move(options))
-    ,thread_([this] { workLoop(); }, "log-recompress")
 {
     if (!compress_codec_ || options.queue_capacity == 0 || options.read_buffer_bytes == 0)
     {
@@ -106,15 +101,28 @@ FullRecompressWorker::~FullRecompressWorker()
 void FullRecompressWorker::start()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (started_)
-    {
-        return;
-    }
     if (closed_)
     {
         throw std::logic_error("full recompress worker cannot restart");
     }
-    thread_.start();
+    if (started_) return;
+    try {
+        thread_ = std::thread([this] {
+            const int error = ::pthread_setname_np(::pthread_self(), "log-recompress");
+            if (error != 0)
+            {
+                try {
+                    LOG_INNER_WARN("log-recompress thread name failed: %d\n", error);
+                } catch (...) {
+                    // 命名诊断失败不能阻止全量任务的处理。
+                }
+            }
+            workLoop();
+        });
+    } catch (...) {
+        closed_ = true;
+        throw;
+    }
     started_ = true;
     accepting_ = true;
 }
@@ -168,6 +176,23 @@ bool FullRecompressWorker::submit(FullRecompressTask task) noexcept
     return true;
 }
 
+bool FullRecompressWorker::archiveInUse(const std::string& path) const noexcept
+{
+    try {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto suffix = "." + compress_codec_->suffix();
+        for (const auto& raw_path : queued_records_)
+        {
+            if (path == raw_path || path == raw_path + suffix)
+            {
+                return true;
+            }
+        }
+        return false;
+    } catch (...) {
+        return true; // 查询异常时保留文件，不能猜测它已经空闲。
+    }
+}
 
 void FullRecompressWorker::stopAccepting() noexcept
 {
@@ -189,7 +214,7 @@ void FullRecompressWorker::wait() noexcept
         closed_ = true;
         cv_.notify_all();
     }
-    thread_.join();
+    if (thread_.joinable()) thread_.join();
 }
 
 

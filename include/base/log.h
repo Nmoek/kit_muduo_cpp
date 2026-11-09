@@ -331,7 +331,7 @@ public:
     LogManagerState state() const noexcept { return state_.load(std::memory_order_acquire); }
 
     /**
-     * @brief 默认析构
+     * @brief 默认析构；调用方须先成功 shutdown，超时返回不代表可销毁运行时。
      */
     ~LogManager() = default;
 
@@ -368,7 +368,7 @@ public:
     // void delLogger(const std::string& name);
 
     /**
-     * @brief 日志配置应用
+     * @brief 日志配置应用；控制面不得与 shutdown 并发，不提供热更新协议。
      * @param config 
      */
     void applyConfig(const LogConfig &config);
@@ -385,10 +385,9 @@ public:
 
     LogManagerResult submitForAsync(LogAttr::Ptr attr);
 
+    // 同步已进入 sink 的数据；不等待仍在异步队列中的日志。
     LogManagerResult flushAll();
     LogManagerResult flush(const std::string& file_path);
-    LogManagerResult durableFlushAll();
-    LogManagerResult durableFlush(const std::string& file_path);
     LogManagerResult reopenAll();
     LogManagerResult reopen(const std::string& file_path);
 
@@ -441,14 +440,18 @@ private:
     std::unique_ptr<LogCompressCoordinator> compress_coordinator_{nullptr};
 
 
-    /// @brief 退出使用 活跃日志器监控锁
+    /// @brief 串行化初始化/退出；生产者不获取该锁。
     std::mutex lifecycle_mtx_;
-    /// @brief 退出使用 活跃日志器监控 条件变量
-    std::condition_variable lifecycle_cv_;
+    /// @brief 锁顺序 lifecycle_mtx_ -> submission_mtx_；不跨越入队/I/O/join。
+    std::mutex submission_mtx_;
+    std::condition_variable submission_cv_;
     /// @brief 还未提交完成的日志器数量
     size_t active_log_submissions_{0};
     /// @brief 是否接收日志数据
-    bool accepting_logs_{true};
+    bool accepting_logs_{false};
+    /// @brief 关闭时日志sink快照
+    std::vector<LogFileSink::Ptr> shutdown_sinks_;
+    bool compression_workers_joined_{false};
 };
 /// @brief 日志管理单例
 #define LOGMANAGER_INSTANCE() (LogManager::GetInstance())

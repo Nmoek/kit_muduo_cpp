@@ -48,6 +48,10 @@ option(MUDUO_TEST.BUFFER "build test_buffer" OFF)
 option(MUDUO_TEST.TIMER "build test_timer" OFF)
 option(MUDUO_TEST.LOG "build test_log" OFF)
 option(MUDUO_TEST.LOG_FULL_RECOMPRESS "build test_log_full_recompress" OFF)
+option(MUDUO_TEST.LOG_TASK_EXECUTOR "build test_log_task_executor" OFF)
+option(MUDUO_TEST.LOG_MMAP "build test_log_mmap" OFF)
+option(MUDUO_TEST.LOG_LIFECYCLE "build test_log_lifecycle" OFF)
+option(MUDUO_TEST.LOG_IO_FAULTS "build test_log_io_faults" OFF)
 option(MUDUO_TEST.CONFIG "build test_config" OFF)
 option(MUDUO_TEST.COMPRESSION "build test_compression" OFF)
 
@@ -213,9 +217,12 @@ set(BASE_SRC
     src/base/regular_log_file_backend.cpp
     src/base/log_async.cpp
     src/base/log_full_recompress.cpp
-    src/base/log_mmap_batch.cpp
     src/base/log_compress_coordinator.cpp
-
+    src/base/mmap_log_file_backend.cpp
+    src/base/log_mmap_batch.cpp
+    src/base/log_mmap_completion.cpp
+    src/base/log_task_executor.cpp
+    
     src/base/util.cpp
     src/base/time_stamp.cpp
     src/base/bytes_codec.cpp
@@ -552,11 +559,27 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.BUFFER test_buffer tests/test_buffer.cpp)
 add_kit_test(MUDUO_TEST MUDUO_TEST.TIMER test_timer tests/test_timer.cpp)
 
 # Log测试 test_log
-add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG test_log tests/test_log.cpp tests/test_log_flush.cpp)
 
 # 普通日志轮转与全量压缩链路测试
 add_kit_test(MUDUO_TEST MUDUO_TEST.LOG_FULL_RECOMPRESS
     test_log_full_recompress tests/test_log_full_recompress.cpp)
+
+# 4-1 专项功能测试（不包含性能基准）。
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG_TASK_EXECUTOR
+    test_log_task_executor tests/test_log_task_executor.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG_MMAP
+    test_log_mmap tests/test_log_mmap.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG_LIFECYCLE
+    test_log_lifecycle tests/test_log_lifecycle.cpp)
+add_kit_test(MUDUO_TEST MUDUO_TEST.LOG_IO_FAULTS
+    test_log_io_faults tests/test_log_io_faults.cpp)
+foreach(_log_test test_log test_log_full_recompress test_log_task_executor test_log_mmap test_log_lifecycle test_log_io_faults)
+    if(TARGET ${_log_test})
+        string(TOUPPER "${_log_test}" _log_test_name)
+        set_tests_properties(${_log_test_name} PROPERTIES TIMEOUT 90 LABELS "log")
+    endif()
+endforeach()
 
 # Config测试 test_config
 add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config
@@ -566,6 +589,18 @@ add_kit_test(MUDUO_TEST MUDUO_TEST.CONFIG test_config
 # 压缩模块测试 test_compression
 add_kit_test(MUDUO_TEST MUDUO_TEST.COMPRESSION test_compression
     tests/test_compression.cpp)
+
+# 当前日志 backend 工厂读取应用配置；专项测试复用真实入口，配置单测已有自己的实现。
+# OBJECT 保证 GetAppConfigVars 定义进入可执行文件，并只编译一次。
+foreach(_log_test test_log test_log_full_recompress test_log_task_executor test_log_mmap test_log_lifecycle test_log_io_faults test_compression test_thread)
+    if(TARGET ${_log_test})
+        if(NOT TARGET kit_log_test_config)
+            add_library(kit_log_test_config OBJECT src/app_config.cpp tests/log_test_config.cpp)
+            target_compile_definitions(kit_log_test_config PRIVATE ${DEF})
+        endif()
+        target_link_libraries(${_log_test} PRIVATE kit_log_test_config)
+    endif()
+endforeach()
     
 
 # TcpServer测试 test_tcp_server

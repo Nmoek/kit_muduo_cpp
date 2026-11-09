@@ -85,16 +85,11 @@ public:
     virtual LogBackendResult append(std::string_view bytes) = 0;
 
     /**
-     * @brief 普通 flush 只要求把 backend 自身的用户态缓冲提交到内核。
+     * @brief 完成已接受数据的处理并同步 active 文件；不排空上游日志队列。
      * @return LogBackendResult 
      */
     virtual LogBackendResult flush() noexcept = 0;
 
-    /**
-     * @brief 求调用 fdatasync 或fsyanc 等价能力。
-     * @return LogBackendResult 
-     */
-    virtual LogBackendResult durableFlush() noexcept = 0;
 
     virtual LogBackendResult rotate(const LogFileRotateRequest& request, int64_t timeout_ms = -1) noexcept = 0;
 
@@ -107,6 +102,10 @@ public:
     virtual uint64_t lastSequence() const noexcept = 0;
 
     virtual bool recompress(std::string archive_path) noexcept = 0;
+    virtual void pollArchiveCompletions() noexcept { }
+    virtual bool archiveInUse(const std::string& path) const noexcept { return true; }
+
+    virtual bool hasPendingArchives() const noexcept { return false; }
 
     /**
      * @brief 检查路径并创建不存在的路径

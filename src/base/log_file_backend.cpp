@@ -7,11 +7,16 @@
  * @copyright Copyright (c) 2026 Kewin Li
  */
 #include "base/log_file_backend.h"
+#include "app_config.h"
+#include "base/log_config.h"
 #include "base/log_inner.h"
+#include "base/mmap_log_file_backend.h"
 #include "base/regular_log_file_backend.h"
-#include "base/zstd_compression.h"
+#include "base/mmap_log_file_backend.h"
 
 #include <filesystem>
+
+using namespace kit_app;
 
 namespace kit_muduo {
 
@@ -61,8 +66,29 @@ bool LogFileBackend::chechkAndCreateLogPath(const std::string &normalize_path)
 
 std::unique_ptr<LogFileBackend> LogFileBackend::NewDefaultBackend(LogCompressCoordinator& compress_coordinator)
 {
-    // HACK 默认使用普通写文件 持久化
-    return std::make_unique<RegularLogFileBackend>(compress_coordinator.fullScheduler());
+    const auto &log_config = *APP_CONFIG_VARS_SYSTEM_LOG()->value();
+
+    if(LogFileBackendType::kRegular == log_config.file.backend)
+    {
+        // 普通写文件持久化
+        return std::make_unique<RegularLogFileBackend>(compress_coordinator.fullScheduler());
+    }
+
+    if(LogFileBackendType::kMmapBuffered == log_config.file.backend)
+    {
+        // 使用mmap链路持久化
+        return std::make_unique<MmapBufferedLogFileBackend>(
+            compress_coordinator.mmapScheduler(),
+            compress_coordinator.fullScheduler(),
+            MmapBackendOptions{
+                MmapBufferedLogFileBackend::kDefaultSlotPayloadCapacity,
+                log_config.file.mmap_batch_bytes,
+                log_config.file.compress_rotated,
+                std::chrono::milliseconds(30000),
+            });
+    }
+
+    return nullptr;
 }
 
 

@@ -109,16 +109,6 @@ std::string DecompressFile(const std::filesystem::path& path)
     return std::string(output.begin(), output.end());
 }
 
-std::shared_ptr<CompressionCodec> MakeCodec()
-{
-    auto codec = CompressionCodec::Create();
-    if (!codec)
-    {
-        throw std::runtime_error("create compression codec failed");
-    }
-    return std::shared_ptr<CompressionCodec>(std::move(codec));
-}
-
 FullRecompressTask MakeTask(const std::filesystem::path& source,
     const std::filesystem::path& target,
     uint64_t generation = 0)
@@ -142,11 +132,14 @@ public:
     }
 
     std::string compressSuffix() const noexcept override { return "zst"; }
+    bool archiveInUse(const std::string& path) const noexcept override { return path == protected_path_; }
+    void protectArchive(std::string path) { protected_path_ = std::move(path); }
 
     size_t submitCount() const noexcept { return submit_count_; }
     const FullRecompressTask& lastTask() const noexcept { return last_task_; }
 
 private:
+    std::string protected_path_;
     size_t submit_count_{0};
     FullRecompressTask last_task_;
 };
@@ -172,7 +165,7 @@ TEST(LogFullRecompressTest, WorkerPublishesCompleteArchiveAndRemovesSource)
     payload.back() = 'Z';
     WriteFile(source, payload);
 
-    FullRecompressWorker worker(MakeCodec(), FullRecompressWorker::Options{
+    FullRecompressWorker worker(FullRecompressWorker::Options{
         .queue_capacity = 4,
         .read_buffer_bytes = 64,
     });
@@ -206,7 +199,7 @@ TEST(LogFullRecompressTest, WorkerRetainsSourceAndAllowsLaterCompensationAfterFa
     const std::string payload = "source must survive compression failure\n";
     WriteFile(source, payload);
 
-    FullRecompressWorker worker(MakeCodec());
+    FullRecompressWorker worker(FullRecompressWorker::Options{});
     worker.start();
 
     ASSERT_TRUE(worker.submit(MakeTask(source, target, 3)));
@@ -245,7 +238,7 @@ TEST(LogFullRecompressTest, RegularBackendRotatesCompressesAndContinuesWriting)
     const std::string first_generation = "generation-0\n";
     const std::string second_generation = "generation-1\n";
 
-    FullRecompressWorker worker(MakeCodec());
+    FullRecompressWorker worker(FullRecompressWorker::Options{});
     worker.start();
     RegularLogFileBackend backend(worker);
 
@@ -311,8 +304,8 @@ TEST(LogFullRecompressTest, SinkRetentionSortsArchivesAndCompensatesSources)
     auto sink = std::make_shared<LogFileSink>(
         &registry, active.string(), std::move(backend));
     ASSERT_TRUE(sink->reopen().ok());
-    ASSERT_TRUE(sink->append("aaaa", LogLevel::INFO, false, 4).ok());
-    ASSERT_TRUE(sink->append("b", LogLevel::INFO, false, 1).ok());
+    ASSERT_TRUE(sink->append("aaaa", false, 4).ok());
+    ASSERT_TRUE(sink->append("b", false, 1).ok());
 
     EXPECT_EQ(scheduler.submitCount(), 2U);
     EXPECT_EQ(scheduler.lastTask().generation, 0U);
@@ -324,5 +317,137 @@ TEST(LogFullRecompressTest, SinkRetentionSortsArchivesAndCompensatesSources)
     EXPECT_TRUE(std::filesystem::exists(scheduler.lastTask().archive_log_path));
     EXPECT_EQ(ReadFile(active), "b");
 
+    sink->close();
+}
+
+/*
+测试思路：校验 Options 和任务参数，并明确 start/stop/wait 的接收边界。
+例：容量=0、读取块=0 构造失败；未 start、task_id=0、同源同目标、已停止提交都返回 false。
+*/
+TEST(LogFullRecompressTest, ValidatesOptionsTasksAndLifecycle)
+{
+    EXPECT_THROW(FullRecompressWorker(FullRecompressWorker::Options{0, 64}), std::invalid_argument);
+    EXPECT_THROW(FullRecompressWorker(FullRecompressWorker::Options{4, 0}), std::invalid_argument);
+    TempLogDirectory directory("lifecycle");
+    const auto source = directory.path() / "a.log";
+    const auto target = directory.path() / "a.log.zst";
+    WriteFile(source, "data");
+    FullRecompressWorker worker(FullRecompressWorker::Options{});
+    EXPECT_FALSE(worker.submit(MakeTask(source, target)));
+    worker.start();
+    worker.start();
+    auto invalid = MakeTask(source, target);
+    invalid.task_id = 0;
+    EXPECT_FALSE(worker.submit(invalid));
+    EXPECT_FALSE(worker.submit(MakeTask(source, source)));
+    EXPECT_FALSE(worker.submit(MakeTask({}, target)));
+    EXPECT_FALSE(worker.submit(MakeTask(source, {})));
+    ASSERT_TRUE(worker.submit(MakeTask(source, target)));
+    worker.stopAccepting();
+    EXPECT_FALSE(worker.submit(MakeTask(source, target)));
+    EXPECT_TRUE(worker.drain(3000));
+    worker.wait();
+    worker.wait();
+    EXPECT_THROW(worker.start(), std::logic_error);
+    EXPECT_FALSE(worker.archiveInUse(source.string()));
+    EXPECT_FALSE(worker.archiveInUse(target.string()));
+    EXPECT_EQ(DecompressFile(target), "data");
+}
+
+/*
+测试思路：空文本也需要产生合法 zstd frame，不能用“输出大小非零”替代内容验证。
+例：0 字节 archive -> 可解压的空串，源文件删除且 in-flight 路径释放。
+*/
+TEST(LogFullRecompressTest, EmptyArchiveProducesValidEmptyFrame)
+{
+    TempLogDirectory directory("empty");
+    const auto source = directory.path() / "empty.log";
+    const auto target = directory.path() / "empty.log.zst";
+    WriteFile(source, "");
+    FullRecompressWorker worker(FullRecompressWorker::Options{});
+    worker.start();
+    ASSERT_TRUE(worker.submit(MakeTask(source, target)));
+    ASSERT_TRUE(worker.drain(3000));
+    EXPECT_EQ(DecompressFile(target), "");
+    EXPECT_FALSE(std::filesystem::exists(source));
+    EXPECT_FALSE(worker.archiveInUse(source.string()));
+}
+
+/*
+测试思路：所有者析构必须先消化已接收任务并 join，再销毁队列/条件变量。
+例：两个不同归档连续提交后立即离开作用域，两个压缩文件都能还原且没有遗留临时文件。
+*/
+TEST(LogFullRecompressTest, DestructorFinishesAcceptedArchives)
+{
+    TempLogDirectory directory("destructor");
+    const auto first = directory.path() / "first.log";
+    const auto second = directory.path() / "second.log";
+    WriteFile(first, "first");
+    WriteFile(second, "second");
+    {
+        FullRecompressWorker worker(FullRecompressWorker::Options{});
+        worker.start();
+        EXPECT_TRUE(worker.submit(MakeTask(first, first.string() + ".zst")));
+        EXPECT_TRUE(worker.submit(MakeTask(second, second.string() + ".zst")));
+    }
+    EXPECT_EQ(DecompressFile(first.string() + ".zst"), "first");
+    EXPECT_EQ(DecompressFile(second.string() + ".zst"), "second");
+    EXPECT_FALSE(std::filesystem::exists(first));
+    EXPECT_FALSE(std::filesystem::exists(second));
+    for (const auto& entry : std::filesystem::directory_iterator(directory.path()))
+        EXPECT_EQ(entry.path().extension(), ".zst");
+}
+
+/*
+测试思路：regular 轮转即使全量队列拒绝，已提交的 rename 不能回滚或丢数据。
+例：旧代 old 留在 archive.log，新代继续写 new；一次轮转只尝试一次压缩提交。
+*/
+TEST(LogFullRecompressTest, RejectedCompensationPreservesRawAndNewActive)
+{
+    TempLogDirectory directory("regular_rejected");
+    const auto active = directory.path() / "active.log";
+    const auto archive = directory.path() / "archive.log";
+    RejectingFullRecompressScheduler scheduler;
+    RegularLogFileBackend backend(scheduler);
+    ASSERT_TRUE(backend.open(active.string()).ok());
+    ASSERT_TRUE(backend.append("old").ok());
+    ASSERT_TRUE(backend.rotate({backend.generation(), 0, active.string(), archive.string(), true}).ok());
+    ASSERT_TRUE(backend.append("new").ok());
+    EXPECT_EQ(scheduler.submitCount(), 1U);
+    EXPECT_EQ(ReadFile(archive), "old");
+    EXPECT_EQ(ReadFile(active), "new");
+    EXPECT_EQ(backend.generation(), 1U);
+}
+
+/*
+测试思路：最老归档正在被 worker 使用时，数量清理必须跳过它并检查其他可删归档。
+例：old(保护)/middle/newest + 本轮新归档，保留数=2；保留 old 和本轮归档，删除 middle/newest。
+*/
+TEST(LogFullRecompressTest, RetentionSkipsProtectedOldestAndRemovesOtherCandidates)
+{
+    TempLogDirectory directory("retention_inflight");
+    const auto active = directory.path() / "service.log";
+    const auto oldest = directory.path() / "service_001_20260919-000000-000.log.zst";
+    const auto middle = directory.path() / "service_002_20260920-000000-000.log.zst";
+    const auto newest = directory.path() / "service_003_20260921-000000-000.log.zst";
+    WriteFile(oldest, "protected");
+    WriteFile(middle, "middle");
+    WriteFile(newest, "newest");
+    RejectingFullRecompressScheduler scheduler;
+    scheduler.protectArchive(oldest.string());
+    LogFileSinkRegister registry;
+    LogFileConfig config;
+    config.rotate_max_bytes = 4;
+    config.rotate_max_backup_files = 2;
+    registry.setConfig(config);
+    auto sink = std::make_shared<LogFileSink>(&registry, active.string(),
+        std::make_unique<RegularLogFileBackend>(scheduler));
+    ASSERT_TRUE(sink->reopen().ok());
+    ASSERT_TRUE(sink->append("aaaa").ok());
+    ASSERT_TRUE(sink->append("b").ok());
+    EXPECT_EQ(ReadFile(oldest), "protected");
+    EXPECT_FALSE(std::filesystem::exists(middle));
+    EXPECT_FALSE(std::filesystem::exists(newest));
+    EXPECT_EQ(ReadFile(active), "b");
     sink->close();
 }

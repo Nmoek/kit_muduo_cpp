@@ -261,6 +261,18 @@ size_t AlignToCachePage(size_t n, size_t page)
     return (n + page - 1) / page * page;
 }
 
+size_t GetCachePageSize()
+{
+#ifdef _WIN32
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+    return sysInfo.dwPageSize;
+#else
+    long pageSize = sysconf(_SC_PAGESIZE);
+    return pageSize > 0 ? static_cast<size_t>(pageSize) : 4096;
+#endif
+}
+
 uint32_t CalcCrc32(const unsigned char *buf, uint32_t len)
 {
     const auto crc = crc32_z(0L, nullptr, 0);

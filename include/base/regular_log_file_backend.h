@@ -33,7 +33,6 @@ public:
 
     LogBackendResult flush() noexcept override;
 
-    LogBackendResult durableFlush() noexcept override;
 
     LogBackendResult rotate(const LogFileRotateRequest& request, int64_t timeout_ms = -1) noexcept override;
 
@@ -46,6 +45,9 @@ public:
     uint64_t lastSequence() const noexcept override;
     
     bool recompress(std::string archive_path) noexcept override;
+
+    bool archiveInUse(const std::string& path) const noexcept override;
+
 private:
     LogBackendResult openInner(const std::string& normalize_path);
 
@@ -60,7 +62,7 @@ private:
     uint64_t open_size_{0};
 
     /// @brief 全量压缩调度器
-    FullRecompressScheduler& scheduler_;
+    FullRecompressScheduler& compress_scheduler_;
     /// @brief 是否压缩退化(压缩失败保留归档日志)
     bool compression_degraded_{false};
 };

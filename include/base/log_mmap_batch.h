@@ -1,6 +1,6 @@
 /**
  * @file log_mmap_batch.h
- * @brief 日志mmap分批处理
+ * @brief 日志mmap封装批次处理
  * @author Kewin Li
  * @version 1.0
  * @date 2026-09-20 15:57:39
@@ -11,7 +11,7 @@
 
 
 #include "base/noncopyable.h"
-#include "base/thread_pool.h"
+#include "base/log_task_executor.h"
 
 #include <array>
 #include <atomic>
@@ -35,7 +35,7 @@
 
 namespace kit_muduo {
 
-class SealedBatch;
+class MmapSealedBatch;
 class MmapBatchTarget;
 
 struct MmapPoolOptions 
@@ -46,21 +46,6 @@ struct MmapPoolOptions
     int32_t compression_queue_capacity{64};
     int32_t idle_seconds{30};
 };
-
-// 初始线程数固定 1，不增加 YAML 配置；上限是装配参数，按部署调整。
-inline void setLogPoolConfig(ThreadPool& pool, int32_t max_threads,
-    int32_t queue_capacity, int32_t idle_seconds)
-{
-    if (max_threads < 1 || queue_capacity < 1 || idle_seconds < 1)
-    {
-        throw std::invalid_argument("invalid log pool options");
-    }
-    pool.setMode(ThreadPool::CACHE_MOD); // 动态伸缩模式
-    pool.setThreadMaxThreshHold(max_threads);
-    pool.setTaskQueMaxThreshHold(queue_capacity);
-    pool.setThreadMaxIdleInterval(idle_seconds);
-}
-
 
 class MmapBatchResult: Noncopyable
 {
@@ -77,11 +62,18 @@ public:
     bool waitFor(int64_t timeout_ms, std::error_code& error) const
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        
-        if (!cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this] { return done_; }))
+        if(-1 == timeout_ms)
         {
-            return false;
+            cv_.wait(lock, [this] { return done_; });
         }
+        else
+        {
+            if (!cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this] { return done_; }))
+            {
+                return false;
+            }
+        }
+
         error = error_;
         return true;
     }
@@ -97,9 +89,53 @@ struct MmapBatchEndTask
     std::shared_ptr<MmapBatchTarget> target;
     uint64_t generation{0};
     uint64_t last_sequence{0};
-    std::shared_ptr< MmapBatchResult> result;
+    std::shared_ptr<MmapBatchResult> result;
 };
 
+struct MmapActiveRotateOutcome
+{
+    bool archive_committed{false};
+    bool active_open{false};
+    std::error_code error;
+    // 保留 rename 失败后恢复旧 fd 的第二个错误。
+    std::error_code reopen_error; 
+};
+
+class MmapActiveRotateResult : Noncopyable
+{
+public:
+    void complete(MmapActiveRotateOutcome outcome) noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        assert(!done_);
+        outcome_ = std::move(outcome);
+        done_ = true;
+        cv_.notify_all();
+    }
+
+    MmapActiveRotateOutcome wait() noexcept
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        cv_.wait(lock, [this] { return done_; });
+        return outcome_;
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    bool done_{false};
+    MmapActiveRotateOutcome outcome_;
+};
+
+using MmapDeadline = std::chrono::steady_clock::time_point;
+
+struct MmapActiveRotateTask
+{
+    std::shared_ptr<MmapBatchTarget> target;
+    std::string archive_log_path;
+    MmapDeadline deadline{MmapDeadline::max()};
+    std::shared_ptr<MmapActiveRotateResult> result;
+};
 
 /**
  * @brief MMAP分批处理调度
@@ -108,8 +144,10 @@ class MmapBatchScheduler
 {
 public:
     virtual ~MmapBatchScheduler() = default;
-    virtual bool submitBatch(std::shared_ptr<SealedBatch> batch) noexcept = 0;
+    virtual bool submitBatch(std::shared_ptr<MmapSealedBatch> batch) noexcept = 0;
     virtual bool submitBatchEnd(MmapBatchEndTask task) noexcept = 0;
+    virtual bool submitActiveRotate(MmapActiveRotateTask task) noexcept = 0;
+
 };
 
 class LogBatchOrderedSinkDispatcher: Noncopyable
@@ -117,7 +155,7 @@ class LogBatchOrderedSinkDispatcher: Noncopyable
 public:
     using Task = std::function<void()>;
 
-    explicit LogBatchOrderedSinkDispatcher(const MmapPoolOptions& options);
+    explicit LogBatchOrderedSinkDispatcher(MmapPoolOptions options = {});
 
     ~LogBatchOrderedSinkDispatcher();
 
@@ -128,6 +166,9 @@ public:
     bool submitPair(const std::string& path, Task active_task, Task compression_task) noexcept;
 
     bool submitCompression(const std::string& path, Task task) noexcept;
+
+    bool submitActive(const std::string& path, Task task) noexcept;
+
 
     void stopAccepting() noexcept;
 
@@ -157,8 +198,8 @@ private:
         std::unique_lock<std::mutex>& lock) noexcept;
 
 private:
-    ThreadPool active_pool_;
-    ThreadPool compression_pool_;
+    LogTaskExecutor active_pool_;
+    LogTaskExecutor compression_pool_;
     std::mutex mutex_;
     std::condition_variable cv_;
     std::unordered_map<std::string, std::shared_ptr<Sink>> sinks_;
@@ -175,20 +216,26 @@ private:
 class MmapBatchDispatcher final: public MmapBatchScheduler, Noncopyable
 {
 public:
-    explicit MmapBatchDispatcher(const MmapPoolOptions& options);
+    explicit MmapBatchDispatcher(MmapPoolOptions options = {});
+
+    bool submitBatch(std::shared_ptr<MmapSealedBatch> batch) noexcept override;
+    bool submitBatchEnd(MmapBatchEndTask task) noexcept override;
+    bool submitActiveRotate(MmapActiveRotateTask task) noexcept override;
+
     void registerSink(const std::string& path) { ordered_.registerSink(path); }
     void start(bool compression_enabled = true) { ordered_.start(compression_enabled); }
-
-    bool submitBatch(std::shared_ptr<SealedBatch> batch) noexcept override { /*TODO */return false; }
-    bool submitBatchEnd(MmapBatchEndTask task) noexcept override { /*TODO */ return false; }
     void stopAccepting() noexcept { ordered_.stopAccepting(); }
     bool drain(uint64_t timeout_ms) noexcept { return ordered_.drain(timeout_ms); }
     void wait() noexcept { ordered_.wait(); }
 
 private:
-    static void processActive(const std::shared_ptr<SealedBatch>& batch) noexcept;
-    static void processCompression(const std::shared_ptr<SealedBatch>& batch) noexcept;
-    static void processEnd(const MmapBatchEndTask& task) noexcept;
+    static void ProcessActive(const std::shared_ptr<MmapSealedBatch>& batch) noexcept;
+    static void ProcessCompression(const std::shared_ptr<MmapSealedBatch>& batch) noexcept;
+    static void ProcessEnd(const MmapBatchEndTask& task) noexcept;
+    static void ProcessActiveRotate(const MmapActiveRotateTask& task) noexcept;
+
+
+private:
     LogBatchOrderedSinkDispatcher ordered_;
 };
 

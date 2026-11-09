@@ -8,6 +8,7 @@
  */
 
 #include "base/log.h"
+#include "base/defer.h"
 #include "base/log_appender.h"
 #include "base/log_async.h"
 #include "base/log_compress_coordinator.h"
@@ -69,7 +70,6 @@ LogFileSink::Ptr FindAndMakeSink(LogFileSinkRegister& file_register,
         }
     }
 
-    // HACK 默认采用 普通写文件 + 全量压缩 落盘策略
     sink = std::make_shared<LogFileSink>(&file_register, normalize_path, LogFileBackend::NewDefaultBackend(compress_coordinator));
 
     auto open_result = sink->reopen();
@@ -106,6 +106,7 @@ LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
     {
         const std::string normalize_path = NormalizeFilePath(config.file_path);
 
+
         LogFileSink::Ptr sink = FindAndMakeSink(file_register, compress_coordinator, sinks, normalize_path);
         if(!sink)
         {
@@ -119,6 +120,7 @@ LogAppender::Ptr MakeAppender(LogFileSinkRegister& file_register,
         f->setFormatter(config.formatter.empty() ? formatter : MakeFormatter(config.formatter));
 
         appender = std::move(f);
+        
     }
 
     return appender;
@@ -154,7 +156,8 @@ void Logger::log(LogAttr::Ptr attr)
         attr->seal();
     }
 
-    logUnchecked(attr);
+    // 所有生产者统一进入 manager 屏障；返回仅表示提交完成，不代表已落盘。
+    logForAync(std::move(attr));
 }
 
 
@@ -165,15 +168,7 @@ void Logger::logUnchecked(LogAttr::Ptr attr)
         return;
     }
 
-    // 日志提交RAII
-    // LogSubmissionGuard guard(*manager_);
-
-    // if(!guard.entered())
-    // {
-    //     LOG_INNER_DEBUG("log attr submission rejected! \n");
-    //     return;
-    // }
-
+    // 消费端不重复检查生产者入口；停止接收后仍须写完已接收日志。
     dispatchUnlocked(attr);
 }
 
@@ -376,6 +371,7 @@ LogManager::LogManager()
 
 LogManagerResult LogManager::initialize(const LogConfig& config)
 {
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mtx_);
     LogManagerState expected = LogManagerState::kInit;
     // 必须是 kInit-->kPreparing
     if(!state_.compare_exchange_strong(expected, LogManagerState::kPreparing, std::memory_order_acq_rel))
@@ -390,23 +386,40 @@ LogManagerResult LogManager::initialize(const LogConfig& config)
     }
 
     try {
-        // 压缩器 zstd
-        std::shared_ptr<CompressionCodec> compress_codec = CompressionCodec::Create();
+        // 只回收本次启动的线程；配置发布的完整事务回滚是独立问题。
+        Defer stop_workers_on_failure([this] {
+            if (LogManagerState::kRunning == state())
+            {
+                return;
+            }
+            if (async_dispatcher_)
+            {
+                (void)async_dispatcher_->shutdown();
+                async_dispatcher_->join();
+            }
+            if (compress_coordinator_) 
+            {
+                compress_coordinator_->wait();
+            }
+        });
 
-        // TODO mmap batch调度器暂时不初始化
         compress_coordinator_ = std::make_unique<LogCompressCoordinator>(
-            nullptr, 
-            std::make_unique<FullRecompressWorker>(compress_codec)
+            std::make_unique<MmapBatchDispatcher>(MmapPoolOptions{}),
+            std::make_unique<FullRecompressWorker>(FullRecompressWorker::Options{})
         );
+        // 开启压缩协调器
+        compress_coordinator_->start(config.file.compress_rotated);
 
         applyConfig(config);
 
-        // 开启压缩协调器
-        compress_coordinator_->start();
         // 开启异步分发器
         async_dispatcher_->start();
 
-        state_.store(LogManagerState::kRunning, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> submission_lock(submission_mtx_);
+            state_.store(LogManagerState::kRunning, std::memory_order_release);
+            accepting_logs_ = true;
+        }
 
         return LogManagerResult::Ok();
 
@@ -477,6 +490,13 @@ void LogManager::applyConfig(const LogConfig &config)
 {
     ValidateLogConfig(config);
 
+    // 冷启动打开已有 active 时就会建立刷新期限，必须先安装本次启动配置。
+    // 运行中的配置应用仍走既有发布流程，不在这里扩展热更新协议。
+    if (state() == LogManagerState::kPreparing)
+    {
+        file_register_.setConfig(config.file);
+    }
+
     // BUG 这里设计始终有点问题 半热更新设计
 
     auto prepared = prepareLogConfig(config);
@@ -491,11 +511,20 @@ LogFileSink::Ptr LogManager::acquireFileSink(const std::string &file_path)
 
 LogManagerResult LogManager::submitForAsync(LogAttr::Ptr attr)
 {
-    if(!attr)
+    if(!attr || !attr->getLogger())
     {
         return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
             "log async attribute is null");
     }
+
+    if(!tryEnterLogSubmission())
+    {
+        return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState,
+            "log producer gate closed");
+    }
+    Defer leave_producer([this]() noexcept { 
+        leaveLogSubmission();
+    });
 
     if(!async_dispatcher_)
     {
@@ -567,52 +596,6 @@ LogManagerResult LogManager::flush(const std::string& file_path)
     return LogManagerResult::Ok();
 }
 
-LogManagerResult LogManager::durableFlushAll()
-{
-    const auto current = state();
-
-    if (LogManagerState::kRunning != current
-        && LogManagerState::kStopAccepting != current)
-    {
-        return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState,
-            "log manager cannot durable flush in current state");
-    }
-
-    const auto result = file_register_.durableFlushAll();
-
-    if (!result.ok())
-    {
-        return LogManagerResult::Failure(
-            LogManagerResultStatus::kOperationFailed,
-            result.message);
-    }
-
-    return LogManagerResult::Ok();
-}
-
-LogManagerResult LogManager::durableFlush(const std::string& file_path)
-{
-    const auto current = state();
-
-    if (LogManagerState::kRunning != current
-        && LogManagerState::kStopAccepting != current)
-    {
-        return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState,
-            "log manager cannot durable flush in current state");
-    }
-
-    const auto result = file_register_.durableFlush(file_path);
-
-    if (!result.ok())
-    {
-        return LogManagerResult::Failure(
-            LogManagerResultStatus::kOperationFailed,
-            result.message);
-    }
-
-    return LogManagerResult::Ok();
-}
-
 LogManagerResult LogManager::reopenAll()
 {
     const auto current = state();
@@ -668,46 +651,135 @@ LogManagerResult LogManager::shutdown()
         return LogManagerResult::Ok();
     }
 
-    if(LogManagerState::kRunning != cur_state)
+    if(LogManagerState::kRunning != cur_state
+        && LogManagerState::kStopAccepting != cur_state)
     {
         return LogManagerResult::Failure(LogManagerResultStatus::kInvalidState, "log manager cannot shutdown in current state");
     }
-
-    state_.store(LogManagerState::kStopAccepting, std::memory_order_release);
-
-    // TODO 这部分是同步处理的遗留写法 先不删
-#if 0
     {
-    // 先阻止新的日志提交。
-    accepting_logs_ = false;
-
-    // 等待内存中日志完全写入 drain
-    lifecycle_cv_.wait(lock, [this](){
-        return 0 == active_log_submissions_;
-    });
+        std::lock_guard<std::mutex> submission_lock(submission_mtx_);
+        accepting_logs_ = false;
+        state_.store(LogManagerState::kStopAccepting, std::memory_order_release);
     }
-#endif
-    // TODO 写线程队列关闭超时继续往下执行有风险
-    if(!async_dispatcher_->shutdown())
-    {
-        LOG_INNER_WARN("log async dispathcher drain timeout! queue capacity: %ld/%ld\n", async_dispatcher_->queueSize(), async_dispatcher_->capacity());
+
+    try {
+        const uint64_t configured_ms = async_dispatcher_
+            ? async_dispatcher_->config()->stop_drain_timeout_ms
+            : LogAsyncConfig{}.stop_drain_timeout_ms;
+        const int64_t budget_ms = static_cast<int64_t>(configured_ms);
+
+        {
+            std::unique_lock<std::mutex> submission_lock(submission_mtx_);
+            // 只释放生产者锁，lifecycle_mtx_ 始终串行化本次完整退出。
+            if(!submission_cv_.wait_for(submission_lock,
+                std::chrono::milliseconds(budget_ms),
+                [this] { return active_log_submissions_ == 0; }))
+            {
+                return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
+                    "log producer drain timeout; runtime retained");
+            }
+        }
+
+        if(!compression_workers_joined_)
+        {
+            if(async_dispatcher_)
+            {
+                if(!async_dispatcher_->shutdown())
+                {
+                    return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
+                        "log writer drain timeout; runtime retained");
+                }
+                async_dispatcher_->join();
+            }
+
+            // writer 不再创建/访问 sink 后取快照，避免遗漏最后一批日志的输出。
+            // 成员强引用保留到关闭成功；失败返回不释放仍在使用的 sink。
+            if(shutdown_sinks_.empty())
+            {
+                shutdown_sinks_ = file_register_.snapshotSinks();
+            }
+            for(const auto& sink : shutdown_sinks_)
+            {
+                if(!sink)
+                {
+                    continue;
+                }
+                const auto result = sink->flush();
+                if (!result.ok())
+                {
+                    return LogManagerResult::Failure(
+                        LogManagerResultStatus::kOperationFailed,
+                        "shutdown tail flush: " + result.message);
+                }
+            }
+
+            if(compress_coordinator_)
+            {
+                compress_coordinator_->stopMmapAccepting();
+                if(!compress_coordinator_->drainMmap(budget_ms))
+                {
+                    return LogManagerResult::Failure(
+                        LogManagerResultStatus::kOperationFailed,
+                        "mmap drain timeout; runtime retained");
+                }
+            }
+            for (const auto& sink : shutdown_sinks_)
+            {
+                if (!sink)
+                {
+                    continue;
+                }
+                const auto result = sink->finishArchiveCompletions();
+                if (!result.ok())
+                {
+                    return LogManagerResult::Failure(
+                        LogManagerResultStatus::kOperationFailed,
+                        "shutdown archive handoff: " + result.message);
+                }
+            }
+            if(compress_coordinator_)
+            {
+                // 此后不再有轮转/End 收尾会产生 full task。
+                compress_coordinator_->stopFullAccepting();
+                if (!compress_coordinator_->drainFull(budget_ms))
+                {
+                    return LogManagerResult::Failure(
+                        LogManagerResultStatus::kOperationFailed,
+                        "full compression drain timeout; runtime retained");
+                }
+                compress_coordinator_->wait();
+            }
+            compression_workers_joined_ = true;
+        }
+
+        // 某个 sink 关闭失败时保留它及剩余项；已关闭项不在下次重试中重复操作。
+        while(!shutdown_sinks_.empty())
+        {
+            const auto& sink = shutdown_sinks_.back();
+            if(sink)
+            {
+                const auto closed = sink->closeForShutdown();
+                if(!closed.ok())
+                {
+                    return LogManagerResult::Failure(
+                        LogManagerResultStatus::kOperationFailed,
+                        "shutdown close: " + closed.message);
+                }
+            }
+            shutdown_sinks_.pop_back();
+        }
+        state_.store(LogManagerState::kStopped, std::memory_order_release);
+        
+    } catch (const std::exception& error) {
+        return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
+            std::string("shutdown failed; runtime retained: ") + error.what());
+    } catch (...) {
+        return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed,
+            "shutdown failed; runtime retained");
     }
-    compress_coordinator_->stopFullAccepting();
-    compress_coordinator_->stopMmapAccepting();
-    compress_coordinator_->wait();
 
-    // 从这里开始 所有日志不再进入系统
-    const auto flush_result = file_register_.flushAll();
-
-    file_register_.closeAll();
-
-    state_.store(LogManagerState::kStopped, std::memory_order_release);
-
-    if(!flush_result.ok())
-    {
-        return LogManagerResult::Failure(LogManagerResultStatus::kOperationFailed, "log manager flushAll error: " + flush_result.message);
-    }
     return LogManagerResult::Ok();
+
 }
 
 LogManagerHealthStat
@@ -828,7 +900,7 @@ void LogManager::publishPreparedConfig(PreparedLogConfig&& prepared)
     /* 发布 LogAsyncDispatcher */
     if(!async_dispatcher_ || async_dispatcher_->shutdown())
     {
-        async_dispatcher_ = std::make_unique<LogAsyncDispatcher>(std::move(prepared.aync_config));
+        async_dispatcher_ = std::make_unique<LogAsyncDispatcher>(file_register_, std::move(prepared.aync_config));
 
         if (LogManagerState::kRunning == state())
         {
@@ -871,7 +943,7 @@ void LogManager::publishPreparedConfig(PreparedLogConfig&& prepared)
 
 bool LogManager::tryEnterLogSubmission() noexcept
 {
-    std::lock_guard<std::mutex> lock(lifecycle_mtx_);
+    std::lock_guard<std::mutex> lock(submission_mtx_);
     if(!accepting_logs_ 
         || LogManagerState::kRunning != state_.load(std::memory_order_acquire))
     {
@@ -883,7 +955,7 @@ bool LogManager::tryEnterLogSubmission() noexcept
 
 void LogManager::leaveLogSubmission() noexcept
 {
-    std::lock_guard<std::mutex> lock(lifecycle_mtx_);
+    std::lock_guard<std::mutex> lock(submission_mtx_);
 
     if(active_log_submissions_ > 0)
     {
@@ -892,7 +964,7 @@ void LogManager::leaveLogSubmission() noexcept
 
     if(!accepting_logs_ && 0 == active_log_submissions_)
     {
-        lifecycle_cv_.notify_all();
+        submission_cv_.notify_all();
     }
 
 }

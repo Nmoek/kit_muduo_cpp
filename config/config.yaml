@@ -16,12 +16,13 @@ system:
       max_queue_bytes: 16777216
       stop_drain_timeout_ms: 3000
     file:
-      flush_threshold: 1048576
-      flush_interval_ms: 3000
-      flush_on_level: ERROR
-      rotate_max_bytes: 314572800
+      flush_threshold: 1048576 # sink 累计未同步字节阈值；达到后执行 fdatasync
+      flush_interval_ms: 3000 # 从第一条未同步数据计时；空闲期间也由 writer 定时检查
+      mmap_batch_bytes: 1048576 # mmap 提交批次阈值，与 sink 刷盘阈值独立
+      rotate_max_bytes: 1048576
       rotate_max_backup_files: 5
       compress_rotated: true
+      backend: "regular"
       init_failure_policy: fail
     loggers:
       - name: root
@@ -52,7 +53,7 @@ system:
         level: DEBUG
         appenders:
           - type: stdout
-            level: DEBUG
+            level: WARN
           - type: file
             level: DEBUG
             file_path: log/web.log
@@ -61,7 +62,7 @@ system:
         level: DEBUG
         appenders:
           - type: stdout
-            level: DEBUG
+            level: WARN
           - type: file
             level: DEBUG
             file_path: log/domain.log

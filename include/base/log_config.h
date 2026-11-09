@@ -23,6 +23,7 @@ namespace kit_muduo {
 
 enum class LogAppenderType { kStdout, kFile };
 
+enum class LogFileBackendType { kRegular, kMmapBuffered };
 
 struct LogAppenderConfig
 {
@@ -71,18 +72,20 @@ inline bool IsLogInitFailurePolicyValid(LogInitFailurePolicy value)
 
 struct LogFileConfig
 {
-    /// @brief 日志写入刷新阈值 默认1MB
+    /// @brief sink 累计未同步字节阈值，默认 1 MiB
     uint64_t flush_threshold{1 * 1024 * 1024};
-    /// @brief 日志写入刷新时间间隔 默认3s
+    /// @brief 第一条未同步日志的刷新期限，默认 3 秒
     uint64_t flush_interval_ms{3000};
-    /// @brief 日志刷新等级(碰到就立即刷新) 默认ERROR
-    LogLevel::Level flush_on_level{LogLevel::ERROR};
+    /// @brief mmap 批次提交阈值，与 sink 刷盘阈值独立。
+    uint64_t mmap_batch_bytes{1 * 1024 * 1024};
     /// @brief 文件大小轮转阈值
     uint64_t rotate_max_bytes{300 * 1024 * 1024};
     /// @brief 文件轮转数量
     uint32_t rotate_max_backup_files{5};
     /// @brief 文件是否进行压缩处理
     bool compress_rotated{true};
+    /// @brief 文件落盘实施策略(普通写 / mmap)
+    LogFileBackendType backend{LogFileBackendType::kRegular};
     /// @brief 日志初始化策略 默认启动失败就终止程序
     LogInitFailurePolicy init_failure_policy{LogInitFailurePolicy::kFail};
 };
@@ -181,6 +184,37 @@ struct ConfigCodec<LogAppenderType, Policy>
         throw ConfigError({}, "invalid appender type enum");
     }
 };
+
+
+template<class Policy>
+struct ConfigCodec<LogFileBackendType, Policy>
+{
+    using Node = typename Policy::Node;
+
+    static LogFileBackendType Decode(const Node& node)
+    {
+        const auto value = ConfigCodec<std::string, Policy>::Decode(node);
+
+        if(value == "regular") return LogFileBackendType::kRegular;
+        if(value == "mmap_buffered") return LogFileBackendType::kMmapBuffered;
+
+        throw ConfigError(Policy::Context(node),
+            "appender type must be stdout or file");
+    }
+
+    static Node Encode(LogFileBackendType value)
+    {
+        switch(value)
+        {
+            case LogFileBackendType::kRegular:
+                return ConfigCodec<std::string, Policy>::Encode("regular");
+            case LogFileBackendType::kMmapBuffered:
+                return ConfigCodec<std::string, Policy>::Encode("mmap_buffered");
+        }
+        throw ConfigError({}, "invalid appender type enum");
+    }
+};
+
 
 template<class Policy>
 struct ConfigCodec<LogLevel::Level, Policy>
@@ -394,10 +428,11 @@ struct ConfigCodec<LogFileConfig, Policy>
         log_config_detail::DecodeObject<Policy>(node,
         {"flush_threshold", 
             "flush_interval_ms",
-            "flush_on_level",
+            "mmap_batch_bytes",
             "rotate_max_bytes", 
             "rotate_max_backup_files", 
             "compress_rotated",
+            "backend",
             "init_failure_policy"},
         [&](const std::string& field, const Node& child) {
         #define XX(NAME, TYPE) \
@@ -408,10 +443,11 @@ struct ConfigCodec<LogFileConfig, Policy>
 
             XX(flush_threshold, uint64_t)
             XX(flush_interval_ms, uint64_t)
-            XX(flush_on_level, LogLevel::Level)
+            XX(mmap_batch_bytes, uint64_t)
             XX(rotate_max_bytes, uint64_t)
             XX(rotate_max_backup_files, int32_t)
             XX(compress_rotated, bool)
+            XX(backend, LogFileBackendType)
             XX(init_failure_policy, LogInitFailurePolicy)
 
         #undef XX
@@ -428,10 +464,11 @@ struct ConfigCodec<LogFileConfig, Policy>
 
         XX(flush_threshold, uint64_t)
         XX(flush_interval_ms, uint64_t)
-        XX(flush_on_level, LogLevel::Level)
+        XX(mmap_batch_bytes, uint64_t)
         XX(rotate_max_bytes, uint64_t)
         XX(rotate_max_backup_files, int32_t)
         XX(compress_rotated, bool)
+        XX(backend, LogFileBackendType)
         XX(init_failure_policy, LogInitFailurePolicy)
     #undef XX
         return node;
