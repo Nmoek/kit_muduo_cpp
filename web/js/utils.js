@@ -954,7 +954,20 @@
         return formData;
     }
 
+    /**
+     * 格式化测试服务监听地址；HTTPS 证书需要覆盖平台当前访问的主机名。
+     * @param {{protocol_type: number|string, listen_port: number}} project
+     * @returns {number|string}
+     */
+    function formatProjectListenEndpoint(project) {
+        const isHttps = Number(project.protocol_type) === 3 || String(project.protocol_type).toLowerCase() === 'https';
+        return isHttps && Number(project.listen_port) > 0
+            ? `https://${global.location.hostname}:${project.listen_port}`
+            : project.listen_port;
+    }
+
     KitProxy.utils = {
+        formatProjectListenEndpoint,
         formatUtcTime,
         delay,
         showLoading,

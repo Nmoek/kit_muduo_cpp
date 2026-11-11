@@ -2358,9 +2358,12 @@
             runtime.liveIntervalMs = 2500;
         }
         mockRuntime.set(runtimeKey, runtime);
+        const useHttpsRecords = Number(context.protocolType) === 3
+            || String(context.protocolType).toLowerCase() === 'https';
         const buildRecord = (scope, seq, overrides = {}) => useTcpRecords
             ? mockTcpRecord(projectId, protocolId, scope, seq, overrides)
-            : mockRecord(projectId, protocolId, scope, seq, overrides);
+            : mockRecord(projectId, protocolId, scope, seq, Object.assign(
+                { protocol_type: useHttpsRecords ? 'https' : 'http' }, overrides));
         const failThisConnection = runtime.failNextConnection === true;
         runtime.failNextConnection = false;
 

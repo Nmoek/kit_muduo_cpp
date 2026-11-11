@@ -212,10 +212,10 @@ function applyAddModalRequestBodyContentHidden(modal) {
  * http协议添加模态框
  */
 var httpProtocolModal = {
-    create: function(/** @type {{ id: any; }} */ serviceCard) {
+    create: function(/** @type {{ id: any; }} */ serviceCard, projectProtocolType = ProtocolType.HTTP) {
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
-        modal.dataset.projectProtocolType = String(ProtocolType.HTTP);
+        modal.dataset.projectProtocolType = String(projectProtocolType);
         modal.innerHTML = `
             <div class="add-protocol-item-modal">
                 <div class="modal-header">
@@ -254,7 +254,7 @@ var httpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="request-body-type">
-                                        ${renderAddModalBodyTypeOptions(ProtocolType.HTTP, 'request')}
+                                        ${renderAddModalBodyTypeOptions(projectProtocolType, 'request')}
                                     </select>
                                     <button type="button" class="import-btn" data-target="request-body-type">导入</button>
                                 </div>
@@ -267,7 +267,7 @@ var httpProtocolModal = {
                                 </div>
                                 <div class="body-type-container">
                                     <select id="response-body-type">
-                                        ${renderAddModalBodyTypeOptions(ProtocolType.HTTP, 'response')}
+                                        ${renderAddModalBodyTypeOptions(projectProtocolType, 'response')}
                                     </select>
                                     <button type="button" class="import-btn" data-target="response-body-type">导入</button>
                                 </div>
@@ -342,7 +342,7 @@ var httpProtocolModal = {
                 submit_protocol.cfg_header = {
                     "id": -1,
                     "name": itemName,
-                    "type": "http",
+                    "type": projectProtocolType === ProtocolType.HTTPS ? 'https' : 'http',
                     "project_id": projectId,
                     "req_body_type": requestBodyType,
                     "resp_body_type": responseBodyType,

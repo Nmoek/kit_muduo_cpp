@@ -49,6 +49,23 @@ cp "$repo_root/kit.sqlite" "$run_dir/kit.sqlite"
 ln -s "$repo_root/web" "$run_dir/web"
 mkdir -p "$run_dir/log"
 
+# HTTPS 证书只写入本轮 /tmp 工作目录的配置，不改仓库 YAML 或数据库。
+if [[ -n "${PLAYWRIGHT_REAL_HTTPS_CERT_DIR:-}" ]]; then
+    python3 - "$run_dir/https.yaml" "$PLAYWRIGHT_REAL_HTTPS_CERT_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+certificate_dir = pathlib.Path(sys.argv[2]).resolve()
+with open(sys.argv[1], "w") as output:
+    json.dump({"work": {"https": {
+        "cert_chain_file": str(certificate_dir / "server-chain.pem"),
+        "private_key_file": str(certificate_dir / "server-key.pem"),
+    }}}, output)
+PY
+    export KIT_CONFIG_FILE="$run_dir/https.yaml"
+fi
+
 # Real E2E 使用副本数据库，并把副本中的现有管理员密码固定为测试密码。
 # 生产数据库和仓库根目录 kit.sqlite 不会被修改。
 sqlite3 "$run_dir/kit.sqlite" <<SQL

@@ -91,10 +91,6 @@
                 user_id: 1,
                 ctime: '2025-08-12T10:20:15.000Z',
             },
-            /*
-             * HTTPS 暂未支持，Mock 不生成 HTTPS 服务样例，避免主页面出现暂不可用协议。
-             * 待后端和前端协议项编辑能力补齐后，再恢复 protocol_type: 3 的样例。
-             */
         ],
         protocols: [
             {
@@ -260,7 +256,7 @@
     }
 
     /**
-     * Mock 示例只覆盖当前已支持的协议类型；HTTPS 暂未接入，所以这里不生成 HTTPS 示例。
+     * 为服务数据补齐所有者信息，HTTP/TCP/HTTPS 使用相同服务模型。
      * @param {any} project
      * @returns {any}
      */

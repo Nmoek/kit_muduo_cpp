@@ -94,7 +94,8 @@ async function assertDesktopLayout(drawer) {
  *
  * 怎么测：
  * 1. 登录真实后端并打开 project 1/protocol 1 的实时抽屉。
- * 2. 发送一条真实 TCP 请求获取真实记录，再通过生产 LiveClient 注入长字段记录。
+ * 2. 发送真实 TCP 请求并确认 matched，再固定展示字段，通过生产 LiveClient 注入长记录。
+ *    例如响应 HEADER 固定为 H23...，避免报文编码变化改变换行数和整列纵向布局。
  * 3. 选择长记录，切换 Request/Response/Raw 详情，检查滚动容器和边界不溢出。
  * 4. 截取普通模式截图，点击全屏后再次检查并截取全屏截图。
  * 5. 向列表继续注入一条记录，确认当前选中记录和详情滚动区域保持稳定。
@@ -114,14 +115,22 @@ test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', as
     await sendProtocolOneRequest();
     await expect.poll(() => drawer.locator('.interaction-record-item').count(), { timeout: 10_000 })
         .toBeGreaterThan(0);
+    await expect.poll(() => page.evaluate(() => {
+        const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
+        return client.getState().visibleRecords.some(record => record.scope === 'protocol'
+            && record.result === 'matched');
+    })).toBe(true);
 
     await page.evaluate(() => {
         const client = Array.from(window.KitProxy.protocolInteractionLive.clients)[0];
-        const source = client.getState().visibleRecords[0];
+        const source = client.getState().visibleRecords.find(record => record.scope === 'protocol'
+            && record.result === 'matched');
         const record = JSON.parse(JSON.stringify(source));
         record.cache_instance_id = 900001;
         record.seq = 1001;
         record.time_ms = 1700000000000;
+        record.peer_addr = '127.0.0.1:43817';
+        record.error_message = 'service handle ok';
         record.request.head_text = `REQUEST-HEADER-${'A'.repeat(3200)}`;
         record.request.raw_packet = {
             kind: 'binary',
@@ -144,6 +153,7 @@ test('真实后端电脑端抽屉长内容和全屏布局通过视觉验收', as
             error_message: '',
             attachments: [],
         };
+        record.response.head_text = 'H23232323 H00000000 H00000000 H8080 H00000000 H0000000000000000';
         client.receiveText(JSON.stringify({ type: 'interaction', delivery: 'live', record }));
     });
 

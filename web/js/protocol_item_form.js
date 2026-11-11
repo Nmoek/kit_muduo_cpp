@@ -189,7 +189,7 @@
 
         const endpointLabel = project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
         const endpointValue = isProjectRunning(project)
-            ? (project.mode === ProjectMode.SERVER ? project.listen_port || '未分配' : project.target_ip || '未设置')
+            ? (project.mode === ProjectMode.SERVER ? KitProxy.utils.formatProjectListenEndpoint(project) || '未分配' : project.target_ip || '未设置')
             : '未开启';
         const projectProtocolType = normalizeProtocolTypeForPage(project.protocol_type);
         const protocolText = ProtocolTypeStr[projectProtocolType] || '未知协议';
@@ -679,7 +679,7 @@
         if (!container) return;
 
         const normalizedProtocolType = normalizeProtocolTypeForPage(protocolType);
-        if (normalizedProtocolType === ProtocolType.HTTP) {
+        if ([ProtocolType.HTTP, ProtocolType.HTTPS].includes(normalizedProtocolType)) {
             renderHTTPFields(container, protocol);
             return;
         }
@@ -1106,7 +1106,7 @@
 
         pageState.protocol = await KitProxy.api.getProtocolEditDetail(pageState.protocolId);
         pageState.protocolType = resolveProtocolType(pageState.project, pageState.protocol);
-        if (normalizeProtocolTypeForPage(pageState.protocolType) === ProtocolType.HTTP) {
+        if ([ProtocolType.HTTP, ProtocolType.HTTPS].includes(normalizeProtocolTypeForPage(pageState.protocolType))) {
             pageState.initialReqCfg = normalizeHttpReqCfgForSubmit(pageState.protocol.req_cfg || {});
             pageState.initialRespCfg = normalizeHttpRespCfgForSubmit(pageState.protocol.resp_cfg || {});
         } else {

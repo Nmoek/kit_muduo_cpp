@@ -1,10 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 import { REAL_E2E } from './e2e/protocol-interaction/real/test_config.js';
+import { prepareHttpsCertificates } from './e2e/protocol-interaction/real/https_certificates.js';
 
 const backend = process.env.PLAYWRIGHT_BACKEND === 'real' ? 'real' : 'mock';
 const mockBaseURL = 'http://127.0.0.1:4173';
 const realBaseURL = REAL_E2E.baseURL;
 const isReal = backend === 'real';
+if (isReal) prepareHttpsCertificates();
 const planE2E = process.env.PLAYWRIGHT_PLAN === '1';
 const reuseExistingServer = process.env.CI
     ? false
@@ -13,6 +15,7 @@ const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR
     || `test-results/${backend}-${Date.now()}-${process.pid}`;
 
 export default defineConfig({
+    globalTeardown: isReal ? './e2e/protocol-interaction/real/https_teardown.js' : undefined,
     testDir: './e2e',
     timeout: 30_000,
     expect: {

@@ -38,15 +38,16 @@ function getProjectRuntimeStatusText(project) {
 
 function getProjectEndpointDisplay(project) {
     if (!project) return '未设置';
+    const listenEndpoint = KitProxy.utils.formatProjectListenEndpoint(project);
     if (isProjectDeleted(project)) {
         if (Number(project.mode) === ProjectMode.SERVER) {
-            return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+            return Number(project.listen_port) > 0 ? listenEndpoint : '未分配';
         }
         return project.target_ip || '未设置';
     }
     if (!isProjectActive(project)) return '未开启';
     if (Number(project.mode) === ProjectMode.SERVER) {
-        return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+        return Number(project.listen_port) > 0 ? listenEndpoint : '未分配';
     }
     return project.target_ip || '未设置';
 }
@@ -1836,8 +1837,7 @@ function addNewServiceCardModalHTML() {
                                 <option value="">请选择协议类型</option>
                                 <option value=1>HTTP</option>
                                 <option value=2>TCP</option>
-                                <!-- HTTPS 测试服务暂未支持，添加入口先隐藏。 -->
-                                <!-- <option value=3>HTTPS</option> -->
+                                <option value=3>HTTPS</option>
                             </select>
                         </div>
 

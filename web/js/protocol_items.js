@@ -65,15 +65,16 @@
 
     function getProjectEndpointDisplay(project) {
         if (!project) return '未设置';
+        const listenEndpoint = KitProxy.utils.formatProjectListenEndpoint(project);
         if (isProjectDeleted(project)) {
             if (Number(project.mode) === ProjectMode.SERVER) {
-                return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+                return Number(project.listen_port) > 0 ? listenEndpoint : '未分配';
             }
             return project.target_ip || '未设置';
         }
         if (!isProjectActive(project)) return '未开启';
         if (Number(project.mode) === ProjectMode.SERVER) {
-            return Number(project.listen_port) > 0 ? project.listen_port : '未分配';
+            return Number(project.listen_port) > 0 ? listenEndpoint : '未分配';
         }
         return project.target_ip || '未设置';
     }

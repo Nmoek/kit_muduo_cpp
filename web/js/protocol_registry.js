@@ -182,6 +182,19 @@
         responseBodyTypeOptions: cloneBodyTypeOptions(RESPONSE_BODY_TYPE_OPTIONS),
     });
 
+    // HTTPS 共用 HTTP 的协议字段和展示，提交时仍保留 HTTPS 类型。
+    register(ProtocolType.HTTPS, {
+        protocolItemType: 'HTTPS',
+        addProtocolModal: {
+            create: function(serviceCard) {
+                return global.httpProtocolModal.create(serviceCard, ProtocolType.HTTPS);
+            },
+        },
+        protocolItemGrid: global.httpProtocolItemGrids,
+        requestBodyTypeOptions: cloneBodyTypeOptions(REQUEST_BODY_TYPE_OPTIONS),
+        responseBodyTypeOptions: cloneBodyTypeOptions(RESPONSE_BODY_TYPE_OPTIONS),
+    });
+
     register(ProtocolType.CUSTOM_TCP, {
         protocolItemType: 'TCP',
         addProtocolModal: global.customTcpProtocolModal,
