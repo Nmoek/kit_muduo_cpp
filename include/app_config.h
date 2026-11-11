@@ -63,6 +63,11 @@ struct AppConfigVars
 
     struct //work
     {
+        struct { // https 测试服务共用证书，启动服务时加载。
+            AppConfigVar<std::string>::Ptr cert_chain_file;
+            AppConfigVar<std::string>::Ptr private_key_file;
+        }https;
+
         struct{ // runtime
             AppConfigVar<size_t>::Ptr loop_capacity;
 
@@ -117,6 +122,8 @@ AppConfigVars RegisterAppConfigVars(ConfigType& config)
     XX(system.sqlite_db.sync_schema, true, "SQLite sync schema");
 
     XX(work.runtime.loop_capacity, static_cast<size_t>(100), "runtime lease loop capacity");
+    XX(work.https.cert_chain_file, std::string(), "HTTPS test server PEM certificate chain absolute path");
+    XX(work.https.private_key_file, std::string(), "HTTPS test server unencrypted PEM private key absolute path");
 
     XX(work.interaction.queue_capacity, static_cast<size_t>(4096), "interaction queue capacity");
     XX(work.interaction.stop_drain_timeout_ms, static_cast<int64_t>(1000), "interaction drain timeout");

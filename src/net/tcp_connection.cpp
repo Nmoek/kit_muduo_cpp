@@ -21,13 +21,13 @@ namespace kit_muduo {
 TcpConnection::TcpConnection(EventLoop *loop, const std::string &name, int32_t sockfd, const InetAddress &peerAddr, const InetAddress &localAddr)
     :_subLoop(loop)
     ,_name(name)
-    ,_state(kConnecting)
     ,_reading(true)
     ,_socket(new Socket(sockfd))
-    ,_channel(new Channel(loop, sockfd, true))
     ,_peerAddr(peerAddr)
     ,_localAddr(localAddr)
     ,_highWaterMark(HIGH_WATER_MARK_MAX)
+    ,_state(kConnecting)
+    ,_channel(new Channel(loop, sockfd, true))
 {
     _channel->setReadCallback(std::bind(&TcpConnection::handleRead, this, std::placeholders::_1));
 
@@ -128,26 +128,49 @@ void TcpConnection::shutdown()
 
 void TcpConnection::connectEstablished()
 {
-    _state = kConnected;
     _channel->tie(shared_from_this());
     _channel->enableReading();
-
-    _connectionCallback(shared_from_this());
-    TCP_F_DEBUG("TcpConnection::connectEstablished fd[%d][%s],  state[%d]\n", fd(), _peerAddr.toIpPort().c_str(), _state.load());
+    establishTransport();
 }
+
+void TcpConnection::establishTransport()
+{
+    notifyConnected();
+}
+
+void TcpConnection::notifyConnected()
+{
+    _state = kConnected;
+    connection_notified_ = true;
+    if(_connectionCallback)
+        _connectionCallback(shared_from_this());
+}
+
+void TcpConnection::notifyMessage(TimeStamp receive_time)
+{
+    if(_messageCallback)
+        _messageCallback(shared_from_this(), &_inputBuffer, receive_time);
+}
+
+void TcpConnection::notifyWriteComplete()
+{
+    if(_writeCompleteCallback)
+        _subLoop->queueInLoop(std::bind(_writeCompleteCallback, shared_from_this()));
+}
+
 void TcpConnection::connectDestroyed()
 {
-    TCP_F_DEBUG("TcpConnection::connectDestroyed fd[%d][%s],  state[%d]\n", fd(), _name.c_str(), _state.load());
-
-    if(kConnected == _state)
-    {
-        _state = kDisconnected;
-        _channel->disableAll();
+    if(channel_removed_)
+        return;
+    const bool notify = connection_notified_ && kDisconnected != _state;
+    _state = kDisconnected;
+    _channel->disableAll();
+    closeTransport();
+    if(notify && _connectionCallback)
         _connectionCallback(shared_from_this());
-    }
-    // 注意 TcpConnection析构时不能销毁Channel
-    // 得在这里手动销毁
+    // Channel 必须在所属 Loop 中移除，再释放连接对象。
     _channel->remove();
+    channel_removed_ = true;
 }
 
 void TcpConnection::handleRead(TimeStamp receiveTime)
@@ -170,7 +193,7 @@ void TcpConnection::handleRead(TimeStamp receiveTime)
 
     // 用户传入的Message处理
     // 存在改进点：业务处理异步出Loop线程
-    _messageCallback(shared_from_this(), &_inputBuffer, receiveTime);
+    notifyMessage(receiveTime);
 }
 
 void TcpConnection::handleWrite()
@@ -192,13 +215,7 @@ void TcpConnection::handleWrite()
         {
             // 写完了 停止写入
             _channel->disableWriting();
-            if(_writeCompleteCallback)
-            {
-                // 写完后需要触发用户传入的回调函数
-                // 注意: 这里需要放入队列里
-                _subLoop->queueInLoop(std::bind(_writeCompleteCallback, shared_from_this()));
-
-            }
+            notifyWriteComplete();
 
             //这里的含义: 关闭时要注意 等待全部数据写完再关闭
             if(kDisconnecting == _state)
@@ -227,17 +244,21 @@ void TcpConnection::handleError()
         err = opt;
     }
     CONN_F_WARN("TcpConnection error: name[%s], fd[%d], state[%d], %s, %d:%s\n", _name.c_str(), _socket->fd(), _state.load(), _peerAddr.toIpPort().c_str(), err, strerror(err));
+    onSocketError(err);
 }
 
 void TcpConnection::handleClose()
 {
+    if(kDisconnected == _state)
+        return;
     CONN_F_INFO("TcpConnection close: name[%s], fd[%d], state[%d], %s\n", _name.c_str(), _socket->fd(), _state.load(), _peerAddr.toIpPort().c_str());
 
     _state = kDisconnected;
     _channel->disableAll(); // 这里只是删除了epoll里的监听
+    closeTransport();
 
     // 注意 这里需要去触发一下用户传入的回调函数
-    if(_connectionCallback)
+    if(_connectionCallback && connection_notified_)
         _connectionCallback(shared_from_this());
 
     if(_closeCallback)
@@ -284,7 +305,7 @@ void TcpConnection::sendInLoop(const void* message, size_t len)
             // 一次性全部写完的情况
             if(0 == remain && _writeCompleteCallback)
             {
-                _subLoop->queueInLoop(std::bind(_writeCompleteCallback, shared_from_this()));
+                notifyWriteComplete();
 
                 return;
             }
@@ -321,6 +342,8 @@ void TcpConnection::sendInLoop(const std::vector<uint8_t> message)
 
 void TcpConnection::shutdownInLoop()
 {
+    if(kDisconnected == _state)
+        return;
     _state = kDisconnecting;
     if(!_channel->isWriting())
     {

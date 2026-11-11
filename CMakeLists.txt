@@ -90,6 +90,7 @@ option(WORK_TEST.DAO_PROTOCOL "build test_dao_protocol" OFF)
 option(WORK_TEST.WEB_PROTOCOL_INTERACTION "build test_web_protocol_interaction" OFF)
 option(WORK_TEST.CUSTOM_PJ_SERVER "build test_custom_project_server" OFF)
 option(WORK_TEST.PJ_SERVER_FAC "build test_project_server_factory" OFF)
+option(WORK_TEST.HTTPS_SERVER "build test_https_server" OFF)
 option(WORK_TEST.RUNTIME_RESULT "build test_runtime_result" OFF)
 option(WORK_TEST.PROTOCOL_RUNTIME_KEY "build test_protocol_runtime_key" OFF)
 option(WORK_TEST.PROTOCOL_CONFIG_PIPELINE "build test_protocol_config_pipeline" OFF)
@@ -151,7 +152,7 @@ list(APPEND CMAKE_PREFIX_PATH "${PROJECT_SOURCE_DIR}/pkg")
 ############系统包##########
 
 find_package(GTest REQUIRED)
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL REQUIRED COMPONENTS SSL Crypto)
 find_package(ZLIB REQUIRED)
 
 if(MUDUO_BENCH.LOG)
@@ -280,6 +281,8 @@ set(NET_SRC
     src/net/tcp_server.cpp
     src/net/buffer.cpp
     src/net/tcp_connection.cpp
+    src/net/tls_context.cpp
+    src/net/tls_connection.cpp
     src/net/timer.cpp
     src/net/sample_timer_queue.cpp
     src/net/net_data_converter.cpp
@@ -344,6 +347,7 @@ set(WORK_DOMAIN_SRC
     src/work/domain/protocol_body_pipeline.cpp
 
     src/work/domain/http_project_server.cpp
+    src/work/domain/https_project_server.cpp
     src/work/domain/custom_tcp_project_server.cpp
     src/work/domain/project_server_factory.cpp
 
@@ -416,6 +420,7 @@ set(KIT_MUDUO_LIBS
     llhttp
     crypt
     OpenSSL::Crypto
+    OpenSSL::SSL
     ZLIB::ZLIB
     pugixml
     simdutf
@@ -749,6 +754,7 @@ add_work_test(WORK_TEST.CUSTOM_TCP_PATTERN test_custom_pattern tests/work/domain
 add_work_test(WORK_TEST.RUNTIME test_runtime tests/work/domain/test_runtime.cpp)
 
 # 项目运行态管理器测试 test_project_runtime_manager
+add_work_domain_test(WORK_TEST.HTTPS_SERVER test_https_server tests/work/domain/test_https_server.cpp)
 add_work_test(WORK_TEST.PROJECT_RUNTIME_MANAGER test_project_runtime_manager tests/work/runtime/test_project_runtime_manager.cpp)
 
 # 用户登录、会话和用户管理服务测试 test_user_auth
@@ -769,6 +775,20 @@ endif()
 # app服务器实例
 add_executable(kit_protocol_test_platform main.cpp)
 target_link_libraries(kit_protocol_test_platform PRIVATE kit_muduo kit_work)
+
+# 网络/HTTPS 回归目标需要解析日志 backend 对应用配置入口的已有依赖。
+# OBJECT 保证定义进入测试可执行文件；不改动生产库的分层。
+foreach(_network_test test_tcp_server test_http_server test_project_server_factory test_https_server
+        test_project_runtime_manager test_web_protocol_interaction test_protocol_config_pipeline
+        test_protocol_body_pipeline)
+    if(TARGET ${_network_test})
+        if(NOT TARGET kit_network_test_config)
+            add_library(kit_network_test_config OBJECT src/app_config.cpp)
+            target_compile_definitions(kit_network_test_config PRIVATE ${DEF})
+        endif()
+        target_link_libraries(${_network_test} PRIVATE kit_network_test_config)
+    endif()
+endforeach()
 redefine_file_macro(kit_protocol_test_platform)   #重定义 __FILE__
 target_compile_definitions(kit_protocol_test_platform PRIVATE ${DEF})
 

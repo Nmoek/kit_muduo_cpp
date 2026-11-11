@@ -106,11 +106,17 @@ void AttachHttpResponseCaptureFromContext(
 
 
 HttpProjectServer::HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop, const kit_muduo::InetAddress &addr)
+    :HttpProjectServer(project_id, std::move(lease_loop), addr, "pj" + std::to_string(project_id) + "http")
+{
+}
+
+HttpProjectServer::HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop,
+    const kit_muduo::InetAddress& addr, const std::string& server_name)
     :ProjectServer(
         project_id,
         lease_loop,
         addr,
-        "pj" + std::to_string(project_id) + "http")
+        server_name)
     ,dispatch_(std::make_shared<HttpServletDispatch>())
 {
     tcp_server_.setConnectionCallback(std::bind(&HttpProjectServer::onConnect, this, std::placeholders::_1));
@@ -632,7 +638,7 @@ ProtocolInteractionObservation HttpProjectServer::buildHttpObservation(HttpConte
     obs.protocol_id = http_item ? http_item->getId() : 0;
     obs.cache_instance_id = cache->cacheInstanceId();
     obs.scope = http_item ? InteractionScope::kProtocol : InteractionScope::kProject;
-    obs.protocol_type = ProtocolType::kHttp;
+    obs.protocol_type = protocolType();
     obs.time_ms = req->receiveTime().millSeconds();
     obs.peer_addr = std::move(peer_addr);
     obs.result = result;

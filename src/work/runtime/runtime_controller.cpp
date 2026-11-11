@@ -482,7 +482,13 @@ ProjectRuntimeResult ProjectRuntimeManager::createAndStartProjectServerImpl(kit_
     std::shared_ptr<RuntimeLease> lease_loop = lease_result.val;
 
     // 工厂模式创建测试服务
-    auto project_server = ProjectServerFactory::Create(p, lease_loop);
+    std::shared_ptr<ProjectServer> project_server;
+    try {
+        project_server = ProjectServerFactory::Create(p, lease_loop);
+    } catch(const std::exception& error) {
+        return ProjectRuntimeResult::Failed(RuntimeControlCode::kCreateServerFailed,
+            RuntimeError(RuntimeError::kInvalidArgument), error.what());
+    }
     if (!project_server)
     {
         RUNPJMA_F_ERROR("create ProjectServer faild! pjId[%ld], type[%d] \n", project_id, static_cast<int32_t>(p.m_protocolType));

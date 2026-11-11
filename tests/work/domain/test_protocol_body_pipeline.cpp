@@ -11,6 +11,7 @@
 
 #include "gtest/gtest.h"
 
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -435,6 +436,30 @@ TEST(TestProtocolBodyPipeline, BinaryBodyViewAssemblesExactlyConfiguredResponseB
     EXPECT_EQ(view.meta.known_type, kit_muduo::http::KnownMediaType::kApplicationOctetStream);
     EXPECT_EQ(view.meta.media_type, "application/octet-stream");
     EXPECT_EQ(*view.body_data, Body({0x01, 0x02, 0x03, 0x04}));
+}
+
+/**
+ * 测试思路：字段偏移必须作用于实际发送字节，空隙补零；异常偏移不能溢出后写越界。
+ * 示例：pos=2,len=2,value=HAABB -> [00 00 AA BB]；再将 pos 改为 SIZE_MAX，
+ * setBody 应抛出长度异常，原有四字节快照和 MIME 元数据均保持有效。
+ */
+TEST(TestProtocolBodyPipeline, BinaryBodyViewHonorsOffsetAndRejectsOverflow)
+{
+    nlohmann::json config = {
+        {"fields", nlohmann::json::array({{
+            {"spec", {{"name", "payload"}, {"byte_pos", 2}, {"byte_len", 2},
+                      {"type", "UINT16"}, {"role", "common"}}},
+            {"value", "HAABB"},
+        }})},
+    };
+    ProtocolItemBodyView view(ProtocolBodyType::kBinary, Body(config.dump()));
+    const std::vector<char> expected{0, 0, static_cast<char>(0xAA), static_cast<char>(0xBB)};
+    EXPECT_EQ(*view.body_data, expected);
+
+    config["fields"][0]["spec"]["byte_pos"] = std::numeric_limits<size_t>::max();
+    EXPECT_THROW(view.setBody(ProtocolBodyType::kBinary, Body(config.dump())), std::length_error);
+    EXPECT_EQ(*view.body_data, expected);
+    EXPECT_EQ(view.meta.media_type, "application/octet-stream");
 }
 
 /*

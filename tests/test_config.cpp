@@ -55,6 +55,7 @@ struct AppConfigDefaultFileScope {};
 struct AppConfigEnvironmentExportScope {};
 struct AppConfigExistingFileScope {};
 struct AppConfigDirectoryTargetScope {};
+struct HttpsConfigScope {};
 
 using YamlPolicy = ConfigYamlPolicy;
 using JsonPolicy = ConfigJsonPolicy;
@@ -64,6 +65,25 @@ using ScopedYamlConfig = Config<YamlPolicy, Scope>;
 
 template<typename Scope>
 using ScopedJsonConfig = Config<JsonPolicy, Scope>;
+
+/*
+测试思路：HTTPS 路径允许为空，由 HTTPS 启动时加载；配置系统能接收并导出两项 PEM 路径。
+示例：默认空配置 -> load YAML /tmp/server.pem -> effective value 与导出 YAML 一致。
+*/
+TEST(TestConfig, HttpsCertificatePathsAreOptionalAndRoundTripThroughYaml)
+{
+    auto& config = ScopedYamlConfig<HttpsConfigScope>::Instance();
+    const auto vars = RegisterAppConfigVars(config);
+    EXPECT_TRUE(vars.work.https.cert_chain_file->value()->empty());
+    EXPECT_TRUE(vars.work.https.private_key_file->value()->empty());
+    config.load(YAML::Load("work:\n  https:\n    cert_chain_file: /tmp/server.pem\n    private_key_file: /tmp/server-key.pem\n"),
+        ConfigContext{.source = "https.yaml"});
+    EXPECT_EQ(*vars.work.https.cert_chain_file->value(), "/tmp/server.pem");
+    EXPECT_EQ(*vars.work.https.private_key_file->value(), "/tmp/server-key.pem");
+    const auto yaml = config.buildNodeTree();
+    EXPECT_EQ(yaml["work"]["https"]["cert_chain_file"].as<std::string>(), "/tmp/server.pem");
+    EXPECT_EQ(yaml["work"]["https"]["private_key_file"].as<std::string>(), "/tmp/server-key.pem");
+}
 
 class TempDirectory
 {
@@ -808,7 +828,7 @@ work:
     const auto vars = RegisterAppConfigVars(config);
     size_t variable_count = 0;
     config.visit([&](ConfigVarBase<YamlPolicy>::Ptr) { ++variable_count; });
-    EXPECT_EQ(variable_count, 20U);
+    EXPECT_EQ(variable_count, 22U);
 
     AppConfigLoadInput input;
     input.yaml_file = file.stringPath();

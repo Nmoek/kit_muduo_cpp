@@ -17,6 +17,8 @@
 #include "runtime/runtime_controller.h"
 #include "service/mock/svc_project_mock.h"
 #include "service/mock/svc_protocol_mock.h"
+#include "../../support/tls_test_support.h"
+#include "../../support/scoped_https_creator.h"
 
 #include <memory>
 #include <unordered_map>
@@ -456,6 +458,71 @@ TEST(ProjectRuntimeManagerSuite, StartProjectHydratesRuntimeEnabledProtocols)
 
     server->stop();
     runtime_manager->removeServer(project_id);
+}
+
+/*
+测试思路：在容量为 1 的 manager 中连续启动缺少证书的 HTTPS，再启动 HTTP。
+示例：HTTPS 失败两次 -> registry 空/不写 running -> HTTP 成功，证明失败没有占用 loop 租约。
+*/
+TEST(ProjectRuntimeManagerSuite, HttpsCertificateFailureReturnsLeaseAndDoesNotPersistRunning)
+{
+    kit_test::ScopedHttpsCreator creator;
+    auto svc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto protocols = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto manager = MakeRuntimeManagerForTest(svc, protocols, 1);
+    auto project = MakeHttpProjectForStatus(9610);
+    project.m_protocolType = ProtocolType::kHttps;
+    EXPECT_CALL(*svc, GetById(_, project.m_id)).WillRepeatedly(Return(project));
+    EXPECT_CALL(*svc, UpdateRuntimeState(_, _, ProjectRuntimeState::kRunning, _)).Times(0);
+    for(int i = 0; i < 2; ++i)
+    {
+        const auto result = manager->startProject(nullptr, project.m_id);
+        EXPECT_FALSE(result.ok());
+        EXPECT_EQ(result.status.code, RuntimeControlCode::kCreateServerFailed);
+        EXPECT_THAT(result.status.message, HasSubstr("work.https.cert_chain_file"));
+        EXPECT_EQ(result.receipt.runtime_applied, 0);
+        EXPECT_EQ(manager->findServer(project.m_id), nullptr);
+    }
+    Mock::VerifyAndClearExpectations(svc.get());
+    project = MakeHttpProjectForStatus(9611);
+    EXPECT_CALL(*svc, GetById(_, project.m_id)).WillOnce(Return(project));
+    EXPECT_CALL(*protocols, GetActiveByProject(_, project.m_id)).WillOnce(Return(std::vector<Protocol>{}));
+    EXPECT_CALL(*svc, UpdateRuntimeState(_, project.m_id, ProjectRuntimeState::kRunning, Gt(0)))
+        .WillOnce(Return(true));
+    EXPECT_TRUE(manager->startProject(nullptr, project.m_id).ok());
+    manager->shutdown();
+}
+
+/*
+测试思路：向 HTTPS 创建器注入真实证书配置，运行态层只通过通用工厂启动服务并 hydrate HTTPS 协议项。
+示例：HTTPS|GET|/secure -> TLS 客户端校验 CA -> HTTP 200，停止时清理活动连接。
+*/
+TEST(ProjectRuntimeManagerSuite, HttpsStartsWithInjectedCertificateAndHydratesProtocol)
+{
+    kit_test::TestCertificates certs;
+    kit_test::ScopedHttpsCreator creator(certs.config());
+    auto svc = std::make_shared<NiceMock<MockProjectSvc>>();
+    auto protocols = std::make_shared<NiceMock<MockProtocolSvc>>();
+    auto publisher = std::make_shared<ProtocolInteractionPublisher>(std::vector<std::shared_ptr<InteractionSink>>{});
+    auto manager = std::make_shared<ProjectRuntimeManager>(svc, protocols, publisher, 1);
+    auto project = MakeHttpProjectForStatus(9612);
+    project.m_protocolType = ProtocolType::kHttps;
+    auto protocol = MakeRuntimeHttpProtocol(961201, project.m_id, "/secure");
+    protocol.m_type = ProtocolType::kHttps;
+    protocol.m_runtimeKey = "HTTPS|GET|/secure";
+    EXPECT_CALL(*svc, GetById(_, project.m_id)).WillOnce(Return(project));
+    EXPECT_CALL(*protocols, GetActiveByProject(_, project.m_id)).WillOnce(Return(std::vector<Protocol>{protocol}));
+    EXPECT_CALL(*svc, UpdateRuntimeState(_, project.m_id, ProjectRuntimeState::kRunning, Gt(0)))
+        .WillOnce(Return(true));
+    const auto result = manager->startProject(nullptr, project.m_id);
+    ASSERT_TRUE(result.ok()) << result.status.message;
+    kit_test::TlsClient client(result.snapshot.listen_port, certs.caFile());
+    ASSERT_TRUE(client.connect());
+    ASSERT_TRUE(client.write("GET /secure HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
+    EXPECT_THAT(client.read(4096), HasSubstr("200"));
+    SSL_shutdown(client.ssl());
+    manager->shutdown();
+    EXPECT_EQ(manager->findServer(project.m_id), nullptr);
 }
 
 /*

@@ -82,3 +82,6 @@ work:
     stop_drain_timeout_ms: 1000
   runtime:
     loop_capacity: 100
+  https:
+    cert_chain_file: "/tmp/kit-https-certs/server-chain.pem"
+    private_key_file: "/tmp/kit-https-certs/server-key.pem"

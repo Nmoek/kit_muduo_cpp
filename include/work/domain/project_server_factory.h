@@ -12,10 +12,12 @@
 #include "domain/project_server.h"
 #include "domain/type.h"
 #include "domain/project.h"
+#include "net/tls_context.h"
 
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <utility>
 
 namespace kit_muduo {
 class EventLoop;
@@ -63,9 +65,15 @@ public:
  */
 class HttpsProjectServerCreator : public ProjectServerCreator {
 public:
+    explicit HttpsProjectServerCreator(kit_muduo::TlsServerConfig tls_config = {})
+        :tls_config_(std::move(tls_config)) {}
+
     std::shared_ptr<ProjectServer> create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) override;
     
     ProtocolType getProtocolType() const override { return ProtocolType::kHttps; }
+
+private:
+    const kit_muduo::TlsServerConfig tls_config_;
 };
 
 /**
@@ -102,6 +110,7 @@ public:
      * @param p Project实体
      * @return std::shared_ptr<ProjectServer> 
      */
+    // 创建异常交给调用方转换为运行态失败回执，保留具体原因。
     std::shared_ptr<ProjectServer> createServer(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop);
         
     /**
@@ -149,9 +158,9 @@ public:
      * @param server_name 服务器名称
      * @return 返回ProjectServer的shared_ptr
      */
-    static std::shared_ptr<ProjectServer> Create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) 
+    static std::shared_ptr<ProjectServer> Create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop)
     {
-        return ProjectServerFactoryManager::getInstance().createServer(p, lease_loop);
+        return ProjectServerFactoryManager::getInstance().createServer(p, std::move(lease_loop));
     }
 };
 

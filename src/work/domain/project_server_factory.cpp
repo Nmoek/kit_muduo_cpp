@@ -9,20 +9,22 @@
 #include "domain/domain_log.h"
 #include "domain/project_server_factory.h"
 #include "domain/http_project_server.h"
+#include "domain/https_project_server.h"
 #include "domain/custom_tcp_project_server.h"
 #include "domain/custom_tcp_pattern.h"
 #include "domain/runtime_loop_pool.h"
-
+#include "app_config.h"
 
 #include <vector>
 #include <mutex>
 
 using namespace kit_muduo;
+using namespace kit_app;
 
 namespace kit_domain {
 
 // HttpProjectServerCreator实现
-std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) 
+std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop)
 {
     // 本地模式下 需要单开线程开启一个新server
     // TODO 分布式模式下使用RPC通知目标服务器开启服务
@@ -46,17 +48,33 @@ std::shared_ptr<ProjectServer> HttpProjectServerCreator::create(const kit_domain
 }
 
 // HttpsProjectServerCreator实现
-std::shared_ptr<ProjectServer> HttpsProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) {
+std::shared_ptr<ProjectServer> HttpsProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop)
+{
+
+    InetAddress address{p.m_listenPort};
     
-    PJSERVER_INFO() << "Creating HttpsProjectServer, project_id=" << p.m_id  << std::endl;
-    
-    // TODO: 实现HTTPS服务器创建逻辑
-    PJSERVER_WARN() << "HttpsProjectServer not implemented yet, using HttpProjectServer" << std::endl;
-    return nullptr;
+    try {
+        auto tls_context = kit_muduo::TlsContext::Create(tls_config_);
+
+        auto pj_server = std::make_shared<HttpsProjectServer>(p.m_id, std::move(lease_loop),
+            address, std::move(tls_context));
+
+        PJSERVER_F_INFO("Creating HttpsProjectServer, project_id[%ld], cert path[%s], key path[%s], old address[%s] --> new address[%s]\n", p.m_id,
+            tls_config_.cert_chain_file.c_str(),
+            tls_config_.private_key_file.c_str(),
+            address.toIpPort().c_str(),
+            pj_server->getBindAddr().toIpPort().c_str());
+
+        return pj_server;
+    } catch (const std::exception& e) {
+        PJSERVER_ERROR() << "Failed to create HttpsProjectServer: " << e.what() << std::endl;
+        throw;
+    }
+
 }
 
 // TcpProjectServerCreator实现
-std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop) 
+std::shared_ptr<ProjectServer> TcpProjectServerCreator::create(const kit_domain::Project &p, std::shared_ptr<RuntimeLease> lease_loop)
 {
     
     // 本地模式下 需要单开线程开启一个新server
@@ -108,9 +126,15 @@ ProjectServerFactoryManager::ProjectServerFactoryManager() {
 void ProjectServerFactoryManager::initializeDefaultCreators() {
     PJSERVER_DEBUG() << "Initializing default ProjectServer creators" << std::endl;
     
+    kit_muduo::TlsServerConfig tls_config{
+        .cert_chain_file = *GetAppConfigVars().work.https.cert_chain_file->value(),
+        .private_key_file = *GetAppConfigVars().work.https.private_key_file->value(),
+    };
+
+
     // 注册默认的创建器
     registerCreator<HttpProjectServerCreator>();    // HTTP测试服务器
-    registerCreator<HttpsProjectServerCreator>();   // HTTPS测试服务器
+    registerCreator(std::make_unique<HttpsProjectServerCreator>(std::move(tls_config)));   // HTTPS测试服务器
     registerCreator<TcpProjectServerCreator>();     // 自定义TCP测试服务器
     
     PJSERVER_INFO() << "Default ProjectServer creators initialized successfully" << std::endl;
@@ -126,18 +150,17 @@ void ProjectServerFactoryManager::registerCreator(std::unique_ptr<ProjectServerC
     std::lock_guard<std::mutex> lock(mutex_);
     
     ProtocolType protocol_type = creator->getProtocolType();
-    auto result = creators_.emplace(protocol_type, std::move(creator));
+    auto result = creators_.insert_or_assign(protocol_type, std::move(creator));
     
     if (result.second) {
         PJSERVER_DEBUG() << "Registered creator for protocol type: " << static_cast<int32_t>(protocol_type) << std::endl;
     } else {
         PJSERVER_WARN() << "Creator for protocol type " << static_cast<int32_t>(protocol_type) 
                   << " already exists, replacing with new creator" << std::endl;
-        creators_[protocol_type] = std::move(creator);
     }
 }
 
-std::shared_ptr<ProjectServer> ProjectServerFactoryManager::createServer(const kit_domain::Project &p, std::shared_ptr<kit_domain::RuntimeLease> lease_loop) 
+std::shared_ptr<ProjectServer> ProjectServerFactoryManager::createServer(const kit_domain::Project &p, std::shared_ptr<kit_domain::RuntimeLease> lease_loop)
 {
 
     // 这个锁是否有存在必要?
@@ -154,12 +177,12 @@ std::shared_ptr<ProjectServer> ProjectServerFactoryManager::createServer(const k
     
     try {
 
-        return it->second->create(p, lease_loop);
+        return it->second->create(p, std::move(lease_loop));
 
     } catch (const std::exception& e) {
         PJSERVER_ERROR() << "Failed to create ProjectServer for protocol type " 
                    << static_cast<int32_t>(p.m_protocolType) << ": " << e.what() << std::endl;
-        return nullptr;
+        throw;
     }
 }
 

@@ -13,14 +13,57 @@
 #include "domain/custom_tcp_project_server.h"
 #include "domain/http_protocol_item.h"
 #include "domain/custom_tcp_protocol_item.h"
+#include "domain/custom_tcp_field_model.h"
+#include "net/http/multiform.h"
+
+#include <algorithm>
+#include <stdexcept>
 
 using namespace kit_muduo;
 namespace kit_domain {
 
 void ProtocolItemBodyView::setBody(ProtocolBodyType new_body_type, const std::vector<char>& new_body_data)
 {
+    auto new_meta = ProtocolBodyTypeToHttpContentMeta(new_body_type);
+    std::vector<char> wire_body;
+    if(new_body_type == ProtocolBodyType::kBinary && !new_body_data.empty())
+    {
+        const auto [fields, total_len] = FieldValueMapParseFromJson(nlohmann::json::parse(new_body_data));
+        wire_body.reserve(total_len);
+        for(const auto& [pos, field] : fields)
+        {
+            if(pos < wire_body.size() || field.bytes.size() > field.spec.byte_len)
+            {
+                throw std::invalid_argument("binary body fields overlap or value exceeds field length");
+            }
+            if(field.spec.byte_len > wire_body.max_size()
+                || pos > wire_body.max_size() - field.spec.byte_len)
+            {
+                throw std::length_error("binary body field range exceeds buffer size");
+            }
+            wire_body.resize(pos + field.spec.byte_len, 0);
+            std::copy(field.bytes.begin(), field.bytes.end(), wire_body.begin() + pos);
+        }
+    }
+    else if(new_body_type == ProtocolBodyType::kMultiForm)
+    {
+        constexpr const char* kBoundary = "KitProtocolFormBoundary";
+        const auto form = new_body_data.empty() ? kit_muduo::http::MultiForm()
+            : kit_muduo::http::MultiForm(new_body_data);
+        const auto bytes = form.serialize(kBoundary);
+        wire_body.assign(bytes.begin(), bytes.end());
+        kit_muduo::http::SetContentTypeParam(new_meta, "boundary", kBoundary);
+    }
+    else
+    {
+        wire_body = new_body_data;
+    }
+
+    // 转换和分配全部成功后再提交，失败时保留原有快照。
+    auto new_data = std::make_shared<const std::vector<char>>(std::move(wire_body));
     body_type = new_body_type;
-    body_data = std::make_shared<const std::vector<char>>(new_body_data);
+    meta = std::move(new_meta);
+    body_data = std::move(new_data);
 }
 
 void ProtocolItem::setId(int64_t id)

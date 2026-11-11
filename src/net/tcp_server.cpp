@@ -112,6 +112,15 @@ void TcpServer::start()
     });
 }
 
+void TcpServer::setConnectionFactory(ConnectionFactory factory)
+{
+    if(_started.load())
+    {
+        throw std::logic_error("Connection factory must be set before TcpServer starts");
+    }
+    connection_factory_ = std::move(factory);
+}
+
 void TcpServer::stop()
 {
     auto done = std::make_shared<std::promise<void>>();
@@ -240,7 +249,9 @@ void TcpServer::newConnection(int32_t sockfd, const InetAddress& peerAddr)
 
     EventLoop *sub_loop = _threadPool->getNextLoop();
 
-    auto connPtr = std::make_shared<TcpConnection>(sub_loop, conn_name, sockfd, peerAddr, local_addr);
+    auto connPtr = connection_factory_
+        ? connection_factory_(sub_loop, conn_name, sockfd, peerAddr, local_addr)
+        : std::make_shared<TcpConnection>(sub_loop, conn_name, sockfd, peerAddr, local_addr);
 
     connPtr->setConnectionCallback(_connectionCallback);
     connPtr->setWriteCompleteCallback(_writeCompleteCallback);

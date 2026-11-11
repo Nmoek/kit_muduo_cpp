@@ -39,7 +39,7 @@ class TcpConnection: Noncopyable, public std::enable_shared_from_this<TcpConnect
 public:
     TcpConnection(EventLoop *loop, const std::string &name, int32_t sockfd, const InetAddress &peerAddr, const InetAddress &localAddr);
 
-    ~TcpConnection();
+    virtual ~TcpConnection();
 
     EventLoop *getLoop() const { return _subLoop; }
     std::string name() const { return _name; }
@@ -74,33 +74,37 @@ public:
     std::shared_ptr<void> getContext() const
     { return _context; }
 
-private:
-    void handleRead(TimeStamp receiveTime);
-    void handleWrite();
-    void handleError();
+protected:
+    enum State {kDisconnected, kConnecting, kConnected, kDisconnecting};
+
+    // 传输扩展点均在连接所属 EventLoop 中执行；公共生命周期仍由基类管理。
+    virtual void establishTransport();
+    virtual void handleRead(TimeStamp receiveTime);
+    virtual void handleWrite();
+    virtual void sendInLoop(const void* message, size_t len);
+    virtual void shutdownInLoop();
+    virtual void closeTransport() {}
+    virtual void onSocketError(int) {}
+
+    void notifyConnected();
+    void notifyMessage(TimeStamp receive_time);
+    void notifyWriteComplete();
     void handleClose();
 
-    void sendInLoop(const void* message, size_t len);
+private:
+    void handleError();
     void sendInLoop(const std::string message);
     
     void sendInLoop(const std::vector<char> message);
     void sendInLoop(const std::vector<uint8_t> message);
 
-    void shutdownInLoop();
-
-
-
 private:
-    enum State {kDisconnected, kConnecting, kConnected, kDisconnecting};
-
     /// @brief 一定是子事件循环
     EventLoop *_subLoop;
     std::string _name;
-    std::atomic_int _state;
     bool _reading;
 
     std::unique_ptr<Socket> _socket;
-    std::unique_ptr<Channel> _channel;
 
     const InetAddress _peerAddr;
     const InetAddress _localAddr;
@@ -113,11 +117,18 @@ private:
     size_t _highWaterMark;
     HighWaterMarkCb _highWaterMarkCallback;
 
-    Buffer _inputBuffer;
-    Buffer _outputBuffer;
     std::mutex _mutex;
 
     std::shared_ptr<void> _context;
+    bool connection_notified_{false};
+    bool channel_removed_{false};
+
+protected:
+    // 派生传输仅在连接所属 EventLoop 中操作共享状态、Channel 和 Buffer。
+    std::atomic_int _state;
+    std::unique_ptr<Channel> _channel;
+    Buffer _inputBuffer;
+    Buffer _outputBuffer;
 
 };
 

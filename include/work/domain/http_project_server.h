@@ -59,6 +59,11 @@ public:
 
     std::shared_ptr<CustomTcpPattern> GetPatternInfo() override;
 
+protected:
+    HttpProjectServer(int64_t project_id, std::shared_ptr<RuntimeLease> lease_loop,
+        const kit_muduo::InetAddress& addr, const std::string& server_name);
+    virtual ProtocolType protocolType() const { return ProtocolType::kHttp; }
+
 private:
     void onConnect(kit_muduo::TcpConnectionPtr conn);
     void onMessage(kit_muduo::TcpConnectionPtr conn, kit_muduo::Buffer *buf, kit_muduo::TimeStamp receiveTime);

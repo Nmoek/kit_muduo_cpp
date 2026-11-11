@@ -31,6 +31,8 @@ class TcpServer: Noncopyable
 public:
     using ThreadInitCb = std::function<void(EventLoop*)>;
     using StopCb = std::function<void()>;
+    using ConnectionFactory = std::function<TcpConnectionPtr(EventLoop*, const std::string&, int32_t,
+        const InetAddress&, const InetAddress&)>;
 
     enum Option
     {
@@ -55,6 +57,9 @@ public:
      * @param[in] nums
      */
     void setThreadNum(int32_t nums);
+
+    /// @brief 启动前设置连接创建方式；工厂返回的连接接管 fd，空工厂使用普通 TCP。
+    void setConnectionFactory(ConnectionFactory factory);
 
     /**
      * @brief 服务器开启监听
@@ -118,6 +123,7 @@ private:
 
     std::atomic_int32_t _nextConnId;
     ConnectMap _connections;
+    ConnectionFactory connection_factory_;
     std::mutex _connectMapMtx;
 };
 

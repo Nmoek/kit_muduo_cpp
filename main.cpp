@@ -8,6 +8,7 @@
  */
 #include "application.h"
 #include "domain/protocol_interaction_hub.h"
+#include "domain/project_server_factory.h"
 #include "ioc/interaction.h"
 #include "net/http/http_server.h"
 #include "net/event_loop.h"
