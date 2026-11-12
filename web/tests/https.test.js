@@ -52,17 +52,20 @@ describe('HTTPS test services', () => {
         expect(add.mock.calls[0][0].req_cfg).toMatchObject({ method: 'POST', path: '/secure' });
     });
 
-    /** 测试思路：编辑 HTTPS 时沿用 HTTP 配置归一化，例：已保存路径和 Headers 能再次编辑。 */
+    /** 测试思路：HTTPS 编辑沿用 HTTP 配置，监听端口保持数字；例：路径可编辑，端口显示 18080。 */
     it('loads HTTPS protocol edit fields', async () => {
         const context = await prepareForm('edit');
         expect(context.document.getElementById('request-path').value).toBe('/api/test1');
         expect(context.document.getElementById('req-http-headers')).toBeTruthy();
         expect(context.KitProxy.protocolItemForm.pageState.protocolType).toBe(3);
         expect(context.KitProxy.protocolItemForm.pageState.initialReqCfg.path).toBe('/api/test1');
+        const portField = Array.from(context.document.querySelectorAll('#protocol-form-project-context .service-context-item'))
+            .find(field => field.querySelector('.meta-label').textContent === '监听端口');
+        expect(portField.querySelector('.meta-value').textContent).toBe('18080');
     });
 
-    /** 测试思路：服务页展示实际 HTTPS URL，并暴露创建入口；例：localhost:8443 显示 https://localhost:8443。 */
-    it('shows HTTPS endpoints and an add-service option', () => {
+    /** 测试思路：HTTPS 服务的监听端口只展示端口号，并暴露创建入口；例：listen_port=8443 显示 8443。 */
+    it('shows HTTPS port numbers and an add-service option', () => {
         const context = createBrowserContext();
         loadCoreScripts(context);
         context.KitProxy.__disableAutoInitMain = true;
@@ -71,7 +74,7 @@ describe('HTTPS test services', () => {
         const endpoint = context.getProjectEndpointDisplay({
             protocol_type: 3, mode: 1, listen_port: 8443, status: 1, runtime_state: 1,
         });
-        expect(endpoint).toBe('https://localhost:8443');
+        expect(endpoint).toBe(8443);
         expect(context.addNewServiceCardModalHTML()).toContain('<option value=3>HTTPS</option>');
     });
 });

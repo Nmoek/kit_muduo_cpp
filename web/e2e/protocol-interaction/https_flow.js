@@ -17,7 +17,7 @@ export async function preserveHttpsMockState(page) {
     });
 }
 
-/** 从真实页面创建 HTTPS 服务与协议项；Mock 和 Real 使用同一套 UI 操作。 */
+/** 从页面创建 HTTPS 服务与协议项；各页面监听端口只显示数字，例如 8443。Mock 和 Real 共用操作。 */
 export async function createHttpsServiceAndProtocol(page, { mock = false } = {}) {
     const suffix = mock ? '?apiMode=mock' : '';
     await page.goto(`/html/main.html${suffix}`);
@@ -38,9 +38,11 @@ export async function createHttpsServiceAndProtocol(page, { mock = false } = {})
     const projectId = Number((await card.getAttribute('id')).split('-').at(-1));
     await card.getByRole('button', { name: '启动测试服务', exact: true }).click();
     await expect(card.getByRole('button', { name: '停止测试服务', exact: true })).toBeVisible();
-    await expect(card.locator('.project-listen-port')).toContainText('https://');
     const project = await page.evaluate(async id => (await window.KitProxy.api.getProject(id))[0], projectId);
+    await expect(card.locator('.project-listen-port .field-value')).toHaveText(String(project.listen_port));
     await card.getByRole('button', { name: '查看协议项' }).click();
+    await expect(page.locator('#protocol-service-meta .project-listen-port .field-value'))
+        .toHaveText(String(project.listen_port));
     await page.locator('#add-protocol-item').click();
     await expect(page.locator('#request-path')).toBeVisible();
     await page.getByLabel('协议项名称').fill('HTTPS健康检查');

@@ -189,7 +189,7 @@
 
         const endpointLabel = project.mode === ProjectMode.SERVER ? '监听端口' : '目标IP/端口';
         const endpointValue = isProjectRunning(project)
-            ? (project.mode === ProjectMode.SERVER ? KitProxy.utils.formatProjectListenEndpoint(project) || '未分配' : project.target_ip || '未设置')
+            ? (project.mode === ProjectMode.SERVER ? project.listen_port || '未分配' : project.target_ip || '未设置')
             : '未开启';
         const projectProtocolType = normalizeProtocolTypeForPage(project.protocol_type);
         const protocolText = ProtocolTypeStr[projectProtocolType] || '未知协议';
